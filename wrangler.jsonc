@@ -24,5 +24,35 @@
       "binding": "SHEETS_KV",
       "id": "e5af34ebf39b4c5d8851d7b071368a0e"
     }
-  ]
+  ],
+  "env": {
+    "demo": {
+      "name": "notreligue-rsvp",
+      "vars": {
+        "PUBLIC_URL": "https://rsvp.notreligue.ca"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "notreligue-demo",
+          "database_id": "87411a46-fc5f-414f-bd46-6ff26feb155f"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "SHEETS_KV",
+          "id": "28a2834f15814fcb84bb98f62f4919f1"
+        }
+      ],
+      "triggers": {
+        "crons": []
+      },
+      "routes": [
+        {
+          "pattern": "rsvp.notreligue.ca",
+          "custom_domain": true
+        }
+      ]
+    }
+  }
 }
