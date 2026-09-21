@@ -1,0 +1,15178 @@
+import PostalMime from 'postal-mime';
+import {
+  cleanupOldReviews,
+  handleScoresheetEmail,
+  handleReviewUpload,
+  handleReviewGet,
+  handleReviewImage,
+  handleReviewPublish,
+  handleReviewDiscard,
+  handleReviewAddSheet,
+  handleReviewReprocess,
+  handleDataJson,
+  handleListBackups,
+  handleDownloadBackup,
+  cleanName
+} from './review.js';
+import {
+  getWeeklyHighlights,
+  renderHighlightsHtml,
+  renderHighlightsText
+} from './highlights.js';
+import {
+  sortStandings,
+  getRegularGoalsByTeam,
+  computeSeasonAwards,
+  updatePlayoffSchedule
+} from './awards.js';
+import {
+  handleSeasonData,
+  handleSeasonRollCall,
+  handleSeasonAutoDraft,
+  handleSeasonSuggestSwap,
+  handleSeasonGenerateSchedule,
+  handleSeasonSaveConfig,
+  handleSeasonLaunch,
+  renderSeasonPage
+} from './season_hub.js';
+
+/* SMBHL attendance
+   Signed links, RSVP endpoint, bilingual page, own-team view.
+   Secrets:  npx wrangler secret put RSVP_SECRET
+   Binding:  DB  (D1, see wrangler.jsonc)
+*/
+
+const TEAMS = ['Red', 'Blue', 'White', 'Black'];
+
+/* ---------- tokens ---------- */
+
+const enc = new TextEncoder();
+
+async function hmac(secret, message) {
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+}
+
+const playerMsg = (eventId, playerId, salt) => `p:${eventId}:${playerId}:${salt}`;
+const teamMsg   = (season, team, salt)     => `t:${season}:${team}:${salt}`;
+const pollMsg   = (pollId, playerId, salt) => `poll:${pollId}:${playerId}:${salt}`;
+
+function same(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+const FAILED_ADMIN_ATTEMPTS = new Map();
+
+function checkAdminAuth(req, env) {
+  if (!env?.ADMIN_KEY) return 'no_key';
+  const expected = String(env.ADMIN_KEY).trim();
+  let candidate = (req.headers.get('x-admin') || '').trim();
+  if (!candidate) {
+    try {
+      const url = new URL(req.url);
+      candidate = (url.searchParams.get('key') || url.searchParams.get('k') || url.searchParams.get('t') || '').trim();
+    } catch (_) {}
+  }
+  if (!candidate) {
+    try {
+      const cookie = req.headers.get('cookie') || '';
+      const m = cookie.match(/(?:^|;\s*)admin_key=([^;]+)/);
+      if (m) candidate = decodeURIComponent(m[1]).trim();
+    } catch (_) {}
+  }
+
+  const ip = req.headers.get('cf-connecting-ip') || '127.0.0.1';
+  const now = Date.now();
+  const rec = FAILED_ADMIN_ATTEMPTS.get(ip);
+
+  // If candidate matches expected key, immediately clear any lockout and allow access
+  if (candidate && candidate === expected) {
+    if (rec) FAILED_ADMIN_ATTEMPTS.delete(ip);
+    return 'ok';
+  }
+
+  // If key is wrong and IP is locked out
+  if (rec && rec.count >= 10 && (now - rec.lastAttempt) < 15 * 60 * 1000) {
+    return 'locked';
+  }
+
+  // Only record failed attempt if an actual candidate was sent and was incorrect!
+  if (candidate) {
+    if (!rec || (now - rec.lastAttempt) > 15 * 60 * 1000) {
+      FAILED_ADMIN_ATTEMPTS.set(ip, { count: 1, lastAttempt: now });
+    } else {
+      rec.count++;
+      rec.lastAttempt = now;
+    }
+  }
+
+  return 'unauthorized';
+}
+
+function adminAuthResponse(status) {
+  if (status === 'locked') {
+    return new Response('Trop de tentatives infructueuses. Réessaie dans 15 minutes / Too many failed attempts. Locked out for 15 minutes.', { status: 429 });
+  }
+  return new Response('nope', { status: 403 });
+}
+
+function adminPageHeaders(authOk, env) {
+  const headers = {
+    'content-type': 'text/html; charset=utf-8',
+    'cache-control': 'no-store'
+  };
+  if (authOk && env?.ADMIN_KEY) {
+    headers['set-cookie'] = `admin_key=${encodeURIComponent(env.ADMIN_KEY)}; Path=/; Max-Age=2592000; SameSite=Lax; Secure`;
+  }
+  return headers;
+}
+
+async function getSeasonFixtures(env, seasonName) {
+  let d = null;
+  try {
+    const raw = env?.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null;
+    if (raw) d = JSON.parse(raw);
+  } catch (_) {}
+  if (!d) {
+    try {
+      const res = await fetch(`${env?.SITE_URL || 'https://smbhl.com'}/data.json`);
+      if (res.ok) d = await res.json();
+    } catch (_) {}
+  }
+  if (!d || !d.seasons) return [];
+  const s = seasonName ? d.seasons.find(x => x.name === seasonName) : (d.seasons.find(x => x.name === d.current_season) || d.seasons[0]);
+  if (!s || !s.fixtures) return [];
+
+  const byWeek = new Map();
+  for (const f of s.fixtures) {
+    if (!byWeek.has(f.week)) {
+      const dt = new Date(String(f.date).replace(/^[A-Za-z]+\s+/, ''));
+      const id = isNaN(dt) ? '' : `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+      byWeek.set(f.week, {
+        week: f.week,
+        date: f.date,
+        id,
+        venue: f.venue
+      });
+    }
+  }
+  return [...byWeek.values()].sort((a, b) => a.week - b.week);
+}
+
+async function getPlannedAbsencesForSeason(db, season) {
+  try {
+    return (await db.prepare(
+      `SELECT pa.id, pa.player_id, pa.date, pa.season, pa.reason, pa.created_at,
+              c.name, c.is_goalie, c.role, COALESCE(c.preferred_team, '') AS team
+       FROM planned_absences pa
+       JOIN contacts c ON c.player_id = pa.player_id
+       WHERE pa.season = ?
+       ORDER BY pa.date ASC, c.name ASC`
+    ).bind(season).all()).results || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+/* ---------- html ---------- */
+
+const DAY_FR = { Sunday:'dimanche', Monday:'lundi', Tuesday:'mardi', Wednesday:'mercredi',
+  Thursday:'jeudi', Friday:'vendredi', Saturday:'samedi' };
+function dayNames(dateLabel) {
+  const m = /^([A-Za-z]+)/.exec(String(dateLabel || '').trim());
+  const en = m && DAY_FR[m[1]] ? m[1] : null;
+  return en ? { en, fr: DAY_FR[en] } : { en: 'that day', fr: 'ce jour-là' };
+}
+
+const esc = s => String(s == null ? '' : s)
+  .replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+async function getStandingsTooltip(env) {
+  try {
+    if (!env) return '';
+    let kv = env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null;
+    if (!kv) {
+      try {
+        const res = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
+        if (res.ok) {
+          kv = await res.text();
+          if (env.SHEETS_KV) await env.SHEETS_KV.put('data_json', kv);
+        }
+      } catch (e) {}
+    }
+    if (!kv) return '';
+    const data = JSON.parse(kv);
+    const s = data.seasons?.find(x => x.name === data.current_season) || data.seasons?.[0];
+    if (!s || !s.standings || !s.standings.length) return '';
+    const played = s.standings.some(t => t.gp > 0);
+    if (!played) return '';
+
+    const regGoals = getRegularGoalsByTeam(data, s.name);
+    const sorted = sortStandings(s.standings, regGoals);
+    const fr = sorted.map((t, i) => `${i + 1}${i === 0 ? 'er' : 'e'} : ${t.team} (${t.pts} pt${t.pts > 1 ? 's' : ''})`).join(' · ');
+    const en = sorted.map((t, i) => `${i + 1}${i === 0 ? 'st' : i === 1 ? 'nd' : i === 2 ? 'rd' : 'th'}: ${t.team} (${t.pts} pt${t.pts > 1 ? 's' : ''})`).join(' · ');
+    return `Classement SMBHL — ${fr} / SMBHL Standings — ${en}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+function page(title, body, logoTooltip = '') {
+  const titleAttr = logoTooltip ? ` title="${esc(logoTooltip)}"` : '';
+  return `<!DOCTYPE html><html lang="fr-CA"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)} — SMBHL</title>
+<meta name="description" content="Plateforme de pr\u00e9sence et gestion d\u2019\u00e9quipe de la ligue de hockey balle SMBHL (Sunday Morning Ball Hockey League).">
+<meta name="rating" content="general">
+<meta name="rating" content="safe for kids">
+<meta itemprop="isFamilyFriendly" content="true">
+<meta name="classification" content="Sports, Hockey">
+<link rel="icon" href="https://smbhl.com/img/favicon-32.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+(function() {
+  var lang = 'fr';
+  try {
+    var saved = localStorage.getItem('smbhl_admin_lang');
+    if (saved === 'fr' || saved === 'en') lang = saved;
+    else if (/^en/i.test(navigator.language || '')) lang = 'en';
+  } catch(e) {}
+
+  window.__currentLang = lang;
+  window.__setLang = function(l) {
+    if (l !== 'fr' && l !== 'en') return;
+    window.__currentLang = l;
+    try { localStorage.setItem('smbhl_admin_lang', l); } catch(e) {}
+    if (document.documentElement) document.documentElement.lang = l === 'en' ? 'en-CA' : 'fr-CA';
+    document.querySelectorAll('.langbtn').forEach(function(b) {
+      b.classList.toggle('on', b.dataset.l === l);
+    });
+    var foot = document.getElementById('footer-stats-link');
+    if (foot) foot.textContent = l === 'en' ? 'Statistics' : 'Statistiques';
+    if (window.__updateAdminTabsLang) window.__updateAdminTabsLang(l);
+    window.dispatchEvent(new CustomEvent('admin_lang_changed', { detail: { lang: l } }));
+  };
+})();
+</script>
+<style>
+ :root{--ink:#16181d;--soft:#5d636e;--faint:#8b919b;--paper:#eef0f3;--card:#fff;
+   --rule:#dde1e7;--rule2:#b9bec7;--red:#b3122c;--blue:#17457f;--green:#1c7a4a;--orange:#f2731f}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--paper);color:var(--ink);font-size:17px;line-height:1.5;
+   font-family:'Barlow',-apple-system,'Segoe UI',Roboto,sans-serif}
+ .top{background:var(--ink);color:#fff;padding:14px 0}
+ .wrap{max-width:560px;margin:0 auto;padding:0 18px}
+ .top .wrap{display:flex;align-items:center;gap:12px}
+ .top img{height:30px}
+ h1{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:30px;
+   margin:22px 0 4px;line-height:1.1}
+ .when{color:var(--soft);font-size:15px;margin:0 0 20px}
+ .card{background:var(--card);border:1px solid var(--rule);padding:18px;margin:0 0 16px}
+ .matchbox{background:#f4f6f8;border-left:4px solid var(--blue);padding:10px 14px;margin:12px 0;font-size:15px}
+ .matchbox b{color:var(--ink)}
+ .btns{display:flex;gap:10px;margin:4px 0 0}
+ .btn{flex:1;font:inherit;font-family:'Barlow Condensed',sans-serif;font-weight:700;
+   font-size:19px;letter-spacing:.03em;padding:16px 10px;border-radius:3px;cursor:pointer;
+   border:2px solid var(--rule2);background:var(--card);color:var(--ink);text-align:center;text-decoration:none}
+ .btn.in.on{background:var(--green);border-color:var(--green);color:#fff}
+ .btn.out.on{background:var(--red);border-color:var(--red);color:#fff}
+ .btn:disabled{opacity:.6;cursor:default}
+ .mini{font:inherit;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;
+   padding:6px 11px;margin-left:5px;border-radius:3px;cursor:pointer;
+   border:1.5px solid var(--rule2);background:var(--card);color:var(--soft)}
+ .mini.in.on{background:var(--green);border-color:var(--green);color:#fff}
+ .mini.out.on{background:var(--red);border-color:var(--red);color:#fff}
+ .mini:disabled{opacity:.5;cursor:default}
+ .picker{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
+ .tabbtn{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;
+   padding:6px 11px;border:1px solid var(--rule2);background:var(--card);
+   color:var(--soft);text-decoration:none;border-radius:3px;display:inline-block;white-space:nowrap}
+ .tabbtn.on{background:var(--ink);border-color:var(--ink);color:#fff}
+ .tabbtn:hover{border-color:var(--ink)}
+ .state{font-size:15px;color:var(--soft);margin:14px 0 0}
+ .state b{color:var(--ink)}
+ table{width:100%;border-collapse:collapse;font-size:16px}
+ td{padding:7px 0;border-bottom:1px solid var(--rule)}
+ tr:last-child td{border-bottom:none}
+ td.s{text-align:right;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:15px}
+ .in{color:var(--green)} .out{color:var(--red)} .pend{color:var(--faint)}
+ .by{color:var(--faint);font-size:13px;margin-left:6px}
+ h2{font-family:'Barlow Condensed',sans-serif;font-size:20px;margin:0 0 10px}
+ .counts{display:flex;gap:16px;flex-wrap:wrap;margin:0;padding:0;list-style:none;font-size:15px}
+ .counts li{color:var(--soft)}
+ .counts b{font-family:'Barlow Condensed',sans-serif;font-size:19px;color:var(--ink);
+   display:block;line-height:1.1}
+ .short{color:var(--red);font-weight:600}
+ .en{color:var(--faint);font-size:14px;display:block;font-weight:400;letter-spacing:0}
+ .langswitch{display:flex;gap:4px;align-items:center}
+ .langbtn{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;padding:3px 8px;border-radius:3px;border:1px solid #4a5160;background:transparent;color:#9aa1ac;cursor:pointer;line-height:1.2}
+ .langbtn:hover{color:#fff;border-color:#9aa1ac}
+ .langbtn.on{background:#fff;border-color:#fff;color:#16181d}
+ footer{color:var(--faint);font-size:13px;padding:24px 0 40px}
+ footer a{color:var(--soft)}
+</style></head><body>
+<div class="top"><div class="wrap" style="display:flex;align-items:center;justify-content:space-between;">
+  <a href="https://smbhl.com/"${titleAttr} id="logo-link"><img src="/api/logo.svg" alt="SMBHL"${titleAttr}></a>
+  <div class="langswitch">
+    <button type="button" class="langbtn on" data-l="fr" id="btn-lang-fr" onclick="window.__setLang &amp;&amp; window.__setLang(&apos;fr&apos;)">FR</button>
+    <button type="button" class="langbtn" data-l="en" id="btn-lang-en" onclick="window.__setLang &amp;&amp; window.__setLang(&apos;en&apos;)">EN</button>
+  </div>
+</div></div>
+<script>
+if (window.__currentLang) {
+  var bFr = document.getElementById('btn-lang-fr');
+  var bEn = document.getElementById('btn-lang-en');
+  if (bFr && bEn) {
+    bFr.classList.toggle('on', window.__currentLang === 'fr');
+    bEn.classList.toggle('on', window.__currentLang === 'en');
+  }
+}
+</script>
+<div class="wrap">${body}</div>
+<footer class="wrap">SMBHL · Laval, Québec · <a href="https://smbhl.com/" id="footer-stats-link">Statistiques</a></footer>
+<script>
+(function() {
+  function triggerInitLang() {
+    if (window.__setLang) window.__setLang(window.__currentLang || 'fr');
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', triggerInitLang);
+  } else {
+    triggerInitLang();
+  }
+
+  const a = document.getElementById('logo-link');
+  if (a && a.title && window.matchMedia('(pointer: coarse)').matches) {
+    a.addEventListener('click', function(e) {
+      if (!a.dataset.tapped) {
+        e.preventDefault();
+        a.dataset.tapped = '1';
+        alert(a.getAttribute('title'));
+        setTimeout(function() { delete a.dataset.tapped; }, 2500);
+      }
+    });
+  }
+})();
+</script>
+</body></html>`;
+}
+
+const notice = (fr, en, logoTooltip = '') => page(fr, `<h1>${esc(fr)}<span class="en">${esc(en)}</span></h1>`, logoTooltip);
+
+/* ---------- data helpers ---------- */
+
+async function getEvent(db, id) {
+  return db.prepare('SELECT * FROM events WHERE id = ?').bind(id).first();
+}
+async function getContact(db, id) {
+  return db.prepare('SELECT * FROM contacts WHERE player_id = ?').bind(id).first();
+}
+
+async function teamRows(db, eventId, team) {
+  return (await db.prepare(
+    `SELECT r.player_id, r.guest_name, r.status, r.role, r.status_by, c.name, c.position
+       FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND r.team = ?
+      ORDER BY (r.role='guest'), COALESCE(c.name, r.guest_name)`
+  ).bind(eventId, team).all()).results || [];
+}
+
+async function allCounts(db, eventId) {
+  const rows = (await db.prepare(
+    `SELECT team, status, COUNT(*) n FROM rsvp
+      WHERE event_id = ? AND team IS NOT NULL GROUP BY team, status`
+  ).bind(eventId).all()).results || [];
+  const out = {};
+  for (const t of TEAMS) out[t] = { in: 0, out: 0, pending: 0 };
+  for (const r of rows) if (out[r.team]) out[r.team][r.status] = r.n;
+  return out;
+}
+
+function renderTeam(rows, counts, team) {
+  const label = { in: 'PRÉSENT', out: 'ABSENT', pending: '—' };
+  const list = rows.map(r => {
+    const name = r.name || r.guest_name || '?';
+    const by = r.status !== 'pending' && r.status_by !== 'self'
+      ? `<span class="by">réglé par ${esc(r.status_by === 'manager' ? 'admin' : 'un coéquipier')}</span>` : '';
+    const extra = r.role === 'guest' ? '<span class="by">invité</span>' : '';
+    return `<tr><td>${esc(name)}${extra}${by}</td>
+      <td class="s ${r.status === 'pending' ? 'pend' : r.status}">${label[r.status]}</td></tr>`;
+  }).join('');
+
+  const others = TEAMS.filter(t => t !== team).map(t =>
+    `<li><b>${counts[t].in}</b>${esc(t)}</li>`).join('');
+
+  return `<div class="card">
+    <h2>${esc(team)}<span class="en">Ton équipe / Your team</span></h2>
+    <table>${list || '<tr><td>—</td></tr>'}</table>
+  </div>
+  <div class="card">
+    <h2>Les autres équipes<span class="en">Other teams — confirmed</span></h2>
+    <ul class="counts">${others}</ul>
+  </div>`;
+}
+
+/* ---------- match & schedule helpers ---------- */
+
+async function getTeamFixtures(env, ev, team) {
+  if (!team || !ev) return null;
+  try {
+    const r = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const season = d.seasons.find(s => s.name === ev.season);
+    if (!season || !season.fixtures) return null;
+
+    const matches = season.fixtures.filter(f =>
+      Number(f.week) === Number(ev.week) && (f.home === team || f.away === team)
+    );
+    if (!matches.length) return null;
+
+    return matches.map(m => {
+      const opp = m.home === team ? m.away : m.home;
+      const venue = m.venue || ev.venue || '';
+      return {
+        time: m.time || '',
+        opp,
+        oppFR: TEAM_FR[opp] || opp,
+        venue
+      };
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+function formatFixtureText(matches, team, isGoalie) {
+  if (!matches || !matches.length) return '';
+  const venues = [...new Set(matches.map(m => m.venue).filter(Boolean))];
+  const header = venues.length === 1 ? `${venues[0]}\n` : '';
+  const matchLines = matches.map(m => {
+    const venueSuffix = venues.length > 1 && m.venue ? ` (${m.venue})` : '';
+    return `${m.time} vs. ${m.opp}${venueSuffix}`;
+  }).join('\n');
+  const shirt = isGoalie
+    ? 'Équipement de gardien (pas de chandail requis).'
+    : `Chandail ${SHIRT_FR[team] || team.toLowerCase()} requis / ${team} shirt required.`;
+
+  return `\n${header}${matchLines}\n${shirt}\n`;
+}
+
+/* ---------- time, in the league's timezone ---------- */
+
+const TZ = 'America/Toronto';
+function localParts(d = new Date()) {
+  const f = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, weekday: 'short', hour: '2-digit', minute: '2-digit',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour12: false
+  }).formatToParts(d);
+  const g = t => (f.find(p => p.type === t) || {}).value;
+  return {
+    weekday: g('weekday'),
+    hour: parseInt(g('hour'), 10),
+    minute: parseInt(g('minute'), 10),
+    date: `${g('year')}-${g('month')}-${g('day')}`
+  };
+}
+const reached = (p, h, m = 0) => p.hour > h || (p.hour === h && p.minute >= m);
+
+function formatMsgTime(isoString) {
+  try {
+    const d = new Date(isoString);
+    const p = localParts(d);
+    const days = { 'Mon': 'Lun', 'Tue': 'Mar', 'Wed': 'Mer', 'Thu': 'Jeu', 'Fri': 'Ven', 'Sat': 'Sam', 'Sun': 'Dim' };
+    const dayFr = days[p.weekday] || p.weekday;
+    const hh = String(p.hour).padStart(2, '0');
+    const mm = String(p.minute).padStart(2, '0');
+    return `${dayFr} ${hh}:${mm}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+/* ---------- email ---------- */
+
+const FROM = 'SMBHL - Hockey <joueur@smbhl.com>';
+const REPLY_TO = 'info@smbhl.com';
+const ADMIN_EMAIL = 'emailrobertosantana@gmail.com';
+
+export function sanitizeAndValidateEmail(raw) {
+  if (!raw || typeof raw !== 'string') return { valid: false, email: '', error: 'Courriel requis / Email required' };
+  let email = raw.trim().toLowerCase();
+  // Auto-convert accidental commas to dots (e.g. "frederick,crevier@hec,ca" -> "frederick.crevier@hec.ca")
+  email = email.replace(/,/g, '.');
+  // Strip any whitespace
+  email = email.replace(/\s+/g, '');
+  const emailRegex = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
+  if (!emailRegex.test(email)) {
+    return { valid: false, email, error: 'Format de courriel invalide / Invalid email format' };
+  }
+  return { valid: true, email };
+}
+
+async function sendMail(env, to, subject, text, html = null, attachments = null) {
+  if (!env.RESEND_API_KEY) throw new Error('RESEND_API_KEY not set');
+  const check = sanitizeAndValidateEmail(to);
+  if (!check.valid) throw new Error(`invalid email format: "${to}"`);
+  const cleanTo = check.email;
+  const payload = {
+    from: FROM,
+    to: [cleanTo],
+    reply_to: REPLY_TO,
+    subject,
+    text,
+    headers: {
+      'List-Unsubscribe': '<mailto:joueur@smbhl.com?subject=unsubscribe>'
+    }
+  };
+  if (html) payload.html = html;
+  if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+    payload.attachments = attachments;
+  }
+  const r = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'authorization': `Bearer ${env.RESEND_API_KEY}`,
+               'content-type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) throw new Error(`resend ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return true;
+}
+
+/* ---------- quiet hours ---------- */
+
+const QUIET_FROM = 23, QUIET_TO = 7;
+function afterQuiet(d) {
+  let t = new Date(d);
+  for (let i = 0; i < 24; i++) {
+    const p = localParts(t);
+    if (p.hour >= QUIET_TO && p.hour < QUIET_FROM) return t;
+    t = new Date(t.getTime() + 30 * 60000);
+  }
+  return t;
+}
+
+/* ---------- outbox ---------- */
+
+async function enqueue(env, { kind, event_id, player_id = null, team = null,
+                              dedup_key = null, payload = {}, delayMin = 0 }) {
+  const now = new Date();
+  const after = afterQuiet(new Date(now.getTime() + delayMin * 60000)).toISOString();
+  if (dedup_key) {
+    await env.DB.prepare(
+      `UPDATE outbox SET cancelled = 1
+        WHERE dedup_key = ? AND sent_at IS NULL AND cancelled = 0`
+    ).bind(dedup_key).run();
+  }
+  await env.DB.prepare(
+    `INSERT INTO outbox (kind,event_id,player_id,team,dedup_key,payload,send_after,created_at)
+     VALUES (?,?,?,?,?,?,?,?)`
+  ).bind(kind, event_id, player_id, team, dedup_key,
+         JSON.stringify(payload), after, now.toISOString()).run();
+}
+
+async function cancelPending(env, dedup_key) {
+  await env.DB.prepare(
+    `UPDATE outbox SET cancelled = 1
+      WHERE dedup_key = ? AND sent_at IS NULL AND cancelled = 0`
+  ).bind(dedup_key).run();
+}
+
+/* ---------- message bodies ---------- */
+
+const TEAM_FR = { Red:'Rouge', Blue:'Bleu', White:'Blanc', Black:'Noir' };
+const SHIRT_FR = { Red:'rouge', Blue:'bleu', White:'blanc', Black:'noir' };
+const tFR = t => TEAM_FR[t] || t;
+const MONTH_FR2 = { January:'janvier', February:'février', March:'mars', April:'avril',
+  May:'mai', June:'juin', July:'juillet', August:'août', September:'septembre',
+  October:'octobre', November:'novembre', December:'décembre' };
+
+function dateFR(label) {
+  const m = /^([A-Za-z]+)\s+([A-Za-z]+)\s+(\d{1,2})/.exec(String(label || ''));
+  if (!m || !DAY_FR[m[1]] || !MONTH_FR2[m[2]]) return label;
+  return `${DAY_FR[m[1]]} ${m[3]} ${MONTH_FR2[m[2]]}`;
+}
+
+function whenLine(ev) {
+  const d = dayNames(ev.date);
+  const t = ev.start_time ? ` ${ev.start_time}` : '';
+  return { fr: `${d.fr}${t}${ev.venue ? ' au ' + ev.venue : ''}`,
+           en: `${d.en}${t}${ev.venue ? ' at ' + ev.venue : ''}` };
+}
+
+function formatInviteDate(ev) {
+  if (!ev) return { fr: 'dimanche prochain', en: 'this Sunday' };
+
+  const MONTH_SHORT_FR = {
+    1: 'janv.', 2: 'févr.', 3: 'mars', 4: 'avr.', 5: 'mai', 6: 'juin',
+    7: 'juil.', 8: 'août', 9: 'sept.', 10: 'oct.', 11: 'nov.', 12: 'déc.',
+    January: 'janv.', February: 'févr.', March: 'mars', April: 'avr.',
+    May: 'mai', June: 'juin', July: 'juil.', August: 'août', September: 'sept.',
+    October: 'oct.', November: 'nov.', December: 'déc.'
+  };
+  const MONTH_SHORT_EN = {
+    1: 'Jan', 2: 'Feb', 3: 'March', 4: 'April', 5: 'May', 6: 'June',
+    7: 'July', 8: 'Aug', 9: 'Sept', 10: 'Oct', 11: 'Nov', 12: 'Dec',
+    January: 'Jan', February: 'Feb', March: 'March', April: 'April',
+    May: 'May', June: 'June', July: 'July', August: 'Aug', September: 'Sept',
+    October: 'Oct', November: 'Nov', December: 'Dec'
+  };
+  const DAY_SHORT_FR = {
+    Sunday: 'dimanche', Monday: 'lundi', Tuesday: 'mardi', Wednesday: 'mercredi',
+    Thursday: 'jeudi', Friday: 'vendredi', Saturday: 'samedi'
+  };
+  const DAY_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  let frDate = '', enDate = '';
+  const mLabel = /^([A-Za-z]+)\s+([A-Za-z]+)\s+(\d{1,2})/.exec(String(ev.date || '').trim());
+  const mIso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ev.date || '').trim());
+
+  if (mLabel && DAY_SHORT_FR[mLabel[1]] && MONTH_SHORT_FR[mLabel[2]]) {
+    const dayFr = DAY_SHORT_FR[mLabel[1]];
+    const dayNum = mLabel[3];
+    const monthFr = MONTH_SHORT_FR[mLabel[2]];
+    const monthEn = MONTH_SHORT_EN[mLabel[2]] || mLabel[2];
+    frDate = `${dayFr} ${dayNum} ${monthFr}`;
+    enDate = `${mLabel[1]} ${monthEn} ${dayNum}`;
+  } else if (mIso) {
+    const d = new Date(`${mIso[1]}-${mIso[2]}-${mIso[3]}T12:00:00Z`);
+    const dayName = DAY_EN[d.getUTCDay()];
+    const dayNum = Number(mIso[3]);
+    const monthNum = Number(mIso[2]);
+    const dayFr = DAY_SHORT_FR[dayName] || 'dimanche';
+    frDate = `${dayFr} ${dayNum} ${MONTH_SHORT_FR[monthNum]}`;
+    enDate = `${dayName} ${MONTH_SHORT_EN[monthNum]} ${dayNum}`;
+  } else {
+    const w = whenLine(ev);
+    return { fr: w.fr, en: w.en };
+  }
+
+  const timePart = ev.start_time ? `, ${ev.start_time}` : '';
+  const venueFr = ev.venue ? ` au ${ev.venue}` : '';
+  const venueEn = ev.venue ? ` at ${ev.venue}` : '';
+
+  return {
+    fr: `${frDate}${timePart}${venueFr}`,
+    en: `${enDate}${timePart}${venueEn}`
+  };
+}
+
+function emailWrap(title, contentHtml) {
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${esc(title)}</title>
+</head>
+<body style="margin:0; padding:16px 8px; background-color:#f4f5f8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#16181d; line-height:1.5;">
+  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:540px; margin:0 auto; background-color:#ffffff; border:1px solid #dde1e7; border-radius:8px; overflow:hidden;">
+    <tr>
+      <td style="background-color:#16181d; padding:14px 20px; color:#ffffff;">
+        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 SMBHL</span>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:22px 20px;">
+        ${contentHtml}
+      </td>
+    </tr>
+    <tr>
+      <td style="background-color:#f8fafc; padding:14px 20px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b; text-align:center;">
+        SMBHL · Sunday Morning Ball Hockey League · <a href="https://smbhl.com" style="color:#2563eb; text-decoration:none;">smbhl.com</a>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function emailBtn(url, label, color = '#15803d', textColor = '#ffffff', border = 'none') {
+  return `<a href="${esc(url)}" style="display:inline-block; background-color:${color}; color:${textColor}; font-weight:700; font-size:15px; text-decoration:none; padding:12px 22px; border-radius:6px; margin:4px 8px 4px 0; text-align:center; border:${border};">${esc(label)}</a>`;
+}
+
+function formatMoneyFr(val) {
+  const n = Number(val || 0);
+  return n.toLocaleString('fr-CA', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }) + ' $';
+}
+
+function formatMoneyEn(val) {
+  const n = Number(val || 0);
+  return '$' + n.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function renderInviteEmail({
+  role = 'regular',
+  ev,
+  name,
+  team,
+  teamLink,
+  yesUrl,
+  noUrl,
+  leagueMessage,
+  duesReminder,
+  highlights
+}) {
+  const subj = `Présence : ${dateFR(ev.date)} / RSVP: ${ev.date}`;
+  const when = formatInviteDate(ev);
+  const qFr = role === 'sub'
+    ? `Dispo pour remplacer ${when.fr} ?`
+    : `Tu joues ${when.fr} ?`;
+  const qEn = role === 'sub'
+    ? `Available to sub ${when.en}?`
+    : `Playing ${when.en}?`;
+
+  const tmFr = team ? (TEAM_FR[team] || team) : '';
+  const tmEn = team || '';
+  const teamLabel = team
+    ? `Gérer l'équipe ${tmFr} / Manage ${tmEn} roster & subs`
+    : `Gérer l'équipe / Manage team roster & subs`;
+
+  const cleanLeagueMsg = leagueMessage ? leagueMessage.trim() : '';
+
+  // Dues
+  let duesText = '';
+  let duesHtml = '';
+  if (duesReminder && duesReminder.balance > 0) {
+    const balFr = formatMoneyFr(duesReminder.balance);
+    const ph = duesReminder.phone ? duesReminder.phone.trim() : '';
+    const payMethodFr = ph
+      ? `Paiement en argent comptant sur place ou par virement Interac au ${ph}.`
+      : `Paiement en argent comptant sur place.`;
+    const payMethodEn = ph
+      ? `Please bring cash to the gym or send an Interac e-Transfer to ${ph}.`
+      : `Please bring cash to the gym.`;
+
+    duesText = `Montant dû / Amount due : ${balFr}\n${payMethodFr}\n${payMethodEn}`;
+    duesHtml = `
+    <div style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px 14px; margin:0 0 16px;">
+      <div style="font-size:13px; font-weight:700; color:#1e293b; margin-bottom:4px;">Montant dû / Amount due : ${balFr}</div>
+      <div style="font-size:13px; color:#334155; line-height:1.4;">
+        ${esc(payMethodFr)}<br>
+        <span style="color:#64748b; font-size:12px;">${esc(payMethodEn)}</span>
+      </div>
+    </div>`;
+  }
+
+  // League Note
+  let leagueMsgText = '';
+  let leagueMsgHtml = '';
+  if (cleanLeagueMsg) {
+    leagueMsgText = `Message de la ligue / League note :\n${cleanLeagueMsg}`;
+    leagueMsgHtml = `
+    <div style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px 14px; margin:0 0 16px;">
+      <div style="font-size:12px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">
+        Message de la ligue / League note
+      </div>
+      <div style="font-size:14px; color:#1e293b; line-height:1.5; white-space:pre-line;">${esc(cleanLeagueMsg)}</div>
+    </div>`;
+  }
+
+  const highlightsHtml = highlights ? renderHighlightsHtml(highlights) : '';
+  const highlightsText = highlights ? renderHighlightsText(highlights) : '';
+
+  // HTML content
+  const contentHtml = `
+    <p style="font-size:16px; margin:0 0 12px; font-weight:700; color:#0f172a;">Salut <b>${esc(name)}</b> / Hi <b>${esc(name)}</b>,</p>
+    <div style="margin:0 0 16px;">
+      <div style="font-size:15px; font-weight:600; color:#0f172a; margin-bottom:2px;">${esc(qFr)}</div>
+      <div style="font-size:14px; color:#475569;">${esc(qEn)}</div>
+    </div>
+    <div style="margin:0 0 10px;">
+      ${emailBtn(yesUrl, 'Oui / Yes', '#17457f', '#ffffff')}
+      ${emailBtn(noUrl, 'Non / No', '#ffffff', '#17457f', '1px solid #cbd5e1')}
+    </div>
+    ${role === 'sub' ? `
+    <div style="font-size:12px; color:#64748b; line-height:1.4; margin:0 0 16px;">
+      <div>Oui = liste d&#39;attente, placement automatique si une place se libère.</div>
+      <div>Yes = sub waitlist, placed automatically if a spot opens.</div>
+    </div>` : ((teamLink) ? `
+    <div style="margin:0 0 16px; font-size:13px;">
+      <a href="${esc(teamLink)}" style="color:#17457f; text-decoration:underline;">${esc(teamLabel)}</a>
+    </div>` : '')}
+    ${leagueMsgHtml}
+    ${duesHtml}
+    ${highlightsHtml}
+  `;
+
+  const html = emailWrap(subj, contentHtml);
+
+  // Plain text content
+  const textParts = [
+    '🏒 SMBHL',
+    '',
+    `Salut ${name} / Hi ${name},`,
+    '',
+    qFr,
+    qEn,
+    '',
+    `Oui / Yes : ${yesUrl}`,
+    `Non / No : ${noUrl}`
+  ];
+
+  if (role === 'sub') {
+    textParts.push('');
+    textParts.push("Oui = liste d'attente, placement automatique si une place se libère.");
+    textParts.push('Yes = sub waitlist, placed automatically if a spot opens.');
+  } else if (teamLink) {
+    textParts.push('');
+    textParts.push(`${teamLabel} :\n${teamLink}`);
+  }
+
+  if (leagueMsgText) {
+    textParts.push('');
+    textParts.push(leagueMsgText);
+  }
+
+  if (duesText) {
+    textParts.push('');
+    textParts.push(duesText);
+  }
+
+  if (highlightsText) {
+    textParts.push('');
+    textParts.push(highlightsText);
+  }
+
+  textParts.push('');
+  textParts.push('SMBHL · smbhl.com');
+
+  const text = textParts.join('\n');
+
+  return { subject: subj, text, html };
+}
+
+function body(kind, { ev, name, team, link, payload }) {
+  const w = whenLine(ev);
+  const sign = '\n\n—\nSMBHL · smbhl.com';
+  const matchInfo = payload && payload.fixtureText ? payload.fixtureText : '';
+
+  switch (kind) {
+    case 'invite': {
+      const role = (payload && payload.isSubInvite) ? 'sub' : 'regular';
+      return renderInviteEmail({
+        role,
+        ev,
+        name,
+        team,
+        teamLink: payload && payload.teamLink,
+        yesUrl: (payload && payload.yes) || `${link}&v=in`,
+        noUrl: (payload && payload.no) || `${link}&v=out`,
+        leagueMessage: payload && payload.leagueMessage,
+        duesReminder: payload && payload.duesReminder,
+        highlights: payload && payload.highlights
+      });
+    }
+
+    case 'chase': {
+      const stage = (payload && payload.stage) || '72';
+      const subj = { '72': `Rappel : tu joues ${dateFR(ev.date)} ? / Playing this week?`,
+                     '49': `Il reste 2 jours pour répondre / 2 days left to RSVP`,
+                     '24': `Dernier rappel pour demain / Last call for tomorrow` }[stage];
+      const text =
+`Salut ${name},
+
+On n'a toujours pas ta réponse pour ${w.fr}.
+${matchInfo}
+OUI (Présent) : ${payload.yes}
+NON (Absent)  : ${payload.no}
+
+—
+
+We still do not have your answer for ${w.en}.
+
+YES (In) : ${payload.yes}
+NO  (Out): ${payload.no}${sign}`;
+
+      const html = emailWrap(
+        subj,
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>On n'a toujours pas ta réponse pour <b>${esc(w.fr)}</b>.</p>
+        ${matchInfo ? `<div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:10px 14px; margin:0 0 16px; font-size:14px; white-space:pre-line;">${esc(matchInfo.trim())}</div>` : ''}
+        <div style="margin:0 0 20px;">
+          ${emailBtn(payload.yes, '✅ OUI (Présent)', '#15803d', '#ffffff')}
+          ${emailBtn(payload.no, '❌ NON (Absent)', '#f1f5f9', '#b91c1c', '1px solid #fca5a5')}
+        </div>
+        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
+        <p style="font-size:15px; margin:0 0 14px; color:#334155;">Hi <b>${esc(name)}</b>,<br>We still do not have your answer for <b>${esc(w.en)}</b>.</p>
+        <div style="margin:0 0 20px;">
+          ${emailBtn(payload.yes, '✅ YES (In)', '#15803d', '#ffffff')}
+          ${emailBtn(payload.no, '❌ NO (Out)', '#f1f5f9', '#b91c1c', '1px solid #fca5a5')}
+        </div>`
+      );
+
+      return { subject: subj, text, html };
+    }
+
+    case 'gameday': {
+      const subj = `À demain pour le match ! / See you at the gym tomorrow!`;
+      const frTeam = team ? tFR(team) : 'ton équipe';
+      const enTeam = team || 'your team';
+      const teamUrl = (payload && payload.teamLink) || link;
+      const webUrl = (payload && payload.websiteTeamLink) || '';
+      const noUrl = (payload && payload.no) || `${link}&v=out`;
+      const teamMsgs = (payload && payload.teamMessages) || [];
+
+      let msgsText = '';
+      let msgsHtml = '';
+      if (teamMsgs.length > 0) {
+        msgsText = `\n💬 Notes d'équipe / Team board :\n` +
+          teamMsgs.map(m => `  • ${m.player_name} (${formatMsgTime(m.created_at)}) : « ${m.message} »`).join('\n') + '\n';
+        msgsHtml = `
+          <div style="margin:0 0 18px; background-color:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #17457f; border-radius:4px; padding:12px 14px;">
+            <div style="font-size:13px; font-weight:700; color:#17457f; text-transform:uppercase; margin-bottom:8px;">
+              💬 Notes d'équipe / Team Board (${esc(team || '')})
+            </div>
+            ${teamMsgs.map(m => `
+              <div style="font-size:13px; color:#1e293b; margin-bottom:6px; line-height:1.4;">
+                <b>${esc(m.player_name)}</b> <span style="font-size:11px; color:#64748b;">(${esc(formatMsgTime(m.created_at))})</span> :
+                <span style="color:#334155;">« ${esc(m.message)} »</span>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      let subFeeText = '';
+      let subFeeHtml = '';
+      if (payload && payload.subFee && payload.subFee.total > 0) {
+        const totFr = formatMoneyFr(payload.subFee.total);
+        const ph = payload.subFee.phone ? payload.subFee.phone.trim() : '';
+        const payMethodFr = ph ? `Paiement en argent comptant sur place ou par virement Interac au ${ph}.` : `Paiement en argent comptant sur place.`;
+        const payMethodEn = ph ? `Please bring cash to the gym or send an Interac e-Transfer to ${ph}.` : `Please bring cash to the gym.`;
+
+        subFeeText = `\n💵 Frais de substitut / Sub Fee : ${totFr}\n${payMethodFr}\n${payMethodEn}\n`;
+
+        subFeeHtml = `
+        <div style="background-color:#f0fdf4; border:1px solid #bbf7d0; border-left:4px solid #16a34a; border-radius:6px; padding:12px 14px; margin:14px 0 18px;">
+          <div style="font-size:14px; font-weight:700; color:#15803d; margin-bottom:4px;">💵 Frais de substitut / Sub Fee : ${totFr}</div>
+          <div style="font-size:13px; color:#1e293b; line-height:1.4;">
+            Paiement en <b>argent comptant sur place</b>${ph ? ` ou par <b>virement Interac</b> au <b>${esc(ph)}</b>` : ''}.<br>
+            <span style="color:#64748b; font-size:12px;">Please bring <b>cash to the gym</b>${ph ? ` or send an <b>Interac e-Transfer</b> to <b>${esc(ph)}</b>` : ''}.</span>
+          </div>
+        </div>`;
+      }
+
+      const text =
+`Salut ${name} / Hi ${name},
+
+Rappel : tu es confirmé(e) avec ${frTeam} pour demain, ${w.fr} !
+Reminder: you are confirmed with ${enTeam} for tomorrow, ${w.en}!
+${subFeeText}${matchInfo ? matchInfo + '\n' : ''}${msgsText}
+📋 Voir l'alignement de l'équipe : ${teamUrl}
+📋 View team lineup: ${teamUrl}
+${webUrl ? `Fiche d'équipe : ${webUrl}\nTeam page: ${webUrl}\n` : ''}
+Tu ne peux plus venir ? Mets ton statut à jour ici. / Can't make it? Update your status here.
+Je ne peux pas jouer / I can't play : ${noUrl}${sign}`;
+
+      const html = emailWrap(
+        subj,
+        `<p style="font-size:16px; margin:0 0 4px; font-weight:700;">Salut <b>${esc(name)}</b> / Hi <b>${esc(name)}</b>,</p>
+        <p style="font-size:16px; margin:0 0 3px; font-weight:600; color:#0f172a;">Rappel : tu es confirmé(e) avec <b>${esc(frTeam)}</b> pour demain, <b>${esc(w.fr)}</b> !</p>
+        <p style="font-size:14px; margin:0 0 16px; color:#475569;">Reminder: you are confirmed with <b>${esc(enTeam)}</b> for tomorrow, <b>${esc(w.en)}</b>!</p>
+        ${subFeeHtml}
+        ${matchInfo ? `<div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:10px 14px; margin:0 0 16px; font-size:14px; white-space:pre-line;">${esc(matchInfo.trim())}</div>` : ''}
+        ${msgsHtml}
+        <div style="margin:0 0 14px;">
+          ${emailBtn(teamUrl, "📋 Voir l'alignement de l'équipe / View team lineup", '#17457f', '#ffffff')}
+        </div>
+        ${webUrl ? `<p style="font-size:13px; margin:0 0 16px;"><a href="${esc(webUrl)}" style="color:#17457f; text-decoration:underline;">Consulter la fiche de l'équipe / Team page sur smbhl.com</a></p>` : ''}
+        <div style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px 14px; margin:0 0 18px;">
+          <p style="font-size:13px; color:#334155; margin:0 0 4px; font-weight:700;">Tu ne peux plus venir ? Mets ton statut à jour ici.</p>
+          <p style="font-size:12px; color:#64748b; margin:0 0 10px;">Can't make it? Update your status here.</p>
+          <div>
+            ${emailBtn(noUrl, "Je ne peux pas jouer / I can't play", '#ffffff', '#17457f', '1px solid #cbd5e1')}
+          </div>
+        </div>`
+      );
+
+      return { subject: subj, text, html };
+    }
+
+    case 'friday_board': {
+      const frTeam = team ? tFR(team) : 'ton équipe';
+      const enTeam = team || 'your team';
+      const teamUrl = (payload && payload.teamLink) || link;
+      const teamMsgs = (payload && payload.teamMessages) || [];
+      const subj = `Notes d'équipe : ${team} / Team board update: ${team}`;
+      const msgsListText = teamMsgs.map(m => `  • ${m.player_name} (${formatMsgTime(m.created_at)}) : « ${m.message} »`).join('\n');
+      const msgsListHtml = teamMsgs.map(m => `
+        <div style="font-size:13px; color:#1e293b; margin-bottom:8px; line-height:1.4;">
+          <b>${esc(m.player_name)}</b> <span style="font-size:11px; color:#64748b;">(${esc(formatMsgTime(m.created_at))})</span> :
+          <span style="color:#334155;">« ${esc(m.message)} »</span>
+        </div>
+      `).join('');
+
+      const text =
+`Salut ${name},
+
+Des coéquipiers ont laissé des notes sur le tableau de l'équipe ${frTeam} pour ${w.fr} !
+${matchInfo ? matchInfo + '\n' : ''}
+💬 Notes d'équipe / Team board :
+${msgsListText}
+
+📋 Voir l'alignement et le tableau : ${teamUrl}
+
+—
+
+Hi ${name},
+
+Teammates have posted notes on the ${enTeam} team board for ${w.en}!
+${matchInfo ? matchInfo + '\n' : ''}
+💬 Team board notes:
+${msgsListText}
+
+📋 View team board & lineup: ${teamUrl}${sign}`;
+
+      const html = emailWrap(
+        subj,
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>Des coéquipiers ont laissé des notes sur le tableau de l'équipe <b>${esc(frTeam)}</b> pour <b>${esc(w.fr)}</b> !</p>
+        ${matchInfo ? `<div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:10px 14px; margin:0 0 16px; font-size:14px; white-space:pre-line;">${esc(matchInfo.trim())}</div>` : ''}
+        <div style="margin:0 0 18px; background-color:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid #17457f; border-radius:4px; padding:12px 14px;">
+          <div style="font-size:13px; font-weight:700; color:#17457f; text-transform:uppercase; margin-bottom:8px;">
+            💬 Notes d'équipe / Team Board (${esc(team || '')})
+          </div>
+          ${msgsListHtml}
+        </div>
+        <div style="margin:0 0 14px;">
+          ${emailBtn(teamUrl, "📋 Voir l'alignement et répondre", '#17457f', '#ffffff')}
+        </div>
+        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
+        <p style="font-size:15px; margin:0 0 14px; color:#334155;">Hi <b>${esc(name)}</b>,<br>Teammates have posted notes on the <b>${esc(enTeam)}</b> team board for <b>${esc(w.en)}</b>!</p>
+        <div style="margin:0 0 14px;">
+          ${emailBtn(teamUrl, '📋 View team board', '#17457f', '#ffffff')}
+        </div>`
+      );
+
+      return { subject: subj, text, html };
+    }
+
+    case 'gameday_morning': {
+      const frTeam = team ? tFR(team) : 'ton équipe';
+      const enTeam = team || 'your team';
+      const teamUrl = (payload && payload.teamLink) || link;
+      const teamMsgs = (payload && payload.teamMessages) || [];
+      const subj = `Notes de dernière minute : ${team} / Last-minute team update: ${team}`;
+      const msgsListText = teamMsgs.map(m => `  • ${m.player_name} (${formatMsgTime(m.created_at)}) : « ${m.message} »`).join('\n');
+      const msgsListHtml = teamMsgs.map(m => `
+        <div style="font-size:13px; color:#1e293b; margin-bottom:8px; line-height:1.4;">
+          <b>${esc(m.player_name)}</b> <span style="font-size:11px; color:#64748b;">(${esc(formatMsgTime(m.created_at))})</span> :
+          <span style="color:#334155;">« ${esc(m.message)} »</span>
+        </div>
+      `).join('');
+
+      const text =
+`Salut ${name},
+
+De nouveaux messages ont été publiés ce matin pour l'équipe ${frTeam} avant le match (${w.fr}) :
+
+⚡ Nouveaux messages / New messages :
+${msgsListText}
+
+📋 Voir le tableau d'équipe : ${teamUrl}
+À tout de suite pour le match !
+
+—
+
+Hi ${name},
+
+New messages were posted this morning for ${enTeam} before the game (${w.en}):
+
+⚡ New messages:
+${msgsListText}
+
+📋 View team board: ${teamUrl}
+See you at the gym soon!${sign}`;
+
+      const html = emailWrap(
+        subj,
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>De nouveaux messages ont été publiés ce matin pour l'équipe <b>${esc(frTeam)}</b> avant le match (<b>${esc(w.fr)}</b>) :</p>
+        <div style="margin:0 0 18px; background-color:#fffbeb; border:1px solid #fde68a; border-left:4px solid #f59e0b; border-radius:4px; padding:12px 14px;">
+          <div style="font-size:13px; font-weight:700; color:#b45309; text-transform:uppercase; margin-bottom:8px;">
+            ⚡ Dernières nouvelles / Last-minute notes (${esc(team || '')})
+          </div>
+          ${msgsListHtml}
+        </div>
+        <div style="margin:0 0 14px;">
+          ${emailBtn(teamUrl, "📋 Voir le tableau d'équipe", '#17457f', '#ffffff')}
+        </div>
+        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
+        <p style="font-size:15px; margin:0 0 14px; color:#334155;">Hi <b>${esc(name)}</b>,<br>New messages were posted this morning for <b>${esc(enTeam)}</b> before the game (<b>${esc(w.en)}</b>):</p>
+        <div style="margin:0 0 14px;">
+          ${emailBtn(teamUrl, '📋 View team board', '#17457f', '#ffffff')}
+        </div>`
+      );
+
+      return { subject: subj, text, html };
+    }
+
+    case 'notice': {
+      const subj = `Statut modifié pour ${dateFR(ev.date)} / Status updated`;
+      const text =
+`Salut ${name},
+
+${payload.by === 'manager' ? 'L\u2019admin' : 'Un coéquipier'} t'a marqué ${
+  payload.status === 'in' ? 'PRÉSENT' : 'ABSENT'} pour ${w.fr}.
+Si ce n'est pas exact, corrige-le : ${link}
+
+—
+
+${payload.by === 'manager' ? 'The admin' : 'A teammate'} marked you ${
+  payload.status === 'in' ? 'IN' : 'OUT'} for ${w.en}.
+Not right? Change it: ${link}${sign}`;
+
+      const html = emailWrap(
+        subj,
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
+        <p style="font-size:15px; margin:0 0 14px;">${payload.by === 'manager' ? 'L\u2019admin' : 'Un coéquipier'} t'a marqué <b>${payload.status === 'in' ? 'PRÉSENT' : 'ABSENT'}</b> pour <b>${esc(w.fr)}</b>.</p>
+        <p style="font-size:14px; margin:0 0 20px;">
+          Si ce n'est pas exact, corrige-le :<br>
+          ${emailBtn(link, '✏️ Corriger mon statut', '#17457f', '#ffffff')}
+        </p>
+        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
+        <p style="font-size:15px; margin:0 0 14px; color:#334155;">${payload.by === 'manager' ? 'The admin' : 'A teammate'} marked you <b>${payload.status === 'in' ? 'IN' : 'OUT'}</b> for <b>${esc(w.en)}</b>.</p>
+        <p style="font-size:14px; margin:0 0 20px; color:#334155;">
+          Not right? Change it:<br>
+          ${emailBtn(link, '✏️ Change my status', '#17457f', '#ffffff')}
+        </p>`
+      );
+
+      return { subject: subj, text, html };
+    }
+
+    case 'assigned': {
+      const goalie = (payload && (payload.need === 'goalie' || payload.is_goalie));
+      const subj = goalie
+        ? `Dans les buts pour ${tFR(team)} / In net for ${team}`
+        : `Tu joues avec ${tFR(team)} / You are with ${team}`;
+      const text = goalie ?
+`Salut ${name},
+
+Tu gardes les buts pour ${tFR(team)} ${w.fr}.
+Pas besoin de chandail d'équipe. Si tu n'as pas d'équipement, la ligue en prête.
+
+—
+
+You are in net for ${team} ${w.en}.
+No team shirt needed. If you do not have gear, the league lends it.${sign}` :
+`Salut ${name},
+
+Tu joues avec l'équipe ${tFR(team)} ${w.fr}.
+Apporte un chandail ${SHIRT_FR[team] || team.toLowerCase()}.
+
+—
+
+You are playing for ${team} ${w.en}.
+Bring a ${team.toLowerCase()} shirt.${sign}`;
+
+      const html = emailWrap(
+        subj,
+        goalie ?
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
+        <p style="font-size:15px; margin:0 0 12px;">Tu gardes les buts pour <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>.</p>
+        <p style="font-size:14px; color:#64748b; margin:0 0 16px;">Pas besoin de chandail d'équipe. Si tu n'as pas d'équipement, la ligue en prête.</p>
+        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
+        <p style="font-size:15px; margin:0 0 12px; color:#334155;">You are in net for <b>${esc(team)}</b> <b>${esc(w.en)}</b>.</p>
+        <p style="font-size:14px; color:#64748b; margin:0;">No team shirt needed. If you do not have gear, the league lends it.</p>` :
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
+        <p style="font-size:15px; margin:0 0 12px;">Tu joues avec l'équipe <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>.</p>
+        <p style="font-size:14px; color:#64748b; margin:0 0 16px;">Apporte un chandail <b>${esc(SHIRT_FR[team] || team.toLowerCase())}</b>.</p>
+        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
+        <p style="font-size:15px; margin:0 0 12px; color:#334155;">You are playing for <b>${esc(team)}</b> <b>${esc(w.en)}</b>.</p>
+        <p style="font-size:14px; color:#64748b; margin:0;">Bring a <b>${esc(team.toLowerCase())}</b> shirt.</p>`
+      );
+
+      return { subject: subj, text, html };
+    }
+
+    case 'released': {
+      const subj = `Plus besoin de toi ${dateFR(ev.date)} / Not needed`;
+      const text =
+`Salut ${name},
+
+Finalement on n'a plus besoin de toi avec ${tFR(team)} ${w.fr}. Désolé du dérangement.
+
+—
+
+We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}`;
+
+      const html = emailWrap(
+        subj,
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
+        <p style="font-size:15px; margin:0 0 16px;">Finalement on n'a plus besoin de toi avec <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>. Désolé du dérangement.</p>
+        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
+        <p style="font-size:15px; margin:0 0 16px; color:#334155;">We no longer need you with <b>${esc(team)}</b> <b>${esc(w.en)}</b>. Sorry for the back and forth.</p>`
+      );
+
+      return { subject: subj, text, html };
+    }
+
+    case 'sub_call': {
+      const g = payload.need === 'goalie';
+      const again = payload.reminder ? ' (rappel / reminder)' : '';
+      const subj = `${tFR(team)} cherche ${g ? 'un gardien' : 'un joueur'}${again}`;
+      const text =
+`${tFR(team)} cherche ${g ? 'un gardien' : 'un joueur'} ${w.fr}.
+
+Disponible ?   OUI : ${payload.yes}
+               NON : ${payload.no}
+
+Si la place est déjà prise, tu restes sur la liste d'attente pour les autres équipes.
+Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.
+
+—
+
+${team} needs ${g ? 'a goalie' : 'a skater'} ${w.en}.
+
+Available?   YES: ${payload.yes}
+             NO:  ${payload.no}
+
+If the spot is taken you stay on the waitlist for the other teams.
+Want off the sub list? Just reply to this email.${sign}`;
+
+      const html = emailWrap(
+        subj,
+        `<p style="font-size:16px; margin:0 0 16px;">
+          <b>${esc(tFR(team))}</b> cherche ${g ? 'un gardien' : 'un joueur'} <b>${esc(w.fr)}</b>.
+        </p>
+        <p style="font-size:15px; font-weight:600; margin:0 0 10px;">Disponible ?</p>
+        <div style="margin:0 0 20px;">
+          ${emailBtn(payload.yes, '✅ OUI — Je suis disponible', '#15803d', '#ffffff')}
+          ${emailBtn(payload.no, 'NON', '#f1f5f9', '#475569', '1px solid #cbd5e1')}
+        </div>
+        <p style="font-size:13px; color:#64748b; margin:0 0 4px;">
+          Si la place est déjà prise, tu restes sur la liste d'attente pour les autres équipes.
+        </p>
+        <p style="font-size:12px; color:#94a3b8; margin:0 0 16px;">
+          Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.
+        </p>
+
+        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
+
+        <p style="font-size:15px; margin:0 0 16px; color:#334155;">
+          <b>${esc(team)}</b> needs ${g ? 'a goalie' : 'a skater'} <b>${esc(w.en)}</b>.
+        </p>
+        <p style="font-size:14px; font-weight:600; margin:0 0 10px; color:#334155;">Available?</p>
+        <div style="margin:0 0 20px;">
+          ${emailBtn(payload.yes, '✅ YES — Available', '#15803d', '#ffffff')}
+          ${emailBtn(payload.no, 'NO', '#f1f5f9', '#475569', '1px solid #cbd5e1')}
+        </div>
+        <p style="font-size:13px; color:#64748b; margin:0 0 4px;">
+          If the spot is taken you stay on the waitlist for the other teams.
+        </p>
+        <p style="font-size:12px; color:#94a3b8; margin:0;">
+          Want off the sub list? Just reply to this email.
+        </p>`
+      );
+
+      return { subject: subj, text, html };
+    }
+
+    case 'team_short': {
+      const g = payload.needGoalie, k = payload.needSkaters;
+      const fr = g && k ? `n'a aucun gardien et seulement ${payload.skaters} joueurs confirmés`
+               : g      ? `n'a aucun gardien confirmé`
+               :          `n'a que ${payload.skaters} joueurs confirmés`;
+      const en = g && k ? `has no goalie and only ${payload.skaters} skaters confirmed`
+               : g      ? `has no goalie confirmed`
+               :          `has only ${payload.skaters} skaters confirmed`;
+      const subj = `${tFR(team)} est incomplète (${payload.skaters} joueurs) / ${team} is short`;
+      const text =
+`Salut ${name},
+
+${tFR(team)} ${fr} pour ${w.fr}.
+
+Regarde qui n'a pas répondu, ajoute un substitut ou un invité :
+${payload.teamLink}
+
+—
+
+${team} ${en} for ${w.en}.
+
+See who has not answered, add a sub or a guest:
+${payload.teamLink}${sign}`;
+
+      const html = emailWrap(
+        subj,
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
+        <p style="font-size:15px; margin:0 0 16px;"><b>${esc(tFR(team))}</b> ${esc(fr)} pour <b>${esc(w.fr)}</b>.</p>
+        <div style="margin:0 0 20px;">
+          ${emailBtn(payload.teamLink, '📋 Voir l\'alignement et gérer les substituts', '#17457f', '#ffffff')}
+        </div>
+        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
+        <p style="font-size:15px; margin:0 0 16px; color:#334155;"><b>${esc(team)}</b> ${esc(en)} for <b>${esc(w.en)}</b>.</p>
+        <div style="margin:0 0 20px;">
+          ${emailBtn(payload.teamLink, '📋 View roster and manage subs', '#17457f', '#ffffff')}
+        </div>`
+      );
+
+      return { subject: subj, text, html };
+    }
+
+    case 'created':
+      return { subject: `Semaine ${ev.week} créée / week ${ev.week} is up`,
+               text: payload.text, html: null };
+
+    case 'summary':
+      return { subject: `Sommaire semaine ${ev.week}`, text: payload.text, html: null };
+
+    case 'season_recap_prompt': {
+      const season = (payload && payload.season) || ev?.season || 'Fall 2026';
+      const base = (payload && payload.base) || 'https://rsvp.smbhl.com';
+      const recapUrl = `${base}/admin/season-recap?s=${encodeURIComponent(season)}`;
+      const subj = `[SMBHL] Préparation du bilan de fin de saison (${season}) / Season Recap Ready`;
+      const text =
+`Bonjour Roberto,
+
+Les séries éliminatoires de la saison ${season} sont terminées !
+
+Tu peux maintenant accéder à la page d'administration pour :
+- Confirmer l'équipe championne
+- Téléverser la photo d'équipe officielle des gagnants
+- Réviser ou personnaliser les 10 trophées de la saison (Richard, Lady Byng, Art Ross, Hart, Norris, Vézina, Calder, Subway, MVP, Masterton)
+- Envoyer le grand courriel officiel de fin de saison à tous les joueurs de la ligue !
+
+👉 Accéder au bilan :
+${recapUrl}
+
+—
+SMBHL Automation`;
+
+      const html = emailWrap(
+        subj,
+        `<p style="font-size:16px; margin:0 0 14px;">Bonjour <b>Roberto</b>,</p>
+        <p style="font-size:15px; margin:0 0 14px;">
+          Les séries éliminatoires de la saison <b>${esc(season)}</b> sont terminées !
+        </p>
+        <div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:12px 14px; margin:0 0 18px; font-size:14px; line-height:1.5;">
+          <b>Prépare le bilan de fin de saison :</b><br>
+          • Confirme l'équipe championne<br>
+          • Téléverse la photo d'équipe des gagnants<br>
+          • Révise les 10 trophées et prix individuels<br>
+          • Transmets le courriel de célébration à toute la ligue
+        </div>
+        <div style="margin:20px 0;">
+          ${emailBtn(recapUrl, '🏆 Préparer le bilan de fin de saison ↗', '#15803d', '#ffffff')}
+        </div>`
+      );
+
+      return { subject: subj, text, html };
+    }
+
+    case 'season_recap': {
+      const season = (payload && payload.season) || 'Fall 2026';
+      const champ = (payload && payload.champion) || 'Champions';
+      const champFr = tFR(champ);
+      const photoUrl = payload && payload.photo_url ? payload.photo_url : '';
+      const awards = (payload && payload.awards) || {};
+      const intro = (payload && payload.intro_note) || '';
+      const outro = (payload && payload.outro_note) || '';
+      const subj = `SMBHL — Félicitations aux Champions (${champ}) & Bilan ${season} !`;
+
+      const awardDefs = [
+        { key: 'rocketRichard', name: 'Rocket Richard', desc: 'Meilleur buteur, Top Goal Scorer', icon: '🚀' },
+        { key: 'ladyByng', name: 'Lady Byng', desc: 'Gentilhomme & passes, Sportsmanship & Assists', icon: '🤝' },
+        { key: 'artRoss', name: 'Art Ross', desc: 'Meilleur pointeur, Top Scorer', icon: '🎯' },
+        { key: 'hartTrophy', name: 'Hart', desc: 'Joueur le plus utile, Most Valuable Player - PPG', icon: '⭐' },
+        { key: 'norris', name: 'James Norris', desc: 'Meilleur défenseur, Top Defenseman', icon: '🛡️' },
+        { key: 'vezina', name: 'Georges Vézina', desc: 'Meilleur gardien, Top Goaltender', icon: '🥅' },
+        { key: 'calder', name: 'Calder', desc: "Recrue de l'année, Rookie of the Year", icon: '🌟' },
+        { key: 'subway', name: 'Subway', desc: 'Meilleur remplaçant, Best Sub', icon: '🥖' },
+        { key: 'mvp', name: 'MVP', desc: 'Implication dans les buts, Goal Involvement', icon: '🔥' },
+        { key: 'billMasterton', name: 'Bill Masterton', desc: 'Persévérance & esprit sportif, Perseverance & Sportsmanship', icon: '❤️' }
+      ];
+
+      let awardsText = '';
+      for (const a of awardDefs) {
+        const val = (awards[a.key] || '').trim();
+        if (val) {
+          awardsText += `\n${a.icon} ${a.name} (${a.desc})\n  ${val}\n`;
+        }
+      }
+
+      const text =
+`Salut ${name},
+
+${intro ? intro + '\n\n' : ''}FÉLICITATIONS AUX CHAMPIONS DE LA SAISON ${season.toUpperCase()} : TEAM ${champ.toUpperCase()} ! 🏆
+
+${awardsText}
+${outro ? '\n' + outro + '\n' : ''}
+Consulte toutes les statistiques finales, classements et fiches complètes sur le site officiel :
+https://smbhl.com
+
+Merci à tous pour cette excellente saison et à très bientôt pour la prochaine saison !
+
+—
+SMBHL · Sunday Morning Ball Hockey League · smbhl.com`;
+
+      const awardsHtml = awardDefs.map(a => {
+        const val = (awards[a.key] || '').trim();
+        if (!val) return '';
+        return `
+          <div style="background-color:#ffffff; border:1px solid #e2e8f0; border-radius:6px; padding:12px 14px; margin-bottom:10px;">
+            <div style="font-size:13px; font-weight:700; color:#17457f; margin-bottom:4px; display:flex; align-items:center; gap:6px;">
+              <span>${a.icon}</span> <span>${esc(a.name)} <span style="font-size:12px; font-weight:500; color:#64748b;">(${esc(a.desc)})</span></span>
+            </div>
+            <div style="font-size:14px; color:#1e293b; font-weight:600; line-height:1.4;">
+              ${esc(val)}
+            </div>
+          </div>
+        `;
+      }).filter(Boolean).join('');
+
+      const contentHtml = `
+        <div style="text-align:center; background:linear-gradient(135deg, #17457f 0%, #0f172a 100%); color:#ffffff; padding:24px 16px; border-radius:8px; margin-bottom:20px;">
+          <div style="font-size:32px; margin-bottom:4px;">🏆 🏒 🥇</div>
+          <h2 style="font-family:'Barlow Condensed',sans-serif; font-size:26px; font-weight:700; margin:0 0 6px; text-transform:uppercase; letter-spacing:0.02em;">
+            Champions ${esc(season)}
+          </h2>
+          <div style="font-size:20px; font-weight:700; color:#fde047; text-transform:uppercase;">
+            Team ${esc(champ)}
+          </div>
+        </div>
+
+        ${photoUrl ? `
+          <div style="text-align:center; margin:0 0 20px;">
+            <img src="${esc(photoUrl)}" alt="Champions ${esc(champ)}" style="max-width:100%; height:auto; border-radius:8px; border:1px solid #cbd5e1; box-shadow:0 4px 12px rgba(0,0,0,0.08);">
+          </div>
+        ` : ''}
+
+        ${intro ? `<p style="font-size:15px; line-height:1.5; margin:0 0 18px; color:#334155;">${esc(intro).replace(/\n/g, '<br>')}</p>` : ''}
+
+        <div style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin:0 0 20px;">
+          <div style="font-size:15px; font-weight:700; color:#0f172a; margin-bottom:12px; text-transform:uppercase; letter-spacing:0.03em;">
+            🏅 Trophées et Récipiendaires / Season Awards
+          </div>
+          ${awardsHtml}
+        </div>
+
+        ${outro ? `<p style="font-size:15px; line-height:1.5; margin:0 0 20px; color:#334155;">${esc(outro).replace(/\n/g, '<br>')}</p>` : ''}
+
+        <div style="text-align:center; margin:24px 0 10px;">
+          ${emailBtn('https://smbhl.com', '🌐 Voir les statistiques complètes sur smbhl.com ↗', '#17457f', '#ffffff')}
+        </div>
+      `;
+
+      return { subject: subj, text, html: emailWrap(subj, contentHtml) };
+    }
+  }
+  return null;
+}
+
+/* ---------- draining the outbox ---------- */
+
+async function runHoldCall(env, m) {
+  const ev = await getEvent(env.DB, m.event_id);
+  const payload = JSON.parse(m.payload || '{}');
+  if (!ev || ev.state !== 'open') return;
+  if (await openSpots(env.DB, ev.id, m.team, payload.need) < 1) return;
+  if (await fillFromWaitlist(env, ev, m.team, payload.need)) return;
+  await callSubs(env, ev, m.team, payload.need);
+}
+
+async function drain(env, limit = 40) {
+  const now = new Date().toISOString();
+  const due = (await env.DB.prepare(
+    `SELECT * FROM outbox
+      WHERE sent_at IS NULL AND cancelled = 0 AND send_after <= ?
+      ORDER BY id LIMIT ?`
+  ).bind(now, limit).all()).results || [];
+
+  let sent = 0, failed = 0;
+  const highlightsCache = new Map();
+  const pricingCache = new Map();
+  let dataJsonCache = null;
+  const getDataJson = async () => {
+    if (dataJsonCache !== null) return dataJsonCache;
+    if (!env.SHEETS_KV) return null;
+    try {
+      const raw = await env.SHEETS_KV.get('data_json');
+      dataJsonCache = raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      dataJsonCache = null;
+    }
+    return dataJsonCache;
+  };
+  for (const m of due) {
+    try {
+      let ev = await getEvent(env.DB, m.event_id);
+      const payload = JSON.parse(m.payload || '{}');
+      if (!ev && (m.kind === 'season_recap' || m.kind === 'season_recap_prompt')) {
+        ev = {
+          id: m.event_id,
+          season: payload.season || 'Fall 2026',
+          week: 14,
+          date: 'Playoffs',
+          state: 'locked'
+        };
+      } else if (!ev) {
+        throw new Error('event gone');
+      }
+      if (m.kind === 'holdcall') {
+        await runHoldCall(env, m);
+        await env.DB.prepare('UPDATE outbox SET sent_at=? WHERE id=?')
+          .bind(new Date().toISOString(), m.id).run();
+        sent++; continue;
+      }
+
+      let to, name = '', link = '', playerTeam = m.team;
+      if (m.kind === 'summary' || m.kind === 'season_recap_prompt') {
+        to = (payload && payload.to) || (env.ADMIN_EMAIL || ADMIN_EMAIL);
+        name = 'Roberto';
+        payload.base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+      } else {
+        const c = await getContact(env.DB, m.player_id);
+        if (!c) throw new Error('contact gone');
+        if (!c.email) {
+          await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
+            .bind('no email on file', m.id).run();
+          continue;
+        }
+        if (c.opted_out) {
+          await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
+            .bind('opted out', m.id).run();
+          continue;
+        }
+        to = c.email; name = c.name.split(' ')[0];
+        const t = await hmac(env.RSVP_SECRET, playerMsg(m.event_id, m.player_id, c.token_salt));
+        const base = env.PUBLIC_URL || 'https://smbhl-rsvp.emailrobertosantana.workers.dev';
+        link = `${base}/rsvp?e=${encodeURIComponent(m.event_id)}&p=${m.player_id}&t=${t}`;
+
+        playerTeam = m.team;
+        if (m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
+          const currentRsvp = await env.DB.prepare(
+            'SELECT status, role, team FROM rsvp WHERE event_id=? AND player_id=?').bind(m.event_id, m.player_id).first();
+          const isEligible = currentRsvp && (
+            currentRsvp.status === 'in' || 
+            (currentRsvp.role === 'roster' && currentRsvp.status === 'pending')
+          );
+          if (!isEligible) {
+            await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
+              .bind('no longer confirmed in', m.id).run();
+            continue;
+          }
+          if (currentRsvp.team) playerTeam = currentRsvp.team;
+        }
+
+        if (m.kind === 'invite' || m.kind === 'chase' || m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
+          payload.yes = `${link}&v=in`;
+          payload.no  = `${link}&v=out`;
+
+          const rsvpRow = await env.DB.prepare(
+            'SELECT team, role FROM rsvp WHERE event_id=? AND player_id=?').bind(m.event_id, m.player_id).first();
+          if (rsvpRow && rsvpRow.team) playerTeam = rsvpRow.team;
+
+          const isSub = Boolean(payload.is_sub || (rsvpRow && rsvpRow.role === 'sub') || (c && c.is_sub === 1 && (!rsvpRow || rsvpRow.role !== 'roster')));
+
+          if (m.kind === 'invite' && isSub) {
+            payload.isSubInvite = true;
+            const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
+            const need = isGoalie ? 'goalie' : 'skater';
+            const at = await hmac(env.RSVP_SECRET, `a:${m.event_id}:${m.player_id}:${need}:${c.token_salt}`);
+            const q = `e=${encodeURIComponent(m.event_id)}&p=${m.player_id}&n=${need}&t=${at}`;
+            payload.yes = `${base}/avail?${q}&a=yes`;
+            payload.no  = `${base}/avail?${q}&a=no`;
+          }
+
+          let pricing = pricingCache.get(ev.season);
+          if (!pricing && ev.season) {
+            pricing = await env.DB.prepare('SELECT * FROM season_pricing WHERE season = ?').bind(ev.season).first();
+            if (pricing) pricingCache.set(ev.season, pricing);
+          }
+          const phone = (pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '');
+
+          if (m.kind === 'gameday') {
+            if (isSub) {
+              const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
+              const perGame = isGoalie ? Number(pricing?.price_sub_goalie || 0) : Number(pricing?.price_sub_player ?? 5);
+              const totalFee = perGame * 2;
+              if (totalFee > 0) {
+                payload.subFee = { perGame, total: totalFee, phone };
+              }
+            }
+          }
+
+          if (m.kind === 'invite') {
+            const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
+            const duesRow = await env.DB.prepare(
+              'SELECT custom_due, amount_paid FROM player_dues WHERE season = ? AND player_id = ?'
+            ).bind(ev.season, m.player_id).first();
+
+            let totalDue;
+            if (duesRow && duesRow.custom_due !== null && duesRow.custom_due !== undefined) {
+              totalDue = Math.max(0, Number(duesRow.custom_due));
+            } else if (!isSub) {
+              totalDue = isGoalie ? Number(pricing?.price_goalie ?? 0) : Number(pricing?.price_player ?? 170);
+            } else {
+              // Sub player: sub goalies are free ($0). Sub skaters pay per game for completed/past events.
+              if (isGoalie) {
+                totalDue = Number(pricing?.price_sub_goalie ?? 0);
+              } else {
+                let gamesPlayed = 0;
+                const dj = await getDataJson();
+                if (dj && dj.players) {
+                  const pData = dj.players.find(p => p.id === m.player_id);
+                  gamesPlayed = Number(pData?.seasons?.[ev.season]?.gp || 0);
+                }
+                const subGpRow = await env.DB.prepare(
+                  `SELECT count(*) as count
+                     FROM rsvp r JOIN events e ON e.id = r.event_id
+                    WHERE e.season = ? AND r.player_id = ? AND r.status = 'in'
+                      AND (e.state = 'done' OR (e.week IS NOT NULL AND ? IS NOT NULL AND e.week < ?))
+                      AND e.id != ?`
+                ).bind(ev.season, m.player_id, ev.week, ev.week, ev.id).first();
+                const gpFromRsvp = (Number(subGpRow?.count || 0)) * 2;
+                gamesPlayed = Math.max(gamesPlayed, gpFromRsvp);
+
+                const priceSub = Number(pricing?.price_sub_player ?? 5);
+                totalDue = gamesPlayed * priceSub;
+              }
+            }
+
+            const amountPaid = Number(duesRow?.amount_paid || 0);
+            const balance = totalDue - amountPaid;
+            if (balance > 0) {
+              payload.duesReminder = { balance, phone };
+            }
+          }
+
+          if (playerTeam) {
+            const matches = await getTeamFixtures(env, ev, playerTeam);
+            payload.fixtureText = formatFixtureText(matches, playerTeam, c.is_goalie === 1);
+            if (m.kind === 'invite' || m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
+              const salt = await teamSalt(env.DB, ev.season, playerTeam);
+              const tt = await hmac(env.RSVP_SECRET, teamMsg(ev.season, playerTeam, salt));
+              payload.teamLink = `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${playerTeam}&t=${tt}&p=${m.player_id}`;
+              const siteUrl = env.SITE_URL || 'https://smbhl.com';
+              payload.websiteTeamLink = `${siteUrl}/#/team/${encodeURIComponent(ev.season)}/${encodeURIComponent(playerTeam)}`;
+
+              if (m.kind === 'gameday' || m.kind === 'friday_board') {
+                payload.teamMessages = await getTeamMessages(env.DB, m.event_id, playerTeam, 5);
+              } else if (m.kind === 'gameday_morning') {
+                const st = eventStart(ev);
+                const cutoff24 = st ? new Date(st.getTime() - 24 * 3600000).toISOString() : new Date(Date.now() - 24 * 3600000).toISOString();
+                payload.teamMessages = await getTeamMessages(env.DB, m.event_id, playerTeam, 10, cutoff24);
+              }
+            }
+          }
+
+          if (m.kind === 'invite') {
+            const wKey = ev.week;
+            const cacheKey = `${ev.season || ''}:${wKey}`;
+            if (!highlightsCache.has(cacheKey)) {
+              highlightsCache.set(cacheKey, await getWeeklyHighlights(env, wKey, ev.season));
+            }
+            payload.highlights = highlightsCache.get(cacheKey);
+
+            const leagueMsgRow = await env.DB.prepare(
+              "SELECT value FROM settings WHERE key = ?"
+            ).bind(`league_message:${ev.id}`).first();
+            if (leagueMsgRow && leagueMsgRow.value) {
+              payload.leagueMessage = leagueMsgRow.value;
+            }
+          }
+        }
+        if (m.kind === 'sub_call') {
+          const at = await hmac(env.RSVP_SECRET,
+            `a:${m.event_id}:${m.player_id}:${payload.need}:${c.token_salt}`);
+          const q = `e=${encodeURIComponent(m.event_id)}&p=${m.player_id}&n=${payload.need}&t=${at}`;
+          payload.yes = `${base}/avail?${q}&a=yes`;
+          payload.no  = `${base}/avail?${q}&a=no`;
+        }
+        if (m.kind === 'team_short') {
+          const salt = await teamSalt(env.DB, ev.season, m.team);
+          const tt = await hmac(env.RSVP_SECRET, teamMsg(ev.season, m.team, salt));
+          payload.teamLink =
+            `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${m.team}&t=${tt}&p=${m.player_id}`;
+        }
+      }
+
+      if (m.kind === 'sub_call' && hoursOut(ev) < CUTOFF_HOURS) {
+        await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
+          .bind('too close to game time', m.id).run();
+        continue;
+      }
+      const msg = body(m.kind, { ev, name, team: playerTeam || m.team, link, payload });
+      if (!msg) throw new Error('unknown kind ' + m.kind);
+      await sendMail(env, to, msg.subject, msg.text, msg.html);
+      if (m.kind === 'sub_call') {
+        await env.DB.prepare(
+          `UPDATE contacts SET asked_streak = asked_streak + 1, last_asked = ?,
+             dormant = CASE WHEN asked_streak + 1 >= 10 THEN 1 ELSE dormant END
+            WHERE player_id = ?`).bind(new Date().toISOString(), m.player_id).run();
+      }
+      await env.DB.prepare('UPDATE outbox SET sent_at=? WHERE id=?')
+        .bind(new Date().toISOString(), m.id).run();
+      sent++;
+    } catch (e) {
+      failed++;
+      const errStr = String(e.message).slice(0, 300);
+      const isPermanent = errStr.includes('422') || errStr.includes('validation_error') ||
+        errStr.includes('invalid email format') || errStr.includes('no email on file');
+      await env.DB.prepare('UPDATE outbox SET error=?, cancelled = CASE WHEN ? THEN 1 ELSE cancelled END WHERE id=?')
+        .bind(errStr, isPermanent ? 1 : 0, m.id).run();
+    }
+  }
+  return { due: due.length, sent, failed };
+}
+
+function eventStart(ev) {
+  if (!ev.start_time) return null;
+  const [hh, mm] = ev.start_time.split(':').map(Number);
+  for (const off of [4, 5]) {
+    const guess = new Date(`${ev.id}T${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00Z`);
+    if (isNaN(guess.getTime())) return null;
+    const utc = new Date(guess.getTime() + off * 3600000);
+    const p = localParts(utc);
+    if (p.date === ev.id && p.hour === hh && p.minute === mm) return utc;
+  }
+  const fallback = new Date(`${ev.id}T${ev.start_time}:00-05:00`);
+  return isNaN(fallback.getTime()) ? null : fallback;
+}
+
+/* ---------- shortage ---------- */
+
+export async function teamState(db, eventId, team) {
+  const rows = (await db.prepare(
+    `SELECT r.player_id, r.guest_name, r.status, r.role,
+            COALESCE(c.is_goalie,0) AS is_goalie,
+            COALESCE(c.is_backup_goalie,0) AS is_backup_goalie
+       FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND r.team = ?`
+  ).bind(eventId, team).all()).results || [];
+  const uniqueRows = [];
+  const seenPids = new Set();
+  for (const r of rows) {
+    const key = r.player_id || r.guest_name;
+    if (key && seenPids.has(key)) continue;
+    if (key) seenPids.add(key);
+    uniqueRows.push(r);
+  }
+  const ins = uniqueRows.filter(r => r.status === 'in');
+  const primaryKeepers = ins.filter(r => r.is_goalie === 1).length;
+  let goalies = 0;
+  if (primaryKeepers > 0) {
+    goalies = Math.min(primaryKeepers, TARGET_GOALIES);
+  } else {
+    // If starting goalie is not in (or out), check if a backup goalie is confirmed in
+    const primaryRow = uniqueRows.find(r => r.is_goalie === 1);
+    const primaryIsOut = !primaryRow || primaryRow.status === 'out';
+    if (primaryIsOut) {
+      const backupKeepers = ins.filter(r => r.is_backup_goalie === 1).length;
+      if (backupKeepers > 0) {
+        goalies = Math.min(backupKeepers, TARGET_GOALIES);
+      }
+    }
+  }
+  const skaters = ins.length - goalies;
+  return {
+    rows: uniqueRows, skaters, goalies,
+    shortGoalie: goalies < TARGET_GOALIES,
+    shortSkaters: skaters < 5,
+    short: goalies < TARGET_GOALIES || skaters < 5
+  };
+}
+
+const WAVE_SIZE = 5;
+const WAVE_GAP_MIN = 60;
+const RUSH_HOURS = 12;
+const CUTOFF_HOURS = 2;
+
+function hoursOut(ev) {
+  const st = eventStart(ev);
+  return st ? (st - new Date()) / 3600000 : 999;
+}
+
+async function callSubs(env, ev, team, need, startDelay = 0) {
+  const role = need === 'goalie' ? 'sub_goalie' : 'sub_skater';
+  const pool = (await env.DB.prepare(
+    `SELECT c.player_id FROM contacts c
+      WHERE c.role = ? AND c.opted_out = 0 AND c.dormant = 0 AND c.email IS NOT NULL
+        AND c.player_id NOT IN (SELECT player_id FROM rsvp
+              WHERE event_id = ? AND player_id IS NOT NULL)
+        AND c.player_id NOT IN (SELECT player_id FROM availability WHERE event_id = ?)
+        AND c.player_id NOT IN (SELECT player_id FROM outbox 
+              WHERE event_id = ? AND kind = 'sub_call' AND player_id IS NOT NULL 
+                AND cancelled = 0 
+                AND dedup_key NOT LIKE 'remind:%')
+      ORDER BY c.answered_ever DESC,
+               CASE WHEN c.last_played IS NULL THEN 1 ELSE 0 END,
+               c.last_played DESC,
+               CASE WHEN c.last_asked IS NULL THEN 0 ELSE 1 END,
+               c.last_asked ASC,
+               c.name`
+  ).bind(role, ev.id, ev.id, ev.id).all()).results || [];
+
+  if (!pool.length) return 0;
+  const hrs = hoursOut(ev);
+  if (hrs < CUTOFF_HOURS) return 0;
+  const gap = hrs < RUSH_HOURS ? 0 : WAVE_GAP_MIN;
+  pool.forEach((p, i) => { p.wave = gap ? Math.floor(i / WAVE_SIZE) : 0; });
+
+  for (const p of pool) {
+    await enqueue(env, { kind: 'sub_call', event_id: ev.id, player_id: p.player_id,
+      team, dedup_key: `call:${ev.id}:${need}:${p.player_id}`,
+      payload: { need }, delayMin: startDelay + p.wave * gap });
+  }
+  return pool.length;
+}
+
+async function stopWaves(env, eventId, need) {
+  for (const team of TEAMS) {
+    if (await openSpots(env.DB, eventId, team, need) > 0) return;
+  }
+  await env.DB.prepare(
+    `UPDATE outbox SET cancelled = 1
+      WHERE event_id = ? AND sent_at IS NULL AND cancelled = 0
+        AND dedup_key LIKE ?`
+  ).bind(eventId, `call:${eventId}:${need}:%`).run();
+}
+
+const TARGET_SKATERS = 8;
+const TARGET_GOALIES = 1;
+
+export async function expected(db, eventId, team) {
+  const rows = (await db.prepare(
+    `SELECT r.player_id, r.role, r.status,
+            COALESCE(c.is_goalie,0) AS is_goalie,
+            COALESCE(c.is_backup_goalie,0) AS is_backup_goalie
+       FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND r.team = ? AND r.status != 'out'`
+  ).bind(eventId, team).all()).results || [];
+
+  const primaryKeepers = rows.filter(r => r.is_goalie === 1);
+  let goalies = 0;
+  if (primaryKeepers.length > 0) {
+    goalies = Math.min(primaryKeepers.length, TARGET_GOALIES);
+  } else {
+    // If starting goalie is out, backup goalie can satisfy the goalie spot
+    const backupKeepers = rows.filter(r => r.is_backup_goalie === 1);
+    if (backupKeepers.length > 0) {
+      goalies = Math.min(backupKeepers.length, TARGET_GOALIES);
+    }
+  }
+  const skaters = rows.length - goalies;
+  return { goalies, skaters, rows };
+}
+
+async function openSpots(db, eventId, team, need) {
+  const e = await expected(db, eventId, team);
+  return need === 'goalie'
+    ? Math.max(0, TARGET_GOALIES - e.goalies)
+    : Math.max(0, TARGET_SKATERS - e.skaters);
+}
+
+export async function acceptAvailability(env, ev, playerId, need) {
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO availability (event_id,player_id,need,status,answered_at)
+     VALUES (?,?,?,'yes',?)
+     ON CONFLICT(event_id,player_id,need) DO UPDATE SET status='yes'`
+  ).bind(ev.id, playerId, need, now).run();
+
+  const already = await env.DB.prepare(
+    'SELECT team FROM rsvp WHERE event_id=? AND player_id=?').bind(ev.id, playerId).first();
+  if (already) return { placed: already.team };
+
+  const c = await getContact(env.DB, playerId);
+  const pref = c && c.preferred_team;
+
+  // Find all teams with open spots and score them by shortage severity
+  const candidateTeams = [];
+  for (const team of TEAMS) {
+    const spots = await openSpots(env.DB, ev.id, team, need);
+    if (spots < 1) continue;
+    const st = await teamState(env.DB, ev.id, team);
+    const confirmed = need === 'goalie' ? st.goalies : st.skaters;
+    candidateTeams.push({ team, spots, confirmed, isPref: pref === team });
+  }
+
+  // Priority order:
+  // 1. Preferred team (if open)
+  // 2. Greatest shortage (most open spots)
+  // 3. Fewest confirmed players (teams with fewer bodies get priority)
+  // 4. Stable tie-breaker (TEAMS order)
+  candidateTeams.sort((a, b) => {
+    if (a.isPref !== b.isPref) return a.isPref ? -1 : 1;
+    if (a.spots !== b.spots) return b.spots - a.spots;
+    if (a.confirmed !== b.confirmed) return a.confirmed - b.confirmed;
+    return TEAMS.indexOf(a.team) - TEAMS.indexOf(b.team);
+  });
+
+  for (const candidate of candidateTeams) {
+    const team = candidate.team;
+    await env.DB.prepare(
+      `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at)
+       VALUES (?,?,?, 'in','sub','self',?)`
+    ).bind(ev.id, playerId, team, now).run();
+    // Do not send an automated email right away if > 24 hours out.
+    // Subs will receive their final reminder (gameday) at 24h before game time.
+    if (hoursOut(ev) <= 24) {
+      await enqueue(env, { kind: 'gameday', event_id: ev.id, player_id: playerId, team,
+        dedup_key: `gameday24:${ev.id}:${playerId}` });
+    }
+    if (await openSpots(env.DB, ev.id, team, need) < 1) {
+      await stopWaves(env, ev.id, need);
+      await cancelPending(env, `hold:${ev.id}:${team}:${need}`);
+    }
+    return { placed: team };
+  }
+  return { placed: null };
+}
+
+async function fillFromWaitlist(env, ev, team, need) {
+  const next = await env.DB.prepare(
+    `SELECT a.player_id FROM availability a
+       JOIN contacts c ON c.player_id = a.player_id
+      WHERE a.event_id = ? AND a.need = ? AND a.status = 'yes'
+        AND c.opted_out = 0
+        AND a.player_id NOT IN (SELECT player_id FROM rsvp
+              WHERE event_id = ? AND player_id IS NOT NULL)
+      ORDER BY (c.preferred_team = ?) DESC, a.answered_at ASC LIMIT 1`
+  ).bind(ev.id, need, ev.id, team).first();
+  if (!next) return false;
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at)
+     VALUES (?,?,?, 'in','sub','auto',?)`
+  ).bind(ev.id, next.player_id, team, now).run();
+  // Do not send an automated email right away if > 24 hours out.
+  // Subs will receive their final reminder (gameday) at 24h before game time.
+  if (hoursOut(ev) <= 24) {
+    await enqueue(env, { kind: 'gameday', event_id: ev.id, player_id: next.player_id, team,
+      dedup_key: `gameday24:${ev.id}:${next.player_id}` });
+  }
+  await stopWaves(env, ev.id, need);
+  return true;
+}
+
+async function remindSubs(env, ev) {
+  const anyOpen = await (async () => {
+    for (const team of TEAMS)
+      for (const need of ['goalie', 'skater'])
+        if (await openSpots(env.DB, ev.id, team, need) > 0) return true;
+    return false;
+  })();
+  if (!anyOpen) return 0;
+
+  const rows = (await env.DB.prepare(
+    `SELECT DISTINCT o.player_id, o.team, o.payload
+       FROM outbox o
+      WHERE o.event_id = ? AND o.kind = 'sub_call' AND o.sent_at IS NOT NULL
+        AND o.player_id IS NOT NULL
+        AND o.player_id NOT IN (SELECT player_id FROM availability WHERE event_id = ?)
+        AND o.player_id NOT IN (SELECT player_id FROM rsvp
+              WHERE event_id = ? AND player_id IS NOT NULL)`
+  ).bind(ev.id, ev.id, ev.id).all()).results || [];
+
+  let n = 0;
+  for (const r of rows) {
+    const need = (JSON.parse(r.payload || '{}').need) || 'skater';
+    if (await openSpots(env.DB, ev.id, r.team, need) < 1) continue;
+    await enqueue(env, { kind: 'sub_call', event_id: ev.id, player_id: r.player_id,
+      team: r.team, dedup_key: `remind:${ev.id}:${need}:${r.player_id}`,
+      payload: { need, reminder: true } });
+    n++;
+  }
+  return n;
+}
+
+/* ---------- scheduled jobs ---------- */
+
+async function jobDone(db, eventId, job) {
+  return !!(await db.prepare('SELECT 1 FROM jobs WHERE event_id=? AND job=?')
+    .bind(eventId, job).first());
+}
+async function markJob(db, eventId, job) {
+  await db.prepare('INSERT OR IGNORE INTO jobs (event_id,job,ran_at) VALUES (?,?,?)')
+    .bind(eventId, job, new Date().toISOString()).run();
+}
+
+async function notifyEventCreated(env, made) {
+  if (!made) return;
+  try {
+    const ev = await getEvent(env.DB, made.id);
+    if (!ev) return;
+    const links = [];
+    for (const team of TEAMS) {
+      const salt = await teamSalt(env.DB, ev.season, team);
+      const tk = await hmac(env.RSVP_SECRET, teamMsg(ev.season, team, salt));
+      links.push(`${team} (${tFR(team)}):\n${env.PUBLIC_URL}` +
+        `/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${team}&t=${tk}`);
+    }
+    await enqueue(env, { kind: 'created', event_id: made.id,
+      dedup_key: `created:${made.id}`,
+      payload: { text:
+        `Semaine ${ev.week} — ${ev.date}${ev.start_time ? ' ' + ev.start_time : ''}` +
+        `${ev.venue ? ' — ' + ev.venue : ''}\n${made.players} joueurs au dossier.\n\n` +
+        `Liens d'équipe (à partager sur WhatsApp) :\n\n${links.join('\n\n')}\n` } });
+  } catch (err) {
+    console.error('Error in notifyEventCreated:', err);
+  }
+}
+
+async function ensureNextEvent(env, force = false) {
+  const open = (await env.DB.prepare(
+    `SELECT id, start_time FROM events WHERE state='open'`).all()).results || [];
+  const now = new Date();
+  if (!force) {
+    for (const e of open) {
+      const st = eventStart(e);
+      if (!st) continue;
+      const h = (st - now) / 3600000;
+      if (h > 0 && h <= 24 * 8) return null;
+    }
+  }
+
+  let d;
+  try {
+    const raw = await env.SHEETS_KV?.get('data_json');
+    if (raw) d = JSON.parse(raw);
+  } catch (_) {}
+  if (!d) {
+    const r = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json?v=${Date.now()}`);
+    if (!r.ok) throw new Error('data.json ' + r.status);
+    d = await r.json();
+  }
+  const season = d.seasons.find(x => x.name === d.current_season);
+  if (!season) return null;
+
+  const byWeek = new Map();
+  for (const f of season.fixtures || []) {
+    if (!byWeek.has(f.week)) byWeek.set(f.week, { date: f.date, venue: f.venue, times: [] });
+    const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(String(f.time || '').trim());
+    if (m) {
+      let h = +m[1]; const ap = m[3].toUpperCase();
+      if (ap === 'PM' && h < 12) h += 12;
+      if (ap === 'AM' && h === 12) h = 0;
+      byWeek.get(f.week).times.push(h * 60 + (+m[2]));
+    }
+  }
+
+  for (const [week, info] of [...byWeek.entries()].sort((a, b) => a[0] - b[0])) {
+    const dt = new Date(String(info.date).replace(/^[A-Za-z]+\s+/, ''));
+    if (isNaN(dt)) continue;
+    const id = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+    if (!info.times.length) continue;
+    const fmt = m => String(Math.floor(m/60)).padStart(2,'0') + ':' + String(m%60).padStart(2,'0');
+    const startT = fmt(Math.min(...info.times));
+    const endT = fmt(Math.max(...info.times) + 60);
+
+    const start = eventStart({ id, start_time: startT });
+    if (!start) continue;
+    const hrs = (start - now) / 3600000;
+    if (hrs <= 0) continue;
+    if (!force && hrs > 24 * 8) break;
+
+    const exists = await env.DB.prepare('SELECT 1 FROM events WHERE id=?').bind(id).first();
+    if (exists) continue;
+
+    await env.DB.prepare(
+      `INSERT INTO events (id,season,week,date,venue,state,start_time,end_time)
+       VALUES (?,?,?,?,?, 'open',?,?)`
+    ).bind(id, season.name, week, info.date, info.venue || '', startT, endT).run();
+
+    let plannedAbsences = new Set();
+    try {
+      plannedAbsences = new Set(
+        ((await env.DB.prepare('SELECT player_id FROM planned_absences WHERE date = ? OR date = ?')
+          .bind(id, info.date).all()).results || []).map(r => r.player_id)
+      );
+    } catch (_) {}
+
+    let subPlayerIds = new Set();
+    try {
+      subPlayerIds = new Set(
+        ((await env.DB.prepare('SELECT player_id FROM contacts WHERE is_sub = 1 OR role != ?')
+          .bind('roster').all()).results || []).map(r => r.player_id)
+      );
+    } catch (_) {}
+
+    const seen = new Set();
+    let n = 0;
+    for (const p of d.players) {
+      if (subPlayerIds.has(p.id)) continue;
+      const v = p.seasons[season.name], g = (p.gseasons || {})[season.name];
+      const team = (v && v.team) || (g && g.team);
+      if (!team || seen.has(p.id)) continue;
+      seen.add(p.id);
+      const isAbsent = plannedAbsences.has(p.id);
+      const st = isAbsent ? 'out' : 'pending';
+      const stBy = isAbsent ? 'prefill' : 'auto';
+      await env.DB.prepare(
+        `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at)
+         VALUES (?,?,?, ?, 'roster', ?, ?)`
+      ).bind(id, p.id, team, st, stBy, now.toISOString()).run();
+      n++;
+    }
+    const result = { id, week, players: n };
+    await notifyEventCreated(env, result);
+    return result;
+  }
+  return null;
+}
+
+async function deadMan(env) {
+  const now = new Date();
+  const problems = [];
+
+  const evs = (await env.DB.prepare(
+    `SELECT * FROM events WHERE state='open'`).all()).results || [];
+  for (const ev of evs) {
+    const start = eventStart(ev);
+    if (!start) continue;
+    const hrs = (start - now) / 3600000;
+    const expect = [['invite', 100], ['r72', 60], ['r49', 40], ['short48', 40], ['pool36', 28]];
+    for (const [job, by] of expect) {
+      if (hrs > by || hrs <= 0) continue;
+      if (await jobDone(env.DB, ev.id, job)) continue;
+      problems.push(`${job} never ran for ${ev.id} (${Math.round(hrs)}h to go)`);
+    }
+  }
+
+  const stuck = (await env.DB.prepare(
+    `SELECT count(*) n FROM outbox
+      WHERE sent_at IS NULL AND cancelled = 0 AND send_after <= ? AND error IS NOT NULL`
+  ).bind(new Date(now.getTime() - 3600000).toISOString()).first()) || { n: 0 };
+  if (stuck.n > 0) problems.push(`${stuck.n} message(s) stuck in the outbox over an hour`);
+
+  for (const p of problems) {
+    const key = 'alert:' + p.replace(/\s+/g, '_').slice(0, 80);
+    const seen = await env.DB.prepare('SELECT 1 FROM settings WHERE key=?').bind(key).first();
+    if (seen) continue;
+    await env.DB.prepare('INSERT INTO settings (key,value) VALUES (?,?)')
+      .bind(key, now.toISOString()).run();
+    try {
+      await sendMail(env, env.ADMIN_EMAIL || ADMIN_EMAIL, 'SMBHL — le système a manqué quelque chose',
+        `Quelque chose ne s'est pas exécuté :\n\n${p}\n\n` +
+        `Something did not run:\n\n${p}\n\n` +
+        `Check: /admin/outbox and the jobs table.`);
+    } catch (e) {}
+  }
+  return problems;
+}
+
+const DEFAULT_EMAIL_SETTINGS = {
+  invite_hours: 120,
+  invite_hour_of_day: 18,
+  r72_hours: 72,
+  r72_hour_of_day: 15,
+  r49_hours: 49,
+  short48_hours: 48,
+  pool_hours: 36,
+  r24_hours: 24,
+  r24_hour_of_day: 18,
+  gameday_morning_hours: 2,
+  quiet_hours_enabled: false,
+  quiet_hours_start: 23,
+  quiet_hours_end: 7
+};
+
+async function getEmailSettings(db) {
+  try {
+    const row = await db.prepare("SELECT value FROM settings WHERE key = 'email_cadence_settings'").first();
+    if (row && row.value) {
+      const parsed = JSON.parse(row.value);
+      return Object.assign({}, DEFAULT_EMAIL_SETTINGS, parsed);
+    }
+  } catch (_) {}
+  return Object.assign({}, DEFAULT_EMAIL_SETTINGS);
+}
+
+async function runSchedule(env) {
+  const log = [];
+  const now = new Date();
+  const emailSettings = await getEmailSettings(env.DB);
+  const evs = (await env.DB.prepare(
+    `SELECT * FROM events WHERE state = 'open' ORDER BY week`).all()).results || [];
+
+  for (const ev of evs) {
+    const start = eventStart(ev);
+    if (!start) continue;
+    const hrs = (start - now) / 3600000;
+    const p = localParts();
+
+    const fire = async (job, when, who) => {
+      if (!when) return;
+      if (await jobDone(env.DB, ev.id, job)) return;
+      await who();
+      await markJob(env.DB, ev.id, job);
+      log.push(`${job} ${ev.id}`);
+    };
+
+    const roster = async where => (await env.DB.prepare(
+      `SELECT player_id FROM rsvp WHERE event_id=? AND role='roster' ${where}`
+    ).bind(ev.id).all()).results || [];
+
+    const mailEach = async (rows, kind, extra = {}) => {
+      for (const r of rows)
+        await enqueue(env, { kind, event_id: ev.id, player_id: r.player_id,
+          dedup_key: `${kind}:${ev.id}:${r.player_id}`, ...extra });
+    };
+
+    const inviteHours = emailSettings.invite_hours ?? 120;
+    const inviteHourOfDay = emailSettings.invite_hour_of_day ?? 18;
+    const r72Hours = emailSettings.r72_hours ?? 72;
+    const r72HourOfDay = emailSettings.r72_hour_of_day ?? 15;
+    const r49Hours = emailSettings.r49_hours ?? 49;
+    const short48Hours = emailSettings.short48_hours ?? 48;
+    const poolHours = emailSettings.pool_hours ?? 36;
+    const r24Hours = emailSettings.r24_hours ?? 24;
+    const r24HourOfDay = emailSettings.r24_hour_of_day;
+    const gamedayMorningHours = emailSettings.gameday_morning_hours ?? 2;
+
+    await fire('invite', hrs <= inviteHours && hrs > 0 && reached(p, inviteHourOfDay), async () => {
+      // 1. All regular roster players
+      await mailEach(await roster(''), 'invite');
+
+      // 2. Anyone who played in the previous week (substitutes)
+      const prevEv = await env.DB.prepare(
+        `SELECT id FROM events WHERE season = ? AND week < ? ORDER BY week DESC LIMIT 1`
+      ).bind(ev.season, ev.week).first();
+
+      if (prevEv) {
+        const prevSubs = (await env.DB.prepare(
+          `SELECT DISTINCT r.player_id FROM rsvp r
+            JOIN contacts c ON c.player_id = r.player_id
+           WHERE r.event_id = ? AND r.status = 'in' AND r.player_id IS NOT NULL
+             AND c.opted_out = 0
+             AND r.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND role = 'roster')`
+        ).bind(prevEv.id, ev.id).all()).results || [];
+
+        for (const s of prevSubs) {
+          await enqueue(env, {
+            kind: 'invite',
+            event_id: ev.id,
+            player_id: s.player_id,
+            dedup_key: `invite:${ev.id}:${s.player_id}`,
+            payload: { is_sub: true }
+          });
+        }
+      }
+    });
+
+    await fire('r72', hrs <= r72Hours && hrs > 0 && reached(p, r72HourOfDay),
+      async () => mailEach(await roster("AND status='pending'"), 'chase',
+        { payload: { stage: '72' } }));
+
+    await fire('r49', hrs <= r49Hours && hrs > 0,
+      async () => mailEach(await roster("AND status='pending'"), 'chase',
+        { payload: { stage: '49' } }));
+
+    await fire('short48', hrs <= short48Hours && hrs > 0, async () => {
+      for (const team of TEAMS) {
+        const st = await teamState(env.DB, ev.id, team);
+        if (!st.short) continue;
+        const confirmed = st.rows.filter(r => r.status === 'in' && r.player_id);
+        for (const r of confirmed)
+          await enqueue(env, { kind: 'team_short', event_id: ev.id,
+            player_id: r.player_id, team,
+            dedup_key: `team_short:${ev.id}:${r.player_id}`,
+            payload: { skaters: st.skaters, goalies: st.goalies,
+                       needGoalie: st.shortGoalie, needSkaters: st.shortSkaters } });
+      }
+    });
+
+    await fire('pool36', hrs <= poolHours && hrs > 0, async () => {
+      await remindSubs(env, ev);
+      for (const team of TEAMS) {
+        const st = await teamState(env.DB, ev.id, team);
+        if (st.shortGoalie) await callSubs(env, ev, team, 'goalie');
+        if (st.shortSkaters) await callSubs(env, ev, team, 'skater');
+      }
+    });
+
+    await fire('friday_board', p.weekday === 'Fri' && reached(p, 14) && hrs > 24, async () => {
+      for (const team of TEAMS) {
+        const msgs = await getTeamMessages(env.DB, ev.id, team, 5);
+        if (!msgs || !msgs.length) continue;
+        const recipients = (await env.DB.prepare(
+          `SELECT player_id FROM rsvp 
+           WHERE event_id=? AND team=? AND player_id IS NOT NULL 
+             AND (status='in' OR (role='roster' AND status='pending'))`
+        ).bind(ev.id, team).all()).results || [];
+        for (const r of recipients) {
+          await enqueue(env, {
+            kind: 'friday_board',
+            event_id: ev.id,
+            player_id: r.player_id,
+            team,
+            dedup_key: `friday_board:${ev.id}:${r.player_id}`
+          });
+        }
+      }
+    });
+
+    await fire('r24', hrs <= r24Hours && hrs > 0 && (r24HourOfDay == null || reached(p, r24HourOfDay)),
+      async () => mailEach(await roster("AND status='pending'"), 'chase',
+        { payload: { stage: '24' } }));
+
+    await fire('gameday24', hrs <= r24Hours && hrs > 0 && (r24HourOfDay == null || reached(p, r24HourOfDay)), async () => {
+      const recipients = (await env.DB.prepare(
+        `SELECT player_id, team FROM rsvp 
+         WHERE event_id=? AND player_id IS NOT NULL 
+           AND (status='in' OR (role='roster' AND status='pending'))`
+      ).bind(ev.id).all()).results || [];
+      for (const r of recipients) {
+        await enqueue(env, {
+          kind: 'gameday',
+          event_id: ev.id,
+          player_id: r.player_id,
+          team: r.team,
+          dedup_key: `gameday24:${ev.id}:${r.player_id}`,
+        });
+      }
+      await markJob(env.DB, ev.id, 'r24');
+    });
+
+    await fire('gameday_morning', hrs <= gamedayMorningHours && hrs > 0, async () => {
+      const start = eventStart(ev);
+      const cutoff24 = start ? new Date(start.getTime() - 24 * 3600000).toISOString() : new Date(Date.now() - 24 * 3600000).toISOString();
+      for (const team of TEAMS) {
+        const newMsgs = await getTeamMessages(env.DB, ev.id, team, 10, cutoff24);
+        if (!newMsgs || !newMsgs.length) continue;
+        const recipients = (await env.DB.prepare(
+          `SELECT player_id FROM rsvp 
+           WHERE event_id=? AND team=? AND player_id IS NOT NULL 
+             AND (status='in' OR (role='roster' AND status='pending'))`
+        ).bind(ev.id, team).all()).results || [];
+        for (const r of recipients) {
+          await enqueue(env, {
+            kind: 'gameday_morning',
+            event_id: ev.id,
+            player_id: r.player_id,
+            team,
+            dedup_key: `gameday_morning:${ev.id}:${r.player_id}`
+          });
+        }
+      }
+    });
+
+    await fire('summary', hrs <= 24 && hrs > 0 && reached(p, 20), async () => {
+      const lines = [];
+      for (const team of TEAMS) {
+        const st = await teamState(env.DB, ev.id, team);
+        lines.push(`${team}: ${st.skaters} joueurs, ${st.goalies} gardien(s)` +
+          (st.short ? '   <-- SHORT' : ''));
+      }
+      const wait = (await env.DB.prepare(
+        `SELECT c.name, a.need FROM availability a JOIN contacts c ON c.player_id=a.player_id
+          WHERE a.event_id=? AND a.status='yes'
+            AND a.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id=? AND player_id IS NOT NULL)
+          ORDER BY a.answered_at`).bind(ev.id, ev.id).all()).results || [];
+      await enqueue(env, { kind: 'summary', event_id: ev.id,
+        dedup_key: `summary:${ev.id}`,
+        payload: { text: `Semaine ${ev.week} — ${ev.date}\n\n` + lines.join('\n') +
+          (wait.length ? `\n\nListe d'attente: ` +
+            wait.map(w => `${w.name} (${w.need === 'goalie' ? 'G' : 'J'})`).join(', ') : '') } });
+    });
+
+    await fire('lock', hrs <= 0 && reached(p, 13), async () => {
+      await env.DB.prepare("UPDATE events SET state='locked' WHERE id=?").bind(ev.id).run();
+    });
+
+    await fire('season_recap_prompt', hrs <= -3 || (ev.end_time && reached(p, 13, 30)), async () => {
+      let isFinalWeek = false;
+      try {
+        const rawData = await env.SHEETS_KV.get('data_json');
+        if (rawData) {
+          const d = JSON.parse(rawData);
+          const s0 = d.seasons?.find(s => s.name === ev.season) || d.seasons?.[0];
+          if (s0 && s0.fixtures) {
+            const maxWeek = Math.max(...s0.fixtures.map(f => Number(f.week) || 0));
+            if (Number(ev.week) === maxWeek) {
+              isFinalWeek = true;
+            }
+          }
+        }
+      } catch (e) {}
+
+      if (isFinalWeek) {
+        await enqueue(env, {
+          kind: 'season_recap_prompt',
+          event_id: ev.id,
+          dedup_key: `season_recap_prompt:${ev.season}`,
+          payload: {
+            season: ev.season,
+            to: env.ADMIN_EMAIL || ADMIN_EMAIL
+          }
+        });
+      }
+    });
+  }
+
+  try {
+    const made = await ensureNextEvent(env);
+    if (made) {
+      log.push(`created ${made.id} week ${made.week} (${made.players} players)`);
+    }
+  } catch (e) { log.push('ensureNextEvent failed: ' + e.message); }
+
+  const d = await drain(env);
+  log.push(`outbox due=${d.due} sent=${d.sent} failed=${d.failed}`);
+
+  try {
+    const probs = await deadMan(env);
+    if (probs.length) log.push('ALERT: ' + probs.join('; '));
+  } catch (e) { log.push('deadMan failed: ' + e.message); }
+
+  return log;
+}
+
+/* ---------- team link ---------- */
+
+async function teamSalt(db, season, team) {
+  const key = `teamsalt:${season}:${team}`;
+  let row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first();
+  if (!row) {
+    const salt = crypto.randomUUID().replace(/-/g, '');
+    await db.prepare('INSERT INTO settings (key,value) VALUES (?,?)').bind(key, salt).run();
+    return salt;
+  }
+  return row.value;
+}
+
+async function currentEvent(db, season) {
+  return db.prepare(
+    `SELECT * FROM events WHERE season = ? AND state = 'open' ORDER BY week LIMIT 1`
+  ).bind(season).first();
+}
+
+async function getTeamMessages(db, eventId, team, limit = 20, since = null) {
+  try {
+    if (since) {
+      const r = await db.prepare(
+        `SELECT id, player_name, player_id, message, created_at 
+         FROM team_messages 
+         WHERE event_id = ? AND team = ? AND created_at >= ?
+         ORDER BY created_at ASC LIMIT ?`
+      ).bind(eventId, team, since, limit).all();
+      return r.results || [];
+    } else {
+      const r = await db.prepare(
+        `SELECT id, player_name, player_id, message, created_at 
+         FROM team_messages 
+         WHERE event_id = ? AND team = ?
+         ORDER BY created_at DESC LIMIT ?`
+      ).bind(eventId, team, limit).all();
+      return (r.results || []).reverse();
+    }
+  } catch (e) {
+    return [];
+  }
+}
+
+async function addTeamMessage(db, eventId, team, playerName, playerId, message) {
+  const now = new Date().toISOString();
+  await db.prepare(
+    `INSERT INTO team_messages (event_id, team, player_name, player_id, message, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(eventId, team, playerName, playerId || null, message, now).run();
+}
+
+/* ---------- polls & awards ---------- */
+
+async function getActivePollForSeason(db, season) {
+  try {
+    return await db.prepare(
+      `SELECT * FROM polls WHERE season = ? AND state = 'open' ORDER BY id DESC LIMIT 1`
+    ).bind(season).first();
+  } catch (_) {
+    return null;
+  }
+}
+
+async function getPollCandidates(db, poll) {
+  try {
+    if (poll && poll.target_position) {
+      return (await db.prepare(
+        `SELECT player_id, name, position
+           FROM contacts
+          WHERE position = ? AND (is_goalie = 0 OR is_goalie IS NULL)
+          ORDER BY name ASC`
+      ).bind(poll.target_position).all()).results || [];
+    }
+    return (await db.prepare(
+      `SELECT player_id, name, position
+         FROM contacts
+        WHERE (is_goalie = 0 OR is_goalie IS NULL)
+        ORDER BY name ASC`
+    ).all()).results || [];
+  } catch (_) {
+    return [];
+  }
+}
+
+async function getPollVote(db, pollId, voterId) {
+  if (!pollId || !voterId) return null;
+  try {
+    return await db.prepare(
+      `SELECT * FROM poll_votes WHERE poll_id = ? AND voter_id = ?`
+    ).bind(pollId, voterId).first();
+  } catch (_) {
+    return null;
+  }
+}
+
+async function getPollResults(db, pollId) {
+  try {
+    const votes = (await db.prepare(
+      `SELECT candidate_id, candidate_name, COUNT(*) as votes
+         FROM poll_votes
+        WHERE poll_id = ?
+        GROUP BY candidate_id, candidate_name
+        ORDER BY votes DESC, candidate_name ASC`
+    ).bind(pollId).all()).results || [];
+    const totalVotes = votes.reduce((acc, v) => acc + v.votes, 0);
+    return {
+      totalVotes,
+      votes: votes.map(v => ({
+        ...v,
+        pct: totalVotes > 0 ? Math.round((v.votes / totalVotes) * 100) : 0
+      }))
+    };
+  } catch (_) {
+    return { totalVotes: 0, votes: [] };
+  }
+}
+
+// Poll voting is strictly identity-tracked via personalized HMAC signed links
+// (e.g. /poll?id=...&p=...&t=... or personal /rsvp?e=...&p=...&t=...).
+// Shared team links (/team-rsvp) do not offer voting to avoid unverified dropdown selections.
+
+async function pollGet(req, env, url) {
+  const pollId = Number(url.searchParams.get('id'));
+  const playerId = url.searchParams.get('p');
+  const token = url.searchParams.get('t');
+  const adminMode = url.searchParams.get('admin') === '1' || checkAdminAuth(req, env) === 'ok';
+
+  if (!pollId) return notice('Sondage non spécifié', 'No poll specified');
+
+  const poll = await env.DB.prepare('SELECT * FROM polls WHERE id = ?').bind(pollId).first();
+  if (!poll) return notice('Sondage introuvable', 'Poll not found');
+
+  let contact = null;
+  let authorized = false;
+
+  if (playerId && token) {
+    contact = await getContact(env.DB, playerId);
+    if (contact) {
+      const want = await hmac(env.RSVP_SECRET, pollMsg(pollId, playerId, contact.token_salt));
+      if (same(want, token)) authorized = true;
+    }
+  }
+
+  if (adminMode && !authorized) {
+    authorized = true;
+    contact = { player_id: playerId || 'admin', name: 'Administrateur (Aperçu)' };
+  }
+
+  if (!authorized) {
+    return notice('Lien invalide ou expiré', 'Invalid or expired voting link');
+  }
+
+  const candidates = await getPollCandidates(env.DB, poll);
+  const myVote = playerId ? await getPollVote(env.DB, poll.id, playerId) : null;
+  const pollResults = await getPollResults(env.DB, poll.id);
+
+  const total = pollResults ? pollResults.totalVotes : 0;
+  const hasVoted = Boolean(myVote);
+  const isClosed = poll.state === 'closed';
+
+  let resultsHtml = '';
+  if (adminMode || (poll.show_results === 1 && (hasVoted || isClosed))) {
+    const bars = (pollResults?.votes || []).map(c => `
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:3px;">
+          <b>${esc(c.candidate_name)}</b>
+          <span style="color:var(--soft);font-size:13px;">${c.votes} vote${c.votes > 1 ? 's' : ''} (${c.pct}%)</span>
+        </div>
+        <div style="background:#e9d5ff;border-radius:4px;height:10px;overflow:hidden;">
+          <div style="background:#8b5cf6;width:${c.pct}%;height:100%;border-radius:4px;transition:width 0.4s ease;"></div>
+        </div>
+      </div>
+    `).join('') || '<p style="font-size:13px;color:var(--soft);margin:4px 0;">Aucun vote enregistré pour l\\u2019instant.</p>';
+
+    resultsHtml = `
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid #e9d5ff;">
+        <div style="font-size:14px;font-weight:700;color:#6b21a8;margin-bottom:10px;">
+          📊 Résultats ${isClosed ? 'finaux' : 'en direct'} (${total} vote${total > 1 ? 's' : ''}) :
+        </div>
+        ${bars}
+      </div>`;
+  } else if (hasVoted) {
+    resultsHtml = `
+      <div style="margin-top:16px;padding:12px 14px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:6px;font-size:13px;color:#6b21a8;">
+        🔒 <b>Scrutin secret</b> : ton vote est strictement confidentiel. Les résultats restent privés.
+        <span class="en" style="display:block;font-size:12px;color:var(--soft);margin-top:2px;">Private ballot: your vote is confidential and results are hidden.</span>
+      </div>`;
+  } else if (isClosed) {
+    resultsHtml = `
+      <div style="margin-top:16px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;color:var(--soft);">
+        🔒 <b>Scrutin fermé</b> : les résultats de ce vote sont confidentiels.
+        <span class="en" style="display:block;font-size:12px;color:var(--soft);margin-top:2px;">Poll closed: results are private.</span>
+      </div>`;
+  }
+
+  const candOpts = candidates.map(c =>
+    `<option value="${esc(c.player_id)}" data-name="${esc(c.name)}"${myVote?.candidate_id === c.player_id ? ' selected' : ''}>${esc(c.name)}${c.position ? ' (' + c.position + ')' : ''}</option>`
+  ).join('');
+
+  const voteForm = !isClosed ? `
+    <div style="margin-bottom:12px;">
+      <label style="display:block;font-size:13px;font-weight:600;color:var(--soft);margin-bottom:5px;">
+        ${myVote ? 'Changer mon vote pour / Change vote to :' : 'Mon choix / My choice :'}
+      </label>
+      <select id="poll-candidate-id" style="width:100%;font:inherit;font-size:15px;padding:10px;border:1px solid var(--rule2);border-radius:4px;background:#fff;">
+        <option value="">— Choisis un candidat / Select a candidate —</option>
+        ${candOpts}
+      </select>
+    </div>
+    <div class="btns">
+      <button type="button" class="btn" id="poll-vote-btn" style="background:#8b5cf6;border-color:#7c3aed;color:#fff;font-size:15px;padding:12px 18px;width:100%;">
+        ${myVote ? 'MODIFIER MON VOTE ✎' : 'SOUMETTRE MON VOTE 🗳️'}
+      </button>
+    </div>
+    <p id="poll-vote-msg" style="font-size:13px;font-weight:600;margin-top:8px;display:none;"></p>
+  ` : `<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;padding:10px;font-size:13px;color:var(--soft);">Ce sondage est maintenant terminé. Merci d'avoir voté !<span class="en">This poll is now closed. Thank you for participating!</span></div>`;
+
+  const statusBadge = hasVoted
+    ? `<div style="background:#f3e8ff;border:1px solid #d8b4fe;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:14px;color:#6b21a8;">
+        ✓ Ton vote enregistré : <b>${esc(myVote.candidate_name)}</b>
+      </div>`
+    : '';
+
+  const norrisHint = (poll.category === 'norris' || poll.target_position === 'D')
+    ? `<div style="font-size:12px;color:var(--soft);margin-top:14px;line-height:1.4;">
+        💡 <i>Note : Seuls les joueurs identifiés comme Défenseurs (D) apparaissent sur le bulletin.</i>
+       </div>`
+    : '';
+
+  const categoryLabel = poll.category === 'norris' ? '🏆 Trophée Norris'
+    : poll.category === 'mvp' ? '👑 Trophée MVP / Hart'
+    : '🗳️ Sondage officiel';
+
+  const body = `
+  <div style="max-width:540px;margin:0 auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <span style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:20px;color:var(--ink);text-transform:uppercase;">SMBHL</span>
+      <span style="font-size:12px;font-weight:700;background:${!isClosed ? '#8b5cf6' : 'var(--soft)'};color:#fff;padding:3px 10px;border-radius:12px;">
+        ${!isClosed ? (poll.show_results === 1 ? 'SCRUTIN OUVERT / OPEN' : '🔒 SCRUTIN SECRET / PRIVATE') : 'SCRUTIN FERMÉ / CLOSED'}
+      </span>
+    </div>
+
+    <div class="card" style="border-top:4px solid #8b5cf6;padding:18px;">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+        <span class="by" style="background:#f3e8ff;color:#6b21a8;font-weight:700;margin:0;">${esc(categoryLabel)}</span>
+        <span class="by" style="margin:0;">${esc(poll.season)}</span>
+      </div>
+      <h1 style="font-size:22px;margin:8px 0 6px;line-height:1.2;color:var(--ink);">${esc(poll.title)}</h1>
+      ${poll.description ? `<p style="font-size:14px;color:var(--soft);margin:0 0 14px;line-height:1.4;">${esc(poll.description)}</p>` : ''}
+      
+      <div style="font-size:13px;color:var(--soft);margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--rule);">
+        Votant / Voter : <b style="color:var(--ink);">${esc(contact.name)}</b> <span style="font-size:12px;color:var(--faint);font-weight:normal;">(confidentiel / private)</span>
+      </div>
+
+      ${statusBadge}
+      ${voteForm}
+      ${resultsHtml}
+      ${norrisHint}
+    </div>
+
+    <p style="text-align:center;font-size:12px;color:var(--faint);margin-top:20px;">
+      SMBHL · Ligue amicale de hockey balle · <a href="https://smbhl.com" target="_blank" style="color:var(--blue);text-decoration:none;">smbhl.com</a>
+    </p>
+  </div>
+
+  <script>
+  const pollVoteBtn = document.getElementById('poll-vote-btn');
+  if (pollVoteBtn) {
+    pollVoteBtn.addEventListener('click', async () => {
+      const candSel = document.getElementById('poll-candidate-id');
+      const msg = document.getElementById('poll-vote-msg');
+      const candId = candSel ? candSel.value : '';
+      const candName = candSel && candSel.selectedOptions[0] ? candSel.selectedOptions[0].dataset.name : '';
+      if (!candId) {
+        if (msg) { msg.textContent = 'Choisis un candidat svp / Select a candidate'; msg.style.color = 'var(--red)'; msg.style.display = 'block'; }
+        return;
+      }
+      pollVoteBtn.disabled = true;
+      if (msg) { msg.textContent = 'Enregistrement...'; msg.style.color = 'var(--soft)'; msg.style.display = 'block'; }
+      try {
+        const res = await fetch('/api/poll/vote', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            poll_id: ${poll.id},
+            voter_id: ${JSON.stringify(contact.player_id)},
+            candidate_id: candId,
+            candidate_name: candName,
+            token: ${JSON.stringify(token || '')}
+          })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        location.reload();
+      } catch (err) {
+        if (msg) { msg.textContent = 'Erreur: ' + err.message; msg.style.color = 'var(--red)'; }
+        pollVoteBtn.disabled = false;
+      }
+    });
+  }
+  </script>`;
+
+  return page('Sondage · ' + poll.title, body);
+}
+
+async function teamGet(req, env, url) {
+  const season = url.searchParams.get('s');
+  const team = url.searchParams.get('team');
+  const token = url.searchParams.get('t');
+  if (!season || !team || !token) return notice('Lien incomplet', 'Incomplete link');
+  if (!TEAMS.includes(team)) return notice('Équipe inconnue', 'Unknown team');
+
+  const salt = await teamSalt(env.DB, season, team);
+  const want = await hmac(env.RSVP_SECRET, teamMsg(season, team, salt));
+  if (!same(want, token)) return notice('Lien invalide ou expiré', 'Invalid or expired link');
+
+  const ev = await currentEvent(env.DB, season);
+  if (!ev) return notice('Aucun match ouvert', 'No open game');
+
+  const rows = await teamRows(env.DB, ev.id, team);
+  const counts = await allCounts(env.DB, ev.id);
+  const c = counts[team] || { in: 0 };
+
+  const goalieIds = await rosterGoalies(env.DB, ev.id, team);
+  const shortGoalie = !rows.some(r => r.status === 'in' && goalieIds.includes(r.player_id));
+  const skaters = rows.filter(r => r.status === 'in' && !goalieIds.includes(r.player_id)).length;
+  const shortSkaters = skaters < 5;
+
+  const list = rows.map(r => {
+    const name = r.name || r.guest_name || '?';
+    const by = r.status !== 'pending' && r.status_by !== 'self'
+      ? `<span class="by">${esc(r.status_by === 'manager' ? 'admin' : 'coéquipier')}</span>` : '';
+    const g = goalieIds.includes(r.player_id) ? '<span class="by">G</span>' : '';
+    const guest = r.role === 'guest' ? '<span class="by">invité</span>' : '';
+    const who = r.player_id ? `p=${encodeURIComponent(r.player_id)}` : `g=${encodeURIComponent(r.guest_name)}`;
+
+    const canUndo = r.status !== 'pending' && r.role === 'roster' && r.player_id && r.status_by === 'teammate';
+
+    const posToggle = !goalieIds.includes(r.player_id) && r.player_id
+      ? `<span class="pos-toggle" data-pid="${esc(r.player_id)}" style="margin-left:6px;display:inline-flex;gap:2px;vertical-align:middle;">
+          <button type="button" class="pos-btn ${r.position === 'F' ? 'on' : ''}" data-pos="F" title="Attaquant / Forward" style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;cursor:pointer;line-height:1.2;border:1px solid var(--rule2);background:${r.position === 'F' ? 'var(--blue)' : 'var(--card)'};color:${r.position === 'F' ? '#fff' : 'var(--soft)'}">A</button>
+          <button type="button" class="pos-btn ${r.position === 'D' ? 'on' : ''}" data-pos="D" title="Défenseur / Defense" style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;cursor:pointer;line-height:1.2;border:1px solid var(--rule2);background:${r.position === 'D' ? 'var(--blue)' : 'var(--card)'};color:${r.position === 'D' ? '#fff' : 'var(--soft)'}">D</button>
+        </span>`
+      : '';
+
+    return `<tr><td>${esc(name)}${g}${guest}${posToggle}${by}</td>
+      <td class="s">
+        <button class="mini in ${r.status === 'in' ? 'on' : ''}" data-who="${who}" data-v="in">IN</button>
+        <button class="mini out ${r.status === 'out' ? 'on' : ''}" data-who="${who}" data-v="out">OUT</button>${
+          canUndo
+            ? `<button class="mini" data-who="${who}" data-v="pending"
+                 title="remettre sans réponse / undo">↺</button>` : ''}
+      </td></tr>`;
+  }).join('');
+
+  const others = TEAMS.filter(x => x !== team)
+    .map(x => `<li><b>${counts[x].in}</b>${esc(x)}</li>`).join('');
+
+  const pool = await subPool(env.DB, ev.id);
+  const onTeam = pool.filter(p => p.placed === team);
+  const addable = pool.filter(p => !p.placed && p.said !== 'no');
+  const unavailable = pool.filter(p => (p.placed && p.placed !== team) || p.said === 'no');
+
+  const kind = p => p.role === 'sub_goalie' ? 'gardien' : 'joueur';
+  const state = p => p.said === 'yes' ? 'a confirmé disponible'
+    : p.said === 'no' ? 'a dit non'
+    : 'pas encore répondu';
+
+  const onTeamRows = onTeam.map(p =>
+    `<tr><td>${esc(p.name)}<span class="by">${esc(kind(p))}</span></td>
+      <td class="s"><button class="mini out" data-sub="${esc(p.player_id)}"
+        data-act="remove">RETIRER</button></td></tr>`).join('');
+
+  const options = addable.map(p =>
+    `<option value="${esc(p.player_id)}">${esc(p.name)} — ${esc(kind(p))}, ${esc(state(p))}</option>`
+  ).join('');
+
+  const unavailRows = unavailable.map(p =>
+    `<tr><td style="opacity:.55">${esc(p.name)}<span class="by">${
+      p.placed ? 'déjà avec ' + esc(p.placed) : 'a dit non'}</span></td>
+      <td class="s">—</td></tr>`).join('');
+
+  const messages = await getTeamMessages(env.DB, ev.id, team, 20);
+  const msgItems = messages.length > 0
+    ? messages.map(m => `
+        <div style="margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid var(--rule); font-size:14px; line-height:1.4;">
+          <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+            <b style="color:var(--ink);">${esc(m.player_name)}</b>
+            <span style="color:var(--faint); font-size:12px;">${esc(formatMsgTime(m.created_at))}</span>
+          </div>
+          <div style="color:var(--soft);">« ${esc(m.message)} »</div>
+        </div>
+      `).join('')
+    : `<p class="state" style="font-style:italic; margin:8px 0 12px;">Aucun message pour l'instant.<span class="en">No messages yet.</span></p>`;
+
+  const authorOptions = rows.map(r => {
+    const n = r.name || r.guest_name || '';
+    return `<option value="${esc(r.player_id || '')}" data-name="${esc(n)}">${esc(n)}</option>`;
+  }).join('');
+
+  const myPlayerId = url.searchParams.get('p');
+  const me = myPlayerId ? rows.find(r => r.player_id === myPlayerId) : null;
+
+  const authorHtml = me
+    ? `<div style="font-size:15px; font-weight:600; color:var(--ink); margin-bottom:10px; padding:4px 0;">
+         De / From : <b style="color:var(--blue); font-size:16px;">${esc(me.name)}</b>
+         <input type="hidden" id="msgauthor" value="${esc(me.player_id)}" data-name="${esc(me.name)}">
+       </div>`
+    : `<select id="msgauthor" style="width:100%; font:inherit; font-size:15px; padding:10px; border:1px solid var(--rule2); border-radius:3px; background:var(--card); margin-bottom:8px;">
+         <option value="">— Choisis ton nom / Select your name —</option>
+         ${authorOptions}
+         <option value="other" data-name="Autre">Autre joueur / Other</option>
+       </select>`;
+
+  const topBoardWidget = messages.length > 0
+    ? `<div class="card" style="border-left:4px solid var(--blue); padding:12px 14px; margin-bottom:14px; background:#fafbfc;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <div style="font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:16px; color:var(--ink); display:flex; align-items:center; gap:6px;">
+            <span>💬 Notes d'équipe / Team Notes</span>
+            <span style="background:var(--blue); color:#fff; font-size:11px; padding:1px 7px; border-radius:10px; font-weight:700;">${messages.length}</span>
+          </div>
+          <a href="#team-board" class="jump-to-board" style="font-size:13px; font-weight:600; color:var(--blue); text-decoration:none; white-space:nowrap;">
+            + Écrire / Voir tout ⬇
+          </a>
+        </div>
+        <div style="font-size:14px; color:var(--soft); line-height:1.4;">
+          <div><b style="color:var(--ink);">${esc(messages[0].player_name)} :</b> « ${esc(messages[0].message)} » <span style="color:var(--faint); font-size:11px;">(${esc(formatMsgTime(messages[0].created_at))})</span></div>
+          ${messages.length > 1 ? `<div style="margin-top:4px;"><b style="color:var(--ink);">${esc(messages[1].player_name)} :</b> « ${esc(messages[1].message)} » <span style="color:var(--faint); font-size:11px;">(${esc(formatMsgTime(messages[1].created_at))})</span></div>` : ''}
+        </div>
+      </div>`
+    : `<div style="display:flex; justify-content:space-between; align-items:center; background:#fafbfc; border:1px dashed var(--rule2); border-radius:4px; padding:8px 12px; margin-bottom:14px; font-size:13px;">
+        <span style="color:var(--soft); display:flex; align-items:center; gap:6px;">
+          <span>💬</span> <span>Aucune note d'équipe pour l'instant / No notes yet</span>
+        </span>
+        <a href="#team-board" class="jump-to-board" style="color:var(--blue); font-weight:600; text-decoration:none; font-size:13px; white-space:nowrap; margin-left:8px;">
+          + Laisser une note ⬇
+        </a>
+      </div>`;
+
+
+  const body = `
+  <h1>${esc(team)}</h1>
+  <p class="when">Semaine ${esc(ev.week)} · ${esc(ev.date)}${
+    ev.start_time ? ' · ' + esc(ev.start_time) + (ev.end_time ? '–' + esc(ev.end_time) : '') : ''}${
+    ev.venue ? ' · ' + esc(ev.venue) : ''}</p>
+
+  ${topBoardWidget}
+
+  <div class="card">
+    <h2>${c.in} confirmés${
+      shortGoalie || shortSkaters ? ' <span class="short">· équipe incomplète</span>' : ''}
+      <span class="en">${skaters} skater${skaters === 1 ? '' : 's'}${
+        shortGoalie ? ', no goalie yet' : ', goalie confirmed'}</span></h2>
+    <div style="font-size:12px;color:var(--soft);margin-bottom:8px;line-height:1.3;display:flex;align-items:center;gap:6px">
+      <span>💡</span>
+      <span><b>Positions :</b> Identifiez vos attaquants (<b style="color:var(--ink)">A</b>) et défenseurs (<b style="color:var(--ink)">D</b>) pour les stats et le trophée Norris !</span>
+    </div>
+    <table>${list}</table>
+    <p class="state" id="msg"></p>
+  </div>
+
+  <div class="card" id="team-board">
+    <h2>Tableau d'équipe<span class="en">Team Message Board</span></h2>
+    <p class="state">Laisse une note pour tes coéquipiers (décision d'avant-match, retard, covoiturage).
+      <span class="en">Leave a note for your teammates (gametime decision, late arrival, carpool).</span></p>
+
+    <div style="margin:12px 0 16px; max-height:220px; overflow-y:auto; border:1px solid var(--rule); border-radius:4px; padding:10px 12px; background:#fafafa;">
+      ${msgItems}
+    </div>
+
+    ${authorHtml}
+    <input id="msgtext" maxlength="160" placeholder="Écris une note (ex: retard de 10 min, décision d'avant-match)..." style="width:100%; font:inherit; padding:10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:10px;">
+    <div class="btns">
+      <button class="btn" id="msgsend" style="padding:12px 10px;">PUBLIER<span class="en">POST NOTE</span></button>
+    </div>
+    <p class="state" id="msgerr" style="color:var(--red); font-size:14px; margin-top:6px; display:none;"></p>
+  </div>
+
+  <div class="card">
+    <h2>Substituts sur l'équipe<span class="en">Subs already on this team</span></h2>
+    <table>${onTeamRows || '<tr><td>—</td></tr>'}</table>
+  </div>
+
+  <div class="card">
+    <h2>Ajouter un substitut qui a confirmé
+      <span class="en">Add a sub who has already confirmed with you</span></h2>
+    <p class="state">N'ajoute quelqu'un que si tu lui as parlé. Il recevra un courriel
+      lui disant qu'il joue avec ${esc(team)}.
+      <span class="en">Only add someone you have actually spoken to. They will be emailed
+      that they are playing for ${esc(team)}.</span></p>
+    <select id="subsel" style="width:100%;font:inherit;font-size:15px;padding:11px;
+      border:1px solid var(--rule2);border-radius:3px;background:var(--card)">
+      <option value="">— choisir / choose —</option>
+      ${options}
+    </select>
+    <div class="btns" style="margin-top:10px">
+      <button class="btn" id="subadd">AJOUTER<span class="en">ADD</span></button>
+    </div>
+    ${unavailRows ? `<details style="margin-top:16px;border-top:1px solid var(--rule);padding-top:12px">
+      <summary style="cursor:pointer;font-size:14px;color:var(--soft);user-select:none;font-weight:600">
+        Pas disponibles / Not available this week &#x25BE;
+      </summary>
+      <table style="margin-top:8px">${unavailRows}</table>
+    </details>` : ''}
+  </div>
+
+  <div class="card">
+    <h2>Ajouter un invité<span class="en">Add a guest — someone not in the pool</span></h2>
+    <input id="gname" placeholder="Prénom Nom" style="width:100%;font:inherit;padding:11px;
+      border:1px solid var(--rule2);border-radius:3px">
+    <div class="btns" style="margin-top:10px">
+      <button class="btn" id="gadd">AJOUTER<span class="en">ADD</span></button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Les autres équipes<span class="en">Other teams — confirmed</span></h2>
+    <ul class="counts">${others}</ul>
+  </div>
+
+  <script>
+  const q = location.search;
+  async function send(payload, btns) {
+    btns.forEach(b => b.disabled = true);
+    document.getElementById('msg').textContent = '…';
+    try {
+      const r = await fetch('/team-rsvp' + q, { method:'POST',
+        headers:{'content-type':'application/json'}, body: JSON.stringify(payload) });
+      if (!r.ok) throw new Error(await r.text());
+      location.reload();
+    } catch (e) {
+      document.getElementById('msg').textContent = 'Erreur / Error: ' + e.message;
+      btns.forEach(b => b.disabled = false);
+    }
+  }
+  const all = () => [...document.querySelectorAll('button')];
+  document.querySelectorAll('.mini').forEach(b => b.addEventListener('click', () => {
+    const who = b.dataset.who, v = b.dataset.v;
+    const p = who.startsWith('p=') ? { player_id: decodeURIComponent(who.slice(2)), status: v }
+                                   : { guest_name: decodeURIComponent(who.slice(2)), status: v };
+    send(p, all());
+  }));
+  document.querySelectorAll('[data-sub]').forEach(b => b.addEventListener('click', () => {
+    send({ player_id: b.dataset.sub, sub_action: b.dataset.act, status: 'in' }, all());
+  }));
+  document.getElementById('subadd').addEventListener('click', () => {
+    const v = document.getElementById('subsel').value;
+    if (!v) { document.getElementById('msg').textContent =
+      'Choisis un substitut / pick a sub'; return; }
+    send({ player_id: v, sub_action: 'add', status: 'in' }, all());
+  });
+  document.getElementById('gadd').addEventListener('click', () => {
+    const n = document.getElementById('gname').value.trim();
+    if (n.split(' ').filter(Boolean).length < 2) {
+      document.getElementById('msg').textContent = 'Prénom et nom, svp / First and last name, please';
+      return;
+    }
+    send({ guest_name: n, status: 'in', add: true }, all());
+  });
+  document.getElementById('msgsend')?.addEventListener('click', () => {
+    const sel = document.getElementById('msgauthor');
+    const txt = document.getElementById('msgtext');
+    const err = document.getElementById('msgerr');
+    if (err) err.style.display = 'none';
+
+    const pid = sel ? sel.value : '';
+    const authorName = sel && (sel.tagName === 'SELECT' ? (sel.selectedOptions[0]?.dataset?.name || '') : (sel.dataset.name || '')) || '';
+    const text = txt ? txt.value.trim() : '';
+
+    if (!authorName) {
+      if (err) {
+        err.textContent = 'Sélectionne ton nom svp / Please select your name';
+        err.style.display = 'block';
+      }
+      return;
+    }
+    if (!text) {
+      if (err) {
+        err.textContent = 'Écris un message svp / Please enter a message';
+        err.style.display = 'block';
+      }
+      return;
+    }
+    send({ action: 'message', player_id: pid === 'other' ? null : pid, player_name: authorName, message: text }, all());
+  });
+  document.querySelectorAll('.jump-to-board').forEach(a => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    const board = document.getElementById('team-board');
+    if (board) {
+      board.scrollIntoView({ behavior: 'smooth' });
+      const inp = document.getElementById('msgtext');
+      if (inp) setTimeout(() => inp.focus(), 350);
+    }
+  }));
+
+  document.querySelectorAll('.pos-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const span = btn.closest('.pos-toggle');
+    const pid = span.dataset.pid;
+    const isCurrentlyOn = btn.classList.contains('on');
+    const newPos = isCurrentlyOn ? null : btn.dataset.pos;
+    const btns = span.querySelectorAll('.pos-btn');
+    btns.forEach(b => {
+      b.classList.remove('on');
+      b.style.background = 'var(--card)';
+      b.style.color = 'var(--soft)';
+    });
+    if (newPos) {
+      btn.classList.add('on');
+      btn.style.background = 'var(--blue)';
+      btn.style.color = '#fff';
+    }
+    try {
+      const res = await fetch('/api/player-position', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          player_id: pid,
+          position: newPos,
+          season: ${JSON.stringify(ev.season)},
+          team: ${JSON.stringify(team)},
+          token: ${JSON.stringify(token)}
+        })
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      alert('Erreur: ' + err.message);
+      location.reload();
+    }
+  }));
+
+  </script>`;
+  const logoTooltip = await getStandingsTooltip(env);
+  return page(team, body, logoTooltip);
+}
+
+async function teamPost(req, env, url) {
+  const season = url.searchParams.get('s');
+  const team = url.searchParams.get('team');
+  const token = url.searchParams.get('t');
+  if (!TEAMS.includes(team)) return new Response('bad team', { status: 400 });
+
+  const salt = await teamSalt(env.DB, season, team);
+  const want = await hmac(env.RSVP_SECRET, teamMsg(season, team, salt));
+  if (!same(want, token)) return new Response('bad token', { status: 403 });
+
+  const ev = await currentEvent(env.DB, season);
+  if (!ev) return new Response('no open event', { status: 404 });
+
+  const body = await req.json().catch(() => ({}));
+  if (body.action === 'message' || body.message) {
+    const msg = String(body.message || '').trim().slice(0, 200);
+    const pName = String(body.player_name || '').trim().slice(0, 60);
+    const pId = body.player_id ? String(body.player_id) : null;
+    if (!msg || !pName) return new Response('missing message or author', { status: 400 });
+    await addTeamMessage(env.DB, ev.id, team, pName, pId, msg);
+    return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } });
+  }
+
+  const { player_id, guest_name, status, add } = body;
+  if (!['in', 'out', 'pending'].includes(status))
+    return new Response('bad status', { status: 400 });
+  const now = new Date().toISOString();
+
+  if (status === 'pending' && player_id) {
+    const existing = await env.DB.prepare(
+      `SELECT status_by FROM rsvp WHERE event_id=? AND player_id=? AND team=? AND role='roster'`
+    ).bind(ev.id, player_id, team).first();
+    
+    if (existing && existing.status_by === 'self') {
+      return new Response('cannot undo self response', { status: 403 });
+    }
+
+    const r = await env.DB.prepare(
+      `UPDATE rsvp SET status='pending', status_by='auto', updated_at=?
+        WHERE event_id=? AND player_id=? AND team=? AND role='roster'`
+    ).bind(now, ev.id, player_id, team).run();
+    if (!r.meta.changes) return new Response('not on this team', { status: 404 });
+    await cancelPending(env, `notice:${ev.id}:${player_id}`);
+    const c0 = await getContact(env.DB, player_id);
+    const need0 = (c0 && c0.is_goalie) ? 'goalie' : 'skater';
+    if (await openSpots(env.DB, ev.id, team, need0) < 1) {
+      await cancelPending(env, `hold:${ev.id}:${team}:${need0}`);
+      await stopWaves(env, ev.id, need0);
+    }
+    return new Response('ok');
+  }
+
+  if (body.sub_action) {
+    return await subChange(env, ev, team, body.player_id, body.sub_action);
+  }
+
+  if (add) {
+    const name = String(guest_name || '').trim().split(' ').filter(Boolean).join(' ');
+    if (name.split(' ').filter(Boolean).length < 2) return new Response('full name required', { status: 400 });
+    if (name.length > 60) return new Response('name too long', { status: 400 });
+    const dupe = await env.DB.prepare(
+      'SELECT 1 FROM rsvp WHERE event_id=? AND team=? AND guest_name=?'
+    ).bind(ev.id, team, name).first();
+    if (dupe) return new Response('already added', { status: 409 });
+    await env.DB.prepare(
+      `INSERT INTO rsvp (event_id,guest_name,team,status,role,status_by,updated_at)
+       VALUES (?,?,?,?, 'guest','teammate',?)`
+    ).bind(ev.id, name, team, status, now).run();
+    return new Response('ok');
+  }
+
+  if (player_id) {
+    const existing = await env.DB.prepare(
+      'SELECT status FROM rsvp WHERE event_id=? AND player_id=? AND team=?').bind(ev.id, player_id, team).first();
+    const previousStatus = existing ? existing.status : 'pending';
+
+    const r = await env.DB.prepare(
+      `UPDATE rsvp SET status=?, status_by='teammate', updated_at=?
+        WHERE event_id=? AND player_id=? AND team=?`
+    ).bind(status, now, ev.id, player_id, team).run();
+    if (!r.meta.changes) return new Response('not on this team', { status: 404 });
+
+    await enqueue(env, { kind: 'notice', event_id: ev.id, player_id, team,
+      dedup_key: `notice:${ev.id}:${player_id}`, payload: { status, by: 'teammate' },
+      delayMin: 5 });
+
+    const c = await getContact(env.DB, player_id);
+    const isPrimaryGoalie = c && (c.is_goalie === 1 || c.role === 'sub_goalie');
+    const isBackupGoalie = c && c.is_backup_goalie === 1;
+
+    let need = 'skater';
+    if (isPrimaryGoalie) {
+      const backupRow = await env.DB.prepare(
+        `SELECT r.status FROM rsvp r JOIN contacts c2 ON c2.player_id = r.player_id
+          WHERE r.event_id=? AND r.team=? AND c2.is_backup_goalie=1 AND r.status != 'out'`
+      ).bind(ev.id, team).first();
+      need = backupRow ? 'skater' : 'goalie';
+    } else if (isBackupGoalie) {
+      const primaryRow = await env.DB.prepare(
+        `SELECT r.status FROM rsvp r JOIN contacts c2 ON c2.player_id = r.player_id
+          WHERE r.event_id=? AND r.team=? AND c2.is_goalie=1 AND r.status != 'out'`
+      ).bind(ev.id, team).first();
+      need = primaryRow ? 'skater' : 'goalie';
+    }
+    const key = `hold:${ev.id}:${team}:${need}`;
+
+    if (status === 'out') {
+      if (need === 'goalie' && previousStatus !== 'out') {
+        await notifyAdminGoalieCancel(env, ev, c, team, 'teammate', previousStatus);
+      }
+      if (await openSpots(env.DB, ev.id, team, need) > 0) {
+        if (!(await fillFromWaitlist(env, ev, team, need))) {
+          const wait = hoursOut(ev) < RUSH_HOURS ? 0 : 60;
+          await enqueue(env, { kind: 'holdcall', event_id: ev.id, team,
+            dedup_key: key, payload: { need }, delayMin: wait });
+        }
+      }
+    } else {
+      await cancelPending(env, key);
+      if (await openSpots(env.DB, ev.id, team, need) < 1) await stopWaves(env, ev.id, need);
+    }
+    return new Response('ok');
+  }
+
+  if (guest_name) {
+    const r = await env.DB.prepare(
+      `UPDATE rsvp SET status=?, status_by='teammate', updated_at=?
+        WHERE event_id=? AND guest_name=? AND team=?`
+    ).bind(status, now, ev.id, guest_name, team).run();
+    if (!r.meta.changes) return new Response('guest not found', { status: 404 });
+    return new Response('ok');
+  }
+  return new Response('nothing to do', { status: 400 });
+}
+
+async function subChange(env, ev, team, player_id, action) {
+  const c = await getContact(env.DB, player_id);
+  if (!c) return new Response('unknown player', { status: 404 });
+  if (c.role !== 'sub_skater' && c.role !== 'sub_goalie')
+    return new Response('not in the sub pool', { status: 400 });
+  const now = new Date().toISOString();
+  const key = `place:${ev.id}:${player_id}`;
+
+  if (action === 'add') {
+    const placed = await env.DB.prepare(
+      'SELECT team FROM rsvp WHERE event_id=? AND player_id=?').bind(ev.id, player_id).first();
+    if (placed) return new Response('already with ' + placed.team, { status: 409 });
+    const said = await env.DB.prepare(
+      "SELECT 1 FROM availability WHERE event_id=? AND player_id=? AND status='no'"
+    ).bind(ev.id, player_id).first();
+    if (said) return new Response('said not available', { status: 409 });
+    await env.DB.prepare(
+      `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at)
+       VALUES (?,?,?, 'in','sub','teammate',?)`
+    ).bind(ev.id, player_id, team, now).run();
+    // Do not send an automated email right away if > 24 hours out.
+    // Subs will receive their final reminder (gameday) at 24h before game time.
+    if (hoursOut(ev) <= 24) {
+      await enqueue(env, { kind: 'gameday', event_id: ev.id, player_id, team,
+        dedup_key: `gameday24:${ev.id}:${player_id}` });
+    }
+    await cancelPending(env, `hold:${ev.id}:${team}`);
+    return new Response('ok');
+  }
+
+  const r = await env.DB.prepare(
+    `DELETE FROM rsvp WHERE event_id=? AND player_id=? AND team=? AND role='sub'`
+  ).bind(ev.id, player_id, team).run();
+  if (!r.meta.changes) return new Response('not a sub on this team', { status: 404 });
+  await cancelPending(env, key);
+  await cancelPending(env, `gameday24:${ev.id}:${player_id}`);
+  // Only send released if within 24 hours of game time
+  if (hoursOut(ev) <= 24) {
+    await enqueue(env, { kind: 'released', event_id: ev.id, player_id, team,
+      dedup_key: key, delayMin: 5 });
+  }
+  const isGoalie = c && (c.role === 'sub_goalie' || c.is_goalie === 1);
+  if (isGoalie) {
+    await notifyAdminGoalieCancel(env, ev, c, team, 'removed_sub', 'in');
+  }
+  const after = await teamState(env.DB, ev.id, team);
+  if (after.shortGoalie) await fillFromWaitlist(env, ev, team, 'goalie');
+  if (after.shortSkaters) await fillFromWaitlist(env, ev, team, 'skater');
+  return new Response('ok');
+}
+
+async function subPool(db, eventId) {
+  return (await db.prepare(
+    `SELECT c.player_id, c.name, c.role, r.team AS placed, a.status AS said
+       FROM contacts c
+       LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+       LEFT JOIN availability a ON a.event_id = ? AND a.player_id = c.player_id
+      WHERE c.role IN ('sub_skater','sub_goalie') AND c.opted_out = 0
+      ORDER BY c.role, c.name`
+  ).bind(eventId, eventId).all()).results || [];
+}
+
+async function rosterGoalies(db, eventId, team) {
+  const rows = (await db.prepare(
+    `SELECT r.player_id, r.status, COALESCE(c.is_goalie,0) as is_goalie, COALESCE(c.is_backup_goalie,0) as is_backup_goalie
+       FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND r.team = ? AND (c.is_goalie = 1 OR c.is_backup_goalie = 1)`
+  ).bind(eventId, team).all()).results || [];
+
+  const primary = rows.find(r => r.is_goalie === 1);
+  if (primary && primary.status !== 'out') {
+    return [primary.player_id];
+  }
+  const backup = rows.find(r => r.is_backup_goalie === 1);
+  if (backup) {
+    return [backup.player_id];
+  }
+  return primary ? [primary.player_id] : [];
+}
+
+async function availRoute(req, env, url) {
+  const eventId = url.searchParams.get('e');
+  const playerId = url.searchParams.get('p');
+  const need = url.searchParams.get('n');
+  const ans = url.searchParams.get('a');
+  const token = url.searchParams.get('t');
+  if (!['goalie', 'skater'].includes(need)) return notice('Lien incomplet', 'Incomplete link');
+
+  const c = await getContact(env.DB, playerId);
+  if (!c) return notice('Joueur inconnu', 'Unknown player');
+  const want = await hmac(env.RSVP_SECRET, `a:${eventId}:${playerId}:${need}:${c.token_salt}`);
+  if (!same(want, token)) return notice('Lien invalide ou expiré', 'Invalid or expired link');
+
+  const ev = await getEvent(env.DB, eventId);
+  if (!ev) return notice('Match introuvable', 'Game not found');
+  if (ev.state !== 'open') return notice('Les réponses sont fermées', 'Responses are closed');
+
+  const w = whenLine(ev);
+  await env.DB.prepare(
+    `UPDATE contacts SET asked_streak = 0, answered_ever = 1, dormant = 0
+      WHERE player_id = ?`).bind(playerId).run();
+
+  if (ans === 'no') {
+    await env.DB.prepare(
+      `INSERT INTO availability (event_id,player_id,need,status,answered_at)
+       VALUES (?,?,?,'no',?) ON CONFLICT(event_id,player_id,need) DO UPDATE SET status='no'`
+    ).bind(eventId, playerId, need, new Date().toISOString()).run();
+    return notice('Merci, noté', 'Thanks, noted');
+  }
+
+  const r = await acceptAvailability(env, ev, playerId, need);
+  const logoTooltip = await getStandingsTooltip(env);
+  if (r.placed) {
+    const shirt = need === 'goalie'
+      ? { fr: 'Pas besoin de chandail d\u2019équipe.', en: 'No team shirt needed.' }
+      : { fr: `Apporte un chandail ${SHIRT_FR[r.placed] || r.placed.toLowerCase()}.`,
+          en: `Bring a ${r.placed.toLowerCase()} shirt.` };
+    return page('Confirmé', `<h1>Tu joues avec ${esc(TEAM_FR[r.placed] || r.placed)}
+      <span class="en">You are with ${esc(r.placed)}</span></h1>
+      <p class="when">${esc(w.fr)}</p>
+      <div class="card"><p>${shirt.fr}<span class="en">${shirt.en}</span></p></div>`, logoTooltip);
+  }
+  return page('Liste d\u2019attente', `<h1>Sur la liste d'attente
+    <span class="en">On the waitlist</span></h1>
+    <div class="card"><p>La place est comblée, mais si une autre équipe a besoin
+    de toi d'ici ${esc(w.fr)}, on te place automatiquement et on t'écrit.
+    <span class="en">That spot is filled. If another team needs you before the
+    game we place you automatically and email you.</span></p></div>`, logoTooltip);
+}
+
+function renderAdminTabs(here, isAuthed = false) {
+  return `<div class="picker" id="admin-nav-tabs" style="margin-bottom:14px;${isAuthed ? 'display:flex' : 'display:none'}">
+  <a class="tabbtn${here === 'board' ? ' on' : ''}" href="/admin/board" data-tab="board" data-fr="Tableau" data-en="Board">Tableau</a>
+  <a class="tabbtn${here === 'subs' ? ' on' : ''}" href="/admin/subs" data-tab="subs" data-fr="Substituts" data-en="Substitutes">Substituts</a>
+  <a class="tabbtn${here === 'teams' ? ' on' : ''}" href="/admin/teams" data-tab="teams" data-fr="Équipes 👥" data-en="Teams 👥">Équipes 👥</a>
+  <a class="tabbtn${here === 'season' ? ' on' : ''}" href="/admin/season" data-tab="season" data-fr="Saison 🏒" data-en="Season 🏒">Saison 🏒</a>
+  <a class="tabbtn${here === 'people' || here === 'contacts' ? ' on' : ''}" href="/admin/contacts" data-tab="contacts" data-fr="Contacts 📇" data-en="Contacts 📇">Contacts 📇</a>
+  <a class="tabbtn${here === 'schedule' ? ' on' : ''}" href="/admin/schedule" data-tab="schedule" data-fr="Calendrier 📅" data-en="Schedule 📅">Calendrier 📅</a>
+  <a class="tabbtn${here === 'emails' || here === 'comms' ? ' on' : ''}" href="/admin/comms" data-tab="comms" data-fr="Comms 💬" data-en="Comms 💬">Comms 💬</a>
+  <a class="tabbtn${here === 'finances' ? ' on' : ''}" href="/admin/finances" data-tab="finances" data-fr="Finances 💵" data-en="Finances 💵">Finances 💵</a>
+  <a class="tabbtn${here === 'review' ? ' on' : ''}" href="/admin/review" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>
+  <a class="tabbtn${here === 'polls' ? ' on' : ''}" href="/admin/polls" data-tab="polls" data-fr="Sondages 🗳️" data-en="Polls 🗳️">Sondages 🗳️</a>
+  <a class="tabbtn${here === 'recap' ? ' on' : ''}" href="/admin/season-recap" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>
+</div>
+<script>
+window.__updateAdminTabsLang = function(l) {
+  document.querySelectorAll('#admin-nav-tabs .tabbtn').forEach(function(btn) {
+    var t = l === 'en' ? btn.dataset.en : btn.dataset.fr;
+    if (t) btn.textContent = t;
+  });
+};
+if (window.__currentLang) window.__updateAdminTabsLang(window.__currentLang);
+</script>`;
+}
+const adminTabs = (here, isAuthed = false) => renderAdminTabs(here, isAuthed);
+
+function renderKeyGate(isAuthed = false) {
+  return `<div class="card" id="gate"${isAuthed ? ' style="display:none"' : ''}>
+    <h2 data-i18n="adminKeyTitle">Clé admin</h2>
+    <input id="key" type="password" placeholder="clé" data-i18n-ph="adminKeyPlaceholder" style="width:100%;font:inherit;
+      padding:11px;border:1px solid var(--rule2);border-radius:3px">
+    <div class="btns" style="margin-top:10px"><button class="btn" id="go" data-i18n="adminKeyBtn">OUVRIR</button></div>
+    <p class="state" id="err"></p>
+  </div>`;
+}
+const keyGate = renderKeyGate(false);
+
+async function boardPage(env = null, isAuthed = false) {
+  const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  return page('Tableau', `
+  ${adminTabs('board', isAuthed)}
+  <h1 data-i18n="pageTitle">Tableau</h1>
+  ${renderKeyGate(isAuthed)}
+  <div id="main"${isAuthed ? '' : ' style="display:none"'}></div>
+<script>
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+const $ = i => document.getElementById(i);
+const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let currentBoardData = null;
+let currentLang = window.__currentLang || (function() {
+  try {
+    var s = localStorage.getItem('smbhl_admin_lang');
+    if (s === 'fr' || s === 'en') return s;
+    if (/^en/i.test(navigator.language || '')) return 'en';
+  } catch(e) {}
+  return 'fr';
+})();
+
+const I18N_BOARD = {
+  fr: {
+    pageTitle: 'Tableau',
+    adminKeyTitle: 'Clé admin',
+    adminKeyPlaceholder: 'clé',
+    adminKeyBtn: 'OUVRIR',
+    errEnterKey: 'Entre la clé',
+    errKeyRejected: 'Clé refusée',
+    noOpenGame: 'Aucun match ouvert.',
+    printSheets: 'Imprimer feuilles de match ↗',
+    weekLabel: 'Semaine',
+    whatsappTitle: 'Liens WhatsApp permanents',
+    whatsappSub: 'Cliquer pour copier le lien public de la saison',
+    copiedToast: '✓ Copié !',
+    copyPrompt: 'Copier le lien pour WhatsApp :',
+    parityTitle: 'Équilibre des équipes',
+    paritySub: 'Points projetés par équipe (somme des pts/m des patineurs confirmés, sous sans historique = 1.0 pt/m)',
+    maxSpread: 'Écart max :',
+    avgPts: 'Moy.',
+    ptsPerGame: 'p/m',
+    ptsLabel: 'pts',
+    skatersLabel: 'patineurs',
+    statusBalanced: 'Équilibré',
+    statusModerate: 'Déséquilibre modéré',
+    statusSevere: 'Déséquilibre élevé',
+    swapTitle: 'Suggestion d’équilibrage des substituts',
+    swapExplain: (s1Name, s1Team, s1Ppg, s2Name, s2Team, s2Ppg) => 'Permuter <b>' + s1Name + '</b> (' + s1Team + ' · ' + s1Ppg + ' p/m) ⇄ <b>' + s2Name + '</b> (' + s2Team + ' · ' + s2Ppg + ' p/m)',
+    swapReduction: (oldSpread, newSpread, imp) => 'Réduirait l’écart entre équipes de <b>' + oldSpread + ' pts à ' + newSpread + ' pts</b> (-' + imp + ' pts)',
+    swapBtn: 'Permuter ⇄',
+    swappingBtn: 'Permutation…',
+    teamIncomplete: 'incomplète',
+    noAnswerYet: 'sans réponse pour l’instant',
+    teamLink: 'lien d’équipe',
+    waitlistTitle: 'Liste d’attente',
+    waitlistSub: 'Disponibles, non assignés',
+    waitlistAvailable: 'DISPO',
+    goalieShort: 'G',
+    skaterShort: 'joueur',
+    statusIn: 'PRÉSENT',
+    statusOut: 'ABSENT',
+    statusPrefill: 'prévu',
+    statusGuest: 'invité',
+    subSelectorPrefix: 'sub :',
+    diffFromAvg: (avg) => 'Écart avec la moyenne de la ligue (' + avg + ' pts)',
+    absencesTitle: '✈️ Absences futures déclarées (Joueurs réguliers)',
+    noAbsences: 'Aucune absence future enregistrée pour les joueurs réguliers.',
+    deleteBtn: 'Supprimer',
+    confirmDelAbsence: 'Supprimer cette absence planifiée ?',
+    goalieAlertBadge: '🥅 GARDIEN ⚠️'
+  },
+  en: {
+    pageTitle: 'Weekly Board',
+    adminKeyTitle: 'Admin Key',
+    adminKeyPlaceholder: 'key',
+    adminKeyBtn: 'OPEN',
+    errEnterKey: 'Enter key',
+    errKeyRejected: 'Key rejected',
+    noOpenGame: 'No open game.',
+    printSheets: 'Print Game Sheets ↗',
+    weekLabel: 'Week',
+    whatsappTitle: 'Permanent WhatsApp Links',
+    whatsappSub: 'Click to copy season public link',
+    copiedToast: '✓ Copied!',
+    copyPrompt: 'Copy link for WhatsApp:',
+    parityTitle: 'Weekly Parity Balance',
+    paritySub: 'Projected points per team (sum of confirmed skaters ppg, subs without history = 1.0 pt/g)',
+    maxSpread: 'Max spread:',
+    avgPts: 'Avg',
+    ptsPerGame: 'pt/g',
+    ptsLabel: 'pts',
+    skatersLabel: 'skaters',
+    statusBalanced: 'Balanced',
+    statusModerate: 'Moderate Imbalance',
+    statusSevere: 'High Imbalance',
+    swapTitle: 'Suggested Sub Rebalance',
+    swapExplain: (s1Name, s1Team, s1Ppg, s2Name, s2Team, s2Ppg) => 'Swap <b>' + s1Name + '</b> (' + s1Team + ' · ' + s1Ppg + ' pt/g) ⇄ <b>' + s2Name + '</b> (' + s2Team + ' · ' + s2Ppg + ' pt/g)',
+    swapReduction: (oldSpread, newSpread, imp) => 'Would reduce team spread from <b>' + oldSpread + ' pts to ' + newSpread + ' pts</b> (-' + imp + ' pts)',
+    swapBtn: 'Swap ⇄',
+    swappingBtn: 'Swapping…',
+    teamIncomplete: 'incomplete',
+    noAnswerYet: 'no response yet',
+    teamLink: 'team link',
+    waitlistTitle: 'Waitlist',
+    waitlistSub: 'Available, not yet placed',
+    waitlistAvailable: 'AVAIL',
+    goalieShort: 'G',
+    skaterShort: 'skater',
+    statusIn: 'CONFIRMED',
+    statusOut: 'OUT',
+    statusPrefill: 'planned',
+    statusGuest: 'guest',
+    subSelectorPrefix: 'sub:',
+    diffFromAvg: (avg) => 'Difference from league average (' + avg + ' pts)',
+    absencesTitle: '✈️ Planned Future Absences (Regular Players)',
+    noAbsences: 'No planned absences recorded yet.',
+    deleteBtn: 'Delete',
+    confirmDelAbsence: 'Remove this planned absence?',
+    goalieAlertBadge: '🥅 GOALIE ⚠️'
+  }
+};
+
+function t(k, ...args) {
+  const dict = I18N_BOARD[currentLang] || I18N_BOARD.fr;
+  const val = dict[k] != null ? dict[k] : (I18N_BOARD.fr[k] != null ? I18N_BOARD.fr[k] : k);
+  if (typeof val === 'function') return val(...args);
+  return val;
+}
+
+function applyLanguage(lang) {
+  currentLang = (lang === 'en') ? 'en' : 'fr';
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (k) {
+      const val = t(k);
+      if (typeof val === 'string') el.textContent = val;
+    }
+  });
+  document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+    const k = el.getAttribute('data-i18n-ph');
+    if (k) {
+      const val = t(k);
+      if (typeof val === 'string') el.placeholder = val;
+    }
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const k = el.getAttribute('data-i18n-title');
+    if (k) {
+      const val = t(k);
+      if (typeof val === 'string') el.title = val;
+    }
+  });
+  if (currentBoardData) {
+    renderBoardUI();
+  }
+}
+
+window.addEventListener('admin_lang_changed', (e) => {
+  if (e.detail && e.detail.lang) {
+    applyLanguage(e.detail.lang);
+  }
+});
+
+async function api(p) {
+  const r = await fetch(p, { headers: { 'x-admin': K } });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function who(p, team, eventId) {
+  const byLabel = p.status_by === 'prefill' ? t('statusPrefill') : esc(p.status_by);
+  const by = p.status !== 'pending' && p.status_by !== 'self'
+    ? '<span class="by">' + byLabel + '</span>' : '';
+  const ppgVal = p.is_goalie ? null : (p.ppg != null && p.ppg > 0 ? p.ppg : 1.0);
+  const gpLabel = currentLang === 'en' ? 'GP' : 'PJ';
+  const ppgTitle = (p.gp || 0) + ' ' + gpLabel + (p.pts != null ? ' · ' + p.pts + ' pts' : '');
+  const ppgTag = !p.is_goalie && ppgVal != null
+    ? '<span class="by" title="' + esc(ppgTitle) + '" style="font-weight:600;color:var(--soft)">' + ppgVal.toFixed(1) + ' ' + esc(t('ptsPerGame')) + '</span>'
+    : '';
+  let tag = '';
+  if (p.role === 'guest') {
+    tag = '<span class="by">' + esc(t('statusGuest')) + '</span>';
+  } else if (p.role === 'sub') {
+    const teams = ['Red','Blue','White','Black'];
+    const opts = teams.map(tOption => '<option value="' + tOption + '"' + (tOption === team ? ' selected' : '') + '>' + tOption + '</option>').join('');
+    tag = '<span class="by" style="margin-left:4px">' + esc(t('subSelectorPrefix')) + ' <select class="sub-team-sel" data-player="' + esc(p.player_id) + '" data-event="' + esc(eventId) + '" style="font:inherit;font-size:12px;padding:1px 4px;border:1px solid var(--rule2);border-radius:3px;background:#fff">' + opts + '</select></span>';
+  }
+  const posBadge = !p.is_goalie && p.position
+    ? '<span class="by" style="font-weight:700;margin-left:3px;color:' + (p.position === 'D' ? '#0369a1' : '#b45309') + ';background:' + (p.position === 'D' ? '#e0f2fe' : '#fef3c7') + ';padding:1px 4px;border-radius:3px">' + esc(p.position) + '</span>'
+    : '';
+  const g = p.is_goalie ? '<span class="by">G</span>' : posBadge;
+  const cls = p.status === 'in' ? 'in' : p.status === 'out' ? 'out' : 'pend';
+  const lbl = p.status === 'in' ? t('statusIn') : p.status === 'out' ? t('statusOut') : '—';
+  return '<tr><td>' + esc(p.name) + g + ppgTag + tag + by + '</td><td class="s ' + cls + '">' + lbl + '</td></tr>';
+}
+
+function renderBoardUI() {
+  if (!currentBoardData) return;
+  const d = currentBoardData;
+  if (!d.event) { $('main').innerHTML = '<div class="card"><p>' + esc(t('noOpenGame')) + '</p></div>'; return; }
+  const sheetLink = 'https://smbhl.com/team-sheets.html?week=' + encodeURIComponent(d.event.week);
+  let h = '';
+
+  if (d.events && d.events.length > 1) {
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">' +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+        '<label style="font-size:14px;color:var(--soft);font-weight:600">' + (currentLang === 'en' ? 'Game:' : 'Match :') + '</label>' +
+        '<select id="boardevsel" style="font:inherit;font-size:14px;padding:5px 8px;border:1px solid var(--rule2);border-radius:4px;background:#fff">' +
+          d.events.map(e => '<option value="' + esc(e.id) + '"' + (e.id === d.event.id ? ' selected' : '') + '>' +
+            esc(t('weekLabel')) + ' ' + esc(e.week) + ' · ' + esc(e.date) + (e.state === 'open' ? ' (' + (currentLang === 'en' ? 'open' : 'ouvert') + ')' : '') +
+          '</option>').join('') +
+        '</select>' +
+      '</div>' +
+      '<button type="button" class="mini" id="refreshboardbtn" style="font-size:13px;padding:5px 14px;cursor:pointer">' + (currentLang === 'en' ? 'REFRESH' : 'RAFRAÎCHIR') + '</button>' +
+    '</div>';
+  }
+
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">' +
+    '<p class="when" style="margin:0">' + esc(t('weekLabel')) + ' ' + esc(d.event.week) + ' · ' + esc(d.event.date) +
+    (d.event.start_time ? ' · ' + esc(d.event.start_time) : '') +
+    (d.event.venue ? ' · ' + esc(d.event.venue) : '') +
+    (d.event.state !== 'open' ? ' <span class="by">(' + esc(d.event.state) + ')</span>' : '') +
+    '</p>' +
+    '<a class="tabbtn" target="_blank" rel="noopener" href="' + sheetLink + '" style="background:var(--green);border-color:var(--green);color:#fff;font-weight:700">' + esc(t('printSheets')) + '</a>' +
+    '</div>';
+
+  const TEAM_STYLES = {
+    Red: 'background:#b3122c;border-color:#991024;color:#fff',
+    Blue: 'background:#17457f;border-color:#10325d;color:#fff',
+    White: 'background:#fff;border-color:#94a3b8;color:#0f172a',
+    Black: 'background:#16181d;border-color:#000;color:#fff'
+  };
+
+  if (d.teams && d.teams.length) {
+    h += '<div class="card" style="margin-bottom:14px;padding:9px 12px;background:#f0fdf4;border:1px solid #bbf7d0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">' +
+      '<div style="display:flex;align-items:center;gap:6px">' +
+        '<span style="font-size:16px">📲</span>' +
+        '<div>' +
+          '<b style="color:#15803d;font-size:13px;text-transform:uppercase;letter-spacing:0.04em">' + esc(t('whatsappTitle')) + '</b>' +
+          '<span style="font-size:11px;color:var(--soft);display:block;line-height:1.2">' + esc(t('whatsappSub')) + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+      d.teams.map(tItem => {
+        const publicUrl = 'https://rsvp.smbhl.com/t/' + tItem.team.toLowerCase();
+        const sty = TEAM_STYLES[tItem.team] || 'background:var(--ink);border-color:var(--ink);color:#fff';
+        return '<button type="button" class="mini copy-team-btn" data-team="' + esc(tItem.team) + '" data-link="' + esc(publicUrl) + '" title="' + esc(publicUrl) + '" style="font-size:13px;padding:5px 11px;font-weight:700;cursor:pointer;white-space:nowrap;margin-left:0;' + sty + '">' +
+          esc(tItem.team) + ' 📋</button>';
+      }).join('') +
+      '</div></div>';
+  }
+
+  if (d.balance && d.teams && d.teams.length) {
+    const b = d.balance;
+    const badgeColor = b.status === 'balanced' ? '#15803d' : b.status === 'moderate' ? '#b45309' : '#b91c1c';
+    const badgeBg = b.status === 'balanced' ? '#dcfce7' : b.status === 'moderate' ? '#fef3c7' : '#fee2e2';
+    const badgeBorder = b.status === 'balanced' ? '#86efac' : b.status === 'moderate' ? '#fde68a' : '#fca5a5';
+    const statusText = b.status === 'balanced' ? t('statusBalanced') : b.status === 'moderate' ? t('statusModerate') : t('statusSevere');
+
+    h += '<div class="card" style="margin-bottom:14px;padding:10px 14px;background:#f8fafc;border:1px solid var(--rule2)">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">' +
+        '<div style="display:flex;align-items:center;gap:6px">' +
+          '<span style="font-size:16px">⚖️</span>' +
+          '<div>' +
+            '<b style="color:var(--ink);font-size:13px;text-transform:uppercase;letter-spacing:0.04em">' + esc(t('parityTitle')) + '</b>' +
+            '<span style="font-size:11px;color:var(--soft);display:block;line-height:1.2">' + esc(t('paritySub')) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px">' +
+          '<span style="font-size:12px;color:var(--soft)">' + esc(t('maxSpread')) + ' <b style="color:var(--ink)">' + b.spread + ' ' + esc(t('ptsLabel')) + '</b> (' + esc(t('avgPts')) + ' ' + b.avg_pts + ' ' + esc(t('ptsLabel')) + ')</span>' +
+          '<span style="background:' + badgeBg + ';color:' + badgeColor + ';border:1px solid ' + badgeBorder + ';padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">' + esc(statusText) + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px">' +
+      d.teams.map(tItem => {
+        const sty = TEAM_STYLES[tItem.team] || 'background:var(--ink);color:#fff';
+        const netTxt = tItem.net_diff !== 0
+          ? ' <span style="font-size:11px;font-weight:600;color:' + (tItem.net_diff > 0 ? '#16a34a' : '#dc2626') + '" title="' + esc(t('diffFromAvg', b.avg_pts)) + '">(' + (tItem.net_diff > 0 ? '+' : '') + tItem.net_diff + ' ' + esc(t('ptsLabel')) + ')</span>' : '';
+        return '<div style="background:#fff;border:1px solid var(--rule);border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:3px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center">' +
+            '<span style="font-size:11px;font-weight:700;padding:1px 6px;border-radius:3px;' + sty + '">' + esc(tItem.team) + '</span>' +
+            '<span style="font-size:14px;font-weight:800;color:var(--ink)">' + (tItem.expected_pts != null ? tItem.expected_pts : '—') + ' ' + esc(t('ptsLabel')) + '</span>' +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--soft);display:flex;justify-content:space-between">' +
+            '<span>' + (tItem.confirmed_skaters || 0) + ' ' + esc(t('skatersLabel')) + ' · ' + (tItem.avg_ppg || 0) + ' ' + esc(t('ptsPerGame')) + '</span>' +
+            netTxt +
+          '</div>' +
+        '</div>';
+      }).join('') +
+      '</div></div>';
+
+    if (b.swapSuggestion) {
+      const s = b.swapSuggestion;
+      h += '<div class="card" style="margin-bottom:14px;padding:11px 14px;background:#fefce8;border:1px solid #fde047">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">' +
+          '<div style="display:flex;align-items:center;gap:8px">' +
+            '<span style="font-size:20px">💡</span>' +
+            '<div>' +
+              '<b style="color:#854d0e;font-size:13px;text-transform:uppercase;letter-spacing:0.03em">' + esc(t('swapTitle')) + '</b>' +
+              '<div style="font-size:12px;color:#713f12;margin-top:2px">' +
+                t('swapExplain', esc(s.sub1.name), esc(s.sub1.fromTeam), s.sub1.ppg, esc(s.sub2.name), esc(s.sub2.fromTeam), s.sub2.ppg) +
+                '<span style="display:block;font-size:11px;color:#a16207;margin-top:2px">' +
+                  t('swapReduction', s.oldSpread, s.newSpread, s.improvement) +
+                '</span>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          '<button type="button" class="mini swap-subs-btn" data-p1="' + esc(s.sub1.player_id) + '" data-t1="' + esc(s.sub1.toTeam) + '" data-p2="' + esc(s.sub2.player_id) + '" data-t2="' + esc(s.sub2.toTeam) + '" data-event="' + esc(d.event.id) + '" style="background:#854d0e;border-color:#713f12;color:#fff;font-weight:700;font-size:12px;padding:6px 14px;cursor:pointer;border-radius:4px;white-space:nowrap">' +
+            esc(t('swapBtn')) +
+          '</button>' +
+        '</div></div>';
+    }
+  }
+
+  for (const tItem of d.teams) {
+    const ptsBadge = tItem.expected_pts != null && tItem.confirmed_skaters > 0
+      ? ' <span class="by" style="font-weight:700;background:var(--card);color:var(--ink);border:1px solid var(--rule2);padding:1px 7px;border-radius:10px;font-size:12px;margin-left:6px" title="' + esc(t('parityTitle')) + '">⭐️ ' + tItem.expected_pts + ' ' + esc(t('ptsLabel')) + '</span>'
+      : '';
+    const avgPts = d.balance && d.balance.avg_pts ? d.balance.avg_pts : '';
+    const netBadge = tItem.net_diff != null && tItem.net_diff !== 0
+      ? ' <span class="by" style="font-size:11px;font-weight:700;color:' + (tItem.net_diff > 0 ? 'var(--green)' : 'var(--red)') + '" title="' + esc(t('diffFromAvg', avgPts)) + '">(' + (tItem.net_diff > 0 ? '+' : '') + tItem.net_diff + ' ' + esc(t('ptsLabel')) + ')</span>'
+      : '';
+    h += '<div class="card"><h2>' + esc(tItem.team) + ' — ' + tItem.skaters + ' + ' + tItem.goalies + 'G' +
+      ptsBadge + netBadge +
+      (tItem.short ? ' <span class="short">· ' + esc(t('teamIncomplete')) + '</span>' : '') +
+      '<div style="font-size:13px;font-weight:400;color:var(--soft);margin-top:2px">' + tItem.pending + ' ' + esc(t('noAnswerYet')) + '</div></h2>' +
+      '<table>' + tItem.rows.map(r => who(r, tItem.team, d.event.id)).join('') + '</table>' +
+      '<p class="state"><a href="' + esc(tItem.link) + '">' + esc(t('teamLink')) + '</a></p></div>';
+  }
+  if (d.waitlist.length) {
+    h += '<div class="card"><h2>' + esc(t('waitlistTitle')) + '<div style="font-size:13px;font-weight:400;color:var(--soft);margin-top:2px">' + esc(t('waitlistSub')) + '</div></h2><table>' +
+      d.waitlist.map(w => '<tr><td>' + esc(w.name) + '<span class="by">' +
+        (w.need === 'goalie' ? esc(t('goalieShort')) : esc(t('skaterShort'))) + '</span>' +
+        (w.ppg != null ? '<span class="by" style="font-weight:600;color:var(--soft)">' + w.ppg + ' ' + esc(t('ptsPerGame')) + '</span>' : '') +
+        '</td><td class="s">' + esc(t('waitlistAvailable')) + '</td></tr>').join('') +
+      '</table></div>';
+  }
+
+  const absences = d.planned_absences || [];
+  const absCount = absences.length;
+  h += '<div class="card" style="margin-top:14px">' +
+    '<h2 style="cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center" id="absencestoggle">' +
+      '<span>' + esc(t('absencesTitle')) + ' (' + absCount + ')</span>' +
+      '<span id="absencesarrow" style="font-size:12px;color:var(--soft)">' + (absCount ? '&#x25BE;' : '&#x25B8;') + '</span>' +
+    '</h2>' +
+    '<div id="absencesbody" style="' + (absCount ? '' : 'display:none;') + 'margin-top:10px">';
+
+  if (absCount === 0) {
+    h += '<p class="empty" style="margin:6px 0;font-size:13px;color:var(--soft)">' + esc(t('noAbsences')) + '</p>';
+  } else {
+    h += '<table style="width:100%;border-collapse:collapse">';
+    for (const a of absences) {
+      const gBadge = a.is_goalie ? ' <span style="background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;font-size:11px;font-weight:700">' + esc(t('goalieAlertBadge')) + '</span>' : '';
+      const tmSty = TEAM_STYLES[a.team] || 'background:var(--soft);color:#fff';
+      const tmBadge = a.team ? ' <span class="by" style="padding:1px 5px;border-radius:3px;' + tmSty + '">' + esc(a.team) + '</span>' : '';
+      const reasonTxt = a.reason ? ' <span style="font-size:11px;color:var(--soft)">(' + esc(a.reason) + ')</span>' : '';
+      h += '<tr style="border-bottom:1px solid var(--rule)">' +
+        '<td style="padding:6px 4px;font-weight:600;white-space:nowrap;width:110px">' + esc(a.date) + '</td>' +
+        '<td style="padding:6px 4px">' + esc(a.name) + tmBadge + gBadge + reasonTxt + '</td>' +
+        '<td style="padding:6px 4px;text-align:right;white-space:nowrap">' +
+          '<button type="button" class="mini del-absence-btn" data-id="' + esc(a.id) + '" style="font-size:11px;padding:2px 7px;color:#b91c1c;border-color:#fca5a5;background:#fff;cursor:pointer">' + esc(t('deleteBtn')) + '</button>' +
+        '</td>' +
+      '</tr>';
+    }
+    h += '</table>';
+  }
+  h += '</div></div>';
+
+  $('main').innerHTML = h;
+}
+
+let currentEventId = '';
+async function load(eventId) {
+  const targetId = eventId || currentEventId;
+  const param = targetId ? '?e=' + encodeURIComponent(targetId) : '';
+  currentBoardData = await api('/admin/board/data' + param);
+  if (currentBoardData?.event?.id) currentEventId = currentBoardData.event.id;
+  renderBoardUI();
+}
+
+document.addEventListener('change', async e => {
+  if (e.target.id === 'boardevsel') {
+    load(e.target.value);
+    return;
+  }
+  if (!e.target.classList.contains('sub-team-sel')) return;
+  const sel = e.target;
+  const playerId = sel.dataset.player;
+  const eventId = sel.dataset.event;
+  const newTeam = sel.value;
+  sel.disabled = true;
+  try {
+    const res = await fetch('/admin/subs/reassign', {
+      method: 'POST',
+      headers: { 'x-admin': K, 'content-type': 'application/json' },
+      body: JSON.stringify({ event_id: eventId, player_id: playerId, team: newTeam })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    load(currentEventId);
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+    load(currentEventId);
+  }
+});
+
+document.addEventListener('click', async e => {
+  if (e.target.id === 'refreshboardbtn') {
+    load(currentEventId);
+    return;
+  }
+  const swapBtn = e.target.closest('.swap-subs-btn');
+  if (swapBtn) {
+    const p1 = swapBtn.dataset.p1, t1 = swapBtn.dataset.t1;
+    const p2 = swapBtn.dataset.p2, t2 = swapBtn.dataset.t2;
+    const evId = swapBtn.dataset.event;
+    swapBtn.disabled = true;
+    swapBtn.textContent = t('swappingBtn');
+    try {
+      const res1 = await fetch('/admin/subs/reassign', {
+        method: 'POST',
+        headers: { 'x-admin': K, 'content-type': 'application/json' },
+        body: JSON.stringify({ event_id: evId, player_id: p1, team: t1 })
+      });
+      if (!res1.ok) throw new Error(await res1.text());
+      const res2 = await fetch('/admin/subs/reassign', {
+        method: 'POST',
+        headers: { 'x-admin': K, 'content-type': 'application/json' },
+        body: JSON.stringify({ event_id: evId, player_id: p2, team: t2 })
+      });
+      if (!res2.ok) throw new Error(await res2.text());
+      load(currentEventId);
+    } catch (err) {
+      alert('Erreur: ' + err.message);
+      load(currentEventId);
+    }
+    return;
+  }
+  const absToggle = e.target.closest('#absencestoggle');
+  if (absToggle) {
+    const body = $('absencesbody');
+    const arrow = $('absencesarrow');
+    if (body) {
+      const isHidden = body.style.display === 'none';
+      body.style.display = isHidden ? '' : 'none';
+      if (arrow) arrow.innerHTML = isHidden ? '&#x25BE;' : '&#x25B8;';
+    }
+    return;
+  }
+  const delAbsBtn = e.target.closest('.del-absence-btn');
+  if (delAbsBtn) {
+    const id = delAbsBtn.dataset.id;
+    if (!confirm(t('confirmDelAbsence'))) return;
+    delAbsBtn.disabled = true;
+    try {
+      const res = await fetch('/admin/absences', {
+        method: 'POST',
+        headers: { 'x-admin': K, 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', id })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      load(currentEventId);
+    } catch (err) {
+      alert('Erreur: ' + err.message);
+      load(currentEventId);
+    }
+    return;
+  }
+  const b = e.target.closest('.copy-team-btn');
+  if (!b) return;
+  const link = b.dataset.link;
+  const team = b.dataset.team;
+  if (!link) return;
+  const origHtml = b.innerHTML;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(link);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = link;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    b.innerHTML = esc(team) + ' ' + esc(t('copiedToast'));
+    setTimeout(() => { b.innerHTML = origHtml; }, 1800);
+  } catch (_) {
+    prompt(t('copyPrompt'), link);
+  }
+});
+
+async function unlock(candidate) {
+  const prev = K;
+  K = candidate;
+  try {
+    await load();
+    localStorage.setItem('adminkey', K);
+    try {
+      document.cookie = 'admin_key=' + encodeURIComponent(K) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure';
+    } catch (_) {}
+    if (window.history && window.history.replaceState) {
+      const u = new URL(location);
+      u.searchParams.delete('key'); u.searchParams.delete('k'); u.searchParams.delete('t');
+      window.history.replaceState({}, document.title, u.pathname + u.search);
+    }
+    $('gate').style.display = 'none';
+    $('main').style.display = '';
+    document.querySelectorAll('.picker').forEach(p => {
+      p.style.display = 'flex';
+      p.querySelectorAll('a').forEach(a => {
+        try {
+          const u = new URL(a.href, location.origin);
+          if (K) u.searchParams.set('key', K);
+          a.href = u.pathname + u.search;
+        } catch (_) {}
+      });
+    });
+    return true;
+  } catch (e) {
+    K = prev;
+    return false;
+  }
+}
+
+$('go').addEventListener('click', async () => {
+  const v = $('key').value.trim();
+  if (!v) { $('err').textContent = t('errEnterKey'); return; }
+  if (!await unlock(v)) $('err').textContent = t('errKeyRejected');
+});
+$('key').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+
+applyLanguage(currentLang);
+
+if (K) {
+  unlock(K);
+} else if (${isAuthed ? 'true' : 'false'}) {
+  $('gate').style.display = 'none';
+  $('main').style.display = '';
+  document.querySelectorAll('.picker').forEach(p => p.style.display = 'flex');
+  load();
+}
+</script>`, logoTooltip);
+}
+
+let DATA_CACHE = null, DATA_CACHE_TIME = 0;
+async function getPlayerStats(env) {
+  const now = Date.now();
+  if (DATA_CACHE && (now - DATA_CACHE_TIME < 600000)) {
+    return DATA_CACHE;
+  }
+  try {
+    const r = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
+    const d = await r.json();
+    const map = new Map();
+    for (const p of d.players || []) {
+      const c = p.career || {};
+      const gp = c.gp || 0;
+      const pts = c.pts || 0;
+      const ppg = gp > 0 ? +(pts / gp).toFixed(1) : null;
+      map.set(p.id, { ppg, gp, pts });
+    }
+    DATA_CACHE = map;
+    DATA_CACHE_TIME = now;
+    return map;
+  } catch (e) {
+    console.error('failed to fetch stats:', e);
+    return DATA_CACHE || new Map();
+  }
+}
+
+const PRIMARY_GOALIES = {
+  Blue: 'P0031',  // Anthony Saragoca
+  Black: 'P0089', // Francois Taillefer
+  White: 'P0133', // JP Flood
+  Red: 'P0299'    // Anthony Pietromonaco
+};
+
+function resolveTeamGoalies(rows, team = null) {
+  if (!rows || !rows.length) return rows;
+
+  const goalies = rows.filter(r => r.is_goalie === 1 || r.is_net_goalie);
+  if (goalies.length <= 1) {
+    if (goalies.length === 1) {
+      goalies[0].is_net_goalie = true;
+    }
+    return rows;
+  }
+
+  // More than 1 player has is_goalie = 1.
+  // In this league, each team can only have ONE starting goalie in net.
+  // When the main goalie is playing, any other goalie on the team plays as a skater and their points count.
+  const primaryId = team && PRIMARY_GOALIES[team] ? PRIMARY_GOALIES[team] : null;
+
+  // 1. If primary regular goalie is present and confirmed 'in', they start in net!
+  let starter = goalies.find(r => r.status === 'in' && (
+    (primaryId && r.player_id === primaryId) ||
+    (!primaryId && (r.player_id === 'P0031' || /saragoca/i.test(r.name || '')))
+  ));
+
+  // 2. If the primary goalie is not 'in' (e.g. absent/pending), check other confirmed goalies:
+  // Prefer confirmed sub goalies (called up for the game) or any confirmed goalie.
+  if (!starter) {
+    starter = goalies.find(r => r.status === 'in' && (r.role === 'sub' || r.role === 'guest'));
+  }
+  if (!starter) {
+    starter = goalies.find(r => r.status === 'in');
+  }
+
+  // 3. If no goalie is confirmed 'in' yet:
+  // The primary regular goalie is the designated starter (even if pending).
+  if (!starter) {
+    starter = goalies.find(r => r.status === 'pending' && (
+      (primaryId && r.player_id === primaryId) ||
+      (!primaryId && (r.player_id === 'P0031' || /saragoca/i.test(r.name || '')))
+    ));
+  }
+  if (!starter) {
+    starter = goalies.find(r => r.status === 'pending');
+  }
+  if (!starter) {
+    starter = goalies[0];
+  }
+
+  // Mark the chosen starter as the goalie in net.
+  // All other goalies on the team:
+  // - If they are absent ('out'), keep them as an absent goalie for sorting/display.
+  // - If they are 'in' or 'pending', they play as a regular/sub skater and their points count!
+  for (const r of goalies) {
+    if (r === starter) {
+      r.is_net_goalie = true;
+      r.is_goalie = 1;
+    } else {
+      r.is_net_goalie = false;
+      if (r.status === 'out') {
+        r.is_goalie = 1;
+      } else {
+        r.is_goalie = 0;
+        r.plays_as_skater = true;
+      }
+    }
+  }
+
+  return rows;
+}
+
+function sortTeamBoardRows(rows, team = null) {
+  resolveTeamGoalies(rows, team);
+  const hasConfirmedGoalie = rows.some(r => r.is_goalie === 1 && r.status === 'in');
+  return rows.slice().sort((a, b) => {
+    const getRank = r => {
+      // 5: Absent
+      if (r.status === 'out') return 5;
+      // 1: The G on top (confirmed goalie, or pending goalie if no goalie confirmed yet)
+      if (r.is_goalie === 1 && (r.status === 'in' || (!hasConfirmedGoalie && r.status === 'pending'))) {
+        return 1;
+      }
+      // 2: Regulars who confirmed
+      if (r.status === 'in' && r.role !== 'sub' && r.role !== 'guest') return 2;
+      // 3: Subs that confirmed
+      if (r.status === 'in') return 3;
+      // 4: Regulars that are unsure (pending)
+      if (r.status === 'pending') return 4;
+      return 5;
+    };
+    const rankA = getRank(a);
+    const rankB = getRank(b);
+    if (rankA !== rankB) return rankA - rankB;
+    if ((b.is_goalie || 0) !== (a.is_goalie || 0)) {
+      return (b.is_goalie || 0) - (a.is_goalie || 0);
+    }
+    return (a.name || '').localeCompare(b.name || '', 'fr', { sensitivity: 'base' });
+  });
+}
+
+function findBestSubSwap(teams, eventId) {
+  const subs = [];
+  for (const t of teams) {
+    for (const r of (t.rows || [])) {
+      if (!r.is_goalie && r.status === 'in' && (r.role === 'sub' || r.role === 'guest') && r.player_id) {
+        subs.push({
+          player_id: r.player_id,
+          name: r.name,
+          team: t.team,
+          ppg: r.effective_ppg || 1.0
+        });
+      }
+    }
+  }
+
+  if (subs.length < 2) return null;
+
+  const currentExpected = {};
+  for (const t of teams) currentExpected[t.team] = t.expected_pts;
+  const currentPts = Object.values(currentExpected);
+  const currentSpread = +(Math.max(...currentPts) - Math.min(...currentPts)).toFixed(1);
+
+  if (currentSpread < 1.0) return null;
+
+  let bestSwap = null;
+  let bestSpread = currentSpread;
+
+  for (let i = 0; i < subs.length; i++) {
+    for (let j = i + 1; j < subs.length; j++) {
+      const s1 = subs[i];
+      const s2 = subs[j];
+      if (s1.team === s2.team) continue;
+      if (Math.abs(s1.ppg - s2.ppg) < 0.05) continue;
+
+      const t1 = s1.team;
+      const t2 = s2.team;
+      const newT1Pts = +(currentExpected[t1] - s1.ppg + s2.ppg).toFixed(1);
+      const newT2Pts = +(currentExpected[t2] - s2.ppg + s1.ppg).toFixed(1);
+
+      const simPts = Object.keys(currentExpected).map(t => {
+        if (t === t1) return newT1Pts;
+        if (t === t2) return newT2Pts;
+        return currentExpected[t];
+      });
+
+      const simSpread = +(Math.max(...simPts) - Math.min(...simPts)).toFixed(1);
+
+      if (simSpread < bestSpread && (bestSpread - simSpread) >= 0.3) {
+        bestSpread = simSpread;
+        bestSwap = {
+          sub1: { player_id: s1.player_id, name: s1.name, fromTeam: s1.team, toTeam: s2.team, ppg: s1.ppg },
+          sub2: { player_id: s2.player_id, name: s2.name, fromTeam: s2.team, toTeam: s1.team, ppg: s2.ppg },
+          oldSpread: currentSpread,
+          newSpread: simSpread,
+          improvement: +(currentSpread - simSpread).toFixed(1),
+          eventId
+        };
+      }
+    }
+  }
+
+  return bestSwap;
+}
+
+function computeTeamBalance(teams, eventId = null) {
+  for (const t of teams) {
+    resolveTeamGoalies(t.rows || [], t.team);
+    const primaryId = t.team && PRIMARY_GOALIES[t.team] ? PRIMARY_GOALIES[t.team] : null;
+
+    let skater_count = 0;
+    let expected_pts = 0;
+    let roster_skater_count = 0;
+    let roster_expected_pts = 0;
+
+    for (const r of (t.rows || [])) {
+      // Skater PPG calculation
+      const effective_ppg = (r.ppg != null && r.ppg > 0) ? r.ppg : 1.0;
+
+      // Regular roster expected points:
+      // Primary regular goalie counts as 0. All other regular roster players count as skaters.
+      if (r.role === 'roster') {
+        const hasPrimary = primaryId && (t.rows || []).some(row => row.player_id === primaryId);
+        const isRosterGoalie = hasPrimary
+          ? (r.player_id === primaryId)
+          : (r.is_goalie === 1 && !r.plays_as_skater);
+        if (!isRosterGoalie) {
+          roster_skater_count++;
+          roster_expected_pts += effective_ppg;
+        }
+      }
+
+      // Active game lineup:
+      // If this player is the starting goalie in net for this match, effective_ppg is 0
+      if (r.is_goalie === 1) {
+        r.effective_ppg = 0;
+        continue;
+      }
+
+      // Otherwise, player is skating
+      r.effective_ppg = effective_ppg;
+
+      if (r.status === 'in') {
+        skater_count++;
+        expected_pts += effective_ppg;
+      }
+    }
+
+    t.confirmed_skaters = skater_count;
+    t.expected_pts = +(expected_pts).toFixed(1);
+    t.roster_expected_pts = +(roster_expected_pts).toFixed(1);
+    t.avg_ppg = skater_count > 0 ? +(expected_pts / skater_count).toFixed(2) : 0;
+  }
+
+  const ptsList = teams.map(t => t.expected_pts || 0);
+  const min_pts = ptsList.length ? Math.min(...ptsList) : 0;
+  const max_pts = ptsList.length ? Math.max(...ptsList) : 0;
+  const spread = +(max_pts - min_pts).toFixed(1);
+  const avg_pts = ptsList.length ? +(ptsList.reduce((a, b) => a + b, 0) / ptsList.length).toFixed(1) : 0;
+
+  // Calculate delta against the league average (avg_pts)
+  for (const t of teams) {
+    t.net_diff = +(t.expected_pts - avg_pts).toFixed(1);
+  }
+
+  let status = 'balanced';
+  let statusText = 'Alignements équilibrés / Balanced';
+  if (spread > 2.5) {
+    status = 'unbalanced';
+    statusText = 'Écart élevé / High disparity';
+  } else if (spread > 1.5) {
+    status = 'moderate';
+    statusText = 'Écart modéré / Moderate spread';
+  }
+
+  const swapSuggestion = findBestSubSwap(teams, eventId);
+
+  return {
+    min_pts,
+    max_pts,
+    avg_pts,
+    spread,
+    status,
+    statusText,
+    swapSuggestion
+  };
+}
+
+async function boardData(env, url = null) {
+  const reqEventId = url ? url.searchParams.get('e') : null;
+  let ev = null;
+  if (reqEventId) {
+    ev = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(reqEventId).first();
+  }
+  if (!ev) {
+    ev = await env.DB.prepare("SELECT * FROM events WHERE state='open' ORDER BY week LIMIT 1").first();
+  }
+  if (!ev) {
+    try {
+      await ensureNextEvent(env);
+      ev = await env.DB.prepare("SELECT * FROM events WHERE state='open' ORDER BY week LIMIT 1").first();
+    } catch (_) {}
+  }
+  if (!ev) {
+    ev = await env.DB.prepare("SELECT * FROM events WHERE state != 'cancelled' ORDER BY id DESC LIMIT 1").first()
+      || await env.DB.prepare('SELECT * FROM events ORDER BY id DESC LIMIT 1').first();
+  }
+
+  const events = (await env.DB.prepare(
+    `SELECT id, week, date, state FROM events WHERE state != 'cancelled' ORDER BY id DESC LIMIT 10`
+  ).all()).results || [];
+
+  if (!ev) return Response.json({ event: null, events: [], teams: [], waitlist: [] });
+
+  const statsMap = await getPlayerStats(env);
+  const teams = [];
+  for (const team of TEAMS) {
+    const rows = (await env.DB.prepare(
+      `SELECT r.player_id, r.guest_name, r.status, r.role, r.status_by,
+              COALESCE(c.name, r.guest_name) AS name, COALESCE(c.is_goalie,0) AS is_goalie,
+              c.position
+         FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
+        WHERE r.event_id = ? AND r.team = ?
+        ORDER BY (r.status='in') DESC, (r.role='guest'), name`
+    ).bind(ev.id, team).all()).results || [];
+    for (const r of rows) {
+      if (r.player_id) {
+        const st = statsMap.get(r.player_id);
+        r.ppg = st ? st.ppg : null;
+        r.gp = st ? st.gp : null;
+        r.pts = st ? st.pts : null;
+      }
+    }
+    const sortedRows = sortTeamBoardRows(rows, team);
+    const st = await teamState(env.DB, ev.id, team);
+    const salt = await teamSalt(env.DB, ev.season, team);
+    const tk = await hmac(env.RSVP_SECRET, teamMsg(ev.season, team, salt));
+    teams.push({ team, rows: sortedRows, skaters: st.skaters, goalies: st.goalies, short: st.short,
+      pending: rows.filter(r => r.status === 'pending').length,
+      link: `${env.PUBLIC_URL}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${team}&t=${tk}` });
+  }
+
+  const balance = computeTeamBalance(teams, ev.id);
+
+  const waitlist = (await env.DB.prepare(
+    `SELECT c.player_id, c.name, a.need FROM availability a JOIN contacts c ON c.player_id = a.player_id
+      WHERE a.event_id = ? AND a.status = 'yes'
+        AND a.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)
+      ORDER BY a.answered_at`).bind(ev.id, ev.id).all()).results || [];
+  for (const w of waitlist) {
+    if (w.player_id) {
+      const st = statsMap.get(w.player_id);
+      w.ppg = st ? st.ppg : null;
+      w.gp = st ? st.gp : null;
+      w.pts = st ? st.pts : null;
+    }
+  }
+
+  const planned_absences = await getPlannedAbsencesForSeason(env.DB, ev.season);
+  return Response.json({ event: ev, events, teams, waitlist, planned_absences, balance });
+}
+
+async function subsPage(env = null, isAuthed = false) {
+  const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  return page('Substituts', `
+  ${adminTabs('subs', isAuthed)}
+  <h1 data-i18n="pageTitle">Substituts sollicités</h1>
+  ${renderKeyGate(isAuthed)}
+  <div id="main"${isAuthed ? '' : ' style="display:none"'}>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+      <div id="evpicker"></div>
+      <button class="mini" id="refreshbtn" style="font-size:14px;padding:6px 14px" data-i18n="refreshBtn">RAFRAÎCHIR</button>
+    </div>
+    <div id="whendiv"></div>
+    <div class="card" id="statscard"></div>
+    <div class="card" id="shortcard"></div>
+    <div class="card">
+      <h2 data-i18n="invitedSubsTitle">Substituts sollicités pour ce match</h2>
+      <table id="substable"></table>
+    </div>
+    <div class="card">
+      <h2 style="cursor:pointer;user-select:none" id="pooltoggle">
+        <span data-i18n="poolTitle">Bassin disponible restant</span> (<span id="poolcount">0</span>) <span id="poolarrow">&#x25BE;</span>
+        <div style="font-size:12px;font-weight:normal;color:var(--soft)" data-i18n="poolToggleSub">(cliquer pour afficher/masquer)</div>
+      </h2>
+      <table id="pooltable" style="display:none;margin-top:10px"></table>
+    </div>
+  </div>
+<script>
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+const $ = i => document.getElementById(i);
+const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let currentEventId = '';
+let currentSubsData = null;
+let currentLang = window.__currentLang || (function() {
+  try {
+    var s = localStorage.getItem('smbhl_admin_lang');
+    if (s === 'fr' || s === 'en') return s;
+    if (/^en/i.test(navigator.language || '')) return 'en';
+  } catch(e) {}
+  return 'fr';
+})();
+
+const I18N_SUBS = {
+  fr: {
+    pageTitle: 'Substituts sollicités',
+    adminKeyTitle: 'Clé admin',
+    adminKeyPlaceholder: 'clé',
+    adminKeyBtn: 'OUVRIR',
+    errEnterKey: 'Entre la clé',
+    errKeyRejected: 'Clé refusée',
+    gameLabel: 'Match :',
+    refreshBtn: 'RAFRAÎCHIR',
+    weekLabel: 'Semaine',
+    openSuffix: '(ouvert)',
+    noGameFound: 'Aucun match trouvé.',
+    atAGlance: 'Sommaire',
+    invited: 'sollicités',
+    placed: 'confirmés',
+    waitlist: 'liste d’attente',
+    awaitingReply: 'en attente',
+    inQueue: 'file d’attente',
+    declined: 'refusés',
+    failed: 'échecs',
+    openSpots: 'Besoins par équipe',
+    skatersLabel: 'patineurs',
+    needed: 'manquant',
+    full: 'complet',
+    callWaves: 'LANCER LES VAGUES',
+    callingWaves: '...',
+    invitedSubsTitle: 'Substituts sollicités pour ce match',
+    noSubsInvited: 'Aucun substitut sollicité pour ce match.',
+    skaterShort: 'joueur',
+    goalieShort: 'G',
+    preferredPrefix: 'préf :',
+    ptsPerGame: 'pts/m',
+    dormantBadge: 'en veille',
+    noAnswerStreak: 'sans rép.',
+    sentAtPrefix: 'Envoyé',
+    reminderTag: 'rappel',
+    scheduledForPrefix: 'Prévu',
+    forTeamPrefix: 'pour',
+    answeredAtPrefix: 'répondu',
+    statusPlaced: 'PRÉSENT —',
+    statusWaitlist: 'LISTE D’ATTENTE',
+    statusWaitlistSub: 'disponible',
+    statusDeclined: 'REFUSÉ',
+    statusDeclinedSub: 'non dispo',
+    statusAwaiting: 'EN ATTENTE',
+    statusReminded: 'rappelé',
+    statusNoAnswer: 'pas de réponse',
+    statusFailed: '⚠️ ÉCHEC',
+    statusFailedDetail: 'courriel rejeté',
+    statusQueued: 'FILE D’ATTENTE',
+    statusQueuedSub: 'vague future',
+    statusCancelled: 'ANNULÉ',
+    statusCancelledSub: 'place comblée',
+    poolTitle: 'Bassin disponible restant',
+    poolToggleSub: '(cliquer pour afficher/masquer)',
+    allPoolInvited: 'Tout le bassin a été sollicité ou est affecté.',
+    neverAsked: 'jamais',
+    lastInvitePrefix: 'Dernière invite :',
+    lastGamePrefix: 'Dernier match :',
+    statusNotAsked: 'NON SOLLICITÉ'
+  },
+  en: {
+    pageTitle: 'Substitute Manager',
+    adminKeyTitle: 'Admin Key',
+    adminKeyPlaceholder: 'key',
+    adminKeyBtn: 'OPEN',
+    errEnterKey: 'Enter key',
+    errKeyRejected: 'Key rejected',
+    gameLabel: 'Game:',
+    refreshBtn: 'REFRESH',
+    weekLabel: 'Week',
+    openSuffix: '(open)',
+    noGameFound: 'No game found.',
+    atAGlance: 'At a Glance',
+    invited: 'invited',
+    placed: 'confirmed',
+    waitlist: 'waitlist',
+    awaitingReply: 'awaiting reply',
+    inQueue: 'in queue',
+    declined: 'declined',
+    failed: 'failed',
+    openSpots: 'Open Spots Remaining',
+    skatersLabel: 'skaters',
+    needed: 'needed',
+    full: 'full',
+    callWaves: 'LAUNCH WAVES',
+    callingWaves: '...',
+    invitedSubsTitle: 'Subs Invited & Response Status',
+    noSubsInvited: 'No subs invited for this game.',
+    skaterShort: 'skater',
+    goalieShort: 'G',
+    preferredPrefix: 'pref:',
+    ptsPerGame: 'pt/g',
+    dormantBadge: 'dormant',
+    noAnswerStreak: 'no answer',
+    sentAtPrefix: 'Sent',
+    reminderTag: 'reminder',
+    scheduledForPrefix: 'Scheduled',
+    forTeamPrefix: 'for',
+    answeredAtPrefix: 'replied',
+    statusPlaced: 'CONFIRMED —',
+    statusWaitlist: 'WAITLIST',
+    statusWaitlistSub: 'available',
+    statusDeclined: 'DECLINED',
+    statusDeclinedSub: 'unavailable',
+    statusAwaiting: 'AWAITING REPLY',
+    statusReminded: 'reminded',
+    statusNoAnswer: 'no response',
+    statusFailed: '⚠️ FAILED',
+    statusFailedDetail: 'email bounced',
+    statusQueued: 'IN QUEUE',
+    statusQueuedSub: 'future wave',
+    statusCancelled: 'CANCELLED',
+    statusCancelledSub: 'spot filled',
+    poolTitle: 'Remaining Sub Pool',
+    poolToggleSub: '(click to toggle)',
+    allPoolInvited: 'Entire pool has been contacted or assigned.',
+    neverAsked: 'never',
+    lastInvitePrefix: 'Last invite:',
+    lastGamePrefix: 'Last game:',
+    statusNotAsked: 'NOT CONTACTED'
+  }
+};
+
+function t(k, ...args) {
+  const dict = I18N_SUBS[currentLang] || I18N_SUBS.fr;
+  const val = dict[k] != null ? dict[k] : (I18N_SUBS.fr[k] != null ? I18N_SUBS.fr[k] : k);
+  if (typeof val === 'function') return val(...args);
+  return val;
+}
+
+function applyLanguage(lang) {
+  currentLang = (lang === 'en') ? 'en' : 'fr';
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (k) {
+      const val = t(k);
+      if (typeof val === 'string') el.textContent = val;
+    }
+  });
+  document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+    const k = el.getAttribute('data-i18n-ph');
+    if (k) {
+      const val = t(k);
+      if (typeof val === 'string') el.placeholder = val;
+    }
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const k = el.getAttribute('data-i18n-title');
+    if (k) {
+      const val = t(k);
+      if (typeof val === 'string') el.title = val;
+    }
+  });
+  if (currentSubsData) {
+    renderSubsUI();
+  }
+}
+
+window.addEventListener('admin_lang_changed', (e) => {
+  if (e.detail && e.detail.lang) {
+    applyLanguage(e.detail.lang);
+  }
+});
+
+async function api(p, opts) {
+  const r = await fetch(p, Object.assign({ headers: { 'x-admin': K, 'content-type': 'application/json' } }, opts));
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const daysFr = ['dim','lun','mar','mer','jeu','ven','sam'];
+  const daysEn = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const days = currentLang === 'en' ? daysEn : daysFr;
+  const day = days[d.getDay()];
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return day + ' ' + h + ':' + m;
+}
+
+function renderSubsUI() {
+  if (!currentSubsData) return;
+  const d = currentSubsData;
+  if (!d.event) {
+    $('main').innerHTML = '<div class="card"><p>' + esc(t('noGameFound')) + '</p></div>';
+    return;
+  }
+  currentEventId = d.event.id;
+
+  if (d.events && d.events.length > 1) {
+    let sel = '<label style="font-size:14px;color:var(--soft);margin-right:6px">' + esc(t('gameLabel')) + '</label>' +
+      '<select id="evsel" style="font:inherit;font-size:14px;padding:5px 8px;border:1px solid var(--rule2);border-radius:3px">';
+    for (const e of d.events) {
+      sel += '<option value="' + esc(e.id) + '"' + (e.id === d.event.id ? ' selected' : '') + '>' +
+        esc(t('weekLabel')) + ' ' + esc(e.week) + ' · ' + esc(e.date) + (e.state === 'open' ? ' ' + esc(t('openSuffix')) : '') + '</option>';
+    }
+    sel += '</select>';
+    $('evpicker').innerHTML = sel;
+    $('evsel').addEventListener('change', e => load(e.target.value));
+  } else {
+    $('evpicker').innerHTML = '';
+  }
+
+  $('whendiv').innerHTML = '<p class="when">' + esc(t('weekLabel')) + ' ' + esc(d.event.week) + ' · ' + esc(d.event.date) +
+    (d.event.start_time ? ' · ' + esc(d.event.start_time) : '') +
+    (d.event.venue ? ' · ' + esc(d.event.venue) : '') +
+    ' <span class="by">(' + esc(d.event.state) + ')</span></p>';
+
+  const st = d.stats || {};
+  $('statscard').innerHTML = '<h2>' + esc(t('atAGlance')) + '</h2>' +
+    '<ul class="counts">' +
+    '<li><b>' + (st.total || 0) + '</b>' + esc(t('invited')) + '</li>' +
+    '<li><b style="color:var(--green)">' + (st.placed || 0) + '</b>' + esc(t('placed')) + '</li>' +
+    '<li><b style="color:var(--blue)">' + (st.waitlist || 0) + '</b>' + esc(t('waitlist')) + '</li>' +
+    '<li><b style="color:var(--soft)">' + (st.sent || 0) + '</b>' + esc(t('awaitingReply')) + '</li>' +
+    '<li><b style="color:var(--orange)">' + (st.queued || 0) + '</b>' + esc(t('inQueue')) + '</li>' +
+    '<li><b style="color:var(--red)">' + (st.declined || 0) + '</b>' + esc(t('declined')) + '</li>' +
+    (st.failed ? '<li><b style="color:var(--red)">' + st.failed + '</b>' + esc(t('failed')) + '</li>' : '') +
+    '</ul>';
+
+  let shHtml = '<h2>' + esc(t('openSpots')) + '</h2>' +
+    '<ul class="counts">';
+  for (const s of (d.shortages || [])) {
+    const isShort = s.openGoalies > 0 || s.openSkaters > 0;
+    const shortTxt = isShort
+      ? '<span class="short">' + (s.openGoalies > 0 ? s.openGoalies + 'G ' : '') +
+        (s.openSkaters > 0 ? s.openSkaters + ' ' + esc(t('skaterShort')) + '(s) ' : '') + esc(t('needed')) + '</span>'
+      : '<span style="color:var(--green)">' + esc(t('full')) + '</span>';
+    const btn = isShort
+      ? '<div style="margin-top:6px"><button class="mini in" data-call-team="' + esc(s.team) +
+        '" data-call-need="' + (s.openGoalies > 0 ? 'goalie' : 'skater') +
+        '">' + esc(t('callWaves')) + '</button></div>'
+      : '';
+    shHtml += '<li><b>' + esc(s.team) + '</b>' + shortTxt +
+      '<div style="font-size:12px;color:var(--soft);margin-top:2px">' + s.skaters + ' ' + esc(t('skatersLabel')) + ', ' + s.goalies + 'G</div>' + btn + '</li>';
+  }
+  shHtml += '</ul>';
+  $('shortcard').innerHTML = shHtml;
+
+  if (!d.subs || !d.subs.length) {
+    $('substable').innerHTML = '<tr><td style="padding:12px 0;color:var(--soft)">' + esc(t('noSubsInvited')) + '</td></tr>';
+  } else {
+    let rows = '';
+    for (const s of d.subs) {
+      const g = s.is_goalie ? '<span class="by" style="font-weight:700">G</span>' : '<span class="by">' + esc(t('skaterShort')) + '</span>';
+      const pref = s.preferred_team ? '<span class="by" style="color:var(--blue)">' + esc(t('preferredPrefix')) + ' ' + esc(s.preferred_team) + '</span>' : '';
+      const ppgTag = s.ppg != null ? '<span class="by" title="' + (s.gp || 0) + ' ' + (currentLang === 'en' ? 'GP' : 'PJ') + '" style="font-weight:600;color:var(--soft)">' + s.ppg + ' ' + esc(t('ptsPerGame')) + '</span>' : '';
+      const streak = s.dormant
+        ? '<span class="by" style="color:var(--red)">' + esc(t('dormantBadge')) + '</span>'
+        : (s.asked_streak > 3 ? '<span class="by">' + s.asked_streak + ' ' + esc(t('noAnswerStreak')) + '</span>' : '');
+
+      let subInfo = '';
+      if (s.sent_at) {
+        subInfo += esc(t('sentAtPrefix')) + ' ' + fmtTime(s.sent_at);
+        if (s.isReminderSent) subInfo += ' · <span style="color:var(--orange)">' + esc(t('reminderTag')) + '</span>';
+      } else if (s.send_after) {
+        subInfo += esc(t('scheduledForPrefix')) + ' ' + fmtTime(s.send_after);
+      }
+      if (s.teamTarget) {
+        subInfo += (subInfo ? ' · ' : '') + esc(t('forTeamPrefix')) + ' ' + esc(s.teamTarget);
+      }
+      if (s.answered_at) {
+        subInfo += (subInfo ? ' · ' : '') + esc(t('answeredAtPrefix')) + ' ' + fmtTime(s.answered_at);
+      }
+      const infoSpan = subInfo ? '<div style="font-size:13px;color:var(--faint);margin-top:2px">' + subInfo + '</div>' : '';
+
+      let statusHtml = '';
+      if (s.statusCode === 'placed') {
+        const teams = ['Red','Blue','White','Black'];
+        const opts = teams.map(tOption => '<option value="' + tOption + '"' + (tOption === s.placed_team ? ' selected' : '') + '>' + tOption + '</option>').join('');
+        const teamSel = '<select class="sub-team-sel" data-player="' + esc(s.player_id) + '" data-event="' + esc(currentEventId) + '" style="font:inherit;font-size:12px;padding:2px 4px;border:1px solid var(--rule2);border-radius:3px;background:#fff;margin-left:4px">' + opts + '</select>';
+        statusHtml = '<span class="in" style="font-weight:700">' + esc(t('statusPlaced')) + ' </span>' + teamSel +
+          (s.placed_by && s.placed_by !== 'self' ? '<div class="by">' + esc(s.placed_by === 'auto' ? 'auto' : s.placed_by) + '</div>' : '');
+      } else if (s.statusCode === 'waitlist') {
+        statusHtml = '<span style="color:var(--blue);font-weight:700">' + esc(t('statusWaitlist')) + '</span><div class="by">' + esc(t('statusWaitlistSub')) + '</div>';
+      } else if (s.statusCode === 'declined') {
+        statusHtml = '<span class="out" style="font-weight:700">' + esc(t('statusDeclined')) + '</span><div class="by">' + esc(t('statusDeclinedSub')) + '</div>';
+      } else if (s.statusCode === 'sent') {
+        statusHtml = '<span class="pend" style="font-weight:700">' + esc(t('statusAwaiting')) + '</span>' +
+          (s.isReminderSent ? '<div class="by" style="color:var(--orange)">' + esc(t('statusReminded')) + '</div>' : '<div class="by">' + esc(t('statusNoAnswer')) + '</div>');
+      } else if (s.statusCode === 'failed') {
+        statusHtml = '<span class="out" style="font-weight:700">' + esc(t('statusFailed')) + '</span><div class="by" style="color:var(--red)">' + esc(s.statusDetail || t('statusFailedDetail')) + '</div>';
+      } else if (s.statusCode === 'queued') {
+        statusHtml = '<span style="color:var(--orange);font-weight:700">' + esc(t('statusQueued')) + '</span><div class="by">' + esc(t('statusQueuedSub')) + '</div>';
+      } else if (s.statusCode === 'cancelled') {
+        statusHtml = '<span class="by" style="opacity:.6">' + esc(t('statusCancelled')) + '</span><div class="by">' + esc(t('statusCancelledSub')) + '</div>';
+      } else {
+        statusHtml = '<span class="pend">—</span>';
+      }
+
+      rows += '<tr><td><div><b>' + esc(s.name) + '</b> ' + g + pref + ppgTag + streak + '</div>' + infoSpan + '</td>' +
+        '<td class="s" style="vertical-align:top;white-space:nowrap">' + statusHtml + '</td></tr>';
+    }
+    $('substable').innerHTML = rows;
+  }
+
+  const rem = d.remaining || [];
+  $('poolcount').textContent = rem.length;
+  if (!rem.length) {
+    $('pooltable').innerHTML = '<tr><td style="color:var(--soft)">' + esc(t('allPoolInvited')) + '</td></tr>';
+  } else {
+    let prows = '';
+    for (const p of rem) {
+      const roleTxt = p.is_goalie ? 'G' : esc(t('skaterShort'));
+      const pref = p.preferred_team ? '<span class="by" style="color:var(--blue)">' + esc(t('preferredPrefix')) + ' ' + esc(p.preferred_team) + '</span>' : '';
+      const ppgTag = p.ppg != null ? '<span class="by" title="' + (p.gp || 0) + ' ' + (currentLang === 'en' ? 'GP' : 'PJ') + '" style="font-weight:600;color:var(--soft)">' + p.ppg + ' ' + esc(t('ptsPerGame')) + '</span>' : '';
+      const lastAskedTxt = p.last_asked ? fmtTime(p.last_asked) : esc(t('neverAsked'));
+      const lastPlayedTxt = p.last_played ? esc(p.last_played) : '—';
+      const stateTxt = p.dormant
+        ? '<span class="by" style="color:var(--red)">' + esc(t('dormantBadge')) + ' (' + p.asked_streak + ')</span>'
+        : (p.asked_streak > 3 ? '<span class="by">' + p.asked_streak + ' ' + esc(t('noAnswerStreak')) + '</span>' : '');
+      prows += '<tr><td' + (p.dormant ? ' style="opacity:.6"' : '') + '><b>' + esc(p.name) + '</b> ' +
+        '<span class="by">' + roleTxt + '</span>' + pref + ppgTag + stateTxt +
+        '<div style="font-size:13px;color:var(--faint)">' + esc(t('lastInvitePrefix')) + ' ' + lastAskedTxt + ' · ' + esc(t('lastGamePrefix')) + ' ' + lastPlayedTxt + '</div></td>' +
+        '<td class="s"><span class="by">' + esc(t('statusNotAsked')) + '</span></td></tr>';
+    }
+    $('pooltable').innerHTML = prows;
+  }
+
+  document.querySelectorAll('[data-call-team]').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true;
+    b.textContent = t('callingWaves');
+    try {
+      await api('/admin/subs/call', { method: 'POST', body: JSON.stringify({
+        event_id: currentEventId, team: b.dataset.callTeam, need: b.dataset.callNeed }) });
+      load(currentEventId);
+    } catch (e) {
+      alert(e.message);
+      b.disabled = false;
+      b.textContent = t('callWaves');
+    }
+  }));
+
+  document.querySelectorAll('.sub-team-sel').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const playerId = sel.dataset.player;
+      const eventId = sel.dataset.event;
+      const newTeam = sel.value;
+      sel.disabled = true;
+      try {
+        const res = await fetch('/admin/subs/reassign', {
+          method: 'POST',
+          headers: { 'x-admin': K, 'content-type': 'application/json' },
+          body: JSON.stringify({ event_id: eventId, player_id: playerId, team: newTeam })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        load(currentEventId);
+      } catch (err) {
+        alert('Erreur: ' + err.message);
+        load(currentEventId);
+      }
+    });
+  });
+}
+
+async function load(eventId) {
+  const url = '/admin/subs/data' + (eventId ? '?e=' + encodeURIComponent(eventId) : '');
+  currentSubsData = await api(url);
+  renderSubsUI();
+}
+
+async function unlock(candidate) {
+  const prev = K;
+  K = candidate;
+  try {
+    await api('/admin/subs/data');
+    localStorage.setItem('adminkey', K);
+    try {
+      document.cookie = 'admin_key=' + encodeURIComponent(K) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure';
+    } catch (_) {}
+    if (window.history && window.history.replaceState) {
+      const u = new URL(location);
+      u.searchParams.delete('key'); u.searchParams.delete('k'); u.searchParams.delete('t');
+      window.history.replaceState({}, document.title, u.pathname + u.search);
+    }
+    $('gate').style.display = 'none';
+    $('main').style.display = '';
+    document.querySelectorAll('.picker').forEach(p => {
+      p.style.display = 'flex';
+      p.querySelectorAll('a').forEach(a => {
+        try {
+          const u = new URL(a.href, location.origin);
+          if (K) u.searchParams.set('key', K);
+          a.href = u.pathname + u.search;
+        } catch (_) {}
+      });
+    });
+    load();
+    return true;
+  } catch (e) {
+    K = prev;
+    return false;
+  }
+}
+
+$('go').addEventListener('click', async () => {
+  const v = $('key').value.trim();
+  if (!v) { $('err').textContent = t('errEnterKey'); return; }
+  if (!await unlock(v)) $('err').textContent = t('errKeyRejected');
+});
+$('key').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+$('refreshbtn').addEventListener('click', () => load(currentEventId));
+$('pooltoggle').addEventListener('click', () => {
+  const tEl = $('pooltable');
+  const open = tEl.style.display !== 'none';
+  tEl.style.display = open ? 'none' : '';
+  const arrow = $('poolarrow');
+  if (arrow) arrow.innerHTML = open ? '&#x25BE;' : '&#x25B4;';
+});
+
+applyLanguage(currentLang);
+
+if (K) {
+  unlock(K);
+} else if (${isAuthed ? 'true' : 'false'}) {
+  $('gate').style.display = 'none';
+  $('main').style.display = '';
+  document.querySelectorAll('.picker').forEach(p => p.style.display = 'flex');
+  load();
+}
+</script>`, logoTooltip);
+}
+
+async function subsData(env, url) {
+  const reqEventId = url.searchParams.get('e');
+  let ev;
+  if (reqEventId) {
+    ev = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(reqEventId).first();
+  }
+  if (!ev) {
+    ev = await env.DB.prepare("SELECT * FROM events WHERE state='open' ORDER BY week LIMIT 1").first();
+  }
+  if (!ev) {
+    ev = await env.DB.prepare('SELECT * FROM events ORDER BY id DESC LIMIT 1').first();
+  }
+
+  const events = (await env.DB.prepare(
+    `SELECT id, week, date, state FROM events ORDER BY id DESC LIMIT 10`
+  ).all()).results || [];
+
+  if (!ev) return Response.json({ event: null, events: [], stats: {}, shortages: [], subs: [], remaining: [] });
+
+  const statsMap = await getPlayerStats(env);
+
+  const shortages = [];
+  for (const team of TEAMS) {
+    const st = await teamState(env.DB, ev.id, team);
+    const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie');
+    const openSkaters = await openSpots(env.DB, ev.id, team, 'skater');
+    shortages.push({
+      team,
+      skaters: st.skaters,
+      goalies: st.goalies,
+      openGoalies,
+      openSkaters,
+      short: st.short
+    });
+  }
+
+  const contactsList = (await env.DB.prepare(
+    `SELECT player_id, name, email, role, is_goalie, dormant, asked_streak, last_asked, last_played, opted_out, preferred_team
+       FROM contacts`
+  ).all()).results || [];
+  const contactMap = new Map(contactsList.map(c => [c.player_id, c]));
+
+  const outboxRows = (await env.DB.prepare(
+    `SELECT id, kind, event_id, player_id, team, dedup_key, payload, send_after, sent_at, cancelled, error, created_at
+       FROM outbox
+      WHERE event_id = ? AND kind = 'sub_call'
+      ORDER BY id ASC`
+  ).bind(ev.id).all()).results || [];
+
+  const availRows = (await env.DB.prepare(
+    `SELECT player_id, need, status, answered_at
+       FROM availability
+      WHERE event_id = ?`
+  ).bind(ev.id).all()).results || [];
+  const availMap = new Map();
+  for (const a of availRows) {
+    availMap.set(a.player_id, a);
+  }
+
+  const rsvpRows = (await env.DB.prepare(
+    `SELECT player_id, guest_name, team, status, role, status_by, updated_at
+       FROM rsvp
+      WHERE event_id = ?`
+  ).bind(ev.id).all()).results || [];
+  const rsvpMap = new Map();
+  for (const r of rsvpRows) {
+    if (r.player_id) rsvpMap.set(r.player_id, r);
+  }
+
+  const invitedPlayerIds = new Set();
+  const playerOutbox = new Map();
+  for (const o of outboxRows) {
+    if (!o.player_id) continue;
+    invitedPlayerIds.add(o.player_id);
+    if (!playerOutbox.has(o.player_id)) playerOutbox.set(o.player_id, []);
+    playerOutbox.get(o.player_id).push(o);
+  }
+  for (const a of availRows) invitedPlayerIds.add(a.player_id);
+  for (const r of rsvpRows) {
+    if (r.role === 'sub' && r.player_id) invitedPlayerIds.add(r.player_id);
+  }
+
+  const subs = [];
+  for (const pid of invitedPlayerIds) {
+    const contact = contactMap.get(pid) || { player_id: pid, name: pid, email: null, role: 'sub_skater', is_goalie: 0 };
+    const outs = playerOutbox.get(pid) || [];
+    const avail = availMap.get(pid);
+    const rsvp = rsvpMap.get(pid);
+
+    let need = contact.is_goalie || contact.role === 'sub_goalie' ? 'goalie' : 'skater';
+    let teamTarget = null;
+    let initialSendAfter = null;
+    let initialSentAt = null;
+    let isReminderSent = false;
+    let isCancelled = false;
+    let isQueued = false;
+    let errorMsg = null;
+
+    for (const o of outs) {
+      const pl = JSON.parse(o.payload || '{}');
+      if (pl.need) need = pl.need;
+      if (o.team) teamTarget = o.team;
+      if (pl.reminder && o.sent_at) isReminderSent = true;
+      if (!initialSendAfter || o.send_after < initialSendAfter) initialSendAfter = o.send_after;
+      if (o.sent_at && (!initialSentAt || o.sent_at < initialSentAt)) initialSentAt = o.sent_at;
+      if (o.cancelled) isCancelled = true;
+      if (!o.sent_at && !o.cancelled) isQueued = true;
+      if (o.error) errorMsg = o.error;
+    }
+
+    let statusCode = 'pending';
+    let statusLabelFr = '';
+    let statusLabelEn = '';
+    let statusDetail = '';
+    let sortPriority = 99;
+
+    if (rsvp && rsvp.role === 'sub' && rsvp.status === 'in') {
+      statusCode = 'placed';
+      sortPriority = 1;
+      statusLabelFr = `Confirmé — ${rsvp.team}`;
+      statusLabelEn = `Confirmed — ${rsvp.team}`;
+      const byDesc = rsvp.status_by === 'auto' ? 'promu auto' : (rsvp.status_by === 'self' ? 'réponse directe' : rsvp.status_by);
+      statusDetail = `${rsvp.team} (${byDesc})`;
+    } else if (avail && avail.status === 'yes') {
+      statusCode = 'waitlist';
+      sortPriority = 2;
+      statusLabelFr = "Liste d'attente";
+      statusLabelEn = 'Waitlist';
+      statusDetail = 'Disponible, en attente de place';
+    } else if (avail && avail.status === 'no') {
+      statusCode = 'declined';
+      sortPriority = 5;
+      statusLabelFr = 'Refusé';
+      statusLabelEn = 'Declined';
+      statusDetail = 'a dit non';
+    } else if (initialSentAt) {
+      statusCode = 'sent';
+      sortPriority = 3;
+      statusLabelFr = isReminderSent ? 'En attente (rappel envoyé)' : 'En attente de réponse';
+      statusLabelEn = isReminderSent ? 'Awaiting (reminder sent)' : 'Awaiting response';
+      statusDetail = isReminderSent ? 'Rappel envoyé' : 'Courriel envoyé';
+    } else if (errorMsg && !initialSentAt) {
+      statusCode = 'failed';
+      sortPriority = 3.5;
+      statusLabelFr = "⚠️ Échec d'envoi";
+      statusLabelEn = '⚠️ Delivery Failed';
+      statusDetail = (errorMsg.includes('422') || errorMsg.toLowerCase().includes('email')) ? 'Courriel invalide / rejeté' : 'Erreur d\'envoi';
+    } else if (isQueued) {
+      statusCode = 'queued';
+      sortPriority = 4;
+      statusLabelFr = "Dans la file d'attente";
+      statusLabelEn = 'Queued';
+      statusDetail = initialSendAfter ? `Prévu: ${initialSendAfter.slice(11, 16)}` : 'Vague future';
+    } else if (isCancelled) {
+      statusCode = 'cancelled';
+      sortPriority = 6;
+      statusLabelFr = 'Annulé';
+      statusLabelEn = 'Cancelled';
+      statusDetail = 'Place déjà comblée';
+    } else {
+      statusCode = 'pending';
+      sortPriority = 7;
+      statusLabelFr = 'Inconnu';
+      statusLabelEn = 'Unknown';
+    }
+
+    const st = statsMap.get(pid);
+    subs.push({
+      player_id: pid,
+      name: contact.name,
+      email: contact.email,
+      need,
+      role: contact.role,
+      is_goalie: contact.is_goalie === 1,
+      dormant: contact.dormant === 1,
+      asked_streak: contact.asked_streak || 0,
+      teamTarget,
+      statusCode,
+      sortPriority,
+      statusLabelFr,
+      statusLabelEn,
+      statusDetail,
+      answered_at: avail ? avail.answered_at : null,
+      sent_at: initialSentAt,
+      send_after: initialSendAfter,
+      placed_team: rsvp && rsvp.status === 'in' ? rsvp.team : null,
+      placed_by: rsvp ? rsvp.status_by : null,
+      preferred_team: contact.preferred_team || null,
+      isReminderSent,
+      errorMsg,
+      ppg: st ? st.ppg : null,
+      gp: st ? st.gp : null
+    });
+  }
+
+  // Deduplicate subs by player_id and normalized name
+  const dedupedSubsMap = new Map();
+  for (const s of subs) {
+    const key = cleanName(s.name) || s.player_id;
+    if (!dedupedSubsMap.has(key)) {
+      dedupedSubsMap.set(key, s);
+    } else {
+      const existing = dedupedSubsMap.get(key);
+      if (s.sortPriority < existing.sortPriority) {
+        dedupedSubsMap.set(key, s);
+      }
+    }
+  }
+  const finalSubs = Array.from(dedupedSubsMap.values());
+
+  finalSubs.sort((a, b) => {
+    if (a.sortPriority !== b.sortPriority) return a.sortPriority - b.sortPriority;
+    return a.name.localeCompare(b.name);
+  });
+
+  const stats = {
+    total: finalSubs.length,
+    placed: finalSubs.filter(s => s.statusCode === 'placed').length,
+    waitlist: finalSubs.filter(s => s.statusCode === 'waitlist').length,
+    sent: finalSubs.filter(s => s.statusCode === 'sent').length,
+    queued: finalSubs.filter(s => s.statusCode === 'queued').length,
+    declined: finalSubs.filter(s => s.statusCode === 'declined').length,
+    cancelled: finalSubs.filter(s => s.statusCode === 'cancelled').length,
+    failed: finalSubs.filter(s => s.statusCode === 'failed').length
+  };
+
+  const remaining = contactsList
+    .filter(c => ['sub_skater', 'sub_goalie'].includes(c.role) && !invitedPlayerIds.has(c.player_id) && !c.opted_out)
+    .map(c => {
+      const st = statsMap.get(c.player_id);
+      return {
+        player_id: c.player_id,
+        name: c.name,
+        email: c.email,
+        role: c.role,
+        is_goalie: c.is_goalie === 1,
+        dormant: c.dormant === 1,
+        asked_streak: c.asked_streak || 0,
+        last_asked: c.last_asked,
+        last_played: c.last_played,
+        preferred_team: c.preferred_team || null,
+        ppg: st ? st.ppg : null,
+        gp: st ? st.gp : null
+      };
+    })
+    .sort((a, b) => {
+      if (a.dormant !== b.dormant) return a.dormant ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+
+  return Response.json({
+    event: ev,
+    events,
+    stats,
+    shortages,
+    subs: finalSubs,
+    remaining
+  });
+}
+
+async function peoplePage(env = null, isAuthed = false) {
+  const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  return page('Contacts', `
+  <style>
+    .wrap { max-width: 1150px !important; }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .stat-icon { font-size: 28px; line-height: 1; }
+    .stat-num { font-family: 'Barlow Condensed', sans-serif; font-size: 26px; font-weight: 700; line-height: 1; color: var(--ink); }
+    .stat-label { font-size: 13px; color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+
+    .team-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .team-badge.Red { background: #b3122c; color: #fff; }
+    .team-badge.Blue { background: #17457f; color: #fff; }
+    .team-badge.White { background: #fff; color: #0f172a; border: 1px solid #94a3b8; }
+    .team-badge.Black { background: #16181d; color: #fff; }
+
+    .pos-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 700;
+      margin-right: 6px;
+    }
+    .pos-G { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+    .pos-D { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+    .pos-F { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+
+    .contact-tbl {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    .contact-tbl th {
+      text-align: left;
+      padding: 8px 10px;
+      background: #f8fafc;
+      border-bottom: 2px solid var(--rule);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--soft);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .contact-tbl td {
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--rule);
+      vertical-align: middle;
+    }
+    .contact-tbl tr:hover td {
+      background: #fafbfc;
+    }
+    .contact-input {
+      font: inherit;
+      font-size: 13px;
+      padding: 5px 8px;
+      border: 1px solid var(--rule2);
+      border-radius: 3px;
+      transition: border-color .15s, background-color .15s;
+      box-sizing: border-box;
+    }
+    .contact-input:focus {
+      border-color: var(--blue);
+      outline: none;
+    }
+    .contact-input.saved {
+      border-color: var(--green, #15803d) !important;
+      background-color: #f0fdf4 !important;
+    }
+    .contact-input.invalid {
+      border-color: var(--red, #ef4444) !important;
+      background-color: #fef2f2 !important;
+    }
+
+    .tbl-wrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      margin-top: 6px;
+    }
+
+    .sec-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .sec-header h2 {
+      margin: 0;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .collapsible-header {
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      background: #f8fafc;
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .collapsible-body {
+      padding: 14px;
+      border: 1px solid var(--rule);
+      border-top: none;
+      background: var(--card);
+      border-radius: 0 0 4px 4px;
+    }
+  </style>
+
+  ${adminTabs('contacts', isAuthed)}
+  <h1 data-i18n="title">Contacts & Coordonnées</h1>
+  ${renderKeyGate(isAuthed)}
+  <div id="main"${isAuthed ? '' : ' style="display:none"'}>
+    <!-- Active season info banner -->
+    <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:4px; padding:10px 14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <div>
+        <span style="font-size:15px; font-weight:700; color:#15803d;">🏒 <span data-i18n="activeSeasonLbl">Saison active :</span> <span id="lbl-season">—</span></span>
+        <span style="font-size:13px; color:var(--soft); margin-left:8px; display:inline-block;" data-i18n="bannerDesc">Coordonnées officielles pour les convocations et communications (courriel & SMS futur). Alignement de la saison en cours et substituts disponibles.</span>
+      </div>
+      <div id="msg" style="font-size:13px; font-weight:600;"></div>
+    </div>
+
+    <!-- Stat cards -->
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-icon">🏒</div>
+        <div>
+          <div class="stat-num" id="cnt-roster">0</div>
+          <div class="stat-label" data-i18n="cardRoster">Réguliers alignés</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">🧤</div>
+        <div>
+          <div class="stat-num" id="cnt-skater">0</div>
+          <div class="stat-label" data-i18n="cardSkaters">Substituts Joueurs</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">🥅</div>
+        <div>
+          <div class="stat-num" id="cnt-goalie">0</div>
+          <div class="stat-label" data-i18n="cardGoalies">Substituts Gardiens</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">📦</div>
+        <div>
+          <div class="stat-num" id="cnt-archived" style="color:var(--soft);">0</div>
+          <div class="stat-label" data-i18n="cardArchived">Archivés & Inactifs</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">📱</div>
+        <div>
+          <div class="stat-num" id="cnt-phones">0</div>
+          <div class="stat-label" data-i18n="cardPhones">Téléphones enregistrés</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Search & Filter bar -->
+    <div class="card" style="margin-bottom:14px; padding:12px;">
+      <div style="display:flex; gap:10px; align-items:center;">
+        <span style="font-size:18px;">🔍</span>
+        <input type="search" id="filter-contacts" data-i18n-ph="filterPh" placeholder="Filtrer par nom, équipe, courriel ou téléphone..." style="width:100%; font:inherit; font-size:15px; padding:8px 12px; border:1px solid var(--rule2); border-radius:3px; outline:none;">
+      </div>
+    </div>
+
+    <!-- Add Sub Collapsible -->
+    <details class="card" style="margin-bottom:16px; padding:0; overflow:hidden;">
+      <summary class="collapsible-header">
+        <span>➕ <span data-i18n="addSubSummary">Ajouter un nouveau substitut (joueur externe ou historique SMBHL)</span></span>
+        <span style="font-size:12px; font-weight:normal; color:var(--soft);" data-i18n="clickToOpen">(cliquer pour ouvrir)</span>
+      </summary>
+      <div class="collapsible-body">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:18px;">
+          <!-- Left: External person -->
+          <div>
+            <h3 style="margin-top:0; font-family:'Barlow Condensed',sans-serif; font-size:17px; font-weight:700;" data-i18n="extPersonTitle">Nouvelle personne externe</h3>
+            <p style="font-size:13px; color:var(--soft); margin:0 0 8px;" data-i18n="extPersonDesc">Quelqu'un qui n'est pas encore dans l'historique SMBHL.</p>
+            <input id="nname" data-i18n-ph="namePh" placeholder="Prénom Nom *" style="width:100%; font:inherit; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:6px;">
+            <input id="nmail" type="email" data-i18n-ph="mailPh" placeholder="Courriel (optionnel)" style="width:100%; font:inherit; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:6px;">
+            <input id="nphone" type="tel" data-i18n-ph="phonePh" placeholder="Téléphone (optionnel, ex: 514-555-0123)" style="width:100%; font:inherit; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:8px;">
+            <div class="btns" style="display:flex; gap:8px;">
+              <button class="btn" id="njoueur" type="button" style="font-size:13px; padding:6px 12px;" data-i18n="btnSkater">+ JOUEUR</button>
+              <button class="btn" id="ngardien" type="button" style="font-size:13px; padding:6px 12px;" data-i18n="btnGoalie">+ GARDIEN</button>
+            </div>
+            <p class="state" id="nmsg" style="margin-top:6px; font-size:13px;"></p>
+          </div>
+
+          <!-- Right: League records search -->
+          <div>
+            <h3 style="margin-top:0; font-family:'Barlow Condensed',sans-serif; font-size:17px; font-weight:700;" data-i18n="recruitTitle">Recruter depuis l'historique SMBHL</h3>
+            <p style="font-size:13px; color:var(--soft); margin:0 0 8px;" data-i18n="recruitDesc">Rechercher un ancien joueur parmi les archives de la ligue.</p>
+            <input id="q" data-i18n-ph="searchLeaguePh" placeholder="Nom du joueur (taper au moins 2 lettres)..." style="width:100%; font:inherit; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px;">
+            <div id="hits" style="margin-top:8px;"></div>
+          </div>
+
+          <!-- Bottom: Season Tools & Batch Import -->
+          <div style="border-top:1px solid var(--rule2); padding-top:14px; grid-column:1/-1; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <div>
+              <div style="font-family:'Barlow Condensed',sans-serif; font-size:16px; font-weight:700;" data-i18n="initSeasonTitle">Initialisation de saison & Import global</div>
+              <div style="font-size:12px; color:var(--soft);" data-i18n="initSeasonDesc">Lors de l'import ou d'une nouvelle saison, tous les joueurs débutent comme substituts libres dans le pool.</div>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button class="mini" id="btn-import-all" type="button" data-i18n="btnImportAll">📥 Importer l'historique SMBHL en substituts</button>
+              <button class="mini out" id="btn-season-reset" type="button" data-i18n="btnSeasonReset">🔄 Démarrer nouvelle saison (remettre réguliers en subs)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <!-- Table 1: Alignement régulier -->
+    <div class="card" style="margin-bottom:16px;">
+      <div class="sec-header">
+        <h2>🏒 <span data-i18n="t1Title">Alignement Régulier</span> — <span id="lbl-season-title">Saison active</span></h2>
+        <span id="lbl-roster-count" style="font-size:13px; color:var(--soft);">32 joueurs confirmés pour la saison en cours</span>
+      </div>
+      <div class="tbl-wrap">
+        <table class="contact-tbl">
+          <thead>
+            <tr>
+              <th style="width:70px;" data-i18n="colPos">Pos</th>
+              <th style="min-width:180px;" data-i18n="colPlayer">Joueur</th>
+              <th style="width:90px;" data-i18n="colTeam">Équipe</th>
+              <th style="min-width:240px;" data-i18n="colEmail">Courriel</th>
+              <th style="min-width:160px;" data-i18n="colPhone">Téléphone / SMS</th>
+              <th style="width:110px; text-align:right;" data-i18n="colActions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="rr"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Table 2: Substituts Joueurs -->
+    <div class="card" style="margin-bottom:16px;">
+      <div class="sec-header">
+        <h2>🧤 <span data-i18n="t2Title">Substituts — Joueurs</span></h2>
+        <span id="sub-skater-desc" style="font-size:13px; color:var(--soft);"></span>
+      </div>
+      <div class="tbl-wrap">
+        <table class="contact-tbl">
+          <thead>
+            <tr>
+              <th style="min-width:200px;" data-i18n="colPlayer">Joueur</th>
+              <th style="width:130px;" data-i18n="colPrefTeam">Équipe préf.</th>
+              <th style="min-width:230px;" data-i18n="colEmail">Courriel</th>
+              <th style="min-width:150px;" data-i18n="colPhone">Téléphone / SMS</th>
+              <th style="min-width:140px; text-align:right;" data-i18n="colActions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="ss"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Table 3: Substituts Gardiens -->
+    <div class="card" style="margin-bottom:16px;">
+      <div class="sec-header">
+        <h2>🥅 <span data-i18n="t3Title">Substituts — Gardiens</span></h2>
+        <span id="sub-goalie-desc" style="font-size:13px; color:var(--soft);"></span>
+      </div>
+      <div class="tbl-wrap">
+        <table class="contact-tbl">
+          <thead>
+            <tr>
+              <th style="min-width:200px;" data-i18n="colGoalie">Gardien</th>
+              <th style="width:130px;" data-i18n="colPrefTeam">Équipe préf.</th>
+              <th style="min-width:230px;" data-i18n="colEmail">Courriel</th>
+              <th style="min-width:150px;" data-i18n="colPhone">Téléphone / SMS</th>
+              <th style="min-width:140px; text-align:right;" data-i18n="colActions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="sg"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Table 4: Archives & Inactifs -->
+    <div class="card" style="margin-bottom:16px;">
+      <div class="sec-header">
+        <h2>📦 <span data-i18n="t4Title">Archives & Inactifs — Pause de saison, blessures & retraités</span></h2>
+        <span id="lbl-archive-count" style="font-size:13px; color:var(--soft);"></span>
+      </div>
+      <p style="font-size:13px; color:var(--soft); margin:0 0 10px;" data-i18n="t4Desc">Joueurs réguliers en pause de saison, blessés, ou substituts inactifs/en veille (10+ convocations sans réponse). Leurs coordonnées restent sauvegardées mais ils ne reçoivent plus de courriels.</p>
+      <div class="tbl-wrap">
+        <table class="contact-tbl">
+          <thead>
+            <tr>
+              <th style="min-width:180px;" data-i18n="colPlayer">Joueur</th>
+              <th style="width:150px;" data-i18n="colPrevRole">Rôle précédent</th>
+              <th style="width:180px;" data-i18n="colReasonStatus">Motif / Statut</th>
+              <th style="min-width:230px;" data-i18n="colEmail">Courriel</th>
+              <th style="min-width:150px;" data-i18n="colPhone">Téléphone / SMS</th>
+              <th style="min-width:150px; text-align:right;" data-i18n="colActions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="sa"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+const I18N_CONTACTS = {
+  fr: {
+    title: "Contacts & Coordonnées",
+    activeSeasonLbl: "Saison active :",
+    bannerDesc: "Coordonnées officielles pour les convocations et communications (courriel & SMS futur). Alignement de la saison en cours et substituts disponibles.",
+    cardRoster: "Réguliers alignés",
+    cardSkaters: "Substituts Joueurs",
+    cardGoalies: "Substituts Gardiens",
+    cardArchived: "Archivés & Inactifs",
+    cardPhones: "Téléphones enregistrés",
+    filterPh: "Filtrer par nom, équipe, courriel ou téléphone...",
+    addSubSummary: "Ajouter un nouveau substitut (joueur externe ou historique SMBHL)",
+    clickToOpen: "(cliquer pour ouvrir)",
+    extPersonTitle: "Nouvelle personne externe",
+    extPersonDesc: "Quelqu'un qui n'est pas encore dans l'historique SMBHL.",
+    namePh: "Prénom Nom *",
+    mailPh: "Courriel (optionnel)",
+    phonePh: "Téléphone (optionnel, ex: 514-555-0123)",
+    btnSkater: "+ JOUEUR",
+    btnGoalie: "+ GARDIEN",
+    recruitTitle: "Recruter depuis l'historique SMBHL",
+    recruitDesc: "Rechercher un ancien joueur parmi les archives de la ligue.",
+    searchLeaguePh: "Nom du joueur (taper au moins 2 lettres)...",
+    initSeasonTitle: "Initialisation de saison & Import global",
+    initSeasonDesc: "Lors de l'import ou d'une nouvelle saison, tous les joueurs débutent comme substituts libres dans le pool.",
+    btnImportAll: "📥 Importer l'historique SMBHL en substituts",
+    btnSeasonReset: "🔄 Démarrer nouvelle saison (remettre réguliers en subs)",
+    t1Title: "Alignement Régulier",
+    t2Title: "Substituts — Joueurs",
+    t3Title: "Substituts — Gardiens",
+    t4Title: "Archives & Inactifs — Pause de saison, blessures & retraités",
+    t4Desc: "Joueurs réguliers en pause de saison, blessés, ou substituts inactifs/en veille (10+ convocations sans réponse). Leurs coordonnées restent sauvegardées mais ils ne reçoivent plus de courriels.",
+    colPos: "Pos",
+    colPlayer: "Joueur",
+    colGoalie: "Gardien",
+    colTeam: "Équipe",
+    colPrefTeam: "Équipe préf.",
+    colEmail: "Courriel",
+    colPhone: "Téléphone / SMS",
+    colActions: "Actions",
+    colPrevRole: "Rôle précédent",
+    colReasonStatus: "Motif / Statut",
+    confirmedPlayersDesc: "{n} joueurs confirmés pour la saison en cours",
+    subSkatersAvail: "{n} joueur{s} disponible{s}",
+    subGoaliesAvail: "{n} gardien{s} disponible{s}",
+    archivedDesc: "{n} joueur{s} archivé{s} ou inactif{s}",
+    savedMsg: "✓ Sauvegardé",
+    loadErrMsg: "Erreur chargement : ",
+    invalidEmailMsg: "⚠️ Format de courriel invalide",
+    phoneErrMsg: "⚠️ Erreur téléphone : ",
+    btnArchive: "ARCHIVER",
+    btnRestore: "⚡ RÉACTIVER",
+    btnToGoalie: "GARDIEN",
+    btnToSkater: "JOUEUR",
+    archivePromptTitle: "Archiver {name} ?\\n\\nIndiquez le motif en tapant un chiffre (1 à 4) :\\n1 - Pause de saison (Season off)\\n2 - Blessure (Injury)\\n3 - Retraite (Retired)\\n4 - Autre / Inactif",
+    restoreConfirm: "Réactiver {name} dans le pool de substituts ?\\n\\n(Le joueur débutera comme substitut et ne sera pas assigné d'office à une équipe).",
+    purgeConfirm: "Supprimer DEFINITIVEMENT {name} de la base de données ?\\n\\nAttention : toutes ses coordonnées seront effacées.",
+    importConfirm: "Importer tous les joueurs manquants de l'historique SMBHL comme substituts disponibles ?",
+    importSuccess: "✅ {n} joueurs importés avec succès comme substituts.",
+    seasonResetConfirm: "Êtes-vous certain de vouloir préparer une nouvelle saison ?\\n\\nTous les joueurs réguliers actuels deviendront substituts dans le pool libre (non assignés à une équipe).\\n\\nVous pourrez ensuite composer les nouvelles équipes dans l'onglet Équipes.\\n(Les joueurs archivés restent archivés).",
+    seasonResetSuccess: "✅ Réinitialisation réussie : {n} joueurs transférés au pool de substituts pour la nouvelle saison.",
+    emptyRoster: "Aucun joueur régulier trouvé pour cette saison.",
+    emptySkaters: "Aucun substitut joueur actif.",
+    emptyGoalies: "Aucun substitut gardien actif.",
+    emptyArchived: "Aucun joueur archivé ou inactif.",
+    alreadyEnrolled: "déjà inscrit",
+    noTeamOpt: "(aucune)",
+    reasonSeasonOff: "⏸️ Pause de saison",
+    reasonInjury: "🏥 Blessé",
+    reasonRetired: "🏁 Retraité",
+    reasonDormant: "💤 En veille ({n} sans rép.)",
+    reasonRemoved: "🚫 Retiré",
+    reasonInactive: "Inactif",
+    prevRegular: "Régulier",
+    prevSubGoalie: "Sub Gardien",
+    prevSubPlayer: "Sub Joueur",
+    btnBackupGoalieOn: "Gardien auxiliaire (cliquer pour retirer)",
+    btnBackupGoalieOff: "Désigner comme gardien auxiliaire"
+  },
+  en: {
+    title: "Player Contacts & Details",
+    activeSeasonLbl: "Active Season:",
+    bannerDesc: "Official contact details for invitations and communications (email & future SMS). Current season roster and available subs.",
+    cardRoster: "Roster Players",
+    cardSkaters: "Sub Skaters",
+    cardGoalies: "Sub Goalies",
+    cardArchived: "Archived & Inactive",
+    cardPhones: "Saved Phones",
+    filterPh: "Filter by name, team, email or phone...",
+    addSubSummary: "Add a New Sub (External player or SMBHL history)",
+    clickToOpen: "(click to open)",
+    extPersonTitle: "New External Person",
+    extPersonDesc: "Someone not yet in SMBHL league history.",
+    namePh: "Full Name *",
+    mailPh: "Email (optional)",
+    phonePh: "Phone (optional, e.g. 514-555-0123)",
+    btnSkater: "+ SKATER",
+    btnGoalie: "+ GOALIE",
+    recruitTitle: "Recruit from SMBHL History",
+    recruitDesc: "Search for a former player in the league archives.",
+    searchLeaguePh: "Player name (type at least 2 letters)...",
+    initSeasonTitle: "Season Initialization & Global Import",
+    initSeasonDesc: "During import or a new season, all players start as free subs in the pool.",
+    btnImportAll: "📥 Import SMBHL History as Subs",
+    btnSeasonReset: "🔄 Start New Season (Reset regulars to subs)",
+    t1Title: "Regular Roster",
+    t2Title: "Substitutes — Skaters",
+    t3Title: "Substitutes — Goalies",
+    t4Title: "Archives & Inactive — Season off, injuries & retired",
+    t4Desc: "Regular players on season break, injured, or inactive/dormant subs (10+ invites without response). Their contact info remains saved but they no longer receive emails.",
+    colPos: "Pos",
+    colPlayer: "Player",
+    colGoalie: "Goalie",
+    colTeam: "Team",
+    colPrefTeam: "Pref. Team",
+    colEmail: "Email",
+    colPhone: "Phone / SMS",
+    colActions: "Actions",
+    colPrevRole: "Previous Role",
+    colReasonStatus: "Reason / Status",
+    confirmedPlayersDesc: "{n} confirmed players for current season",
+    subSkatersAvail: "{n} skater{s} available",
+    subGoaliesAvail: "{n} goalie{s} available",
+    archivedDesc: "{n} player{s} archived or inactive",
+    savedMsg: "✓ Saved",
+    loadErrMsg: "Loading error: ",
+    invalidEmailMsg: "⚠️ Invalid email format",
+    phoneErrMsg: "⚠️ Phone error: ",
+    btnBackupGoalieOn: "Backup Goalie (click to unset)",
+    btnBackupGoalieOff: "Designate as backup goalie",
+    btnArchive: "ARCHIVE",
+    btnRestore: "⚡ REACTIVATE",
+    btnToGoalie: "GOALIE",
+    btnToSkater: "SKATER",
+    archivePromptTitle: "Archive {name}?\\n\\nEnter the reason by typing a number (1 to 4):\\n1 - Season off\\n2 - Injury\\n3 - Retired\\n4 - Other / Inactive",
+    restoreConfirm: "Reactivate {name} in the sub pool?\\n\\n(The player will start as a sub and will not be automatically assigned to a team).",
+    purgeConfirm: "PERMANENTLY delete {name} from the database?\\n\\nWarning: all contact information will be erased.",
+    importConfirm: "Import all missing players from SMBHL history as available subs?",
+    importSuccess: "✅ {n} players successfully imported as subs.",
+    seasonResetConfirm: "Are you sure you want to initialize a new season?\\n\\nAll current regular players will become free subs (unassigned).\\n\\nYou can then draft new teams in the Teams tab.\\n(Archived players remain archived).",
+    seasonResetSuccess: "✅ Reset successful: {n} players moved to the sub pool for the new season.",
+    emptyRoster: "No regular players found for this season.",
+    emptySkaters: "No active sub skaters.",
+    emptyGoalies: "No active sub goalies.",
+    emptyArchived: "No archived or inactive players.",
+    alreadyEnrolled: "already registered",
+    noTeamOpt: "(none)",
+    reasonSeasonOff: "⏸️ Season off",
+    reasonInjury: "🏥 Injured",
+    reasonRetired: "🏁 Retired",
+    reasonDormant: "💤 Dormant ({n} no resp.)",
+    reasonRemoved: "🚫 Inactive",
+    reasonInactive: "Inactive",
+    prevRegular: "Regular",
+    prevSubGoalie: "Sub Goalie",
+    prevSubPlayer: "Sub Skater"
+  }
+};
+
+let currentLang = (localStorage.getItem('admin_lang') || 'fr').toLowerCase();
+function t(k) {
+  const dict = I18N_CONTACTS[currentLang] || I18N_CONTACTS.fr;
+  return dict[k] !== undefined ? dict[k] : (I18N_CONTACTS.fr[k] || k);
+}
+
+let contactsData = null;
+
+function applyLanguage(lang) {
+  currentLang = (lang || 'fr').toLowerCase();
+  const dict = I18N_CONTACTS[currentLang] || I18N_CONTACTS.fr;
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (dict[key] !== undefined) el.textContent = dict[key];
+  });
+  document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+    const key = el.getAttribute('data-i18n-ph');
+    if (dict[key] !== undefined) el.setAttribute('placeholder', dict[key]);
+  });
+  if (contactsData) renderContacts(contactsData);
+}
+
+window.addEventListener('admin_lang_changed', e => {
+  applyLanguage(e.detail.lang);
+});
+
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '${isAuthed && env?.ADMIN_KEY ? env.ADMIN_KEY : ''}';
+if (K) { try { localStorage.setItem('adminkey', K); } catch (_) {} }
+const $ = i => document.getElementById(i);
+const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function api(path, opts) {
+  const headers = { 'content-type': 'application/json' };
+  if (K) headers['x-admin'] = K;
+  const r = await fetch(path, Object.assign({ headers }, opts));
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function flashSaved(pid, inputEl) {
+  if (inputEl) {
+    inputEl.classList.add('saved');
+    inputEl.classList.remove('invalid');
+    setTimeout(() => inputEl.classList.remove('saved'), 2000);
+  }
+  const st = $('st-' + pid);
+  if (st) {
+    st.style.opacity = '1';
+    setTimeout(() => { st.style.opacity = '0'; }, 2000);
+  }
+  $('msg').textContent = t('savedMsg');
+  $('msg').style.color = 'var(--green, #15803d)';
+  setTimeout(() => { if ($('msg').textContent === t('savedMsg')) $('msg').textContent = ''; }, 3000);
+}
+
+function updatePhoneCount() {
+  let count = 0;
+  document.querySelectorAll('[data-ph]').forEach(inp => {
+    if (inp.value && inp.value.trim().length > 0) count++;
+  });
+  $('cnt-phones').textContent = count;
+}
+
+function renderContacts(d) {
+  const season = d.current_season || (currentLang === 'en' ? 'Active season' : 'Saison active');
+  $('lbl-season').textContent = season;
+  $('lbl-season-title').textContent = season;
+
+  const rosterList = d.people.filter(p => p.role === 'roster');
+  const skaterList = d.people.filter(p => p.role === 'sub_skater');
+  const goalieList = d.people.filter(p => p.role === 'sub_goalie');
+  const archiveList = d.archived || d.people.filter(p => p.role === 'archived');
+
+  $('cnt-roster').textContent = d.counts?.roster || rosterList.length;
+  $('cnt-skater').textContent = d.counts?.sub_skater || skaterList.length;
+  $('cnt-goalie').textContent = d.counts?.sub_goalie || goalieList.length;
+  $('cnt-archived').textContent = d.counts?.archived != null ? d.counts.archived : archiveList.length;
+  
+  $('lbl-roster-count').textContent = t('confirmedPlayersDesc').replace('{n}', rosterList.length);
+  $('sub-skater-desc').textContent = t('subSkatersAvail').replace('{n}', skaterList.length).replace('{s}', skaterList.length > 1 ? 's' : '');
+  $('sub-goalie-desc').textContent = t('subGoaliesAvail').replace('{n}', goalieList.length).replace('{s}', goalieList.length > 1 ? 's' : '');
+  $('lbl-archive-count').textContent = t('archivedDesc').replace('{n}', archiveList.length).replace(/\{s\}/g, archiveList.length > 1 ? 's' : '');
+
+  const rowRoster = (p) => {
+    const isBackup = p.is_backup_goalie === 1;
+    const backupBtn = !p.is_goalie ? '<button type="button" class="mini ' + (isBackup ? 'in' : '') + '" data-toggle-backup="' + esc(p.player_id) + '" data-val="' + (isBackup ? '0' : '1') + '" title="' + esc(isBackup ? t('btnBackupGoalieOn') : t('btnBackupGoalieOff')) + '" style="margin-right:4px;font-size:11px;padding:2px 5px;">' + (isBackup ? '🥅 G2' : '+G2') + '</button>' : '';
+    const posBadge = p.is_goalie ? '<span class="pos-badge pos-G">G</span>'
+      : (isBackup ? '<span class="pos-badge" style="background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe;" title="Gardien auxiliaire">' + (p.position === 'D' ? 'D/G' : (p.position === 'F' ? (currentLang === 'en' ? 'F/G' : 'A/G') : 'G2')) + '</span>'
+      : (p.position === 'D' ? '<span class="pos-badge pos-D">D</span>' : '<span class="pos-badge pos-F">' + (currentLang === 'en' ? 'F' : 'A') + '</span>'));
+    const teamBadge = p.current_team
+      ? '<span class="team-badge ' + esc(p.current_team) + '">' + esc(p.current_team) + '</span>'
+      : '<span style="color:var(--soft);font-size:12px;">—</span>';
+    const em = '<input type="email" class="contact-input" data-em="' + esc(p.player_id) + '" value="' + esc(p.email || '') + '" placeholder="user@domain.com" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+    const ph = '<input type="tel" class="contact-input" data-ph="' + esc(p.player_id) + '" value="' + esc(p.phone || '') + '" placeholder="(514) 000-0000" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+    const acts = '<span class="st-icon" id="st-' + esc(p.player_id) + '" style="font-size:14px;color:var(--green);opacity:0;transition:opacity .2s;margin-right:6px;">✓</span>' +
+      backupBtn +
+      '<button class="mini out" data-archive="' + esc(p.player_id) + '" data-name="' + esc(p.name) + '" data-role="roster" title="' + esc(t('btnArchive')) + '">' + esc(t('btnArchive')) + '</button>';
+    const searchKey = [p.name, p.current_team, p.email, p.phone].filter(Boolean).join(' ');
+    return '<tr class="contact-row" data-search="' + esc(searchKey) + '">' +
+      '<td>' + posBadge + '</td>' +
+      '<td><strong>' + esc(p.name) + '</strong></td>' +
+      '<td>' + teamBadge + '</td>' +
+      '<td>' + em + '</td>' +
+      '<td>' + ph + '</td>' +
+      '<td style="text-align:right;white-space:nowrap;">' + acts + '</td>' +
+      '</tr>';
+  };
+
+  const rowSub = (p) => {
+    const teams = ['Red', 'Blue', 'White', 'Black'];
+    const opts = '<option value="">' + esc(t('noTeamOpt')) + '</option>' + teams.map(tm =>
+      '<option value="' + esc(tm) + '"' + (p.preferred_team === tm ? ' selected' : '') + '>' + esc(tm) + '</option>'
+    ).join('');
+    const pref = '<select class="contact-input" data-pref="' + esc(p.player_id) + '" title="' + esc(t('colPrefTeam')) + '" style="width:100%;font-size:12px;padding:4px 6px;">' + opts + '</select>';
+    const em = '<input type="email" class="contact-input" data-em="' + esc(p.player_id) + '" value="' + esc(p.email || '') + '" placeholder="' + (currentLang === 'en' ? 'email' : 'courriel') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+    const ph = '<input type="tel" class="contact-input" data-ph="' + esc(p.player_id) + '" value="' + esc(p.phone || '') + '" placeholder="' + (currentLang === 'en' ? 'phone' : 'téléphone') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+    const roleToggleBtnText = p.role === 'sub_goalie' ? t('btnToSkater') : t('btnToGoalie');
+    const acts = '<button class="mini" data-mv="' + esc(p.player_id) + '" data-to="' +
+          (p.role === 'sub_goalie' ? 'sub_skater' : 'sub_goalie') + '">' +
+          esc(roleToggleBtnText) + '</button> ' +
+      '<button class="mini out" data-archive="' + esc(p.player_id) + '" data-name="' + esc(p.name) + '" data-role="' + esc(p.role) + '" title="' + esc(t('btnArchive')) + '">' + esc(t('btnArchive')) + '</button>';
+    const searchKey = [p.name, p.preferred_team, p.email, p.phone, p.role].filter(Boolean).join(' ');
+    return '<tr class="contact-row" data-search="' + esc(searchKey) + '">' +
+      '<td><strong>' + esc(p.name) + '</strong></td>' +
+      '<td>' + pref + '</td>' +
+      '<td>' + em + '</td>' +
+      '<td>' + ph + '</td>' +
+      '<td style="text-align:right;white-space:nowrap;">' + acts + '</td>' +
+      '</tr>';
+  };
+
+  const rowArchive = (p) => {
+    let reasonBadge = '';
+    const r = p.archive_reason || '';
+    if (r === 'season_off') reasonBadge = '<span class="pos-badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;">' + esc(t('reasonSeasonOff')) + '</span>';
+    else if (r === 'injury') reasonBadge = '<span class="pos-badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;">' + esc(t('reasonInjury')) + '</span>';
+    else if (r === 'retired') reasonBadge = '<span class="pos-badge" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;">' + esc(t('reasonRetired')) + '</span>';
+    else if (r === 'dormant_10' || p.dormant || p.asked_streak >= 10) reasonBadge = '<span class="pos-badge" style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;">' + esc(t('reasonDormant').replace('{n}', p.asked_streak || 0)) + '</span>';
+    else if (r === 'removed') reasonBadge = '<span class="pos-badge" style="background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb;">' + esc(t('reasonRemoved')) + '</span>';
+    else if (r) reasonBadge = '<span class="pos-badge" style="background:#f3f4f6;color:#475569;border:1px solid #e2e8f0;">' + esc(r) + '</span>';
+    else reasonBadge = '<span class="pos-badge" style="background:#f1f5f9;color:#64748b;">' + esc(t('reasonInactive')) + '</span>';
+
+    let prevRoleBadge = '';
+    if (p.previous_role === 'roster') {
+      prevRoleBadge = p.current_team
+        ? '<span class="team-badge ' + esc(p.current_team) + '">' + esc(p.current_team) + '</span>'
+        : '<span class="pos-badge pos-F">' + esc(t('prevRegular')) + '</span>';
+    } else if (p.previous_role === 'sub_goalie' || p.is_goalie) {
+      prevRoleBadge = '<span class="pos-badge pos-G">' + esc(t('prevSubGoalie')) + '</span>';
+    } else {
+      prevRoleBadge = '<span class="pos-badge pos-F">' + esc(t('prevSubPlayer')) + '</span>';
+    }
+
+    const em = '<input type="email" class="contact-input" data-em="' + esc(p.player_id) + '" value="' + esc(p.email || '') + '" placeholder="' + (currentLang === 'en' ? 'email' : 'courriel') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+    const ph = '<input type="tel" class="contact-input" data-ph="' + esc(p.player_id) + '" value="' + esc(p.phone || '') + '" placeholder="' + (currentLang === 'en' ? 'phone' : 'téléphone') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+    const acts = '<button class="mini in" data-restore="' + esc(p.player_id) + '" data-name="' + esc(p.name) + '" title="' + esc(t('btnRestore')) + '">' + esc(t('btnRestore')) + '</button> ' +
+      '<button class="mini out" data-purge="' + esc(p.player_id) + '" data-name="' + esc(p.name) + '" title="🗑️">🗑️</button>';
+
+    const searchKey = [p.name, p.current_team, p.email, p.phone, p.previous_role, p.archive_reason].filter(Boolean).join(' ');
+    return '<tr class="contact-row" data-search="' + esc(searchKey) + '" style="opacity:.85;">' +
+      '<td><strong>' + esc(p.name) + '</strong></td>' +
+      '<td>' + prevRoleBadge + '</td>' +
+      '<td>' + reasonBadge + '</td>' +
+      '<td>' + em + '</td>' +
+      '<td>' + ph + '</td>' +
+      '<td style="text-align:right;white-space:nowrap;">' + acts + '</td>' +
+      '</tr>';
+  };
+
+  $('rr').innerHTML = rosterList.map(p => rowRoster(p)).join('') || '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--soft);">' + esc(t('emptyRoster')) + '</td></tr>';
+  $('ss').innerHTML = skaterList.map(p => rowSub(p)).join('') || '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--soft);">' + esc(t('emptySkaters')) + '</td></tr>';
+  $('sg').innerHTML = goalieList.map(p => rowSub(p)).join('') || '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--soft);">' + esc(t('emptyGoalies')) + '</td></tr>';
+  $('sa').innerHTML = archiveList.map(p => rowArchive(p)).join('') || '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--soft);">' + esc(t('emptyArchived')) + '</td></tr>';
+
+  updatePhoneCount();
+  wire();
+  applyFilter();
+}
+
+async function load() {
+  try {
+    try {
+      contactsData = await api('/admin/contacts/data');
+    } catch (_) {
+      contactsData = await api('/admin/people/data');
+    }
+  } catch (err) {
+    console.error('Failed loading contacts:', err);
+    if ($('msg')) {
+      $('msg').textContent = t('loadErrMsg') + (err.message || 'accès refusé');
+      $('msg').style.color = 'var(--red, #b91c1c)';
+    }
+    return;
+  }
+  renderContacts(contactsData);
+}
+
+function applyFilter() {
+  const q = ($('filter-contacts').value || '').trim().toLowerCase();
+  document.querySelectorAll('.contact-row').forEach(row => {
+    const key = (row.dataset.search || '').toLowerCase();
+    row.style.display = !q || key.includes(q) ? '' : 'none';
+  });
+}
+
+function wire() {
+  document.querySelectorAll('[data-em]').forEach(i => {
+    i.addEventListener('change', async () => {
+      let val = i.value.trim().toLowerCase().replace(/,/g, '.').replace(/\s+/g, '');
+      i.value = val;
+      const pid = i.dataset.em;
+      if (val && !/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(val)) {
+        i.classList.add('invalid');
+        $('msg').textContent = t('invalidEmailMsg');
+        $('msg').style.color = 'var(--red, #ef4444)';
+        return;
+      }
+      i.classList.remove('invalid');
+      try {
+        const res = await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+          action: 'email', player_id: pid, email: val }) });
+        if (res && res.email !== undefined) i.value = res.email || '';
+        flashSaved(pid, i);
+      } catch (e) {
+        i.classList.add('invalid');
+        $('msg').textContent = '⚠️ ' + String(e.message);
+        $('msg').style.color = 'var(--red, #ef4444)';
+      }
+    });
+    i.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); i.blur(); } });
+  });
+
+  document.querySelectorAll('[data-ph]').forEach(i => {
+    i.addEventListener('change', async () => {
+      const val = i.value.trim();
+      const pid = i.dataset.ph;
+      try {
+        const res = await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+          action: 'phone', player_id: pid, phone: val }) });
+        if (res && res.phone !== undefined) i.value = res.phone || '';
+        flashSaved(pid, i);
+        updatePhoneCount();
+      } catch (e) {
+        i.classList.add('invalid');
+        $('msg').textContent = t('phoneErrMsg') + String(e.message);
+        $('msg').style.color = 'var(--red, #ef4444)';
+      }
+    });
+    i.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); i.blur(); } });
+  });
+
+  document.querySelectorAll('[data-pref]').forEach(s => s.addEventListener('change', async () => {
+    const pid = s.dataset.pref;
+    try {
+      await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+        action: 'pref_team', player_id: pid, team: s.value }) });
+      flashSaved(pid, s);
+    } catch (e) {
+      $('msg').textContent = '⚠️ ' + String(e.message);
+      $('msg').style.color = 'var(--red, #ef4444)';
+    }
+  }));
+
+  document.querySelectorAll('[data-mv]').forEach(b => b.addEventListener('click', async () => {
+    await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+      action: 'role', player_id: b.dataset.mv, role: b.dataset.to }) });
+    load();
+  }));
+
+  document.querySelectorAll('[data-toggle-backup]').forEach(b => b.addEventListener('click', async () => {
+    const pid = b.dataset.toggleBackup;
+    const newVal = parseInt(b.dataset.val, 10) || 0;
+    try {
+      await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+        action: 'backup_goalie', player_id: pid, is_backup_goalie: newVal }) });
+      load();
+    } catch (e) { alert('Erreur: ' + e.message); }
+  }));
+
+  document.querySelectorAll('[data-wake]').forEach(b => b.addEventListener('click', async () => {
+    await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+      action: 'wake', player_id: b.dataset.wake }) });
+    load();
+  }));
+
+  document.querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', async () => {
+    const pid = b.dataset.rm;
+    const name = b.dataset.name || 'ce joueur';
+    if (!confirm(t('archivePromptTitle').replace('{name}', name))) return;
+    await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+      action: 'remove', player_id: pid }) });
+    load();
+  }));
+
+  document.querySelectorAll('[data-archive]').forEach(b => b.addEventListener('click', async () => {
+    const pid = b.dataset.archive;
+    const name = b.dataset.name || (currentLang === 'en' ? 'this player' : 'ce joueur');
+    const role = b.dataset.role || 'roster';
+    const choice = prompt(t('archivePromptTitle').replace('{name}', name), '1');
+    if (choice === null) return;
+    let reason = 'season_off';
+    const trimmed = choice.trim();
+    if (trimmed === '2') reason = 'injury';
+    else if (trimmed === '3') reason = 'retired';
+    else if (trimmed === '4') reason = 'removed';
+    else if (trimmed && !['1','2','3','4'].includes(trimmed)) reason = trimmed;
+
+    try {
+      await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+        action: 'archive', player_id: pid, reason: reason, role: role }) });
+      load();
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+  }));
+
+  document.querySelectorAll('[data-restore]').forEach(b => b.addEventListener('click', async () => {
+    const pid = b.dataset.restore;
+    const name = b.dataset.name || (currentLang === 'en' ? 'this player' : 'ce joueur');
+    if (!confirm(t('restoreConfirm').replace('{name}', name))) return;
+    try {
+      await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+        action: 'restore', player_id: pid }) });
+      load();
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+  }));
+
+  document.querySelectorAll('[data-purge]').forEach(b => b.addEventListener('click', async () => {
+    const name = b.dataset.name || (currentLang === 'en' ? 'this player' : 'ce joueur');
+    if (!confirm(t('purgeConfirm').replace('{name}', name))) return;
+    try {
+      await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+        action: 'purge', player_id: b.dataset.purge }) });
+      load();
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+  }));
+}
+
+$('filter-contacts').addEventListener('input', applyFilter);
+
+async function unlock(candidate) {
+  const prev = K;
+  K = candidate;
+  try {
+    try {
+      await api('/admin/contacts/data');
+    } catch (_) {
+      await api('/admin/people/data');
+    }
+    localStorage.setItem('adminkey', K);
+    try {
+      document.cookie = 'admin_key=' + encodeURIComponent(K) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure';
+    } catch (_) {}
+    if (window.history && window.history.replaceState) {
+      const u = new URL(location);
+      u.searchParams.delete('key'); u.searchParams.delete('k'); u.searchParams.delete('t');
+      window.history.replaceState({}, document.title, u.pathname + u.search);
+    }
+    $('gate').style.display = 'none';
+    $('main').style.display = '';
+    document.querySelectorAll('.picker').forEach(p => {
+      p.style.display = 'flex';
+      p.querySelectorAll('a').forEach(a => {
+        try {
+          const u = new URL(a.href, location.origin);
+          if (K) u.searchParams.set('key', K);
+          a.href = u.pathname + u.search;
+        } catch (_) {}
+      });
+    });
+    load();
+    return true;
+  } catch (e) { K = prev; return false; }
+}
+
+$('go').addEventListener('click', async () => {
+  const v = $('key').value.trim();
+  if (!v) { $('err').textContent = 'Entre la clé / enter the key'; return; }
+  if (!await unlock(v)) $('err').textContent = 'Clé refusée / key rejected';
+});
+$('key').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+
+async function addNew(role) {
+  const name = $('nname').value.trim();
+  let email = $('nmail').value.trim().toLowerCase().replace(/,/g, '.').replace(/\s+/g, '');
+  $('nmail').value = email;
+  let phone = $('nphone').value.trim();
+  $('nphone').value = phone;
+
+  if (name.split(' ').filter(Boolean).length < 2) {
+    $('nmsg').textContent = currentLang === 'en' ? 'Full name required' : 'Prénom et nom requis';
+    $('nmsg').style.color = 'var(--red, #ef4444)';
+    return;
+  }
+  if (email && !/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(email)) {
+    $('nmsg').textContent = t('invalidEmailMsg');
+    $('nmsg').style.color = 'var(--red, #ef4444)';
+    $('nmail').classList.add('invalid');
+    return;
+  }
+  $('nmail').classList.remove('invalid');
+  $('nmsg').style.color = '';
+  try {
+    const r = await api('/admin/contacts', { method: 'POST',
+      body: JSON.stringify({ action: 'new', name, email, phone, role }) });
+    $('nname').value = ''; $('nmail').value = ''; $('nphone').value = '';
+    $('nmsg').textContent = (currentLang === 'en' ? 'Successfully added — ' : 'Ajouté avec succès — ') + r.player_id;
+    $('nmsg').style.color = 'var(--green, #15803d)';
+    load();
+  } catch (e) {
+    $('nmsg').textContent = '⚠️ ' + String(e.message);
+    $('nmsg').style.color = 'var(--red, #ef4444)';
+  }
+}
+
+$('njoueur').addEventListener('click', () => addNew('sub_skater'));
+$('ngardien').addEventListener('click', () => addNew('sub_goalie'));
+
+let timer;
+$('q').addEventListener('input', () => {
+  clearTimeout(timer);
+  timer = setTimeout(async () => {
+    const tVal = $('q').value.trim();
+    if (tVal.length < 2) { $('hits').innerHTML = ''; return; }
+    const d = await api('/admin/contacts/search?q=' + encodeURIComponent(tVal));
+    $('hits').innerHTML = '<table class="contact-tbl">' + d.hits.map(h =>
+      '<tr><td>' + esc(h.name) + (h.have ? ' <span class="by">' + esc(t('alreadyEnrolled')) + '</span>' : '') +
+      '</td><td style="text-align:right;">' + (h.have ? '—' :
+        '<button class="mini in" data-add="' + esc(h.id) + '" data-role="sub_skater">' + esc(t('btnSkater')) + '</button> ' +
+        '<button class="mini in" data-add="' + esc(h.id) + '" data-role="sub_goalie">' + esc(t('btnGoalie')) + '</button>') +
+      '</td></tr>').join('') + '</table>';
+    document.querySelectorAll('[data-add]').forEach(b => b.addEventListener('click', async () => {
+      await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+        action: 'add', player_id: b.dataset.add, role: b.dataset.role }) });
+      $('q').value = ''; $('hits').innerHTML = ''; load();
+    }));
+  }, 250);
+});
+
+$('btn-import-all').addEventListener('click', async () => {
+  if (!confirm(t('importConfirm'))) return;
+  try {
+    const res = await api('/admin/contacts', { method: 'POST', body: JSON.stringify({ action: 'import_all' }) });
+    alert(t('importSuccess').replace('{n}', res.imported || 0));
+    load();
+  } catch (e) {
+    alert('Erreur: ' + e.message);
+  }
+});
+
+$('btn-season-reset').addEventListener('click', async () => {
+  if (!confirm(t('seasonResetConfirm'))) return;
+  try {
+    const res = await api('/admin/contacts', { method: 'POST', body: JSON.stringify({ action: 'new_season_reset' }) });
+    alert(t('seasonResetSuccess').replace('{n}', res.reset_count || 0));
+    load();
+  } catch (e) {
+    alert('Erreur: ' + e.message);
+  }
+});
+
+if (currentLang !== 'fr') {
+  applyLanguage(currentLang);
+}
+
+if (K) {
+  unlock(K);
+} else if (${isAuthed ? 'true' : 'false'}) {
+  $('gate').style.display = 'none';
+  $('main').style.display = '';
+  document.querySelectorAll('.picker').forEach(p => p.style.display = 'flex');
+  load();
+}
+</script>`, logoTooltip);
+}
+
+let contactsArchiveColumnsEnsured = false;
+async function ensureContactsArchiveColumns(db) {
+  if (!db) return;
+  if (!contactsArchiveColumnsEnsured) {
+    try { await db.prepare("ALTER TABLE contacts ADD COLUMN previous_role TEXT").run(); } catch (_) {}
+    try { await db.prepare("ALTER TABLE contacts ADD COLUMN archive_reason TEXT").run(); } catch (_) {}
+    try { await db.prepare("ALTER TABLE contacts ADD COLUMN is_backup_goalie INTEGER NOT NULL DEFAULT 0").run(); } catch (_) {}
+    contactsArchiveColumnsEnsured = true;
+  }
+  try { await db.prepare("UPDATE contacts SET email = 'rsantana@live.ca' WHERE email = 'rantana@live.ca'").run(); } catch (_) {}
+  try { await db.prepare("UPDATE contacts SET email = 'rsantana@live.ca' WHERE player_id = 'P0217' AND email != 'rsantana@live.ca'").run(); } catch (_) {}
+}
+
+async function peopleData(env) {
+  await ensureContactsArchiveColumns(env.DB);
+  let d = null;
+  try {
+    const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+      || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+    d = JSON.parse(raw);
+  } catch (_) {
+    d = { seasons: [], players: [] };
+  }
+  const currentSeason = d.current_season || (d.seasons && d.seasons[0]?.name) || 'Fall 2026';
+
+  const dbContacts = (await env.DB.prepare(
+    `SELECT player_id, name, email, phone, role, is_goalie, is_backup_goalie, dormant, asked_streak, last_asked, preferred_team, previous_role, archive_reason
+       FROM contacts ORDER BY role, name`
+  ).all()).results || [];
+
+  const contactMap = new Map();
+  for (const c of dbContacts) {
+    contactMap.set(c.player_id, c);
+  }
+
+  // Build map of players currently assigned to a team in the active season
+  const rosterMap = new Map();
+  for (const p of (d.players || [])) {
+    const sInfo = p.seasons?.[currentSeason];
+    const gInfo = p.gseasons?.[currentSeason];
+    const team = sInfo?.team || gInfo?.team;
+    if (team && ['Red', 'Blue', 'White', 'Black'].includes(team)) {
+      const isGoalie = gInfo?.team != null;
+      rosterMap.set(p.id, {
+        player_id: p.id,
+        name: p.name,
+        team,
+        is_goalie: isGoalie ? 1 : 0,
+        position: isGoalie ? 'G' : (p.position || 'F')
+      });
+    }
+  }
+
+  const rosterPeople = [];
+  const archivedPeople = [];
+
+  for (const [pid, rInfo] of rosterMap.entries()) {
+    const c = contactMap.get(pid);
+    if (c?.role === 'archived') {
+      archivedPeople.push({
+        player_id: pid,
+        name: c?.name || rInfo.name,
+        email: c?.email || '',
+        phone: c?.phone || '',
+        role: 'archived',
+        previous_role: c?.previous_role || 'roster',
+        archive_reason: c?.archive_reason || 'season_off',
+        is_goalie: rInfo.is_goalie,
+        current_team: rInfo.team,
+        position: rInfo.position,
+        dormant: 1,
+        asked_streak: c?.asked_streak || 0,
+        preferred_team: rInfo.team
+      });
+      continue;
+    }
+    if (c?.role === 'sub_skater' || c?.role === 'sub_goalie') {
+      continue;
+    }
+    rosterPeople.push({
+      player_id: pid,
+      name: c?.name || rInfo.name,
+      email: c?.email || '',
+      phone: c?.phone || '',
+      role: 'roster',
+      is_goalie: rInfo.is_goalie,
+      is_backup_goalie: c?.is_backup_goalie || 0,
+      current_team: rInfo.team,
+      position: rInfo.position,
+      dormant: 0,
+      asked_streak: 0,
+      preferred_team: rInfo.team
+    });
+  }
+
+  // Fallback for tests or setups without data.json where roster contacts exist in DB
+  if (rosterPeople.length === 0) {
+    for (const c of dbContacts) {
+      if (c.role === 'roster') {
+        rosterPeople.push({
+          player_id: c.player_id,
+          name: c.name,
+          email: c.email || '',
+          phone: c.phone || '',
+          role: 'roster',
+          is_goalie: c.is_goalie || 0,
+          is_backup_goalie: c.is_backup_goalie || 0,
+          current_team: c.preferred_team || '',
+          position: c.is_goalie ? 'G' : 'F',
+          dormant: 0,
+          asked_streak: 0,
+          preferred_team: c.preferred_team || ''
+        });
+      }
+    }
+  }
+
+  // Sort roster players by team ('Red', 'Blue', 'White', 'Black'), then goalies first, then name
+  const teamOrder = { Red: 1, Blue: 2, White: 3, Black: 4 };
+  rosterPeople.sort((a, b) => {
+    const tA = teamOrder[a.current_team] || 99;
+    const tB = teamOrder[b.current_team] || 99;
+    if (tA !== tB) return tA - tB;
+    if (a.is_goalie !== b.is_goalie) return b.is_goalie - a.is_goalie;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  const rosterIds = new Set(rosterPeople.map(p => p.player_id));
+
+  // Active subs from DB contacts (sub_skater, sub_goalie, or unassigned roster), excluding current season roster players and dormant/archived
+  const subPeople = [];
+  for (const c of dbContacts) {
+    if (rosterIds.has(c.player_id)) continue;
+
+    if (c.role === 'archived') {
+      if (!archivedPeople.some(a => a.player_id === c.player_id)) {
+        archivedPeople.push({
+          player_id: c.player_id,
+          name: c.name,
+          email: c.email || '',
+          phone: c.phone || '',
+          role: 'archived',
+          previous_role: c.previous_role || (c.is_goalie ? 'sub_goalie' : 'sub_skater'),
+          archive_reason: c.archive_reason || 'season_off',
+          is_goalie: c.is_goalie || 0,
+          dormant: 1,
+          asked_streak: c.asked_streak || 0,
+          last_asked: c.last_asked || null,
+          preferred_team: c.preferred_team || ''
+        });
+      }
+    } else if (c.dormant === 1 || (c.asked_streak >= 10)) {
+      archivedPeople.push({
+        player_id: c.player_id,
+        name: c.name,
+        email: c.email || '',
+        phone: c.phone || '',
+        role: 'archived',
+        previous_role: c.role || (c.is_goalie ? 'sub_goalie' : 'sub_skater'),
+        archive_reason: c.archive_reason || 'dormant_10',
+        is_goalie: c.is_goalie || (c.role === 'sub_goalie' ? 1 : 0),
+        dormant: 1,
+        asked_streak: c.asked_streak || 0,
+        last_asked: c.last_asked || null,
+        preferred_team: c.preferred_team || ''
+      });
+    } else if (c.role === 'sub_skater' || c.role === 'sub_goalie' || c.role === 'roster') {
+      const subRole = (c.is_goalie || c.role === 'sub_goalie') ? 'sub_goalie' : 'sub_skater';
+      subPeople.push({
+        player_id: c.player_id,
+        name: c.name,
+        email: c.email || '',
+        phone: c.phone || '',
+        role: subRole,
+        is_goalie: c.is_goalie || (c.role === 'sub_goalie' ? 1 : 0),
+        dormant: 0,
+        asked_streak: c.asked_streak || 0,
+        last_asked: c.last_asked || null,
+        preferred_team: c.preferred_team || ''
+      });
+    }
+  }
+
+  archivedPeople.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  return Response.json({
+    people: [...rosterPeople, ...subPeople, ...archivedPeople],
+    archived: archivedPeople,
+    current_season: currentSeason,
+    counts: {
+      roster: rosterPeople.length,
+      sub_skater: subPeople.filter(p => p.role === 'sub_skater').length,
+      sub_goalie: subPeople.filter(p => p.role === 'sub_goalie').length,
+      archived: archivedPeople.length
+    }
+  });
+}
+
+async function peopleSearch(env, url) {
+  const q = (url.searchParams.get('q') || '').toLowerCase();
+  if (q.length < 2) return Response.json({ hits: [] });
+  let d = null;
+  try {
+    const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+      || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+    d = JSON.parse(raw);
+  } catch (_) {
+    d = { players: [] };
+  }
+  const have = new Set(((await env.DB.prepare('SELECT player_id FROM contacts').all()).results || [])
+    .map(x => x.player_id));
+  const hits = (d.players || []).filter(p => p.name.toLowerCase().includes(q))
+    .slice(0, 12).map(p => ({ id: p.id, name: p.name, have: have.has(p.id) }));
+  return Response.json({ hits });
+}
+
+async function peopleAction(req, env) {
+  await ensureContactsArchiveColumns(env.DB);
+  const b = await req.json().catch(() => ({}));
+  const id = b.player_id;
+  if (!id && !['new', 'import_all', 'new_season_reset'].includes(b.action)) return new Response('no player', { status: 400 });
+
+  if (b.action === 'pref_team') {
+    const pref = TEAMS.includes(b.team) ? b.team : null;
+    await env.DB.prepare('UPDATE contacts SET preferred_team=? WHERE player_id=?')
+      .bind(pref, id).run();
+    return Response.json({ ok: true });
+  }
+
+  if (b.action === 'email') {
+    let emailVal = (b.email || '').trim();
+    if (emailVal) {
+      const check = sanitizeAndValidateEmail(emailVal);
+      if (!check.valid) {
+        return new Response(check.error, { status: 400 });
+      }
+      emailVal = check.email;
+    } else {
+      emailVal = null;
+    }
+    const res = await env.DB.prepare('UPDATE contacts SET email=? WHERE player_id=?')
+      .bind(emailVal, id).run();
+    if (res.meta.changes === 0) {
+      let name = b.name || id;
+      try {
+        const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+          || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+        const d = JSON.parse(raw);
+        const p = (d.players || []).find(x => x.id === id);
+        if (p) name = p.name;
+        const isGoalie = (p?.gcareer && p.gcareer.gp > 0) || (p?.gseasons && Object.keys(p.gseasons).length > 0) ? 1 : 0;
+        const newRole = isGoalie ? 'sub_goalie' : 'sub_skater';
+        const salt = crypto.randomUUID().replace(/-/g, '');
+        await env.DB.prepare(
+          `INSERT INTO contacts (player_id, name, email, role, is_sub, is_goalie, token_salt)
+           VALUES (?, ?, ?, ?, 1, ?, ?)
+           ON CONFLICT(player_id) DO UPDATE SET email=excluded.email`
+        ).bind(id, name, emailVal, newRole, isGoalie, salt).run();
+      } catch (_) {}
+    }
+    return Response.json({ ok: true, email: emailVal });
+  }
+
+  if (b.action === 'phone') {
+    let phoneVal = (b.phone || '').trim();
+    if (phoneVal) {
+      phoneVal = phoneVal.replace(/[^\d+().\s-]/g, '').trim() || null;
+    } else {
+      phoneVal = null;
+    }
+    const res = await env.DB.prepare('UPDATE contacts SET phone=? WHERE player_id=?')
+      .bind(phoneVal, id).run();
+    if (res.meta.changes === 0) {
+      let name = b.name || id;
+      try {
+        const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+          || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+        const d = JSON.parse(raw);
+        const p = (d.players || []).find(x => x.id === id);
+        if (p) name = p.name;
+        const isGoalie = (p?.gcareer && p.gcareer.gp > 0) || (p?.gseasons && Object.keys(p.gseasons).length > 0) ? 1 : 0;
+        const newRole = isGoalie ? 'sub_goalie' : 'sub_skater';
+        const salt = crypto.randomUUID().replace(/-/g, '');
+        await env.DB.prepare(
+          `INSERT INTO contacts (player_id, name, email, phone, role, is_sub, is_goalie, token_salt)
+           VALUES (?, ?, NULL, ?, ?, 1, ?, ?)
+           ON CONFLICT(player_id) DO UPDATE SET phone=excluded.phone`
+        ).bind(id, name, phoneVal, newRole, isGoalie, salt).run();
+      } catch (_) {}
+    }
+    return Response.json({ ok: true, phone: phoneVal });
+  }
+
+  if (b.action === 'role') {
+    if (!['sub_skater', 'sub_goalie'].includes(b.role))
+      return new Response('bad role', { status: 400 });
+    await env.DB.prepare('UPDATE contacts SET role=?, is_goalie=? WHERE player_id=?')
+      .bind(b.role, b.role === 'sub_goalie' ? 1 : 0, id).run();
+    return Response.json({ ok: true });
+  }
+
+  if (b.action === 'backup_goalie') {
+    const isBackup = b.is_backup_goalie ? 1 : 0;
+    await env.DB.prepare('UPDATE contacts SET is_backup_goalie=? WHERE player_id=?')
+      .bind(isBackup, id).run();
+    return Response.json({ ok: true, is_backup_goalie: isBackup });
+  }
+
+  if (b.action === 'archive') {
+    const reason = b.reason || 'season_off';
+    const c = await env.DB.prepare('SELECT role, is_goalie, name FROM contacts WHERE player_id=?').bind(id).first();
+    const prevRole = (c && c.role !== 'archived') ? c.role : (b.role || 'roster');
+    let name = c?.name || b.name || id;
+    if (!c) {
+      try {
+        const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+          || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+        const d = JSON.parse(raw);
+        const p = (d.players || []).find(x => x.id === id);
+        if (p) name = p.name;
+      } catch (_) {}
+    }
+    const salt = crypto.randomUUID().replace(/-/g, '');
+    await env.DB.prepare(
+      `INSERT INTO contacts (player_id, name, role, previous_role, archive_reason, dormant, token_salt)
+       VALUES (?, ?, 'archived', ?, ?, 1, ?)
+       ON CONFLICT(player_id) DO UPDATE SET
+         role = 'archived',
+         previous_role = CASE WHEN contacts.role != 'archived' THEN contacts.role ELSE COALESCE(contacts.previous_role, excluded.previous_role) END,
+         archive_reason = excluded.archive_reason,
+         dormant = 1`
+    ).bind(id, name, prevRole, reason, salt).run();
+
+    if (prevRole === 'roster') {
+      try {
+        await env.DB.prepare(
+          `UPDATE rsvp SET status = 'out', status_by = 'manager', updated_at = ?
+           WHERE player_id = ? AND event_id IN (SELECT id FROM events WHERE state = 'open') AND status != 'out'`
+        ).bind(new Date().toISOString(), id).run();
+      } catch (_) {}
+    }
+
+    return Response.json({ ok: true, archived: true, reason });
+  }
+
+  if (b.action === 'restore' || b.action === 'wake') {
+    const c = await env.DB.prepare('SELECT role, previous_role, is_goalie FROM contacts WHERE player_id=?').bind(id).first();
+    const isGoalie = (c?.is_goalie === 1 || c?.previous_role === 'sub_goalie' || c?.role === 'sub_goalie' || b.target_role === 'sub_goalie') ? 1 : 0;
+    const targetRole = isGoalie ? 'sub_goalie' : 'sub_skater';
+    await env.DB.prepare(
+      `UPDATE contacts SET role = ?, is_goalie = ?, is_sub = 1, preferred_team = NULL, dormant = 0, asked_streak = 0, archive_reason = NULL
+       WHERE player_id = ?`
+    ).bind(targetRole, isGoalie, id).run();
+
+    try {
+      await env.DB.prepare(
+        `DELETE FROM rsvp WHERE player_id = ? AND role = 'roster'
+          AND event_id IN (SELECT id FROM events WHERE state = 'open')`
+      ).bind(id).run();
+    } catch (_) {}
+
+    if (env.SHEETS_KV) {
+      try {
+        const raw = await env.SHEETS_KV.get('data_json');
+        if (raw) {
+          const d = JSON.parse(raw);
+          const currentSeason = d.current_season || (d.seasons && d.seasons[0]?.name);
+          const p = (d.players || []).find(x => x.id === id);
+          if (p && currentSeason) {
+            let changed = false;
+            if (p.seasons && p.seasons[currentSeason]) { delete p.seasons[currentSeason]; changed = true; }
+            if (p.gseasons && p.gseasons[currentSeason]) { delete p.gseasons[currentSeason]; changed = true; }
+            if (changed) await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+          }
+        }
+      } catch (_) {}
+    }
+
+    return Response.json({ ok: true, restored_to: targetRole });
+  }
+
+  if (b.action === 'import_all') {
+    let d = null;
+    try {
+      const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+        || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+      d = JSON.parse(raw);
+    } catch (_) { d = { players: [] }; }
+
+    const existingRows = (await env.DB.prepare('SELECT player_id FROM contacts').all()).results || [];
+    const existingIds = new Set(existingRows.map(r => r.player_id));
+    let imported = 0;
+
+    for (const p of (d.players || [])) {
+      if (!p.id || !p.name) continue;
+      if (!existingIds.has(p.id)) {
+        const isGoalie = (p.gcareer && p.gcareer.gp > 0) || (p.gseasons && Object.keys(p.gseasons).length > 0) ? 1 : 0;
+        const role = isGoalie ? 'sub_goalie' : 'sub_skater';
+        const salt = crypto.randomUUID().replace(/-/g, '');
+        await env.DB.prepare(
+          `INSERT INTO contacts (player_id, name, email, phone, role, is_sub, is_goalie, token_salt)
+           VALUES (?, ?, NULL, NULL, ?, 1, ?, ?)`
+        ).bind(p.id, p.name, role, isGoalie, salt).run();
+        imported++;
+      }
+    }
+    return Response.json({ ok: true, imported });
+  }
+
+  if (b.action === 'new_season_reset') {
+    const res = await env.DB.prepare(
+      `UPDATE contacts
+          SET role = CASE WHEN is_goalie = 1 THEN 'sub_goalie' ELSE 'sub_skater' END,
+              is_sub = 1,
+              preferred_team = NULL
+        WHERE role = 'roster'`
+    ).run();
+    return Response.json({ ok: true, reset_count: res.meta?.changes || 0 });
+  }
+
+  if (b.action === 'remove') {
+    const c = await env.DB.prepare('SELECT role, is_goalie FROM contacts WHERE player_id=?').bind(id).first();
+    const prevRole = (c && c.role !== 'archived') ? c.role : 'sub_skater';
+    const reason = b.reason || 'removed';
+    const r = await env.DB.prepare(
+      `UPDATE contacts SET role = 'archived', previous_role = ?, archive_reason = ?, dormant = 1
+       WHERE player_id = ?`
+    ).bind(prevRole, reason, id).run();
+    if (!r.meta.changes) return new Response('not found', { status: 404 });
+    return Response.json({ ok: true, archived: true });
+  }
+
+  if (b.action === 'purge' || b.action === 'delete_permanent') {
+    const r = await env.DB.prepare('DELETE FROM contacts WHERE player_id=?').bind(id).run();
+    if (!r.meta.changes) return new Response('not found', { status: 404 });
+    return Response.json({ ok: true, deleted: true });
+  }
+
+  if (b.action === 'new') {
+    const name = String(b.name || '').trim().split(' ').filter(Boolean).join(' ');
+    if (name.split(' ').length < 2) return new Response('full name required', { status: 400 });
+    if (name.length > 60) return new Response('name too long', { status: 400 });
+    if (!['sub_skater', 'sub_goalie'].includes(b.role))
+      return new Response('bad role', { status: 400 });
+    let emailVal = (b.email || '').trim();
+    if (emailVal) {
+      const check = sanitizeAndValidateEmail(emailVal);
+      if (!check.valid) {
+        return new Response(check.error, { status: 400 });
+      }
+      emailVal = check.email;
+    } else {
+      emailVal = null;
+    }
+    let phoneVal = (b.phone || '').trim();
+    if (phoneVal) {
+      phoneVal = phoneVal.replace(/[^\d+().\s-]/g, '').trim() || null;
+    } else {
+      phoneVal = null;
+    }
+    const dupe = await env.DB.prepare('SELECT player_id FROM contacts WHERE lower(name)=lower(?)')
+      .bind(name).first();
+    if (dupe) return new Response('already on file as ' + dupe.player_id, { status: 409 });
+    const last = await env.DB.prepare(
+      "SELECT player_id FROM contacts WHERE player_id LIKE 'P9%' ORDER BY player_id DESC LIMIT 1"
+    ).first();
+    const n = last ? parseInt(last.player_id.slice(1), 10) + 1 : 9001;
+    const id = 'P' + n;
+    const salt = crypto.randomUUID().replace(/-/g, '');
+    await env.DB.prepare(
+      `INSERT INTO contacts (player_id,name,email,phone,is_sub,role,token_salt,is_goalie)
+       VALUES (?,?,?,?,1,?,?,?)`
+    ).bind(id, name, emailVal, phoneVal, b.role, salt,
+           b.role === 'sub_goalie' ? 1 : 0).run();
+    return Response.json({ ok: true, player_id: id, email: emailVal, phone: phoneVal });
+  }
+
+  if (b.action === 'add') {
+    if (!['sub_skater', 'sub_goalie'].includes(b.role))
+      return new Response('bad role', { status: 400 });
+    let d = null;
+    try {
+      const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+        || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+      d = JSON.parse(raw);
+    } catch (_) {
+      d = { players: [] };
+    }
+    const p = (d.players || []).find(x => x.id === id);
+    if (!p) return new Response('not in league records', { status: 404 });
+    const salt = crypto.randomUUID().replace(/-/g, '');
+    await env.DB.prepare(
+      `INSERT INTO contacts (player_id,name,email,phone,is_sub,role,token_salt,is_goalie)
+       VALUES (?,?,NULL,NULL,1,?,?,?)
+       ON CONFLICT(player_id) DO UPDATE SET role=excluded.role, is_sub=1, is_goalie=excluded.is_goalie`
+    ).bind(id, p.name, b.role, salt, b.role === 'sub_goalie' ? 1 : 0).run();
+    return Response.json({ ok: true });
+  }
+  return new Response('unknown action', { status: 400 });
+}
+
+/* ---------- admin goalie alert ---------- */
+
+async function notifyAdminGoalieCancel(env, ev, contact, team, by = 'self', previousStatus = null) {
+  try {
+    const adminEmail = env.ADMIN_EMAIL || ADMIN_EMAIL;
+    if (!adminEmail) return false;
+
+    const goalieName = (contact && contact.name) || 'Gardien inconnu';
+    const teamFR = team ? tFR(team) : 'Équipe inconnue';
+    const teamEN = team || 'Unknown Team';
+    const w = whenLine(ev || {});
+
+    const byLabelFR = by === 'self' ? 'Le gardien lui-même (lien direct / web)'
+                    : by === 'teammate' ? 'Un coéquipier ou admin (via page alignement)'
+                    : by === 'removed_sub' ? "Retiré de l'alignement des substituts"
+                    : by;
+    const byLabelEN = by === 'self' ? 'The goalie himself (direct email link / web)'
+                    : by === 'teammate' ? 'A teammate or admin (via team lineup page)'
+                    : by === 'removed_sub' ? 'Removed from team sub lineup'
+                    : by;
+
+    const prevNoteFR = previousStatus === 'in' ? ' (était déjà confirmé PRÉSENT)' : '';
+    const prevNoteEN = previousStatus === 'in' ? ' (was previously confirmed IN)' : '';
+
+    const evDate = (ev && ev.date) || 'Date inconnue';
+    const subj = `Alerte Gardien : ${goalieName} absent pour ${teamFR} (${evDate}) / Goalie Cancelled`;
+
+    const base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+    const subsUrl = `${base}/admin/subs`;
+    const boardUrl = `${base}/admin/board`;
+
+    let teamUrl = '';
+    if (team && ev && ev.season) {
+      try {
+        const salt = await teamSalt(env.DB, ev.season, team);
+        const tt = await hmac(env.RSVP_SECRET, teamMsg(ev.season, team, salt));
+        teamUrl = `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${team}&t=${tt}`;
+      } catch (e) {}
+    }
+
+    const text =
+`ALERTE GARDIEN / GOALIE CANCELLATION ALERT
+
+Le gardien ${goalieName} a été marqué ABSENT pour ${teamFR} (${teamEN})${prevNoteFR}.
+
+Détails / Details :
+• Match / Game : ${w.fr}
+• Équipe / Team : ${teamFR} (${teamEN})
+• Gardien / Goalie : ${goalieName}
+• Action par / By : ${byLabelFR}
+
+Gérer les substituts / Call subs :
+${subsUrl}
+${teamUrl ? `Alignement d'équipe / Team lineup :\n${teamUrl}\n` : ''}
+Tableau général / Master board :
+${boardUrl}
+
+—
+Hi Roberto,
+
+Goalie ${goalieName} was marked OUT for ${teamEN}${prevNoteEN}.
+
+Details:
+• Game: ${w.en}
+• Team: ${teamEN}
+• Goalie: ${goalieName}
+• Action by: ${byLabelEN}
+
+Manage subs:
+${subsUrl}
+${teamUrl ? `Team lineup:\n${teamUrl}\n` : ''}
+Master board:
+${boardUrl}
+
+—
+SMBHL Alert System`;
+
+    const html = emailWrap(
+      subj,
+      `<div style="background-color:#fff1f2; border:2px solid #e11d48; border-radius:8px; padding:16px 18px; margin:0 0 20px;">
+        <h2 style="color:#9f1239; margin:0 0 10px; font-size:18px;">Alerte : Un gardien a annulé / Goalie Cancellation</h2>
+        <p style="font-size:15px; color:#1e293b; margin:0 0 14px; line-height:1.5;">
+          Le gardien <b>${esc(goalieName)}</b> a été marqué <b>ABSENT</b> pour <b>${esc(teamFR)}</b> (${esc(teamEN)})${esc(prevNoteFR)}.<br>
+          <span style="color:#64748b; font-size:14px;">Goalie <b>${esc(goalieName)}</b> was marked <b>OUT</b> for <b>${esc(teamEN)}</b>${esc(prevNoteEN)}.</span>
+        </p>
+        <table style="font-size:14px; color:#334155; line-height:1.6; margin-bottom:6px;">
+          <tr><td style="font-weight:600; padding-right:12px;">📅 Match / Game :</td><td>${esc(w.fr)}</td></tr>
+          <tr><td style="font-weight:600; padding-right:12px;">🏒 Équipe / Team :</td><td><b>${esc(teamFR)}</b> (${esc(teamEN)})</td></tr>
+          <tr><td style="font-weight:600; padding-right:12px;">👤 Gardien / Goalie :</td><td><b>${esc(goalieName)}</b></td></tr>
+          <tr><td style="font-weight:600; padding-right:12px;">⚡ Action par / By :</td><td>${esc(byLabelFR)}</td></tr>
+        </table>
+      </div>
+
+      <div style="margin:20px 0;">
+        ${emailBtn(subsUrl, '🧤 Gérer et appeler des substituts', '#e11d48', '#ffffff')}
+        ${teamUrl ? emailBtn(teamUrl, "📋 Alignement de l'équipe", '#17457f', '#ffffff') : ''}
+        ${emailBtn(boardUrl, '📊 Tableau général', '#475569', '#ffffff')}
+      </div>`
+    );
+
+    await sendMail(env, adminEmail, subj, text, html);
+    return true;
+  } catch (e) {
+    console.error('Failed to notify admin of goalie cancel:', e.message);
+    return false;
+  }
+}
+
+/* ---------- routes ---------- */
+
+async function rsvpGet(req, env, url) {
+  const eventId = url.searchParams.get('e');
+  const playerId = url.searchParams.get('p');
+  const token = url.searchParams.get('t');
+  if (!eventId || !playerId || !token)
+    return notice('Lien incomplet', 'Incomplete link');
+
+  const contact = await getContact(env.DB, playerId);
+  if (!contact) return notice('Joueur inconnu', 'Unknown player');
+
+  const want = await hmac(env.RSVP_SECRET, playerMsg(eventId, playerId, contact.token_salt));
+  if (!same(want, token)) return notice('Lien invalide ou expiré', 'Invalid or expired link');
+
+  const ev = await getEvent(env.DB, eventId);
+  if (!ev) return notice('Match introuvable', 'Game not found');
+
+  let row = await env.DB.prepare(
+    'SELECT * FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
+  let team = row ? row.team : null;
+  let status = row ? row.status : 'pending';
+  const locked = ev.state !== 'open';
+
+  // Instant response via email link
+  const autoVal = url.searchParams.get('v');
+  if (['in', 'out'].includes(autoVal) && ev.state === 'open' && status !== autoVal) {
+    const previousStatus = status;
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at)
+       VALUES (?, ?, (SELECT team FROM rsvp WHERE event_id=? AND player_id=?), ?, 'roster', 'self', ?)
+       ON CONFLICT(event_id, player_id) DO UPDATE SET
+         status = excluded.status, status_by = 'self', updated_at = excluded.updated_at`
+    ).bind(eventId, playerId, eventId, playerId, autoVal, now).run();
+
+    await cancelPending(env, `notice:${eventId}:${playerId}`);
+    const isPrimaryGoalie = contact && (contact.is_goalie === 1 || contact.role === 'sub_goalie');
+    const isBackupGoalie = contact && contact.is_backup_goalie === 1;
+    let need = 'skater';
+    if (isPrimaryGoalie) {
+      const backupRow = await env.DB.prepare(
+        `SELECT r.status FROM rsvp r JOIN contacts c2 ON c2.player_id = r.player_id
+          WHERE r.event_id=? AND r.team=? AND c2.is_backup_goalie=1 AND r.status != 'out'`
+      ).bind(eventId, team).first();
+      need = backupRow ? 'skater' : 'goalie';
+    } else if (isBackupGoalie) {
+      const primaryRow = await env.DB.prepare(
+        `SELECT r.status FROM rsvp r JOIN contacts c2 ON c2.player_id = r.player_id
+          WHERE r.event_id=? AND r.team=? AND c2.is_goalie=1 AND r.status != 'out'`
+      ).bind(eventId, team).first();
+      need = primaryRow ? 'skater' : 'goalie';
+    }
+    if (team) {
+      await cancelPending(env, `hold:${eventId}:${team}:${need}`);
+      if (autoVal === 'out') {
+        if (need === 'goalie' && previousStatus !== 'out') {
+          await notifyAdminGoalieCancel(env, ev, contact, team, 'self', previousStatus);
+        }
+        if (await openSpots(env.DB, eventId, team, need) > 0) {
+          if (!(await fillFromWaitlist(env, ev, team, need)))
+            await callSubs(env, ev, team, need);
+        }
+      } else if (await openSpots(env.DB, eventId, team, need) < 1) {
+        await stopWaves(env, eventId, need);
+      }
+    }
+    status = autoVal;
+  }
+
+  let setBy = '';
+  if (row && status !== 'pending' && row.status_by !== 'self') {
+    setBy = `<p class="state">Ce statut a été réglé par ${
+      esc(row.status_by === 'manager' ? 'l\u2019admin' : 'un coéquipier')}.
+      Tu peux le corriger.<span class="en">Someone else set this. You can change it.</span></p>`;
+  }
+
+  const day = dayNames(ev.date);
+
+  let matchBoxHtml = '';
+  if (team) {
+    const matches = await getTeamFixtures(env, ev, team);
+    if (matches && matches.length) {
+      const matchItems = matches.map(m =>
+        `<div><b>${esc(m.time)}</b> : vs <b>${esc(m.oppFR)}</b> <span class="en">(${esc(m.opp)})</span>${m.venue ? ' · ' + esc(m.venue) : ''}</div>`
+      ).join('');
+      const shirtDesc = contact.is_goalie
+        ? 'Équipement de gardien (pas de chandail d\u2019équipe requis)'
+        : `Chandail ${esc(SHIRT_FR[team] || team.toLowerCase())} requis / ${esc(team)} shirt`;
+
+      matchBoxHtml = `
+      <div class="matchbox">
+        <div style="font-weight:700;margin-bottom:4px">Horaire des matchs / Schedule :</div>
+        ${matchItems}
+        <div style="color:var(--soft);margin-top:6px;font-size:14px">${shirtDesc}</div>
+      </div>`;
+    }
+  }
+
+  let teamMgmtLink = '';
+  if (team) {
+    const salt = await teamSalt(env.DB, ev.season, team);
+    const tt = await hmac(env.RSVP_SECRET, teamMsg(ev.season, team, salt));
+    const tUrl = `/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${team}&t=${tt}&p=${encodeURIComponent(playerId)}`;
+    teamMgmtLink = `
+      <div style="margin-top:14px; text-align:center;">
+        <a href="${tUrl}" class="tabbtn" style="display:block; text-align:center; padding:11px 16px; font-weight:700;">
+          Gérer l'équipe ${esc(team)} / Manage ${esc(team)} roster & subs
+        </a>
+      </div>`;
+  }
+
+  const isRegular = contact && contact.is_sub !== 1 && (!row || row.role === 'roster');
+  let absencesHtml = '';
+  if (isRegular) {
+    const allSeasonFixtures = await getSeasonFixtures(env, ev.season);
+    const futureFixtures = allSeasonFixtures.filter(f => Number(f.week) > Number(ev.week));
+
+    let playerAbsences = new Set();
+    try {
+      const pAbs = (await env.DB.prepare('SELECT date FROM planned_absences WHERE player_id = ? AND season = ?')
+        .bind(playerId, ev.season).all()).results || [];
+      playerAbsences = new Set(pAbs.map(x => x.date));
+    } catch (_) {}
+  if (futureFixtures.length) {
+    const countChecked = futureFixtures.filter(f => playerAbsences.has(f.id) || playerAbsences.has(f.date)).length;
+    const badgeText = countChecked > 0 ? ' (' + countChecked + ' déclarée' + (countChecked > 1 ? 's' : '') + ')' : '';
+
+    const fixtureCheckboxes = futureFixtures.map(f => {
+      const isChecked = playerAbsences.has(f.id) || playerAbsences.has(f.date);
+      return '<label style="display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:4px; cursor:pointer; background:' + (isChecked ? '#fef2f2' : '#f8fafc') + '; border:1px solid ' + (isChecked ? '#fecaca' : '#e2e8f0') + '; font-size:14px;">' +
+        '<input type="checkbox" class="absence-cb" data-date="' + esc(f.id || f.date) + '" ' + (isChecked ? 'checked' : '') + ' style="transform:scale(1.2); cursor:pointer;">' +
+        '<div>' +
+          '<b>Semaine ' + esc(f.week) + '</b> · ' + esc(f.date) +
+          '<span style="display:block; font-size:12px; color:' + (isChecked ? '#dc2626' : 'var(--soft)') + '">' + (isChecked ? '❌ Absent(e) / Out' : '✅ Disponible / Available') + '</span>' +
+        '</div>' +
+      '</label>';
+    }).join('');
+
+    absencesHtml = `
+    <div class="card" style="margin-top:16px;">
+      <div id="toggle-absences" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <h2 style="margin:0; font-size:18px;">✈️ Vacances & absences futures<span id="absence-badge" style="font-size:14px; font-weight:normal; color:#dc2626;">${badgeText}</span></h2>
+          <span class="en" style="font-size:13px; color:var(--soft);">Planned future absences (vacations / travel)</span>
+        </div>
+        <span id="absence-chevron" style="font-size:18px; color:var(--soft);">▼</span>
+      </div>
+      <div id="absences-drawer" style="display:none; margin-top:12px; border-top:1px solid var(--rule); padding-top:12px;">
+        <p style="font-size:13px; color:var(--soft); margin:0 0 10px;">
+          Tu sais déjà que tu manqueras un match plus tard cette saison ? Coche les dates où tu seras absent pour aider ton équipe à prévoir les remplaçants à l'avance.
+        </p>
+        <div id="absence-list" style="display:flex; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto; padding-right:4px;">
+          ${fixtureCheckboxes}
+        </div>
+        <div style="margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <button type="button" class="btn" id="save-absences-btn" style="font-size:15px; padding:10px 16px; width:auto; flex:none;">Enregistrer mes absences 💾</button>
+          <span id="absence-msg" style="font-size:13px; font-weight:600;"></span>
+        </div>
+      </div>
+    </div>`;
+  }
+}
+
+  const isGoalie = contact && (contact.is_goalie === 1 || contact.role === 'sub_goalie');
+  let selfPosHtml = '';
+  if (!isGoalie) {
+    selfPosHtml = `
+    <div class="card" style="margin-top:14px;padding:12px 14px">
+      <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:2px">
+        🎯 Ma position habituelle <span class="en" style="font-weight:normal;color:var(--soft)">/ My usual position</span>
+      </div>
+      <div style="font-size:12px;color:var(--soft);margin-bottom:8px">
+        Aide à équilibrer les alignements et pour les trophées (ex. Trophée Norris) !
+      </div>
+      <div style="display:flex;gap:8px" id="self-pos-picker">
+        <button type="button" class="btn self-pos-btn ${contact.position === 'F' ? 'on' : ''}" data-pos="F" style="flex:1;font-size:13px;padding:8px;background:${contact.position === 'F' ? 'var(--blue)' : 'var(--card)'};color:${contact.position === 'F' ? '#fff' : 'var(--ink)'};border:1px solid var(--rule2);font-weight:700">
+          ⚡ Attaquant / Forward (A)
+        </button>
+        <button type="button" class="btn self-pos-btn ${contact.position === 'D' ? 'on' : ''}" data-pos="D" style="flex:1;font-size:13px;padding:8px;background:${contact.position === 'D' ? 'var(--blue)' : 'var(--card)'};color:${contact.position === 'D' ? '#fff' : 'var(--ink)'};border:1px solid var(--rule2);font-weight:700">
+          🛡️ Défenseur / Defenseman (D)
+        </button>
+      </div>
+      <p id="self-pos-msg" style="font-size:12px;color:var(--green);margin:6px 0 0;display:none;font-weight:600"></p>
+    </div>`;
+  }
+
+  const isSub = contact && (contact.is_sub === 1 || contact.role === 'sub');
+  const rsvpPoll = await env.DB.prepare(
+    `SELECT * FROM polls WHERE season = ? AND state = 'open' AND show_on_rsvp = 1 ORDER BY id DESC LIMIT 1`
+  ).bind(ev.season).first();
+
+  let pollCardHtml = '';
+  let pollScript = '';
+  if (rsvpPoll && !(rsvpPoll.allow_subs === 0 && isSub)) {
+    const rsvpCandidates = await getPollCandidates(env.DB, rsvpPoll);
+    const myRsvpVote = await getPollVote(env.DB, rsvpPoll.id, playerId);
+    const rsvpPollResults = await getPollResults(env.DB, rsvpPoll.id);
+    const total = rsvpPollResults?.totalVotes || 0;
+    const hasVoted = Boolean(myRsvpVote);
+
+    let resultsHtml = '';
+    if (rsvpPoll.show_results === 1 && hasVoted) {
+      const bars = (rsvpPollResults?.votes || []).map(c => `
+        <div style="margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px;">
+            <b>${esc(c.candidate_name)}</b>
+            <span style="color:var(--soft);font-size:12px;">${c.votes} vote${c.votes > 1 ? 's' : ''} (${c.pct}%)</span>
+          </div>
+          <div style="background:#e9d5ff;border-radius:4px;height:8px;overflow:hidden;">
+            <div style="background:#8b5cf6;width:${c.pct}%;height:100%;border-radius:4px;transition:width 0.4s ease;"></div>
+          </div>
+        </div>
+      `).join('') || '<p style="font-size:13px;color:var(--soft);margin:4px 0;">Aucun autre vote enregistré pour l\\u2019instant.</p>';
+
+      resultsHtml = `
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e9d5ff;">
+          <div style="font-size:13px;font-weight:700;color:#6b21a8;margin-bottom:8px;">
+            📊 Résultats en direct (${total} vote${total > 1 ? 's' : ''}) :
+          </div>
+          ${bars}
+        </div>`;
+    } else if (hasVoted) {
+      resultsHtml = `
+        <div style="margin-top:12px;padding:10px 12px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:6px;font-size:12px;color:#6b21a8;">
+          🔒 <b>Scrutin secret</b> : ton vote est strictement confidentiel. Les résultats restent privés.
+          <span class="en" style="display:block;font-size:11px;color:var(--soft);margin-top:2px;">Private ballot: your vote is confidential and tallies are hidden.</span>
+        </div>`;
+    }
+
+    const candOpts = rsvpCandidates.map(c =>
+      `<option value="${esc(c.player_id)}" data-name="${esc(c.name)}"${myRsvpVote?.candidate_id === c.player_id ? ' selected' : ''}>${esc(c.name)}${c.position ? ' (' + c.position + ')' : ''}</option>`
+    ).join('');
+
+    const categoryLabel = rsvpPoll.category === 'norris' ? '🏆 Trophée Norris'
+      : rsvpPoll.category === 'mvp' ? '👑 Trophée MVP / Hart'
+      : '🗳️ Sondage de la ligue';
+
+    const statusBadge = hasVoted
+      ? `<div style="background:#f3e8ff;border:1px solid #d8b4fe;border-radius:6px;padding:9px 12px;margin-bottom:12px;font-size:13px;color:#6b21a8;">
+          ✓ Ton vote enregistré : <b>${esc(myRsvpVote.candidate_name)}</b>
+        </div>`
+      : '';
+
+    pollCardHtml = `
+    <div class="card" style="margin-top:14px;border-top:4px solid #8b5cf6;padding:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span class="by" style="background:#f3e8ff;color:#6b21a8;font-weight:700;margin:0;">${esc(categoryLabel)}</span>
+        <span class="by" style="background:#8b5cf6;color:#fff;font-weight:700;margin:0;">${rsvpPoll.show_results === 1 ? 'VOTE EN DIRECT' : '🔒 SCRUTIN SECRET'}</span>
+      </div>
+      <h2 style="font-size:17px;margin:6px 0 4px;line-height:1.3;color:var(--ink);">${esc(rsvpPoll.title)}</h2>
+      ${rsvpPoll.description ? `<p style="font-size:13px;color:var(--soft);margin:0 0 10px;line-height:1.4;">${esc(rsvpPoll.description)}</p>` : ''}
+      
+      <div style="font-size:12px;color:var(--soft);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--rule);">
+        Votant / Voter : <b style="color:var(--ink);">${esc(contact.name)}</b> <span style="font-size:11px;color:var(--faint);font-weight:normal;">(confidentiel / private)</span>
+      </div>
+
+      ${statusBadge}
+
+      <div style="margin-bottom:10px;">
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--soft);margin-bottom:4px;">
+          ${hasVoted ? 'Modifier mon vote pour / Change vote to :' : 'Mon choix / My choice :'}
+        </label>
+        <select id="poll-candidate-id" style="width:100%;font:inherit;font-size:14px;padding:9px;border:1px solid var(--rule2);border-radius:4px;background:var(--card);color:var(--ink);">
+          <option value="">— Choisis un candidat / Select a candidate —</option>
+          ${candOpts}
+        </select>
+      </div>
+      <div class="btns">
+        <button type="button" class="btn" id="poll-vote-btn" style="background:#8b5cf6;border-color:#7c3aed;color:#fff;font-size:14px;padding:10px 14px;width:100%;">
+          ${hasVoted ? 'MODIFIER MON VOTE ✎' : 'SOUMETTRE MON VOTE 🗳️'}
+        </button>
+      </div>
+      <p id="poll-vote-msg" style="font-size:12px;font-weight:600;margin-top:6px;display:none;"></p>
+      ${resultsHtml}
+    </div>`;
+
+    pollScript = `
+  const pollVoteBtn = document.getElementById('poll-vote-btn');
+  if (pollVoteBtn) {
+    pollVoteBtn.addEventListener('click', async () => {
+      const sel = document.getElementById('poll-candidate-id');
+      const candId = sel.value;
+      const opt = sel.selectedOptions && sel.selectedOptions[0];
+      const candName = opt ? (opt.dataset.name || opt.textContent.split(' (')[0]).trim() : '';
+      const msg = document.getElementById('poll-vote-msg');
+      if (!candId && !candName) {
+        if (msg) {
+          msg.textContent = 'Choisis un candidat avant de voter / Please select a candidate';
+          msg.style.color = 'var(--red)';
+          msg.style.display = 'block';
+        }
+        return;
+      }
+      pollVoteBtn.disabled = true;
+      if (msg) {
+        msg.textContent = 'Enregistrement de ton vote...';
+        msg.style.color = 'var(--soft)';
+        msg.style.display = 'block';
+      }
+      try {
+        const r = await fetch('/api/poll/vote', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            poll_id: ` + rsvpPoll.id + `,
+            voter_id: ` + JSON.stringify(playerId) + `,
+            candidate_id: candId || null,
+            candidate_name: candName,
+            event_id: ` + JSON.stringify(eventId) + `,
+            token: ` + JSON.stringify(token) + `
+          })
+        });
+        if (!r.ok) throw new Error(await r.text());
+        if (msg) {
+          msg.textContent = '✓ Vote enregistré avec succès ! / Vote recorded!';
+          msg.style.color = 'var(--green)';
+        }
+        setTimeout(() => location.reload(), 1000);
+      } catch (e) {
+        if (msg) {
+          msg.textContent = 'Erreur: ' + e.message;
+          msg.style.color = 'var(--red)';
+        }
+        pollVoteBtn.disabled = false;
+      }
+    });
+  }`;
+  }
+
+  const body = `
+  <h1>${esc(contact.name)}</h1>
+  <p class="when">Semaine ${esc(ev.week)} · ${esc(ev.date)}${
+    ev.start_time ? ' · ' + esc(ev.start_time) + (ev.end_time ? '–' + esc(ev.end_time) : '') : ''}${
+    ev.venue ? ' · ' + esc(ev.venue) : ''}</p>
+  <div class="card">
+    <h2>Tu joues ${esc(day.fr)} ?<span class="en">Playing ${esc(day.en)}?</span></h2>
+    ${matchBoxHtml}
+    <div class="btns">
+      <button class="btn in ${status === 'in' ? 'on' : ''}" data-v="in" ${locked ? 'disabled' : ''}>PRÉSENT<span class="en">IN</span></button>
+      <button class="btn out ${status === 'out' ? 'on' : ''}" data-v="out" ${locked ? 'disabled' : ''}>ABSENT<span class="en">OUT</span></button>
+    </div>
+    ${setBy}
+    ${ev.state === 'cancelled'
+      ? `<div style="background:#fee2e2;border:1px solid #f87171;border-radius:4px;padding:10px 12px;margin-top:12px;color:#991b1b;font-weight:700;">⚠️ Ce match a été annulé.<span class="en" style="display:block;font-weight:normal;font-size:13px;color:#7f1d1d;">This game has been cancelled.</span></div>`
+      : (locked ? '<p class="state">Les réponses sont fermées.<span class="en">Responses are closed.</span></p>' : '')}
+    <p class="state" id="msg">${autoVal ? 'Réponse enregistrée avec succès! / Response recorded!' : ''}</p>
+  </div>
+  ${selfPosHtml}
+  ${pollCardHtml}
+  ${absencesHtml}
+  ${team ? renderTeam(await teamRows(env.DB, eventId, team), await allCounts(env.DB, eventId), team) + teamMgmtLink : ''}
+  <script>
+  document.querySelectorAll('.btn[data-v]').forEach(b => b.addEventListener('click', async () => {
+    const v = b.dataset.v;
+    document.querySelectorAll('.btn[data-v]').forEach(x => x.disabled = true);
+    document.getElementById('msg').textContent = '…';
+    try {
+      const r = await fetch(location.pathname + location.search, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: v })
+      });
+      if (!r.ok) throw new Error(await r.text());
+      location.href = location.pathname + location.search.replace(/&v=[^&]*/, '');
+    } catch (e) {
+      document.getElementById('msg').textContent = 'Erreur / Error: ' + e.message;
+      document.querySelectorAll('.btn[data-v]').forEach(x => x.disabled = false);
+    }
+  }));
+
+  const toggleBtn = document.getElementById('toggle-absences');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      const d = document.getElementById('absences-drawer');
+      const chev = document.getElementById('absence-chevron');
+      if (d.style.display === 'none') {
+        d.style.display = 'block';
+        chev.textContent = '▲';
+      } else {
+        d.style.display = 'none';
+        chev.textContent = '▼';
+      }
+    });
+
+    document.querySelectorAll('.absence-cb').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const p = cb.closest('label');
+        const desc = p.querySelector('span');
+        if (cb.checked) {
+          p.style.background = '#fef2f2';
+          p.style.borderColor = '#fecaca';
+          desc.textContent = '❌ Absent(e) / Out';
+          desc.style.color = '#dc2626';
+        } else {
+          p.style.background = '#f8fafc';
+          p.style.borderColor = '#e2e8f0';
+          desc.textContent = '✅ Disponible / Available';
+          desc.style.color = 'var(--soft)';
+        }
+      });
+    });
+
+    const saveBtn = document.getElementById('save-absences-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        const msg = document.getElementById('absence-msg');
+        msg.textContent = 'Enregistrement...';
+        msg.style.color = 'var(--soft)';
+        const dates = [...document.querySelectorAll('.absence-cb:checked')].map(c => c.dataset.date);
+        try {
+          const res = await fetch('/rsvp/absences', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              event_id: ${JSON.stringify(eventId)},
+              player_id: ${JSON.stringify(playerId)},
+              token: ${JSON.stringify(token)},
+              season: ${JSON.stringify(ev.season)},
+              dates
+            })
+          });
+          if (!res.ok) throw new Error(await res.text());
+          msg.textContent = '✓ Absences enregistrées !';
+          msg.style.color = 'var(--green)';
+          const b = document.getElementById('absence-badge');
+          if (b) b.textContent = dates.length ? ' (' + dates.length + ' déclarée' + (dates.length > 1 ? 's' : '') + ')' : '';
+        } catch (e) {
+          msg.textContent = 'Erreur: ' + e.message;
+          msg.style.color = 'var(--red)';
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+    }
+  }
+
+  const selfPosBtns = document.querySelectorAll('.self-pos-btn');
+  selfPosBtns.forEach(btn => btn.addEventListener('click', async () => {
+    const pos = btn.dataset.pos;
+    const isCurrentlyOn = btn.classList.contains('on');
+    const newPos = isCurrentlyOn ? null : pos;
+    selfPosBtns.forEach(b => {
+      b.classList.remove('on');
+      b.style.background = 'var(--card)';
+      b.style.color = 'var(--ink)';
+    });
+    if (newPos) {
+      btn.classList.add('on');
+      btn.style.background = 'var(--blue)';
+      btn.style.color = '#fff';
+    }
+    const msg = document.getElementById('self-pos-msg');
+    try {
+      const r = await fetch('/api/player-position', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          player_id: ${JSON.stringify(playerId)},
+          position: newPos,
+          event_id: ${JSON.stringify(eventId)},
+          token: ${JSON.stringify(token)}
+        })
+      });
+      if (!r.ok) throw new Error(await r.text());
+      if (msg) {
+        msg.textContent = newPos ? '✓ Position enregistrée : ' + (newPos === 'D' ? 'Défenseur' : 'Attaquant') : '✓ Position réinitialisée';
+        msg.style.display = 'block';
+      }
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+  }));
+
+  ${pollScript}
+
+  </script>`;
+  const logoTooltip = await getStandingsTooltip(env);
+  return page(contact.name, body, logoTooltip);
+}
+
+async function rsvpAbsencesPost(req, env, url) {
+  const { event_id, player_id, token, season, dates } = await req.json().catch(() => ({}));
+  if (!event_id || !player_id || !token || !season || !Array.isArray(dates)) {
+    return new Response('invalid request', { status: 400 });
+  }
+  const contact = await getContact(env.DB, player_id);
+  if (!contact) return new Response('unknown player', { status: 404 });
+  if (contact.is_sub === 1 || contact.role === 'sub') {
+    return new Response('Planned absences are only for regular roster players', { status: 400 });
+  }
+  const want = await hmac(env.RSVP_SECRET, playerMsg(event_id, player_id, contact.token_salt));
+  if (!same(want, token)) return new Response('unauthorized', { status: 403 });
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `DELETE FROM planned_absences WHERE player_id = ? AND season = ? AND date > ?`
+  ).bind(player_id, season, event_id).run();
+
+  for (const dt of dates) {
+    if (typeof dt === 'string' && dt.length) {
+      await env.DB.prepare(
+        `INSERT INTO planned_absences (player_id, date, season, reason, created_at)
+         VALUES (?, ?, ?, 'vacation', ?)
+         ON CONFLICT(player_id, date) DO UPDATE SET created_at = excluded.created_at`
+      ).bind(player_id, dt, season, now).run();
+    }
+  }
+  return Response.json({ ok: true, count: dates.length });
+}
+
+async function adminAbsenceAction(req, env) {
+  const { action, player_id, date, id, season, reason } = await req.json().catch(() => ({}));
+
+  if (action === 'delete') {
+    if (id) {
+      await env.DB.prepare('DELETE FROM planned_absences WHERE id = ?').bind(id).run();
+      return Response.json({ ok: true });
+    }
+    if (player_id && date) {
+      await env.DB.prepare('DELETE FROM planned_absences WHERE player_id = ? AND date = ?')
+        .bind(player_id, date).run();
+      return Response.json({ ok: true });
+    }
+    return new Response('invalid payload', { status: 400 });
+  } else if (action === 'add') {
+    if (!player_id || !date) return new Response('invalid payload', { status: 400 });
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO planned_absences (player_id, date, season, reason, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(player_id, date) DO UPDATE SET reason = excluded.reason, created_at = excluded.created_at`
+    ).bind(player_id, date, season || 'Fall 2026', reason || 'absence', now).run();
+    return Response.json({ ok: true });
+  }
+  return new Response('unknown action', { status: 400 });
+}
+
+async function rsvpPost(req, env, url) {
+  const eventId = url.searchParams.get('e');
+  const playerId = url.searchParams.get('p');
+  const token = url.searchParams.get('t');
+  const { status } = await req.json().catch(() => ({}));
+  if (!['in', 'out'].includes(status)) return new Response('bad status', { status: 400 });
+
+  const contact = await getContact(env.DB, playerId);
+  if (!contact) return new Response('unknown player', { status: 404 });
+  const want = await hmac(env.RSVP_SECRET, playerMsg(eventId, playerId, contact.token_salt));
+  if (!same(want, token)) return new Response('bad token', { status: 403 });
+
+  const ev = await getEvent(env.DB, eventId);
+  if (!ev) return new Response('no event', { status: 404 });
+  if (ev.state !== 'open') return new Response('locked', { status: 409 });
+
+  const existing = await env.DB.prepare(
+    'SELECT status FROM rsvp WHERE event_id=? AND player_id=?').bind(eventId, playerId).first();
+  const previousStatus = existing ? existing.status : 'pending';
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at)
+     VALUES (?, ?, (SELECT team FROM rsvp WHERE event_id=? AND player_id=?), ?, 'roster', 'self', ?)
+     ON CONFLICT(event_id, player_id) DO UPDATE SET
+         status = excluded.status, status_by = 'self', updated_at = excluded.updated_at`
+  ).bind(eventId, playerId, eventId, playerId, status, now).run();
+
+  await cancelPending(env, `notice:${eventId}:${playerId}`);
+  const isPrimaryGoalie = contact && (contact.is_goalie === 1 || contact.role === 'sub_goalie');
+  const isBackupGoalie = contact && contact.is_backup_goalie === 1;
+  let need = 'skater';
+  if (isPrimaryGoalie) {
+    const backupRow = await env.DB.prepare(
+      `SELECT r.status FROM rsvp r JOIN contacts c2 ON c2.player_id = r.player_id
+        WHERE r.event_id=? AND r.team=? AND c2.is_backup_goalie=1 AND r.status != 'out'`
+    ).bind(eventId, mine.team).first();
+    need = backupRow ? 'skater' : 'goalie';
+  } else if (isBackupGoalie) {
+    const primaryRow = await env.DB.prepare(
+      `SELECT r.status FROM rsvp r JOIN contacts c2 ON c2.player_id = r.player_id
+        WHERE r.event_id=? AND r.team=? AND c2.is_goalie=1 AND r.status != 'out'`
+    ).bind(eventId, mine.team).first();
+    need = primaryRow ? 'skater' : 'goalie';
+  }
+  const mine = await env.DB.prepare(
+    'SELECT team FROM rsvp WHERE event_id=? AND player_id=?').bind(eventId, playerId).first();
+  if (mine && mine.team) {
+    const ev2 = await getEvent(env.DB, eventId);
+    await cancelPending(env, `hold:${eventId}:${mine.team}:${need}`);
+    if (status === 'out') {
+      if (need === 'goalie' && previousStatus !== 'out') {
+        await notifyAdminGoalieCancel(env, ev2, contact, mine.team, 'self', previousStatus);
+      }
+      if (await openSpots(env.DB, eventId, mine.team, need) > 0) {
+        if (!(await fillFromWaitlist(env, ev2, mine.team, need)))
+          await callSubs(env, ev2, mine.team, need);
+      }
+    } else if (await openSpots(env.DB, eventId, mine.team, need) < 1) {
+      await stopWaves(env, eventId, need);
+    }
+  }
+  return new Response('ok');
+}
+
+async function linksRoute(req, env, url) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const eventId = url.searchParams.get('e');
+  const ev = await getEvent(env.DB, eventId);
+  if (!ev) return new Response('no event', { status: 404 });
+
+  const people = (await env.DB.prepare(
+    'SELECT player_id, name, email, token_salt FROM contacts WHERE opted_out = 0 ORDER BY name'
+  ).all()).results || [];
+
+  const base = url.origin;
+  const out = [];
+  for (const p of people) {
+    const t = await hmac(env.RSVP_SECRET, playerMsg(eventId, p.player_id, p.token_salt));
+    out.push({ player_id: p.player_id, name: p.name, email: p.email || null,
+      link: `${base}/rsvp?e=${encodeURIComponent(eventId)}&p=${p.player_id}&t=${t}` });
+  }
+  return Response.json({ event: ev, count: out.length, links: out });
+}
+
+async function teamLinksRoute(req, env, url) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const season = url.searchParams.get('s');
+  if (!season) return new Response('need ?s=Season Name', { status: 400 });
+  const out = [];
+  for (const team of TEAMS) {
+    const salt = await teamSalt(env.DB, season, team);
+    const t = await hmac(env.RSVP_SECRET, teamMsg(season, team, salt));
+    out.push({ team, link: `${url.origin}/team-rsvp?s=${encodeURIComponent(season)}&team=${team}&t=${t}` });
+  }
+  return Response.json({ season, links: out });
+}
+
+async function reassignSub(req, env) {
+  const { event_id, player_id, team } = await req.json().catch(() => ({}));
+  if (!event_id || !player_id || !TEAMS.includes(team)) {
+    return new Response('invalid params', { status: 400 });
+  }
+  const existing = await env.DB.prepare(
+    `SELECT role FROM rsvp WHERE event_id = ? AND player_id = ?`
+  ).bind(event_id, player_id).first();
+  if (existing && existing.role === 'roster') {
+    return new Response('player is on regular roster', { status: 400 });
+  }
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at)
+    VALUES (?, ?, ?, 'in', 'sub', 'admin', ?)
+    ON CONFLICT(event_id, player_id) DO UPDATE SET
+      team = excluded.team,
+      status = 'in',
+      role = 'sub',
+      status_by = 'admin',
+      updated_at = excluded.updated_at
+  `).bind(event_id, player_id, team, now).run();
+
+  const c = await getContact(env.DB, player_id);
+  const need = (c && (c.is_goalie === 1 || c.role === 'sub_goalie')) ? 'goalie' : 'skater';
+  await env.DB.prepare(`
+    INSERT INTO availability (event_id, player_id, need, status, answered_at)
+    VALUES (?, ?, ?, 'yes', ?)
+    ON CONFLICT(event_id, player_id, need) DO UPDATE SET
+      status = 'yes',
+      answered_at = excluded.answered_at
+  `).bind(event_id, player_id, need, now).run();
+
+  // Cancel any pending outbox entry for this sub
+  await cancelPending(env, `place:${event_id}:${player_id}`);
+  await cancelPending(env, `gameday24:${event_id}:${player_id}`);
+
+  // Do not send an automated email right away if > 24 hours out.
+  // Only send if late reassignment within 24h of game time.
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(event_id).first();
+  if (ev && hoursOut(ev) <= 24) {
+    await enqueue(env, {
+      kind: 'gameday',
+      event_id,
+      player_id,
+      team,
+      dedup_key: `gameday24:${event_id}:${player_id}`
+    });
+  }
+
+  return Response.json({ ok: true });
+}
+
+async function sheetData(env, url) {
+  const corsHeaders = {
+    'content-type': 'application/json; charset=utf-8',
+    'access-control-allow-origin': '*',
+    'cache-control': 'public, max-age=30'
+  };
+
+  try {
+    const dateParam = url.searchParams.get('date');
+    const eventIdParam = url.searchParams.get('event_id') || url.searchParams.get('e');
+    const seasonParam = url.searchParams.get('season') || url.searchParams.get('s');
+    const weekParam = url.searchParams.get('week') || url.searchParams.get('w');
+
+    let ev;
+    if (eventIdParam) {
+      ev = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(eventIdParam).first();
+    }
+    if (!ev && dateParam) {
+      ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? OR date = ?').bind(dateParam, dateParam).first();
+    }
+    if (!ev && seasonParam && weekParam) {
+      ev = await env.DB.prepare('SELECT * FROM events WHERE season = ? AND week = ?')
+        .bind(seasonParam, parseInt(weekParam, 10)).first();
+    }
+    if (!ev && !eventIdParam && !dateParam && !weekParam) {
+      ev = await env.DB.prepare("SELECT * FROM events WHERE state='open' ORDER BY week LIMIT 1").first();
+    }
+    if (!ev && !eventIdParam && !dateParam && !weekParam) {
+      ev = await env.DB.prepare('SELECT * FROM events ORDER BY id DESC LIMIT 1').first();
+    }
+
+    if (!ev) {
+      return new Response(JSON.stringify({ event_id: null, teams: {} }), { headers: corsHeaders });
+    }
+
+    const rsvpRows = (await env.DB.prepare(
+      `SELECT r.player_id, r.team, r.status, r.role,
+              COALESCE(c.name, r.guest_name) AS name, COALESCE(c.is_goalie, 0) AS is_goalie
+         FROM rsvp r
+         LEFT JOIN contacts c ON c.player_id = r.player_id
+        WHERE r.event_id = ?`
+    ).bind(ev.id).all()).results || [];
+
+    const teams = {};
+    for (const t of TEAMS) {
+      teams[t] = {
+        out: [],
+        subs: []
+      };
+    }
+
+    for (const r of rsvpRows) {
+      if (!teams[r.team]) continue;
+      if (r.role === 'roster' && r.status === 'out' && r.player_id) {
+        teams[r.team].out.push(r.player_id);
+      } else if (r.role === 'sub' && r.status === 'in') {
+        teams[r.team].subs.push({
+          player_id: r.player_id,
+          name: r.name,
+          is_goalie: r.is_goalie === 1
+        });
+      }
+    }
+
+    return new Response(JSON.stringify({
+      event_id: ev.id,
+      season: ev.season,
+      week: ev.week,
+      date: ev.date,
+      teams
+    }), { headers: corsHeaders });
+  } catch (e) {
+    return new Response(JSON.stringify({ event_id: null, teams: {}, error: e.message }), { headers: corsHeaders });
+  }
+}
+
+/* ---------- season recap admin & public api ---------- */
+
+async function seasonRecapPage(env = null, isAuthed = false) {
+  const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  return page('Bilan de fin de saison', `
+  ${adminTabs('recap', isAuthed)}
+  <h1 data-i18n="title">Bilan de fin de saison</h1>
+  ${renderKeyGate(isAuthed)}
+  <div id="main"${isAuthed ? '' : ' style="display:none"'}>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <label for="seasonSelect" style="font-weight:700; font-size:15px;" data-i18n="lblSeason">Saison :</label>
+        <select id="seasonSelect" style="font:inherit; font-weight:600; padding:6px 12px; border:1px solid var(--rule2); border-radius:4px; background:#fff;"></select>
+      </div>
+      <div id="sentBadge" style="display:none; background:#dcfce7; color:#166534; font-weight:700; font-size:13px; padding:6px 12px; border-radius:4px;" data-i18n="sentBadge">
+        ✅ Courriel officiel envoyé à la ligue
+      </div>
+    </div>
+
+    <!-- Card 1: Champion & Photo -->
+    <div class="card">
+      <h2 data-i18n="card1Title">1. Équipe Championne & Photo officielle</h2>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:16px; align-items:start;">
+        <div>
+          <label style="display:block; font-size:13px; font-weight:700; color:var(--soft); margin-bottom:6px; text-transform:uppercase;" data-i18n="lblChampSelect">
+            Équipe couronnée championne :
+          </label>
+          <select id="champSelect" style="width:100%; font:inherit; font-size:16px; font-weight:700; padding:10px 12px; border:1px solid var(--rule2); border-radius:6px; background:#fff;">
+            <option value="Black">Équipe Black (Noire) 🏆</option>
+            <option value="Blue">Équipe Blue (Bleue) 🏆</option>
+            <option value="Red">Équipe Red (Rouge) 🏆</option>
+            <option value="White">Équipe White (Blanche) 🏆</option>
+          </select>
+          <p style="font-size:12px; color:var(--faint); margin:8px 0 0;" data-i18n="champHint">
+            Déterminé automatiquement par la finale, mais modifiable si besoin.
+          </p>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:13px; font-weight:700; color:var(--soft); margin-bottom:6px; text-transform:uppercase;" data-i18n="lblPhotoSelect">
+            Photo officielle des champions :
+          </label>
+          <div style="border:2px dashed var(--rule2); border-radius:6px; padding:14px; text-align:center; background:#fafbfc; cursor:pointer;" onclick="document.getElementById('photoInput').click()">
+            <input type="file" id="photoInput" accept="image/*" style="display:none;">
+            <div id="photoPreviewContainer">
+              <div id="photoPlaceholder" style="color:var(--soft); font-size:13px;" data-i18n="photoPlaceholder">
+                📸 Cliquez pour téléverser la photo des champions (JPG, PNG, WebP)
+              </div>
+              <img id="photoImg" src="" alt="Champion team" style="display:none; max-width:100%; max-height:180px; border-radius:4px; margin-top:8px; object-fit:contain;">
+            </div>
+          </div>
+          <div id="photoStatus" style="font-size:12px; color:var(--green); margin-top:4px; font-weight:600;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 2: Intro & Outro Note -->
+    <div class="card">
+      <h2 data-i18n="card2Title">2. Mots d'introduction & de conclusion</h2>
+      <div style="margin-bottom:14px;">
+        <label style="display:block; font-size:13px; font-weight:700; color:var(--soft); margin-bottom:4px; text-transform:uppercase;" data-i18n="lblIntro">
+          Mot d'introduction (au début du courriel) :
+        </label>
+        <textarea id="introNote" rows="2" style="width:100%; font:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--rule2); border-radius:4px;" placeholder="Félicitations à tous pour cette magnifique saison..." data-i18n-ph="phIntro"></textarea>
+      </div>
+      <div>
+        <label style="display:block; font-size:13px; font-weight:700; color:var(--soft); margin-bottom:4px; text-transform:uppercase;" data-i18n="lblOutro">
+          Mot de conclusion (à la fin du courriel) :
+        </label>
+        <textarea id="outroNote" rows="2" style="width:100%; font:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--rule2); border-radius:4px;" placeholder="Merci à tous et rendez-vous la saison prochaine au gymnase !" data-i18n-ph="phOutro"></textarea>
+      </div>
+    </div>
+
+    <!-- Card 3: The 10 Awards -->
+    <div class="card">
+      <h2 data-i18n="card3Title">3. Les 10 Trophées & Prix individuels</h2>
+      <p style="font-size:13px; color:var(--soft); margin-top:-4px; margin-bottom:16px;" data-i18n="awardsSubtitle">
+        Tous les prix sont précalculés d'après les statistiques de la saison. Vous pouvez ajuster ou réécrire n'importe quel texte avant l'envoi.
+      </p>
+      <div id="awardsList" style="display:flex; flex-direction:column; gap:12px;"></div>
+    </div>
+
+    <!-- Action Bar -->
+    <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; align-items:center; margin:24px 0 40px;">
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button id="btnSaveDraft" class="btn" style="background:#475569; padding:10px 18px; font-size:14px;" data-i18n="btnSaveDraft">
+          💾 Sauvegarder brouillon
+        </button>
+        <button id="btnPreview" class="btn" style="background:var(--blue); padding:10px 18px; font-size:14px;" data-i18n="btnPreview">
+          👁️ Prévisualiser courriel
+        </button>
+      </div>
+      <button id="btnSendLeague" class="btn" style="background:var(--green); padding:10px 22px; font-size:15px; font-weight:700;" data-i18n="btnSendLeague">
+        🚀 Confirmer et envoyer à toute la ligue
+      </button>
+    </div>
+    <div id="actionMsg" style="font-weight:700; text-align:center; margin-bottom:20px;"></div>
+  </div>
+
+  <!-- Modal for Email Preview -->
+  <div id="previewModal" style="display:none; position:fixed; z-index:100; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; padding:16px;">
+    <div style="background:#fff; width:100%; max-width:680px; max-height:92vh; border-radius:8px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 30px rgba(0,0,0,0.3);">
+      <div style="background:var(--ink); color:#fff; padding:12px 18px; display:flex; justify-content:space-between; align-items:center;">
+        <b style="font-size:16px;" data-i18n="modalPreviewTitle">Aperçu du courriel de fin de saison</b>
+        <span onclick="document.getElementById('previewModal').style.display='none'" style="cursor:pointer; font-size:22px; line-height:1; opacity:0.8;">&times;</span>
+      </div>
+      <div id="previewContent" style="padding:16px; overflow-y:auto; flex:1; background:#f4f5f8;"></div>
+      <div style="padding:12px 18px; background:#fff; border-top:1px solid var(--rule); display:flex; justify-content:flex-end;">
+        <button onclick="document.getElementById('previewModal').style.display='none'" class="btn" style="background:#64748b; padding:8px 16px; font-size:14px;" data-i18n="btnClose">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+const $ = i => document.getElementById(i);
+const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const AWARD_METAS = [
+  { key: 'rocketRichard', title: 'Rocket Richard', desc: { fr: 'Meilleur buteur', en: 'Top Goal Scorer' }, icon: '🚀' },
+  { key: 'ladyByng', title: 'Lady Byng', desc: { fr: 'Gentilhomme & passes', en: 'Sportsmanship & Assists' }, icon: '🤝' },
+  { key: 'artRoss', title: 'Art Ross', desc: { fr: 'Meilleur pointeur', en: 'Top Scorer' }, icon: '🎯' },
+  { key: 'hartTrophy', title: 'Hart', desc: { fr: 'Joueur le plus utile - PPG', en: 'Most Valuable Player - PPG' }, icon: '⭐' },
+  { key: 'norris', title: 'James Norris', desc: { fr: 'Meilleur défenseur', en: 'Top Defenseman' }, icon: '🛡️' },
+  { key: 'vezina', title: 'Georges Vézina', desc: { fr: 'Meilleur gardien', en: 'Top Goaltender' }, icon: '🥅' },
+  { key: 'calder', title: 'Calder', desc: { fr: "Recrue de l'année (1ère saison régulière, ≤ 25 PJ antérieures)", en: 'Rookie of the Year (1st regular season, ≤ 25 prior games)' }, icon: '🌟' },
+  { key: 'subway', title: 'Subway', desc: { fr: 'Meilleur remplaçant', en: 'Best Sub' }, icon: '🥖' },
+  { key: 'mvp', title: 'MVP', desc: { fr: 'Implication dans les buts', en: 'Goal Involvement' }, icon: '🔥' },
+  { key: 'billMasterton', title: 'Bill Masterton', desc: { fr: 'Persévérance & esprit sportif', en: 'Perseverance & Sportsmanship' }, icon: '❤️' }
+];
+
+let stateData = null;
+let currentLang = window.__currentLang || (function() {
+  try {
+    const s = localStorage.getItem('smbhl_admin_lang');
+    if (s === 'en' || s === 'fr') return s;
+  } catch (_) {}
+  return 'fr';
+})();
+
+const I18N_RECAP = {
+  fr: {
+    title: "Bilan de fin de saison",
+    lblSeason: "Saison :",
+    sentBadge: "✅ Courriel officiel envoyé à la ligue",
+    card1Title: "1. Équipe Championne & Photo officielle",
+    lblChampSelect: "Équipe couronnée championne :",
+    champHint: "Déterminé automatiquement par la finale, mais modifiable si besoin.",
+    optBlack: "Équipe Black (Noire) 🏆",
+    optBlue: "Équipe Blue (Bleue) 🏆",
+    optRed: "Équipe Red (Rouge) 🏆",
+    optWhite: "Équipe White (Blanche) 🏆",
+    lblPhotoSelect: "Photo officielle des champions :",
+    photoPlaceholder: "📸 Cliquez pour téléverser la photo des champions (JPG, PNG, WebP)",
+    photoSaved: "✓ Photo enregistrée avec succès!",
+    uploadingPhoto: "Téléversement en cours...",
+    card2Title: "2. Mots d'introduction & de conclusion",
+    lblIntro: "Mot d'introduction (au début du courriel) :",
+    phIntro: "Félicitations à tous pour cette magnifique saison...",
+    lblOutro: "Mot de conclusion (à la fin du courriel) :",
+    phOutro: "Merci à tous et rendez-vous la saison prochaine au gymnase !",
+    card3Title: "3. Les 10 Trophées & Prix individuels",
+    awardsSubtitle: "Tous les prix sont précalculés d'après les statistiques de la saison. Vous pouvez ajuster ou réécrire n'importe quel texte avant l'envoi.",
+    btnResetAuto: "↺ Rétablir calcul automatique",
+    btnSaveDraft: "💾 Sauvegarder brouillon",
+    btnPreview: "👁️ Prévisualiser courriel",
+    btnSendLeague: "🚀 Confirmer et envoyer à toute la ligue",
+    savingDraft: "Sauvegarde...",
+    draftSaved: "✅ Brouillon enregistré avec succès!",
+    modalPreviewTitle: "Aperçu du courriel de fin de saison",
+    btnClose: "Fermer",
+    previewHeaderAwards: "🏅 Trophées et Récipiendaires",
+    calderGoalieNote: "🥅 <b>Gardien recrue admissible :</b> ",
+    calderGoalieHint: " · <i>cliquable à ta discrétion</i>",
+    confirmSendLeague: "Êtes-vous sûr de vouloir envoyer le grand courriel officiel de fin de saison pour {season} à tous les joueurs de la ligue ?",
+    sendingLeague: "Envoi en cours à toute la ligue...",
+    sendSuccess: "🎉 Courriels envoyés avec succès à {count} joueurs !",
+    adminKeyTitle: "Clé admin",
+    adminKeyPlaceholder: "clé",
+    adminKeyBtn: "OUVRIR",
+    errEnterKey: "Entrez la clé svp",
+    errKeyRejected: "Clé refusée",
+    errInvalidKey: "Clé invalide",
+    errPrefix: "Erreur : "
+  },
+  en: {
+    title: "Season Recap & Awards",
+    lblSeason: "Season:",
+    sentBadge: "✅ Official email sent to league",
+    card1Title: "1. Champion Team & Official Photo",
+    lblChampSelect: "Crowned Champion Team:",
+    champHint: "Automatically determined from the finals, but editable if needed.",
+    optBlack: "Team Black 🏆",
+    optBlue: "Team Blue 🏆",
+    optRed: "Team Red 🏆",
+    optWhite: "Team White 🏆",
+    lblPhotoSelect: "Official champions team photo:",
+    photoPlaceholder: "📸 Click to upload champion team photo (JPG, PNG, WebP)",
+    photoSaved: "✓ Photo saved successfully!",
+    uploadingPhoto: "Uploading photo...",
+    card2Title: "2. Intro & Outro Messages",
+    lblIntro: "Introductory message (at top of email):",
+    phIntro: "Congratulations to everyone on a fantastic season...",
+    lblOutro: "Closing message (at bottom of email):",
+    phOutro: "Thank you all and see you next season at the gym!",
+    card3Title: "3. The 10 Seasonal Awards",
+    awardsSubtitle: "All awards are pre-calculated based on regular season statistics. You can adjust or rewrite any recipient before sending.",
+    btnResetAuto: "↺ Reset to auto-calculated",
+    btnSaveDraft: "💾 Save Draft",
+    btnPreview: "👁️ Preview Email",
+    btnSendLeague: "🚀 Confirm and Send to League",
+    savingDraft: "Saving...",
+    draftSaved: "✅ Draft saved successfully!",
+    modalPreviewTitle: "Season Recap Email Preview",
+    btnClose: "Close",
+    previewHeaderAwards: "🏅 Seasonal Awards & Recipients",
+    calderGoalieNote: "🥅 <b>Eligible Rookie Goalie:</b> ",
+    calderGoalieHint: " · <i>clickable at your discretion</i>",
+    confirmSendLeague: "Are you sure you want to send the official end-of-season email for {season} to all players in the league?",
+    sendingLeague: "Sending in progress to all players...",
+    sendSuccess: "🎉 Emails successfully sent to {count} players!",
+    adminKeyTitle: "Admin Key",
+    adminKeyPlaceholder: "key",
+    adminKeyBtn: "UNLOCK",
+    errEnterKey: "Please enter key",
+    errKeyRejected: "Key rejected",
+    errInvalidKey: "Invalid key",
+    errPrefix: "Error: "
+  }
+};
+
+function renderChampOptions() {
+  const sel = $('champSelect');
+  if (!sel) return;
+  const curVal = sel.value;
+  const isEn = currentLang === 'en';
+  sel.innerHTML = '<option value="Black">' + (isEn ? 'Team Black 🏆' : 'Équipe Black (Noire) 🏆') + '</option>' +
+    '<option value="Blue">' + (isEn ? 'Team Blue 🏆' : 'Équipe Blue (Bleue) 🏆') + '</option>' +
+    '<option value="Red">' + (isEn ? 'Team Red 🏆' : 'Équipe Red (Rouge) 🏆') + '</option>' +
+    '<option value="White">' + (isEn ? 'Team White 🏆' : 'Équipe White (Blanche) 🏆') + '</option>';
+  if (curVal) sel.value = curVal;
+}
+
+function applyLanguage(lang) {
+  currentLang = lang || 'fr';
+  const dict = I18N_RECAP[currentLang] || I18N_RECAP.fr;
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    if (dict[k] != null) {
+      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = dict[k];
+      else el.innerHTML = dict[k];
+    }
+  });
+  document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+    const k = el.getAttribute('data-i18n-ph');
+    if (dict[k] != null) el.placeholder = dict[k];
+  });
+  if (window.__updateAdminTabsLang) window.__updateAdminTabsLang(currentLang);
+  renderChampOptions();
+  if (stateData) renderAwards();
+}
+window.addEventListener('admin_lang_changed', e => applyLanguage(e.detail.lang));
+
+async function api(path, options = {}) {
+  const headers = { 'x-admin': K, ...(options.headers || {}) };
+  const res = await fetch(path, { ...options, headers });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function load(season = '') {
+  try {
+    const q = season ? '?s=' + encodeURIComponent(season) : '';
+    stateData = await api('/admin/season-recap/data' + q);
+
+    const sel = $('seasonSelect');
+    sel.innerHTML = (stateData.allSeasons || [stateData.season]).map(s =>
+      '<option value="' + esc(s) + '"' + (s === stateData.season ? ' selected' : '') + '>' + esc(s) + '</option>'
+    ).join('');
+
+    if (stateData.champion) {
+      $('champSelect').value = stateData.champion;
+    }
+
+    if (stateData.photo_url) {
+      $('photoImg').src = stateData.photo_url + '&_t=' + Date.now();
+      $('photoImg').style.display = 'block';
+      $('photoPlaceholder').style.display = 'none';
+      $('photoStatus').textContent = currentLang === 'en' ? '✓ Photo saved' : '✓ Photo enregistrée';
+    } else {
+      $('photoImg').style.display = 'none';
+      $('photoPlaceholder').style.display = 'block';
+      $('photoStatus').textContent = '';
+    }
+
+    $('introNote').value = stateData.intro_note || '';
+    $('outroNote').value = stateData.outro_note || '';
+
+    if (stateData.sent_at) {
+      $('sentBadge').style.display = 'block';
+      const locDate = new Date(stateData.sent_at).toLocaleDateString(currentLang === 'en' ? 'en-CA' : 'fr-CA');
+      $('sentBadge').textContent = currentLang === 'en'
+        ? ('✅ Official email sent to league on ' + locDate)
+        : ('✅ Courriel officiel envoyé le ' + locDate);
+    } else {
+      $('sentBadge').style.display = 'none';
+    }
+
+    applyLanguage(currentLang);
+  } catch (err) {
+    const dict = I18N_RECAP[currentLang] || I18N_RECAP.fr;
+    $('actionMsg').textContent = dict.errPrefix + err.message;
+    $('actionMsg').style.color = '#dc2626';
+    throw err;
+  }
+}
+
+function renderAwards() {
+  const c = $('awardsList');
+  const dict = I18N_RECAP[currentLang] || I18N_RECAP.fr;
+  c.innerHTML = AWARD_METAS.map(m => {
+    const curVal = (stateData.awards && stateData.awards[m.key] != null)
+      ? stateData.awards[m.key]
+      : (stateData.autoAwards && stateData.autoAwards[m.key]) || '';
+    const autoVal = (stateData.autoAwards && stateData.autoAwards[m.key]) || '';
+    const mDesc = m.desc[currentLang] || m.desc.fr;
+
+    let extraNote = '';
+    if (m.key === 'calder' && stateData.autoAwards?.calderCandidates?.topGoalie) {
+      const tg = stateData.autoAwards.calderCandidates.topGoalie;
+      const gaaLbl = currentLang === 'en' ? ' GAA, ' : ' MBA, ';
+      const winLbl = currentLang === 'en' ? 'W' : 'V';
+      extraNote = '<div style="font-size:12px;color:#1e40af;margin-top:6px;background:#eff6ff;padding:5px 8px;border-radius:4px;border:1px solid #bfdbfe;">' +
+        dict.calderGoalieNote + esc(tg.name) + ' (' + tg.gaa.toFixed(2) + gaaLbl + tg.w + winLbl + ')' + dict.calderGoalieHint +
+        '</div>';
+    }
+
+    return '<div style="background:#fff; border:1px solid var(--rule); border-radius:6px; padding:12px 14px;">' +
+      '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:6px;">' +
+        '<div style="font-weight:700; font-size:14px; color:var(--ink); display:flex; align-items:center; gap:6px;">' +
+          '<span>' + m.icon + '</span> <span>' + esc(m.title) + '</span>' +
+        '</div>' +
+        '<button type="button" class="btn-reset" data-key="' + m.key + '" data-auto="' + esc(autoVal) + '" style="background:none; border:none; color:var(--blue); font-size:12px; cursor:pointer; font-weight:600; text-decoration:underline;">' +
+          esc(dict.btnResetAuto) +
+        '</button>' +
+      '</div>' +
+      '<div style="font-size:12px; color:var(--soft); margin-bottom:8px;">' + esc(mDesc) + '</div>' +
+      '<input type="text" id="award_' + m.key + '" value="' + esc(curVal) + '" style="width:100%; font:inherit; font-size:14px; padding:7px 10px; border:1px solid var(--rule2); border-radius:4px; font-weight:500;">' +
+      extraNote +
+    '</div>';
+  }).join('');
+
+  document.querySelectorAll('.btn-reset').forEach(b => {
+    b.onclick = () => {
+      const k = b.dataset.key;
+      const aut = b.dataset.auto;
+      const inp = $('award_' + k);
+      if (inp) inp.value = aut;
+    };
+  });
+}
+
+function collectPayload() {
+  const awards = {};
+  for (const m of AWARD_METAS) {
+    const el = $('award_' + m.key);
+    awards[m.key] = el ? el.value.trim() : '';
+  }
+  return {
+    season: $('seasonSelect').value,
+    champion: $('champSelect').value,
+    intro_note: $('introNote').value.trim(),
+    outro_note: $('outroNote').value.trim(),
+    awards
+  };
+}
+
+$('seasonSelect').onchange = () => load($('seasonSelect').value);
+
+$('photoInput').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const dict = I18N_RECAP[currentLang] || I18N_RECAP.fr;
+  $('photoStatus').textContent = dict.uploadingPhoto;
+  $('photoStatus').style.color = 'var(--blue)';
+  const fd = new FormData();
+  fd.append('photo', file);
+  fd.append('season', $('seasonSelect').value);
+  try {
+    const res = await fetch('/admin/season-recap/upload-photo', {
+      method: 'POST',
+      headers: { 'x-admin': K },
+      body: fd
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    $('photoImg').src = data.url;
+    $('photoImg').style.display = 'block';
+    $('photoPlaceholder').style.display = 'none';
+    $('photoStatus').textContent = dict.photoSaved;
+    $('photoStatus').style.color = 'var(--green)';
+  } catch (err) {
+    $('photoStatus').textContent = dict.errPrefix + err.message;
+    $('photoStatus').style.color = '#dc2626';
+  }
+};
+
+$('btnSaveDraft').onclick = async () => {
+  const p = collectPayload();
+  const dict = I18N_RECAP[currentLang] || I18N_RECAP.fr;
+  $('actionMsg').textContent = dict.savingDraft;
+  $('actionMsg').style.color = 'var(--soft)';
+  try {
+    await api('/admin/season-recap/save', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(p)
+    });
+    $('actionMsg').textContent = dict.draftSaved;
+    $('actionMsg').style.color = 'var(--green)';
+  } catch (err) {
+    $('actionMsg').textContent = dict.errPrefix + err.message;
+    $('actionMsg').style.color = '#dc2626';
+  }
+};
+
+$('btnPreview').onclick = () => {
+  const p = collectPayload();
+  const champ = p.champion;
+  const season = p.season;
+  const photoUrl = $('photoImg').style.display !== 'none' ? $('photoImg').src : '';
+  const dict = I18N_RECAP[currentLang] || I18N_RECAP.fr;
+
+  let awardsHtml = AWARD_METAS.map(m => {
+    const val = p.awards[m.key];
+    if (!val) return '';
+    const mDesc = m.desc[currentLang] || m.desc.fr;
+    return '<div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:12px 14px; margin-bottom:10px;">' +
+      '<div style="font-size:13px; font-weight:700; color:#17457f; margin-bottom:4px; display:flex; align-items:center; gap:6px;">' +
+        '<span>' + m.icon + '</span> <span>' + esc(m.title) + ' <span style="font-size:12px; font-weight:500; color:#64748b;">(' + esc(mDesc) + ')</span></span>' +
+      '</div>' +
+      '<div style="font-size:14px; color:#1e293b; font-weight:600;">' + esc(val) + '</div>' +
+    '</div>';
+  }).join('');
+
+  $('previewContent').innerHTML =
+    '<div style="text-align:center; background:linear-gradient(135deg, #17457f 0%, #0f172a 100%); color:#ffffff; padding:24px 16px; border-radius:8px; margin-bottom:20px;">' +
+      '<div style="font-size:32px; margin-bottom:4px;">🏆 🏒 🥇</div>' +
+      '<h2 style="font-family:Barlow Condensed,sans-serif; font-size:26px; font-weight:700; margin:0 0 6px; text-transform:uppercase;">' +
+        (currentLang === 'en' ? 'Champions ' : 'Champions ') + esc(season) +
+      '</h2>' +
+      '<div style="font-size:20px; font-weight:700; color:#fde047; text-transform:uppercase;">' +
+        (currentLang === 'en' ? 'Team ' : 'Équipe ') + esc(champ) +
+      '</div>' +
+    '</div>' +
+    (photoUrl ? '<div style="text-align:center; margin-bottom:20px;"><img src="' + photoUrl + '" style="max-width:100%; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>' : '') +
+    (p.intro_note ? '<p style="font-size:15px; line-height:1.5; margin-bottom:18px; color:#334155;">' + esc(p.intro_note).replace(/\\n/g, '<br>') + '</p>' : '') +
+    '<div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-bottom:20px;">' +
+      '<div style="font-size:15px; font-weight:700; color:#0f172a; margin-bottom:12px; text-transform:uppercase;">' +
+        esc(dict.previewHeaderAwards) +
+      '</div>' +
+      awardsHtml +
+    '</div>' +
+    (p.outro_note ? '<p style="font-size:15px; line-height:1.5; margin-bottom:20px; color:#334155;">' + esc(p.outro_note).replace(/\\n/g, '<br>') + '</p>' : '');
+
+  $('previewModal').style.display = 'flex';
+};
+
+$('btnSendLeague').onclick = async () => {
+  const p = collectPayload();
+  const dict = I18N_RECAP[currentLang] || I18N_RECAP.fr;
+  const ok = confirm(dict.confirmSendLeague.replace('{season}', p.season));
+  if (!ok) return;
+
+  $('btnSendLeague').disabled = true;
+  $('actionMsg').textContent = dict.sendingLeague;
+  $('actionMsg').style.color = 'var(--blue)';
+
+  try {
+    const res = await api('/admin/season-recap/send', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(p)
+    });
+    $('actionMsg').textContent = dict.sendSuccess.replace('{count}', String(res.sent || res.queued));
+    $('actionMsg').style.color = 'var(--green)';
+    $('sentBadge').style.display = 'block';
+    const locDate = new Date().toLocaleDateString(currentLang === 'en' ? 'en-CA' : 'fr-CA');
+    $('sentBadge').textContent = currentLang === 'en'
+      ? ('✅ Official email sent to league on ' + locDate)
+      : ('✅ Courriel officiel envoyé le ' + locDate);
+  } catch (err) {
+    $('actionMsg').textContent = dict.errPrefix + err.message;
+    $('actionMsg').style.color = '#dc2626';
+    $('btnSendLeague').disabled = false;
+  }
+};
+
+(function init() {
+  const params = new URLSearchParams(location.search);
+  const qK = params.get('t') || params.get('key') || params.get('k');
+  if (qK) { K = qK; localStorage.setItem('adminkey', K); }
+
+  async function unlock(candidate) {
+    const prev = K;
+    K = candidate;
+    try {
+      await load();
+      localStorage.setItem('adminkey', K);
+      try {
+        document.cookie = 'admin_key=' + encodeURIComponent(K) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure';
+      } catch (_) {}
+      if (window.history && window.history.replaceState) {
+        const u = new URL(location);
+        u.searchParams.delete('key'); u.searchParams.delete('k'); u.searchParams.delete('t');
+        window.history.replaceState({}, document.title, u.pathname + u.search);
+      }
+      $('gate').style.display = 'none';
+      $('main').style.display = 'block';
+      document.querySelectorAll('.picker').forEach(p => {
+        p.style.display = 'flex';
+        p.querySelectorAll('a').forEach(a => {
+          try {
+            const u = new URL(a.href, location.origin);
+            if (K) u.searchParams.set('key', K);
+            a.href = u.pathname + u.search;
+          } catch (_) {}
+        });
+      });
+      return true;
+    } catch (e) {
+      K = prev;
+      return false;
+    }
+  }
+
+  $('go').onclick = async () => {
+    const v = $('key').value.trim();
+    if (!v) { $('err').textContent = currentLang === 'en' ? 'Enter admin key' : 'Entre la clé svp'; return; }
+    if (!await unlock(v)) $('err').textContent = currentLang === 'en' ? 'Key rejected' : 'Clé refusée';
+  };
+  $('key').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+
+  applyLanguage(currentLang);
+
+  if (K) {
+    unlock(K);
+  } else if (${isAuthed ? 'true' : 'false'}) {
+    $('gate').style.display = 'none';
+    $('main').style.display = 'block';
+    document.querySelectorAll('.picker').forEach(p => p.style.display = 'flex');
+    load();
+  }
+})();
+</script>
+`);
+}
+
+async function handleSeasonRecapData(req, env, url) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const seasonParam = url.searchParams.get('s') || url.searchParams.get('season');
+  const rawData = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+  const d = JSON.parse(rawData);
+  const allSeasons = (d.seasons || []).map(s => s.name);
+  const s0 = d.seasons?.find(s => s.name === seasonParam) || d.seasons?.[0];
+  const season = s0?.name || seasonParam || 'Fall 2026';
+
+  const autoAwards = computeSeasonAwards(d, season);
+  const draftRaw = await env.SHEETS_KV.get(`season_recap_draft:${season}`);
+  const draft = draftRaw ? JSON.parse(draftRaw) : null;
+  const sentRaw = await env.SHEETS_KV.get(`season_recap:${season}`);
+  const sent = sentRaw ? JSON.parse(sentRaw) : null;
+
+  const hasPhoto = !!(await env.SHEETS_KV.get(`champion_photo:${season}`));
+  const photoUrl = hasPhoto ? `/api/champion-photo?s=${encodeURIComponent(season)}` : null;
+
+  return Response.json({
+    season,
+    allSeasons,
+    champion: draft?.champion || s0?.champion || autoAwards.champion || 'Blue',
+    photo_url: photoUrl,
+    autoAwards,
+    awards: draft?.awards ? Object.fromEntries(
+      Object.entries(draft.awards).map(([k, v]) => {
+        if (!v || typeof v !== 'string') return [k, v];
+        let s = v.trim();
+        s = s.replace(/^(.+?) (?:tied with|with) (\d+) goals?$/i, (m, p, n) => `${p}, ${n} ${Number(n) === 1 ? 'but / goal' : 'buts / goals'}`);
+        s = s.replace(/^(.+?) (?:tied with|with) (\d+) [Aa]ssists?$/i, (m, p, n) => `${p}, ${n} ${Number(n) === 1 ? 'passe / assist' : 'passes / assists'}`);
+        s = s.replace(/^(.+?) (?:tied with|with) (\d+) [Pp]oints?$/i, (m, p, n) => `${p}, ${n} ${Number(n) === 1 ? 'point' : 'points'}`);
+        s = s.replace(/^(.+?) with ([\d.]+) PPG$/i, '$1, $2 PPM / PPG');
+        s = s.replace(/^(.+?) with (\d+) points?$/i, (m, p, n) => `${p}, ${n} ${Number(n) === 1 ? 'point' : 'points'}`);
+        s = s.replace(/^(.+?) wins the top sub award with (\d+) points?$/i, (m, p, n) => `${p}, ${n} ${Number(n) === 1 ? 'point' : 'points'}`);
+        s = s.replace(/^(.+?) scored or assisted (?:in|on) (\d+)% of Team (.+?)'s Goals\.?$/i, '$1, $2% des buts / goals (Team $3)');
+        s = s.replace(/^(.+?) \((\d+\.\d+) GAA\)$/i, '$1, $2 MBA / GAA');
+        return [k, s];
+      })
+    ) : {
+      rocketRichard: autoAwards.rocketRichard,
+      ladyByng: autoAwards.ladyByng,
+      artRoss: autoAwards.artRoss,
+      hartTrophy: autoAwards.hartTrophy,
+      norris: autoAwards.norris,
+      vezina: autoAwards.vezina,
+      calder: autoAwards.calder,
+      subway: autoAwards.subway,
+      mvp: autoAwards.mvp,
+      billMasterton: autoAwards.billMasterton
+    },
+    intro_note: draft?.intro_note ?? '',
+    outro_note: draft?.outro_note ?? '',
+    sent_at: sent?.sent_at || null
+  });
+}
+
+async function handleSeasonRecapSave(req, env) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const body = await req.json().catch(() => ({}));
+  const season = body.season || 'Fall 2026';
+  await env.SHEETS_KV.put(`season_recap_draft:${season}`, JSON.stringify(body));
+  return Response.json({ ok: true, saved_at: new Date().toISOString() });
+}
+
+async function handleSeasonRecapUploadPhoto(req, env) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const formData = await req.formData();
+  const season = formData.get('season') || 'Fall 2026';
+  const file = formData.get('photo');
+  if (!file || typeof file.arrayBuffer !== 'function') {
+    return Response.json({ ok: false, error: 'No photo provided' }, { status: 400 });
+  }
+  const buf = await file.arrayBuffer();
+  const mime = file.type || 'image/jpeg';
+  await env.SHEETS_KV.put(`champion_photo:${season}`, buf);
+  await env.SHEETS_KV.put(`champion_photo_mime:${season}`, mime);
+  return Response.json({ ok: true, url: `/api/champion-photo?s=${encodeURIComponent(season)}&v=${Date.now()}` });
+}
+
+async function handleSeasonRecapSend(req, env) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const body = await req.json().catch(() => ({}));
+  const season = body.season || 'Fall 2026';
+  const now = new Date().toISOString();
+  await env.SHEETS_KV.put(`season_recap:${season}`, JSON.stringify({ ...body, sent_at: now }));
+
+  if (body.champion) {
+    try {
+      const rawData = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+      const d = JSON.parse(rawData);
+      const s0 = d.seasons?.find(s => s.name === season) || d.seasons?.[0];
+      if (s0 && s0.champion !== body.champion) {
+        s0.champion = body.champion;
+        d.updated = now.slice(0, 10);
+        await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+      }
+    } catch (e) {
+      console.error('Error updating champion in data.json:', e);
+    }
+  }
+
+  // Determine eligible recipients: all regular players + any subs who played during this season
+  const contacts = (await env.DB.prepare(
+    'SELECT player_id, email, name, role FROM contacts WHERE opted_out = 0 AND email IS NOT NULL'
+  ).all()).results || [];
+
+  // 1. Players who played according to RSVP records for this season
+  const playedInRsvp = new Set(
+    (await env.DB.prepare(
+      `SELECT DISTINCT r.player_id
+         FROM rsvp r
+         JOIN events e ON e.id = r.event_id
+        WHERE e.season = ? AND r.status = 'in' AND r.player_id IS NOT NULL`
+    ).bind(season).all()).results?.map(r => r.player_id) || []
+  );
+
+  // 2. Players who played according to data.json (gp > 0 in this season)
+  let playedInDataJson = new Set();
+  try {
+    const rawData = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+    const d = JSON.parse(rawData);
+    for (const p of (d.players || [])) {
+      const sStat = p.seasons?.[season];
+      const gStat = p.gseasons?.[season];
+      if ((sStat && Number(sStat.gp) > 0) || (gStat && Number(gStat.gp) > 0)) {
+        playedInDataJson.add(p.id);
+      }
+    }
+  } catch (e) {
+    console.error('Error checking played players in data.json:', e);
+  }
+
+  // Filter: all regulars (role = 'roster') + any subs who played in this season
+  const eligibleContacts = contacts.filter(c => {
+    const isSub = String(c.role || '').toLowerCase().startsWith('sub');
+    if (!isSub) return true; // All regular players
+    return playedInRsvp.has(c.player_id) || playedInDataJson.has(c.player_id); // Subs who played
+  });
+
+  const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+  const hasPhoto = !!(await env.SHEETS_KV.get(`champion_photo:${season}`));
+  const photoUrl = hasPhoto ? `${publicUrl}/api/champion-photo?s=${encodeURIComponent(season)}` : null;
+
+  let count = 0;
+  for (const c of eligibleContacts) {
+    await enqueue(env, {
+      kind: 'season_recap',
+      event_id: `${season}-recap`,
+      player_id: c.player_id,
+      dedup_key: `season_recap:${season}:${c.player_id}`,
+      payload: {
+        season,
+        champion: body.champion,
+        photo_url: photoUrl,
+        awards: body.awards || {},
+        intro_note: body.intro_note || '',
+        outro_note: body.outro_note || ''
+      }
+    });
+    count++;
+  }
+
+  const drainRes = await drain(env);
+  return Response.json({ ok: true, queued: count, sent: drainRes.sent, failed: drainRes.failed });
+}
+
+/* ---------- finances & dues tracker ---------- */
+
+async function handleFinancesData(req, env, url) {
+  const seasonParam = url.searchParams.get('s') || url.searchParams.get('season');
+  let rawData = null;
+  if (env.SHEETS_KV) {
+    try { rawData = await env.SHEETS_KV.get('data_json'); } catch (_) {}
+  }
+  if (!rawData) {
+    try {
+      const res = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
+      if (res && res.ok) rawData = await res.text();
+    } catch (_) {}
+  }
+  let d = {};
+  try { if (rawData) d = JSON.parse(rawData); } catch (_) {}
+
+  // All seasons from data.json + DB
+  const seasonsSet = new Set((d.seasons || []).map(s => s.name));
+  const pricingSeasons = (await env.DB.prepare('SELECT DISTINCT season FROM season_pricing').all()).results || [];
+  pricingSeasons.forEach(r => seasonsSet.add(r.season));
+  const eventSeasons = (await env.DB.prepare('SELECT DISTINCT season FROM events').all()).results || [];
+  eventSeasons.forEach(r => seasonsSet.add(r.season));
+  if (seasonParam) seasonsSet.add(seasonParam);
+
+  const allSeasons = Array.from(seasonsSet);
+  const s0 = d.seasons?.find(s => s.name === seasonParam) || d.seasons?.[0];
+  const season = seasonParam || s0?.name || 'Fall 2026';
+
+  // 1. Season Pricing
+  let pricing = await env.DB.prepare('SELECT * FROM season_pricing WHERE season = ?').bind(season).first();
+  if (!pricing) {
+    pricing = {
+      season,
+      price_player: 170,
+      price_goalie: 0,
+      price_sub_player: 5,
+      price_sub_goalie: 0,
+      etransfer_phone: '',
+      updated_at: null
+    };
+  }
+
+  // 2. D1 Player Dues records
+  const duesRows = (await env.DB.prepare('SELECT * FROM player_dues WHERE season = ?').bind(season).all()).results || [];
+  const duesMap = new Map(duesRows.map(r => [r.player_id, r]));
+
+  // 3. Sub games played in this season from completed RSVP events
+  const subGpRows = (await env.DB.prepare(
+    `SELECT r.player_id, count(*) as gp
+       FROM rsvp r JOIN events e ON e.id = r.event_id
+      WHERE e.season = ? AND r.role = 'sub' AND r.status = 'in' AND e.state = 'done' AND r.player_id IS NOT NULL
+      GROUP BY r.player_id`
+  ).bind(season).all()).results || [];
+  const subGpMap = new Map(subGpRows.map(r => [r.player_id, r.gp]));
+
+  // 4. Contacts
+  const contactsList = (await env.DB.prepare(
+    'SELECT player_id, name, email, role, is_goalie, is_sub, preferred_team FROM contacts'
+  ).all()).results || [];
+  const contactMap = new Map(contactsList.map(c => [c.player_id, c]));
+
+  // 5. Gather players for this season
+  const playerEntries = [];
+  const processedPlayerIds = new Set();
+
+  for (const p of (d.players || [])) {
+    const sData = p.seasons?.[season];
+    const gData = p.gseasons?.[season];
+    if (sData || gData) {
+      const c = contactMap.get(p.id);
+      const isGoalie = !!gData || (sData && sData.pos === 'G') || (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
+      const team = sData?.team || gData?.team || null;
+      const isSub = (c && c.is_sub === 1) || !team || (sData && sData.team === null);
+      let gamesPlayed = 0;
+      if (c && c.role === 'sub_goalie') {
+        gamesPlayed = gData?.gp ?? sData?.gp ?? subGpMap.get(p.id) ?? 0;
+      } else if (isGoalie && gData && sData && sData.gp === gData.gp && (sData.g || 0) === 0 && (sData.a || 0) === 0) {
+        gamesPlayed = gData.gp;
+      } else {
+        const gpFromData = (sData?.gp ?? 0) + (gData?.gp ?? 0);
+        const gpFromRsvp = subGpMap.get(p.id) || 0;
+        gamesPlayed = Math.max(gpFromData, gpFromRsvp);
+      }
+
+      // If a player is a sub or dropped regular with team: null:
+      // Only include them if they played games or have recorded dues/payments
+      if (isSub) {
+        const hasDuesRecord = duesMap.has(p.id);
+        if (gamesPlayed === 0 && !hasDuesRecord) {
+          continue;
+        }
+        processedPlayerIds.add(p.id);
+        playerEntries.push({
+          player_id: p.id,
+          name: p.name,
+          team: team || c?.preferred_team || null,
+          role: isGoalie ? 'sub_goalie' : 'sub_skater',
+          is_goalie: isGoalie,
+          is_sub: true,
+          games_played: gamesPlayed
+        });
+      } else {
+        processedPlayerIds.add(p.id);
+        playerEntries.push({
+          player_id: p.id,
+          name: p.name,
+          team,
+          role: isGoalie ? 'roster_goalie' : 'roster_skater',
+          is_goalie: isGoalie,
+          is_sub: false,
+          games_played: gamesPlayed
+        });
+      }
+    }
+  }
+
+  // Rsvp roster players for this season (not in data.json yet)
+  const rsvpRosterRows = (await env.DB.prepare(
+    `SELECT DISTINCT r.player_id, r.team, c.is_goalie, c.is_sub
+       FROM rsvp r
+       JOIN events e ON e.id = r.event_id
+       LEFT JOIN contacts c ON c.player_id = r.player_id
+      WHERE e.season = ? AND r.role = 'roster' AND r.player_id IS NOT NULL`
+  ).bind(season).all()).results || [];
+
+  for (const rr of rsvpRosterRows) {
+    if (!processedPlayerIds.has(rr.player_id)) {
+      const c = contactMap.get(rr.player_id);
+      const isSub = (c && c.is_sub === 1) || rr.is_sub === 1;
+      const isGoalie = c ? (c.is_goalie === 1 || c.role === 'sub_goalie') : rr.is_goalie === 1;
+      const gp = subGpMap.get(rr.player_id) || 0;
+      if (isSub && gp === 0 && !duesMap.has(rr.player_id)) {
+        continue;
+      }
+      processedPlayerIds.add(rr.player_id);
+      playerEntries.push({
+        player_id: rr.player_id,
+        name: c?.name || rr.player_id,
+        team: rr.team || c?.preferred_team || null,
+        role: isSub ? (isGoalie ? 'sub_goalie' : 'sub_skater') : (isGoalie ? 'roster_goalie' : 'roster_skater'),
+        is_goalie: isGoalie,
+        is_sub: isSub,
+        games_played: isSub ? gp : null
+      });
+    }
+  }
+
+  // Gather any other subs with completed games or custom dues
+  for (const [pid, gp] of subGpMap.entries()) {
+    if (!processedPlayerIds.has(pid) && gp > 0) {
+      processedPlayerIds.add(pid);
+      const c = contactMap.get(pid);
+      const isGoalie = c ? (c.is_goalie === 1 || c.role === 'sub_goalie') : false;
+      playerEntries.push({
+        player_id: pid,
+        name: c?.name || pid,
+        team: c?.preferred_team || null,
+        role: isGoalie ? 'sub_goalie' : 'sub_skater',
+        is_goalie: isGoalie,
+        is_sub: true,
+        games_played: gp
+      });
+    }
+  }
+
+  for (const [pid, dueRow] of duesMap.entries()) {
+    if (!processedPlayerIds.has(pid)) {
+      processedPlayerIds.add(pid);
+      const c = contactMap.get(pid);
+      const isGoalie = c ? (c.is_goalie === 1 || c.role === 'sub_goalie') : false;
+      playerEntries.push({
+        player_id: pid,
+        name: c?.name || pid,
+        team: c?.preferred_team || null,
+        role: isGoalie ? 'sub_goalie' : 'sub_skater',
+        is_goalie: isGoalie,
+        is_sub: true,
+        games_played: subGpMap.get(pid) || 0
+      });
+    }
+  }
+
+  // 7. Calculate dues for each player
+  const players = playerEntries.map(p => {
+    const dues = duesMap.get(p.player_id) || {};
+    const gamesPlayed = p.games_played != null ? p.games_played : (subGpMap.get(p.player_id) || 0);
+
+    let basePrice = 0;
+    if (!p.is_sub) {
+      basePrice = p.is_goalie ? Number(pricing.price_goalie) : Number(pricing.price_player);
+    } else {
+      basePrice = p.is_goalie
+        ? (Number(gamesPlayed || 0) * Number(pricing.price_sub_goalie))
+        : (Number(gamesPlayed || 0) * Number(pricing.price_sub_player));
+    }
+
+    const customDue = (dues.custom_due !== null && dues.custom_due !== undefined && dues.custom_due !== '')
+      ? Number(dues.custom_due) : null;
+    const totalDue = customDue !== null ? Math.max(0, customDue) : basePrice;
+    const amountPaid = Number(dues.amount_paid || 0);
+    const outstanding = totalDue - amountPaid;
+    const notes = dues.notes || '';
+
+    let status = 'unpaid';
+    if (totalDue === 0) {
+      status = 'exempt';
+    } else if (amountPaid >= totalDue) {
+      status = 'paid';
+    } else if (amountPaid > 0) {
+      status = 'partial';
+    }
+
+    return {
+      player_id: p.player_id,
+      name: p.name,
+      team: p.team,
+      role: p.role,
+      is_goalie: p.is_goalie,
+      is_sub: p.is_sub,
+      games_played: gamesPlayed,
+      base_price: basePrice,
+      custom_due: customDue,
+      total_due: totalDue,
+      amount_paid: amountPaid,
+      outstanding,
+      status,
+      notes
+    };
+  });
+
+  players.sort((a, b) => {
+    if (a.is_sub !== b.is_sub) return a.is_sub ? 1 : -1;
+    if (!a.is_sub) {
+      if (a.team !== b.team) return (a.team || 'Z').localeCompare(b.team || 'Z');
+      return a.name.localeCompare(b.name);
+    }
+    if ((b.games_played || 0) !== (a.games_played || 0)) return (b.games_played || 0) - (a.games_played || 0);
+    return a.name.localeCompare(b.name);
+  });
+
+  const costRows = (await env.DB.prepare(
+    'SELECT id, season, category, description, amount, created_at FROM season_costs WHERE season = ? ORDER BY created_at DESC'
+  ).bind(season).all()).results || [];
+
+  const costSummary = {
+    rental: costRows.filter(c => c.category === 'rental').reduce((sum, c) => sum + Number(c.amount || 0), 0),
+    equipment: costRows.filter(c => c.category === 'equipment').reduce((sum, c) => sum + Number(c.amount || 0), 0),
+    technology: costRows.filter(c => c.category === 'technology').reduce((sum, c) => sum + Number(c.amount || 0), 0),
+    other: costRows.filter(c => c.category === 'other').reduce((sum, c) => sum + Number(c.amount || 0), 0),
+    totalCosts: costRows.reduce((sum, c) => sum + Number(c.amount || 0), 0)
+  };
+
+  const totalDue = players.reduce((sum, p) => sum + p.total_due, 0);
+  const totalPaid = players.reduce((sum, p) => sum + p.amount_paid, 0);
+
+  const summary = {
+    totalDue,
+    totalPaid,
+    totalOutstanding: players.reduce((sum, p) => sum + Math.max(0, p.outstanding), 0),
+    totalCosts: costSummary.totalCosts,
+    netBalance: totalPaid - costSummary.totalCosts,
+    netProjected: totalDue - costSummary.totalCosts,
+    countPaid: players.filter(p => p.status === 'paid' || p.status === 'exempt').length,
+    countUnpaid: players.filter(p => p.status === 'unpaid' || p.status === 'partial').length,
+    countTotal: players.length
+  };
+
+  return Response.json({
+    season,
+    allSeasons,
+    pricing,
+    summary,
+    costSummary,
+    costs: costRows,
+    players
+  });
+}
+
+async function handleFinancesPricingSave(req, env) {
+  const b = await req.json().catch(() => ({}));
+  const season = String(b.season || '').trim();
+  if (!season) return new Response('season required', { status: 400 });
+
+  const pricePlayer = Number(b.price_player ?? 170);
+  const priceGoalie = Number(b.price_goalie ?? 0);
+  const priceSubPlayer = Number(b.price_sub_player ?? 5);
+  const priceSubGoalie = Number(b.price_sub_goalie ?? 0);
+  const etransferPhone = b.etransfer_phone !== undefined ? String(b.etransfer_phone || '').trim() : null;
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    `INSERT INTO season_pricing (season, price_player, price_goalie, price_sub_player, price_sub_goalie, etransfer_phone, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(season) DO UPDATE SET
+       price_player = excluded.price_player,
+       price_goalie = excluded.price_goalie,
+       price_sub_player = excluded.price_sub_player,
+       price_sub_goalie = excluded.price_sub_goalie,
+       etransfer_phone = excluded.etransfer_phone,
+       updated_at = excluded.updated_at`
+  ).bind(season, pricePlayer, priceGoalie, priceSubPlayer, priceSubGoalie, etransferPhone, now).run();
+
+  return Response.json({ ok: true, season });
+}
+
+async function handleFinancesPlayerSave(req, env) {
+  const b = await req.json().catch(() => ({}));
+  const season = String(b.season || '').trim();
+  const playerId = String(b.player_id || '').trim();
+  if (!season || !playerId) return new Response('season and player_id required', { status: 400 });
+
+  const customDue = (b.custom_due !== null && b.custom_due !== undefined && b.custom_due !== '')
+    ? Number(b.custom_due) : null;
+  const amountPaid = Number(b.amount_paid ?? 0);
+  const notes = b.notes !== undefined ? String(b.notes || '').trim() : null;
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    `INSERT INTO player_dues (season, player_id, custom_due, adjustment, amount_paid, notes, updated_at)
+     VALUES (?, ?, ?, 0, ?, ?, ?)
+     ON CONFLICT(season, player_id) DO UPDATE SET
+       custom_due = excluded.custom_due,
+       adjustment = 0,
+       amount_paid = excluded.amount_paid,
+       notes = excluded.notes,
+       updated_at = excluded.updated_at`
+  ).bind(season, playerId, customDue, amountPaid, notes, now).run();
+
+  return Response.json({ ok: true, season, player_id: playerId });
+}
+
+async function handleFinancesCostSave(req, env) {
+  const b = await req.json().catch(() => ({}));
+  const season = String(b.season || '').trim();
+  const category = String(b.category || 'other').trim().toLowerCase();
+  const description = String(b.description || '').trim();
+  const amount = Number(b.amount || 0);
+  if (!season) return new Response('season required', { status: 400 });
+  if (!description) return new Response('description required', { status: 400 });
+  if (isNaN(amount) || amount < 0) return new Response('invalid amount', { status: 400 });
+
+  const validCategories = ['rental', 'equipment', 'technology', 'other'];
+  const cat = validCategories.includes(category) ? category : 'other';
+
+  const id = b.id ? String(b.id).trim() : 'cost_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    `INSERT INTO season_costs (id, season, category, description, amount, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       category = excluded.category,
+       description = excluded.description,
+       amount = excluded.amount,
+       updated_at = excluded.updated_at`
+  ).bind(id, season, cat, description, amount, now, now).run();
+
+  return Response.json({ ok: true, id, season });
+}
+
+async function handleFinancesCostDelete(req, env) {
+  const b = await req.json().catch(() => ({}));
+  const id = String(b.id || '').trim();
+  const season = String(b.season || '').trim();
+  if (!id) return new Response('id required', { status: 400 });
+
+  if (season) {
+    await env.DB.prepare('DELETE FROM season_costs WHERE id = ? AND season = ?').bind(id, season).run();
+  } else {
+    await env.DB.prepare('DELETE FROM season_costs WHERE id = ?').bind(id).run();
+  }
+
+  return Response.json({ ok: true, id });
+}
+
+async function financesPage(env = null, isAuthed = false) {
+  const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  return page('Cotisations et Finances', `
+  <style>
+    .wrap { max-width: 1100px !important; }
+    .kpi-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap:12px; margin-bottom:16px; }
+    .kpi-card { background:#fff; border:1px solid var(--rule); padding:14px 16px; border-radius:4px; }
+    .kpi-title { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; }
+    .kpi-num { font-family:'Barlow Condensed',sans-serif; font-size:34px; font-weight:700; line-height:1.1; margin:4px 0 2px; }
+    .kpi-sub { font-size:13px; color:var(--soft); }
+    .pill { display:inline-block; font-size:12px; font-weight:700; padding:2px 7px; border-radius:3px; }
+    .pill-team-Red { background:#fef2f2; color:#b91c1c; border:1px solid #fca5a5; }
+    .pill-team-Blue { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+    .pill-team-Black { background:#1e293b; color:#f8fafc; border:1px solid #334155; }
+    .pill-team-White { background:#f8fafc; color:#334155; border:1px solid #cbd5e1; }
+    .pill-team-none { background:#f1f5f9; color:#64748b; }
+    .status-paid { background:#dcfce7; color:#15803d; }
+    .status-partial { background:#ffedd5; color:#c2410c; }
+    .status-unpaid { background:#fee2e2; color:#b91c1c; }
+    .status-exempt { background:#f1f5f9; color:#64748b; }
+    .tbl-inp { font:inherit; font-size:14px; padding:4px 7px; border:1px solid var(--rule2); border-radius:3px; box-sizing:border-box; }
+    .tbl-inp:focus { outline:none; border-color:var(--ink); }
+    .filter-btn { font:inherit; font-family:'Barlow Condensed',sans-serif; font-weight:600; font-size:14px; padding:5px 12px; border:1px solid var(--rule2); background:#fff; color:var(--soft); border-radius:3px; cursor:pointer; }
+    .filter-btn.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  </style>
+  ${adminTabs('finances', isAuthed)}
+  <h1 data-i18n="pageTitle">Cotisations et Finances</h1>
+  ${renderKeyGate(isAuthed)}
+  <div id="main"${isAuthed ? '' : ' style="display:none"'}>
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <label for="seasonSelect" style="font-weight:700; font-size:15px;" data-i18n="seasonLabel">Saison :</label>
+        <select id="seasonSelect" style="font:inherit; font-weight:600; padding:6px 12px; border:1px solid var(--rule2); border-radius:3px; background:#fff;"></select>
+        <button class="mini" id="btnNewSeason" title="Ajouter une saison future" data-i18n="btnNewSeason" data-i18n-title="btnNewSeasonTitle">+ Saison future</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <button class="mini" id="btnExportCsv" data-i18n="btnExportCsv">📥 Exporter CSV</button>
+        <span id="toastMsg" style="display:none; color:var(--green); font-weight:700; font-size:13px;" data-i18n="toastSaved">✅ Enregistré</span>
+      </div>
+    </div>
+
+    <!-- Pricing Configuration Card -->
+    <div class="card" style="margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="margin:0;" data-i18n="pricingTitle">Tarification de la saison</h2>
+        <span id="pricingSaved" style="display:none; color:var(--green); font-size:12px; font-weight:700;" data-i18n="pricingSaved">Tarifs enregistrés ✅</span>
+      </div>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; align-items:end;">
+        <div>
+          <label style="font-size:12px; font-weight:600; color:var(--soft); display:block; margin-bottom:3px;" data-i18n="lblPlayerDues">Joueur régulier ($)</label>
+          <input type="number" id="p_player" min="0" step="0.01" class="tbl-inp" style="width:100%;">
+        </div>
+        <div>
+          <label style="font-size:12px; font-weight:600; color:var(--soft); display:block; margin-bottom:3px;" data-i18n="lblGoalieDues">Gardien régulier ($)</label>
+          <input type="number" id="p_goalie" min="0" step="0.01" class="tbl-inp" style="width:100%;">
+        </div>
+        <div>
+          <label style="font-size:12px; font-weight:600; color:var(--soft); display:block; margin-bottom:3px;" data-i18n="lblSubPlayer">Substitut joueur ($/match)</label>
+          <input type="number" id="p_sub_player" min="0" step="0.01" class="tbl-inp" style="width:100%;">
+        </div>
+        <div>
+          <label style="font-size:12px; font-weight:600; color:var(--soft); display:block; margin-bottom:3px;" data-i18n="lblSubGoalie">Substitut gardien ($/match)</label>
+          <input type="number" id="p_sub_goalie" min="0" step="0.01" class="tbl-inp" style="width:100%;">
+        </div>
+        <div>
+          <label style="font-size:12px; font-weight:600; color:var(--soft); display:block; margin-bottom:3px;" data-i18n="lblEtransferPhone">Téléphone Virement Interac</label>
+          <input type="text" id="p_etransfer_phone" placeholder="ex: 514-XXX-XXXX" class="tbl-inp" style="width:100%;">
+        </div>
+        <div>
+          <button class="btn in" id="btnSavePricing" style="font-size:15px; padding:8px 10px; margin:0; width:100%;" data-i18n="btnSavePricing">ENREGISTRER</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary KPI Cards -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title" style="color:var(--ink);" data-i18n="kpiDueTitle">Total Attendu</div>
+        <div class="kpi-num" id="kpiDue">0 $</div>
+        <div class="kpi-sub" id="kpiDueSub" data-i18n="kpiDueSub">sur l'ensemble des joueurs</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title" style="color:var(--green);" data-i18n="kpiPaidTitle">Total Perçu</div>
+        <div class="kpi-num" id="kpiPaid" style="color:var(--green);">0 $</div>
+        <div class="kpi-sub" id="kpiPaidCount">0 joueurs payés</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title" style="color:var(--red);" data-i18n="kpiCostsTitle">Total Dépenses</div>
+        <div class="kpi-num" id="kpiCosts" style="color:var(--red);">0 $</div>
+        <div class="kpi-sub" id="kpiCostsSub" data-i18n="kpiCostsSub">coûts opérationnels</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title" style="color:var(--blue);" id="kpiNetTitle" data-i18n="kpiNetTitle">Solde Net</div>
+        <div class="kpi-num" id="kpiNet" style="color:var(--blue);">0 $</div>
+        <div class="kpi-sub" id="kpiNetSub" data-i18n="kpiNetSub">perçu - dépenses</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title" style="color:var(--soft);" data-i18n="kpiOutTitle">Soldes Dus</div>
+        <div class="kpi-num" id="kpiOut" style="color:var(--soft);">0 $</div>
+        <div class="kpi-sub" id="kpiOutCount">0 joueurs avec solde</div>
+      </div>
+    </div>
+
+    <!-- Operating Costs & Expenses Card -->
+    <div class="card" style="margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+        <div>
+          <h2 style="margin:0;" data-i18n="expensesTitle">Dépenses & Coûts d'exploitation</h2>
+          <div style="font-size:13px; color:var(--soft); margin-top:2px;" data-i18n="expensesSubtitle">Location de gymnases, équipement, technologie et frais de la saison.</div>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <span class="pill" style="background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; font-size:12px;"><span data-i18n="catRental">Gym / Salles</span>: <b id="costSumRental">0 $</b></span>
+          <span class="pill" style="background:#fef9c3; color:#a16207; border:1px solid #fde047; font-size:12px;"><span data-i18n="catEquip">Équipement</span>: <b id="costSumEquip">0 $</b></span>
+          <span class="pill" style="background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; font-size:12px;"><span data-i18n="catTech">Technologie</span>: <b id="costSumTech">0 $</b></span>
+          <span class="pill" style="background:#f5f3ff; color:#6d28d9; border:1px solid #ddd6fe; font-size:12px;"><span data-i18n="catOther">Autre</span>: <b id="costSumOther">0 $</b></span>
+          <span class="pill" style="background:var(--ink); color:#fff; font-size:12px;"><span data-i18n="lblTotal">Total</span>: <b id="costSumTotal">0 $</b></span>
+        </div>
+      </div>
+
+      <!-- Add Expense Form -->
+      <form id="costForm" style="display:grid; grid-template-columns: minmax(140px, 1fr) minmax(200px, 2fr) minmax(100px, 1fr) auto; gap:8px; align-items:end; margin-bottom:12px; background:#f8fafc; padding:10px; border-radius:4px; border:1px solid var(--rule2);">
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--soft); text-transform:uppercase; display:block; margin-bottom:2px;" data-i18n="lblCategory">Catégorie</label>
+          <select id="newCostCategory" class="tbl-inp" style="width:100%; font-weight:600; background:#fff;">
+            <option value="rental" data-i18n="optRental">Location / Gymnase</option>
+            <option value="equipment" data-i18n="optEquip">Équipement / Balles</option>
+            <option value="technology" data-i18n="optTech">Technologie / Domaine</option>
+            <option value="other" data-i18n="optOther">Autre / Événements</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--soft); text-transform:uppercase; display:block; margin-bottom:2px;" data-i18n="lblDescSupplier">Description / Fournisseur</label>
+          <input type="text" id="newCostDesc" placeholder="Ex: Gymnase Letendre, Balles D-Gel, Domaine smbhl.com..." class="tbl-inp" style="width:100%;" required>
+        </div>
+        <div>
+          <label style="font-size:11px; font-weight:700; color:var(--soft); text-transform:uppercase; display:block; margin-bottom:2px;" data-i18n="lblAmount">Montant ($)</label>
+          <input type="number" id="newCostAmount" placeholder="0" min="0" step="0.01" class="tbl-inp" style="width:100%; font-weight:700;" required>
+        </div>
+        <div>
+          <button type="submit" class="btn in" style="font-size:13px; padding:7px 12px; margin:0; white-space:nowrap;" data-i18n="btnAddExpense">+ AJOUTER</button>
+        </div>
+      </form>
+
+      <!-- Costs Table -->
+      <div style="overflow-x:auto;">
+        <table style="font-size:13px; width:100%; border-collapse:collapse;">
+          <thead>
+            <tr style="text-align:left; color:var(--soft); font-size:11px; text-transform:uppercase; letter-spacing:0.04em; border-bottom:1px solid var(--rule);">
+              <th style="padding:6px 8px;" data-i18n="thCategory">Catégorie</th>
+              <th style="padding:6px 8px;" data-i18n="thDescription">Description</th>
+              <th style="padding:6px 8px; text-align:right;" data-i18n="thAmount">Montant</th>
+              <th style="padding:6px 8px; text-align:center; width:60px;" data-i18n="thAction">Action</th>
+            </tr>
+          </thead>
+          <tbody id="costsTable">
+            <tr><td colspan="4" style="text-align:center; padding:12px; color:var(--soft);">Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Main Player Dues Table Card -->
+    <div class="card" style="padding:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+        <div style="display:flex; gap:6px; flex-wrap:wrap;" id="filterBar">
+          <button class="filter-btn on" data-filter="all" data-i18n="btnFilterAll">Tous</button>
+          <button class="filter-btn" data-filter="roster" data-i18n="btnFilterRoster">Réguliers</button>
+          <button class="filter-btn" data-filter="sub" data-i18n="btnFilterSub">Substituts</button>
+          <button class="filter-btn" data-filter="unpaid" style="color:var(--red);" data-i18n="btnFilterUnpaid">À percevoir</button>
+          <button class="filter-btn" data-filter="paid" style="color:var(--green);" data-i18n="btnFilterPaid">En règle</button>
+        </div>
+        <input id="searchBox" placeholder="Rechercher nom, équipe..." data-i18n-ph="searchPlaceholder" class="tbl-inp" style="width:220px;">
+      </div>
+
+      <div style="overflow-x:auto;">
+        <table style="font-size:14px; width:100%; border-collapse:collapse;">
+          <thead>
+            <tr style="text-align:left; color:var(--soft); font-size:12px; text-transform:uppercase; letter-spacing:0.04em; border-bottom:1px solid var(--rule);">
+              <th style="padding:8px 6px;" data-i18n="thPlayer">Joueur</th>
+              <th style="padding:8px 6px;" data-i18n="thTeam">Équipe</th>
+              <th style="padding:8px 6px;" data-i18n="thRole">Rôle</th>
+              <th style="padding:8px 6px; text-align:center;" data-i18n="thGp">PJ</th>
+              <th style="padding:8px 6px; text-align:center;" data-i18n="thDue">Dû ($)</th>
+              <th style="padding:8px 6px; text-align:center;" data-i18n="thPaid">Payé ($)</th>
+              <th style="padding:8px 6px; text-align:right;" data-i18n="thBalance">Solde</th>
+              <th style="padding:8px 6px; text-align:center;" data-i18n="thStatus">Statut</th>
+              <th style="padding:8px 6px;" data-i18n="thNote">Note / Mémo</th>
+              <th style="padding:8px 6px; text-align:center;" data-i18n="thAction">Action</th>
+            </tr>
+          </thead>
+          <tbody id="duesTable">
+            <tr><td colspan="10" style="text-align:center; padding:20px; color:var(--soft);">Chargement des données...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+  const $ = i => document.getElementById(i);
+  const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let currentData = null;
+  let activeFilter = 'all';
+  let searchTerm = '';
+  let currentLang = window.__currentLang || (function() {
+    try {
+      var s = localStorage.getItem('smbhl_admin_lang');
+      if (s === 'fr' || s === 'en') return s;
+      if (/^en/i.test(navigator.language || '')) return 'en';
+    } catch(e) {}
+    return 'fr';
+  })();
+
+  const I18N_FINANCES = {
+    fr: {
+      pageTitle: 'Cotisations et Finances',
+      seasonLabel: 'Saison :',
+      btnNewSeason: '+ Saison future',
+      btnNewSeasonTitle: 'Ajouter une saison future',
+      btnExportCsv: '📥 Exporter CSV',
+      toastSaved: '✅ Enregistré',
+      pricingTitle: 'Tarification de la saison',
+      pricingSaved: 'Tarifs enregistrés ✅',
+      lblPlayerDues: 'Joueur régulier ($)',
+      lblGoalieDues: 'Gardien régulier ($)',
+      lblSubPlayer: 'Substitut joueur ($/match)',
+      lblSubGoalie: 'Substitut gardien ($/match)',
+      lblEtransferPhone: 'Téléphone Virement Interac',
+      btnSavePricing: 'ENREGISTRER',
+      kpiDueTitle: 'Total Attendu',
+      kpiDueSub: "sur l'ensemble des joueurs",
+      kpiPaidTitle: 'Total Perçu',
+      playersPaid: 'joueurs réglés',
+      kpiCostsTitle: 'Total Dépenses',
+      kpiCostsSub: 'coûts opérationnels',
+      kpiNetTitle: 'Solde Net',
+      kpiNetSub: 'perçu - dépenses',
+      surplusProfit: 'Surplus / Bénéfice',
+      operatingDeficit: "Déficit d'exploitation",
+      kpiOutTitle: 'Soldes Dus',
+      playersWithBalance: 'joueurs avec solde',
+      expensesTitle: "Dépenses & Coûts d'exploitation",
+      expensesSubtitle: 'Location de gymnases, équipement, technologie et frais de la saison.',
+      catRental: 'Gym / Salles',
+      catEquip: 'Équipement',
+      catTech: 'Technologie',
+      catOther: 'Autre',
+      lblTotal: 'Total',
+      lblCategory: 'Catégorie',
+      optRental: 'Location / Gymnase',
+      optEquip: 'Équipement / Balles',
+      optTech: 'Technologie / Domaine',
+      optOther: 'Autre / Événements',
+      lblDescSupplier: 'Description / Fournisseur',
+      lblAmount: 'Montant ($)',
+      btnAddExpense: '+ AJOUTER',
+      thCategory: 'Catégorie',
+      thDescription: 'Description',
+      thAmount: 'Montant',
+      thAction: 'Action',
+      noExpenses: 'Aucune dépense enregistrée pour cette saison.',
+      delExpenseConfirm: 'Supprimer cette dépense ?',
+      expenseAdded: 'Dépense ajoutée ✅',
+      expenseDeleted: 'Dépense supprimée',
+      btnFilterAll: 'Tous',
+      btnFilterRoster: 'Réguliers',
+      btnFilterSub: 'Substituts',
+      btnFilterUnpaid: 'À percevoir',
+      btnFilterPaid: 'En règle',
+      searchPlaceholder: 'Rechercher nom, équipe...',
+      thPlayer: 'Joueur',
+      thTeam: 'Équipe',
+      thRole: 'Rôle',
+      thGp: 'PJ',
+      thDue: 'Dû ($)',
+      thPaid: 'Payé ($)',
+      thBalance: 'Solde',
+      thStatus: 'Statut',
+      thNote: 'Note / Mémo',
+      noPlayersFound: 'Aucun joueur ne correspond aux critères.',
+      notePlaceholder: 'Note...',
+      markPaidBtn: 'PAYÉ COMPLET',
+      statusPaid: 'PAYÉ',
+      statusPartial: 'PARTIEL',
+      statusExempt: 'GRATUIT',
+      statusUnpaid: 'IMPAYÉ',
+      creditSuffix: ' crédit',
+      roleGoalie: 'Gardien',
+      rolePlayer: 'Joueur',
+      roleSubGoalie: 'Sub Gardien',
+      roleSubPlayer: 'Sub Joueur',
+      customDueTitle: 'Montant personnalisé (différent du tarif calculé)',
+      standardDueTitle: 'Tarif standard calculé',
+      promptNewSeason: 'Nom de la nouvelle saison (ex: Winter 2027, Spring 2027) :',
+      errDescRequired: 'Veuillez entrer une description.',
+      errAmountPositive: 'Le montant doit être supérieur à 0.',
+      pricingSavedToast: 'Tarifs sauvegardés ✅',
+      csvPlayerSection: '--- COTISATIONS DES JOUEURS ---',
+      csvPlayerHeaders: ['Joueur', 'Équipe', 'Rôle', 'Matchs_Sub', 'Montant_Dû', 'Montant_Payé', 'Solde_Restant', 'Statut', 'Notes'],
+      csvCostsSection: "--- DÉPENSES & COÛTS D'EXPLOITATION ---",
+      csvCostsHeaders: ['Catégorie', 'Description', 'Montant'],
+      csvSummarySection: '--- SOMMAIRE FINANCIER ---',
+      csvTotalDue: 'Total Attendu (Joueurs)',
+      csvTotalPaid: 'Total Perçu (Joueurs)',
+      csvTotalCosts: 'Total Dépenses (Opérations)',
+      csvNetBalance: 'Solde Net (Perçu - Dépenses)'
+    },
+    en: {
+      pageTitle: 'League Dues & Finances',
+      seasonLabel: 'Season:',
+      btnNewSeason: '+ Future Season',
+      btnNewSeasonTitle: 'Add or configure a future season',
+      btnExportCsv: '📥 Export CSV',
+      toastSaved: '✅ Saved',
+      pricingTitle: 'Season Pricing Setup',
+      pricingSaved: 'Pricing saved ✅',
+      lblPlayerDues: 'Regular Player ($)',
+      lblGoalieDues: 'Regular Goalie ($)',
+      lblSubPlayer: 'Sub Player ($/game)',
+      lblSubGoalie: 'Sub Goalie ($/game)',
+      lblEtransferPhone: 'Interac e-Transfer Phone',
+      btnSavePricing: 'SAVE PRICING',
+      kpiDueTitle: 'Total Billed',
+      kpiDueSub: 'across all players',
+      kpiPaidTitle: 'Total Collected',
+      playersPaid: 'players settled',
+      kpiCostsTitle: 'Total Expenses',
+      kpiCostsSub: 'operating costs',
+      kpiNetTitle: 'Net Balance',
+      kpiNetSub: 'collected - expenses',
+      surplusProfit: 'Net Surplus / Profit',
+      operatingDeficit: 'Operating Deficit',
+      kpiOutTitle: 'Outstanding Due',
+      playersWithBalance: 'players with balance',
+      expensesTitle: 'Operating Costs & League Expenses',
+      expensesSubtitle: 'Gym rentals, equipment, balls, technology, and season costs.',
+      catRental: 'Gym / Rental',
+      catEquip: 'Equipment',
+      catTech: 'Technology',
+      catOther: 'Other',
+      lblTotal: 'Total',
+      lblCategory: 'Category',
+      optRental: 'Gym / Hall Rental',
+      optEquip: 'Equipment & Balls',
+      optTech: 'Technology & Domain',
+      optOther: 'Other / Events',
+      lblDescSupplier: 'Description / Supplier',
+      lblAmount: 'Amount ($)',
+      btnAddExpense: '+ ADD EXPENSE',
+      thCategory: 'Category',
+      thDescription: 'Description',
+      thAmount: 'Amount',
+      thAction: 'Action',
+      noExpenses: 'No expenses recorded for this season.',
+      delExpenseConfirm: 'Delete this expense?',
+      expenseAdded: 'Expense added ✅',
+      expenseDeleted: 'Expense deleted',
+      btnFilterAll: 'All',
+      btnFilterRoster: 'Regulars',
+      btnFilterSub: 'Subs',
+      btnFilterUnpaid: 'Outstanding',
+      btnFilterPaid: 'Settled',
+      searchPlaceholder: 'Search name, team...',
+      thPlayer: 'Player',
+      thTeam: 'Team',
+      thRole: 'Role',
+      thGp: 'GP',
+      thDue: 'Due ($)',
+      thPaid: 'Paid ($)',
+      thBalance: 'Balance',
+      thStatus: 'Status',
+      thNote: 'Note / Memo',
+      noPlayersFound: 'No players match the criteria.',
+      notePlaceholder: 'Note...',
+      markPaidBtn: 'MARK PAID',
+      statusPaid: 'PAID',
+      statusPartial: 'PARTIAL',
+      statusExempt: 'FREE',
+      statusUnpaid: 'UNPAID',
+      creditSuffix: ' credit',
+      roleGoalie: 'Goalie',
+      rolePlayer: 'Player',
+      roleSubGoalie: 'Sub Goalie',
+      roleSubPlayer: 'Sub Player',
+      customDueTitle: 'Custom amount (overriding standard rate)',
+      standardDueTitle: 'Standard calculated fee',
+      promptNewSeason: 'New season name (e.g. Winter 2027, Spring 2027):',
+      errDescRequired: 'Please enter a description.',
+      errAmountPositive: 'Amount must be greater than 0.',
+      pricingSavedToast: 'Pricing saved ✅',
+      csvPlayerSection: '--- PLAYER DUES & PAYMENTS ---',
+      csvPlayerHeaders: ['Player', 'Team', 'Role', 'Sub_Games', 'Amount_Due', 'Amount_Paid', 'Balance_Due', 'Status', 'Notes'],
+      csvCostsSection: '--- LEAGUE OPERATING COSTS & EXPENSES ---',
+      csvCostsHeaders: ['Category', 'Description', 'Amount'],
+      csvSummarySection: '--- FINANCIAL SUMMARY ---',
+      csvTotalDue: 'Total Billed (Players)',
+      csvTotalPaid: 'Total Collected (Players)',
+      csvTotalCosts: 'Total Expenses (Operations)',
+      csvNetBalance: 'Net Balance (Collected - Expenses)'
+    }
+  };
+
+  function t(k) {
+    const dict = I18N_FINANCES[currentLang] || I18N_FINANCES.fr;
+    return dict[k] != null ? dict[k] : (I18N_FINANCES.fr[k] != null ? I18N_FINANCES.fr[k] : k);
+  }
+
+  function applyLanguage(lang) {
+    currentLang = (lang === 'en') ? 'en' : 'fr';
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const k = el.getAttribute('data-i18n');
+      if (k) {
+        const val = t(k);
+        if (typeof val === 'string') el.textContent = val;
+      }
+    });
+    document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+      const k = el.getAttribute('data-i18n-ph');
+      if (k) {
+        const val = t(k);
+        if (typeof val === 'string') el.placeholder = val;
+      }
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(el => {
+      const k = el.getAttribute('data-i18n-title');
+      if (k) {
+        const val = t(k);
+        if (typeof val === 'string') el.title = val;
+      }
+    });
+
+    if (currentData) {
+      renderAll();
+    }
+  }
+
+  window.addEventListener('admin_lang_changed', (e) => {
+    if (e.detail && e.detail.lang) {
+      applyLanguage(e.detail.lang);
+    }
+  });
+
+  async function api(path, opts) {
+    const r = await fetch(path, Object.assign({ headers: { 'x-admin': K, 'content-type': 'application/json' } }, opts));
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  }
+
+  function fmtMoney(amt) {
+    const n = Number(amt || 0);
+    if (currentLang === 'en') {
+      return '$' + n.toLocaleString('en-CA', { minimumFractionDigits: (n % 1 === 0 ? 0 : 2), maximumFractionDigits: 2 });
+    }
+    return n.toLocaleString('fr-CA', { minimumFractionDigits: (n % 1 === 0 ? 0 : 2), maximumFractionDigits: 2 }) + ' $';
+  }
+
+  function showToast(msg) {
+    const tEl = $('toastMsg');
+    tEl.textContent = msg || t('toastSaved');
+    tEl.style.display = 'inline';
+    clearTimeout(tEl._timer);
+    tEl._timer = setTimeout(() => { tEl.style.display = 'none'; }, 2000);
+  }
+
+  async function load(season) {
+    const q = season ? ('?s=' + encodeURIComponent(season)) : '';
+    currentData = await api('/admin/finances/data' + q);
+    renderAll();
+  }
+
+  function renderAll() {
+    if (!currentData) return;
+    const d = currentData;
+
+    // Season Dropdown
+    const sel = $('seasonSelect');
+    sel.innerHTML = (d.allSeasons || []).map(s =>
+      '<option value="' + esc(s) + '"' + (s === d.season ? ' selected' : '') + '>' + esc(s) + '</option>'
+    ).join('');
+
+    // Pricing Fields
+    const pr = d.pricing || {};
+    $('p_player').value = pr.price_player ?? 170;
+    $('p_goalie').value = pr.price_goalie ?? 0;
+    $('p_sub_player').value = pr.price_sub_player ?? 5;
+    $('p_sub_goalie').value = pr.price_sub_goalie ?? 0;
+    $('p_etransfer_phone').value = pr.etransfer_phone || '';
+
+    // KPI Cards
+    const sm = d.summary || {};
+    $('kpiDue').textContent = fmtMoney(sm.totalDue);
+    $('kpiPaid').textContent = fmtMoney(sm.totalPaid);
+    $('kpiPaidCount').textContent = (sm.countPaid || 0) + ' / ' + (sm.countTotal || 0) + ' ' + t('playersPaid');
+    $('kpiCosts').textContent = fmtMoney(sm.totalCosts);
+
+    const net = sm.netBalance ?? ((sm.totalPaid || 0) - (sm.totalCosts || 0));
+    const netEl = $('kpiNet');
+    if (net >= 0) {
+      netEl.textContent = '+' + fmtMoney(net);
+      netEl.style.color = 'var(--green)';
+      $('kpiNetSub').textContent = t('surplusProfit');
+    } else {
+      netEl.textContent = fmtMoney(net);
+      netEl.style.color = 'var(--red)';
+      $('kpiNetSub').textContent = t('operatingDeficit');
+    }
+
+    $('kpiOut').textContent = fmtMoney(sm.totalOutstanding);
+    $('kpiOutCount').textContent = (sm.countUnpaid || 0) + ' ' + t('playersWithBalance');
+
+    renderCosts();
+    renderTable();
+  }
+
+  const CAT_LABELS = {
+    fr: {
+      rental: { label: 'Gym / Salle', pillStyle: 'background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0;' },
+      equipment: { label: 'Équipement', pillStyle: 'background:#fef9c3; color:#a16207; border:1px solid #fde047;' },
+      technology: { label: 'Technologie', pillStyle: 'background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe;' },
+      other: { label: 'Autre', pillStyle: 'background:#f5f3ff; color:#6d28d9; border:1px solid #ddd6fe;' }
+    },
+    en: {
+      rental: { label: 'Gym / Hall', pillStyle: 'background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0;' },
+      equipment: { label: 'Equipment', pillStyle: 'background:#fef9c3; color:#a16207; border:1px solid #fde047;' },
+      technology: { label: 'Technology', pillStyle: 'background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe;' },
+      other: { label: 'Other', pillStyle: 'background:#f5f3ff; color:#6d28d9; border:1px solid #ddd6fe;' }
+    }
+  };
+
+  function renderCosts() {
+    if (!currentData) return;
+    const cs = currentData.costSummary || { rental: 0, equipment: 0, technology: 0, other: 0, totalCosts: 0 };
+    $('costSumRental').textContent = fmtMoney(cs.rental);
+    $('costSumEquip').textContent = fmtMoney(cs.equipment);
+    $('costSumTech').textContent = fmtMoney(cs.technology);
+    $('costSumOther').textContent = fmtMoney(cs.other);
+    $('costSumTotal').textContent = fmtMoney(cs.totalCosts);
+
+    const costs = currentData.costs || [];
+    if (!costs.length) {
+      $('costsTable').innerHTML = '<tr><td colspan="4" style="text-align:center; padding:14px; color:var(--soft);">' + esc(t('noExpenses')) + '</td></tr>';
+      return;
+    }
+
+    const dict = CAT_LABELS[currentLang] || CAT_LABELS.fr;
+    $('costsTable').innerHTML = costs.map(c => {
+      const catConf = dict[c.category] || dict.other;
+      return '<tr style="border-bottom:1px solid var(--rule);">' +
+        '<td style="padding:6px 8px;"><span class="pill" style="' + catConf.pillStyle + '">' + esc(catConf.label) + '</span></td>' +
+        '<td style="padding:6px 8px; font-weight:600;">' + esc(c.description) + '</td>' +
+        '<td style="padding:6px 8px; text-align:right; font-weight:700; font-family:Barlow Condensed,sans-serif; font-size:16px;">' + fmtMoney(c.amount) + '</td>' +
+        '<td style="padding:6px 8px; text-align:center;"><button class="mini" data-act="del-cost" data-id="' + esc(c.id) + '" title="' + esc(t('delExpenseConfirm')) + '" style="color:#b91c1c; border-color:#fca5a5; padding:2px 6px; font-size:11px;">✕</button></td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  function renderTable() {
+    if (!currentData) return;
+    const players = currentData.players || [];
+    const q = searchTerm.toLowerCase().trim();
+
+    const filtered = players.filter(p => {
+      if (activeFilter === 'roster' && p.is_sub) return false;
+      if (activeFilter === 'sub' && !p.is_sub) return false;
+      if (activeFilter === 'unpaid' && (p.status === 'paid' || p.status === 'exempt')) return false;
+      if (activeFilter === 'paid' && (p.status === 'unpaid' || p.status === 'partial')) return false;
+      if (q) {
+        const matchesName = (p.name || '').toLowerCase().includes(q);
+        const matchesTeam = (p.team || '').toLowerCase().includes(q);
+        const matchesNote = (p.notes || '').toLowerCase().includes(q);
+        if (!matchesName && !matchesTeam && !matchesNote) return false;
+      }
+      return true;
+    });
+
+    if (!filtered.length) {
+      $('duesTable').innerHTML = '<tr><td colspan="10" style="text-align:center; padding:20px; color:var(--soft);">' + esc(t('noPlayersFound')) + '</td></tr>';
+      return;
+    }
+
+    $('duesTable').innerHTML = filtered.map(p => {
+      const teamClass = p.team ? ('pill-team-' + esc(p.team)) : 'pill-team-none';
+      const teamHtml = p.team ? '<span class="pill ' + teamClass + '">' + esc(p.team) + '</span>' : '<span style="color:var(--faint);">—</span>';
+      
+      let roleLabel = p.is_goalie ? t('roleGoalie') : t('rolePlayer');
+      if (p.is_sub) roleLabel = p.is_goalie ? t('roleSubGoalie') : t('roleSubPlayer');
+      const roleColor = p.is_goalie ? '#0284c7' : (p.is_sub ? 'var(--soft)' : 'var(--ink)');
+      const roleHtml = '<span style="color:' + roleColor + '; font-weight:600;">' + esc(roleLabel) + '</span>';
+
+      const gpVal = p.games_played ?? 0;
+      const gpDisplay = '<span class="by" style="font-weight:700; color:' + (p.is_sub ? 'var(--blue)' : 'var(--ink)') + ';">' + gpVal + '</span>';
+      
+      const dueVal = p.total_due;
+      const isCustom = p.custom_due !== null && p.custom_due !== undefined;
+      const dueInput = '<input type="number" min="0" step="0.01" data-f="due" data-pid="' + esc(p.player_id) + '" value="' + dueVal + '" class="tbl-inp" style="width:75px; text-align:center; font-weight:700;' + (isCustom ? ' border-color:var(--orange); background:#fffbeb;' : '') + '" title="' + esc(isCustom ? t('customDueTitle') : t('standardDueTitle')) + '">';
+
+      let statusBadge = '';
+      if (p.status === 'paid') statusBadge = '<span class="pill status-paid">' + esc(t('statusPaid')) + '</span>';
+      else if (p.status === 'partial') statusBadge = '<span class="pill status-partial">' + esc(t('statusPartial')) + '</span>';
+      else if (p.status === 'exempt') statusBadge = '<span class="pill status-exempt">' + esc(t('statusExempt')) + '</span>';
+      else statusBadge = '<span class="pill status-unpaid">' + esc(t('statusUnpaid')) + '</span>';
+
+      let outDisplay = '';
+      if (p.outstanding <= 0 && p.total_due > 0) {
+        outDisplay = '<b style="color:var(--green)">' + fmtMoney(0) + '</b>';
+      } else if (p.outstanding < 0) {
+        outDisplay = '<b style="color:var(--blue)">+' + fmtMoney(Math.abs(p.outstanding)) + esc(t('creditSuffix')) + '</b>';
+      } else if (p.outstanding > 0) {
+        outDisplay = '<b style="color:var(--red)">' + fmtMoney(p.outstanding) + '</b>';
+      } else {
+        outDisplay = '<span style="color:var(--faint)">' + fmtMoney(0) + '</span>';
+      }
+
+      const fullBtn = (p.outstanding > 0)
+        ? '<button class="mini in" data-act="full" data-pid="' + esc(p.player_id) + '" data-due="' + p.total_due + '" style="font-size:11px; padding:3px 7px;">' + esc(t('markPaidBtn')) + '</button>'
+        : '<span style="color:var(--green); font-weight:700; font-size:13px;">✓</span>';
+
+      return '<tr style="border-bottom:1px solid var(--rule);">' +
+        '<td style="font-weight:600; padding:6px;">' + esc(p.name) + '</td>' +
+        '<td style="padding:6px;">' + teamHtml + '</td>' +
+        '<td style="padding:6px;">' + roleHtml + '</td>' +
+        '<td style="padding:6px; text-align:center;">' + gpDisplay + '</td>' +
+        '<td style="padding:6px; text-align:center;">' + dueInput + '</td>' +
+        '<td style="padding:6px; text-align:center;"><input type="number" min="0" step="0.01" data-f="paid" data-pid="' + esc(p.player_id) + '" value="' + (p.amount_paid || 0) + '" class="tbl-inp" style="width:75px; text-align:center;"></td>' +
+        '<td style="padding:6px; text-align:right;">' + outDisplay + '</td>' +
+        '<td style="padding:6px; text-align:center;">' + statusBadge + '</td>' +
+        '<td style="padding:6px;"><input type="text" data-f="notes" data-pid="' + esc(p.player_id) + '" value="' + esc(p.notes || '') + '" placeholder="' + esc(t('notePlaceholder')) + '" class="tbl-inp" style="width:100%; max-width:160px;"></td>' +
+        '<td style="padding:6px; text-align:center;">' + fullBtn + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  async function savePlayer(pid, changes) {
+    const season = currentData.season;
+    const cur = currentData.players.find(x => x.player_id === pid);
+    if (!cur) return;
+    const body = {
+      season,
+      player_id: pid,
+      custom_due: changes.custom_due !== undefined ? changes.custom_due : cur.custom_due,
+      amount_paid: changes.amount_paid !== undefined ? changes.amount_paid : cur.amount_paid,
+      notes: changes.notes !== undefined ? changes.notes : cur.notes
+    };
+    try {
+      await api('/admin/finances/player', { method: 'POST', body: JSON.stringify(body) });
+      showToast();
+      load(season);
+    } catch (e) { alert('Erreur: ' + e.message); }
+  }
+
+  async function unlock(candidate) {
+    const prev = K;
+    K = candidate;
+    try {
+      await load();
+      localStorage.setItem('adminkey', K);
+      document.cookie = 'admin_key=' + encodeURIComponent(K) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure';
+      if (window.history && window.history.replaceState) {
+        const u = new URL(location);
+        u.searchParams.delete('key'); u.searchParams.delete('k'); u.searchParams.delete('t');
+        window.history.replaceState({}, document.title, u.pathname + u.search);
+      }
+      $('gate').style.display = 'none';
+      $('main').style.display = '';
+      document.querySelectorAll('.picker').forEach(p => {
+        p.style.display = 'flex';
+        p.querySelectorAll('a').forEach(a => {
+          try {
+            const u = new URL(a.href, location.origin);
+            if (K) u.searchParams.set('key', K);
+            a.href = u.pathname + u.search;
+          } catch (_) {}
+        });
+      });
+      return true;
+    } catch (e) {
+      K = prev;
+      return false;
+    }
+  }
+
+  $('go').addEventListener('click', async () => {
+    const v = $('key').value.trim();
+    if (!v) { $('err').textContent = 'Entre la clé / enter key'; return; }
+    if (!await unlock(v)) $('err').textContent = 'Clé refusée / key rejected';
+  });
+  $('key').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+
+  $('seasonSelect').addEventListener('change', e => { load(e.target.value); });
+
+  $('btnNewSeason').addEventListener('click', () => {
+    const s = prompt(t('promptNewSeason'));
+    if (s && s.trim()) load(s.trim());
+  });
+
+  $('btnSavePricing').addEventListener('click', async () => {
+    const season = currentData.season;
+    const body = {
+      season,
+      price_player: Number($('p_player').value) || 0,
+      price_goalie: Number($('p_goalie').value) || 0,
+      price_sub_player: Number($('p_sub_player').value) || 0,
+      price_sub_goalie: Number($('p_sub_goalie').value) || 0,
+      etransfer_phone: $('p_etransfer_phone').value.trim()
+    };
+    try {
+      await api('/admin/finances/pricing', { method: 'POST', body: JSON.stringify(body) });
+      showToast(t('pricingSavedToast'));
+      load(season);
+    } catch (e) { alert('Erreur: ' + e.message); }
+  });
+
+  $('filterBar').addEventListener('click', e => {
+    const b = e.target.closest('button[data-filter]');
+    if (!b) return;
+    document.querySelectorAll('#filterBar button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    activeFilter = b.dataset.filter;
+    renderTable();
+  });
+
+  $('searchBox').addEventListener('input', e => {
+    searchTerm = e.target.value;
+    renderTable();
+  });
+
+  $('duesTable').addEventListener('change', e => {
+    const inp = e.target;
+    const f = inp.dataset.f;
+    const pid = inp.dataset.pid;
+    if (!f || !pid) return;
+
+    if (f === 'due') {
+      const val = inp.value.trim() === '' ? null : Number(inp.value);
+      savePlayer(pid, { custom_due: val });
+    } else if (f === 'paid') {
+      savePlayer(pid, { amount_paid: Number(inp.value) || 0 });
+    } else if (f === 'notes') {
+      savePlayer(pid, { notes: inp.value.trim() });
+    }
+  });
+
+  $('duesTable').addEventListener('click', e => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const act = b.dataset.act;
+    const pid = b.dataset.pid;
+
+    if (act === 'full') {
+      const due = Number(b.dataset.due) || 0;
+      savePlayer(pid, { amount_paid: due });
+    }
+  });
+
+  $('costForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const season = currentData.season;
+    const cat = $('newCostCategory').value;
+    const desc = $('newCostDesc').value.trim();
+    const amt = Number($('newCostAmount').value) || 0;
+    if (!desc) { alert(t('errDescRequired')); return; }
+    if (amt <= 0) { alert(t('errAmountPositive')); return; }
+    try {
+      await api('/admin/finances/cost', {
+        method: 'POST',
+        body: JSON.stringify({ season, category: cat, description: desc, amount: amt })
+      });
+      $('newCostDesc').value = '';
+      $('newCostAmount').value = '';
+      showToast(t('expenseAdded'));
+      load(season);
+    } catch (err) {
+      alert('Erreur: ' + err.message);
+    }
+  });
+
+  $('costsTable').addEventListener('click', async e => {
+    const btn = e.target.closest('[data-act="del-cost"]');
+    if (!btn) return;
+    const id = btn.dataset.id;
+    if (!id) return;
+    if (!confirm(t('delExpenseConfirm'))) return;
+    try {
+      await api('/admin/finances/cost/delete', {
+        method: 'POST',
+        body: JSON.stringify({ id, season: currentData.season })
+      });
+      showToast(t('expenseDeleted'));
+      load(currentData.season);
+    } catch (err) {
+      alert('Erreur: ' + err.message);
+    }
+  });
+
+  $('btnExportCsv').addEventListener('click', () => {
+    if (!currentData) return;
+    const rows = [
+      [t('csvPlayerSection')],
+      t('csvPlayerHeaders')
+    ];
+    for (const p of (currentData.players || [])) {
+      rows.push([
+        '"' + (p.name || '').replace(/"/g, '""') + '"',
+        '"' + (p.team || '') + '"',
+        '"' + (p.role || '') + '"',
+        p.games_played || 0,
+        p.total_due || 0,
+        p.amount_paid || 0,
+        p.outstanding || 0,
+        p.status || '',
+        '"' + (p.notes || '').replace(/"/g, '""') + '"'
+      ]);
+    }
+    rows.push([]);
+    rows.push([t('csvCostsSection')]);
+    rows.push(t('csvCostsHeaders'));
+    for (const c of (currentData.costs || [])) {
+      rows.push([
+        '"' + (c.category || '') + '"',
+        '"' + (c.description || '').replace(/"/g, '""') + '"',
+        c.amount || 0
+      ]);
+    }
+    rows.push([]);
+    rows.push([t('csvSummarySection')]);
+    rows.push([t('csvTotalDue'), currentData.summary?.totalDue || 0]);
+    rows.push([t('csvTotalPaid'), currentData.summary?.totalPaid || 0]);
+    rows.push([t('csvTotalCosts'), currentData.summary?.totalCosts || 0]);
+    rows.push([t('csvNetBalance'), currentData.summary?.netBalance || 0]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + rows.map(r => r.join(',')).join('\\n');
+    const enc = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', enc);
+    link.setAttribute('download', 'SMBHL_Finances_' + currentData.season.replace(/\\s+/g, '_') + '.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  });
+
+  applyLanguage(currentLang);
+
+  if (K) unlock(K);
+  else if (${isAuthed ? 'true' : 'false'}) {
+    $('gate').style.display = 'none';
+    $('main').style.display = '';
+    load();
+  }
+  </script>
+  `, logoTooltip);
+}
+
+/* ---------- polls & positions handlers ---------- */
+
+async function handlePlayerPosition(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const { player_id, position, token, season, team, event_id } = body;
+  if (!player_id) return new Response('player_id required', { status: 400 });
+
+  const validPos = (position === 'F' || position === 'D') ? position : null;
+
+  let authorized = false;
+  const adminCheck = checkAdminAuth(req, env);
+  if (adminCheck === 'ok') {
+    authorized = true;
+  } else if (token && season && team) {
+    const salt = await teamSalt(env.DB, season, team);
+    const want = await hmac(env.RSVP_SECRET, teamMsg(season, team, salt));
+    if (same(want, token)) authorized = true;
+  } else if (token && event_id && player_id) {
+    const contact = await getContact(env.DB, player_id);
+    if (contact) {
+      const want = await hmac(env.RSVP_SECRET, playerMsg(event_id, player_id, contact.token_salt));
+      if (same(want, token)) authorized = true;
+    }
+  }
+
+  if (!authorized) {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
+  await env.DB.prepare(
+    `UPDATE contacts SET position = ? WHERE player_id = ?`
+  ).bind(validPos, player_id).run();
+
+  return Response.json({ ok: true, player_id, position: validPos });
+}
+
+async function handlePollVote(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const { poll_id, voter_id, candidate_id, candidate_name, token, season, team, event_id } = body;
+  if (!poll_id || !voter_id) return new Response('poll_id and voter_id required', { status: 400 });
+
+  let authorized = false;
+  const adminCheck = checkAdminAuth(req, env);
+  if (adminCheck === 'ok') {
+    authorized = true;
+  } else if (token && season && team) {
+    const salt = await teamSalt(env.DB, season, team);
+    const want = await hmac(env.RSVP_SECRET, teamMsg(season, team, salt));
+    if (same(want, token)) authorized = true;
+  } else if (token && event_id && voter_id) {
+    const contact = await getContact(env.DB, voter_id);
+    if (contact) {
+      const want = await hmac(env.RSVP_SECRET, playerMsg(event_id, voter_id, contact.token_salt));
+      if (same(want, token)) authorized = true;
+    }
+  } else if (token && poll_id && voter_id) {
+    const contact = await getContact(env.DB, voter_id);
+    if (contact) {
+      const want = await hmac(env.RSVP_SECRET, pollMsg(poll_id, voter_id, contact.token_salt));
+      if (same(want, token)) authorized = true;
+    }
+  }
+
+  if (!authorized) {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
+  const poll = await env.DB.prepare(`SELECT * FROM polls WHERE id = ?`).bind(poll_id).first();
+  if (!poll || poll.state !== 'open') {
+    return new Response('Poll not found or closed', { status: 400 });
+  }
+
+  if (poll.allow_subs === 0 && voter_id) {
+    const voter = await getContact(env.DB, voter_id);
+    if (voter && (voter.is_sub === 1 || voter.role === 'sub')) {
+      return new Response('Poll is restricted to regular roster players', { status: 403 });
+    }
+  }
+
+  let finalCandidateName = candidate_name;
+  if (candidate_id) {
+    const cand = await env.DB.prepare(`SELECT name FROM contacts WHERE player_id = ?`).bind(candidate_id).first();
+    if (cand && cand.name) finalCandidateName = cand.name;
+  }
+  if (!finalCandidateName) return new Response('candidate_name required', { status: 400 });
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO poll_votes (poll_id, voter_id, candidate_id, candidate_name, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(poll_id, voter_id) DO UPDATE SET
+       candidate_id = excluded.candidate_id,
+       candidate_name = excluded.candidate_name,
+       updated_at = excluded.updated_at`
+  ).bind(poll_id, voter_id, candidate_id || null, finalCandidateName, now, now).run();
+
+  const returnResults = (poll.show_results === 1 || adminCheck === 'ok');
+  const results = returnResults ? await getPollResults(env.DB, poll_id) : null;
+  return Response.json({ ok: true, poll_id, voter_id, candidate_id, candidate_name: finalCandidateName, results });
+}
+
+async function handlePollsData(req, env) {
+  const polls = (await env.DB.prepare(`SELECT * FROM polls ORDER BY id DESC`).all()).results || [];
+  for (const poll of polls) {
+    const results = await getPollResults(env.DB, poll.id);
+    poll.results = results;
+    const votes = (await env.DB.prepare(
+      `SELECT v.id, v.poll_id, v.voter_id, v.candidate_id, v.candidate_name, v.created_at, v.updated_at,
+              c.name AS voter_name, c.preferred_team AS voter_team
+         FROM poll_votes v
+         LEFT JOIN contacts c ON c.player_id = v.voter_id
+        WHERE v.poll_id = ?
+        ORDER BY v.updated_at DESC`
+    ).bind(poll.id).all()).results || [];
+    poll.votes_list = votes;
+
+    // Recipient counts
+    const rosterCount = (await env.DB.prepare(
+      `SELECT count(*) AS n FROM contacts WHERE role = 'roster' AND opted_out = 0 AND email IS NOT NULL AND email != ''`
+    ).first())?.n || 0;
+    let subCount = 0;
+    if (poll.allow_subs === 1) {
+      subCount = (await env.DB.prepare(
+        `SELECT count(DISTINCT c.player_id) AS n
+           FROM contacts c
+           JOIN rsvp r ON r.player_id = c.player_id
+           JOIN events e ON e.id = r.event_id
+          WHERE e.season = ? AND r.status = 'in' AND c.role != 'roster'
+            AND c.opted_out = 0 AND c.email IS NOT NULL AND c.email != ''`
+      ).bind(poll.season).first())?.n || 0;
+    }
+    poll.recipients = { roster: rosterCount, subs: subCount, total: rosterCount + subCount };
+  }
+  return Response.json({ ok: true, polls });
+}
+
+async function handlePollCreate(req, env) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const body = await req.json().catch(() => ({}));
+  const { season, title, description, category, target_position, allow_subs, show_on_rsvp, show_results } = body;
+  if (!title || !season) return new Response('title and season required', { status: 400 });
+
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare(
+    `INSERT INTO polls (season, title, description, category, target_position, allow_subs, state, created_at, show_on_rsvp, show_results)
+     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)`
+  ).bind(
+    season,
+    title.trim(),
+    description ? description.trim() : null,
+    category || 'general',
+    target_position || null,
+    allow_subs === 0 || allow_subs === false ? 0 : 1,
+    now,
+    show_on_rsvp === 1 || show_on_rsvp === true ? 1 : 0,
+    show_results === 1 || show_results === true ? 1 : 0
+  ).run();
+
+  return Response.json({ ok: true, id: res.meta?.last_row_id });
+}
+
+async function handlePollToggleRsvp(req, env) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const body = await req.json().catch(() => ({}));
+  const { id, show_on_rsvp } = body;
+  if (!id) return new Response('id required', { status: 400 });
+
+  const val = show_on_rsvp === 1 || show_on_rsvp === true ? 1 : 0;
+  await env.DB.prepare(`UPDATE polls SET show_on_rsvp = ? WHERE id = ?`).bind(val, id).run();
+  return Response.json({ ok: true, id, show_on_rsvp: val });
+}
+
+async function handlePollToggleResults(req, env) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const body = await req.json().catch(() => ({}));
+  const { id, show_results } = body;
+  if (!id) return new Response('id required', { status: 400 });
+
+  const val = show_results === 1 || show_results === true ? 1 : 0;
+  await env.DB.prepare(`UPDATE polls SET show_results = ? WHERE id = ?`).bind(val, id).run();
+  return Response.json({ ok: true, id, show_results: val });
+}
+
+async function handlePollClose(req, env) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const body = await req.json().catch(() => ({}));
+  const { id, state } = body;
+  if (!id) return new Response('id required', { status: 400 });
+
+  const newState = state === 'open' ? 'open' : 'closed';
+  const closedAt = newState === 'closed' ? new Date().toISOString() : null;
+
+  await env.DB.prepare(
+    `UPDATE polls SET state = ?, closed_at = ? WHERE id = ?`
+  ).bind(newState, closedAt, id).run();
+
+  return Response.json({ ok: true, id, state: newState });
+}
+
+async function handlePollSend(req, env) {
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
+  const body = await req.json().catch(() => ({}));
+  const { poll_id, test_only } = body;
+  if (!poll_id) return new Response('poll_id required', { status: 400 });
+
+  const poll = await env.DB.prepare('SELECT * FROM polls WHERE id = ?').bind(poll_id).first();
+  if (!poll) return new Response('Poll not found', { status: 404 });
+
+  const base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+
+  if (test_only) {
+    const adminEmail = env.ADMIN_EMAIL || ADMIN_EMAIL;
+    const testPlayer = await env.DB.prepare("SELECT * FROM contacts WHERE email IS NOT NULL AND opted_out = 0 ORDER BY player_id ASC LIMIT 1").first() || {
+      player_id: 'TEST_ADMIN',
+      name: 'Roberto Santana',
+      token_salt: 'test_salt'
+    };
+    const tok = await hmac(env.RSVP_SECRET, pollMsg(poll.id, testPlayer.player_id, testPlayer.token_salt));
+    const voteUrl = `${base}/poll?id=${poll.id}&p=${encodeURIComponent(testPlayer.player_id)}&t=${tok}`;
+
+    const subj = `[TEST] Vote SMBHL : ${poll.title} / SMBHL Poll`;
+    const text = `Salut / Hi ${testPlayer.name},
+
+Un nouveau vote officiel est ouvert pour la SMBHL : ${poll.title}
+${poll.description ? '\n' + poll.description + '\n' : ''}
+Pour soumettre ou modifier ton vote, clique sur ce lien direct :
+${voteUrl}
+
+—
+SMBHL · smbhl.com`;
+
+    const html = emailWrap(
+      subj,
+      `<p style="font-size:16px;margin:0 0 6px;font-weight:700;">Salut <b>${esc(testPlayer.name)}</b> / Hi <b>${esc(testPlayer.name)}</b>,</p>
+       <div style="background:#faf5ff;border:1px solid #e9d5ff;border-left:4px solid #8b5cf6;border-radius:6px;padding:12px 14px;margin:12px 0 16px;">
+         <div style="font-size:12px;font-weight:700;color:#6b21a8;text-transform:uppercase;margin-bottom:4px;">Sondage officiel / Official Poll</div>
+         <div style="font-size:16px;font-weight:700;color:var(--ink);">${esc(poll.title)}</div>
+         ${poll.description ? `<div style="font-size:13px;color:#475569;margin-top:6px;line-height:1.4;">${esc(poll.description)}</div>` : ''}
+       </div>
+       <p style="font-size:14px;color:#334155;margin:0 0 16px;line-height:1.4;">
+         Clique sur le bouton ci-dessous pour voter directement en 1 clic :<br>
+         <span style="color:#64748b;font-size:13px;">Click below to cast your ballot with 1 click:</span>
+       </p>
+       <div style="margin:0 0 20px;">
+         ${emailBtn(voteUrl, 'Voter / Vote', '#8b5cf6', '#ffffff')}
+       </div>
+       <p style="font-size:12px;color:#94a3b8;margin:16px 0 0;border-top:1px solid #e2e8f0;padding-top:10px;">
+         <i>Note : Ce message est un aperçu de test envoyé aux administrateurs.</i>
+       </p>`
+    );
+
+    await sendMail(env, adminEmail, subj, text, html);
+    return Response.json({ ok: true, test: true, sent_to: adminEmail });
+  }
+
+  // Live launch:
+  const rosterPlayers = (await env.DB.prepare(
+    `SELECT player_id, name, email, token_salt, preferred_team, role
+       FROM contacts
+      WHERE role = 'roster' AND opted_out = 0 AND email IS NOT NULL AND email != ''`
+  ).all()).results || [];
+
+  let subPlayers = [];
+  if (poll.allow_subs === 1) {
+    subPlayers = (await env.DB.prepare(
+      `SELECT DISTINCT c.player_id, c.name, c.email, c.token_salt, c.preferred_team, c.role
+         FROM contacts c
+         JOIN rsvp r ON r.player_id = c.player_id
+         JOIN events e ON e.id = r.event_id
+        WHERE e.season = ? AND r.status = 'in' AND c.role != 'roster'
+          AND c.opted_out = 0 AND c.email IS NOT NULL AND c.email != ''`
+    ).bind(poll.season).all()).results || [];
+  }
+
+  const map = new Map();
+  for (const p of [...rosterPlayers, ...subPlayers]) {
+    if (!map.has(p.player_id)) map.set(p.player_id, p);
+  }
+  const recipients = [...map.values()];
+
+  let sentCount = 0;
+  let failedCount = 0;
+
+  for (const p of recipients) {
+    try {
+      const tok = await hmac(env.RSVP_SECRET, pollMsg(poll.id, p.player_id, p.token_salt));
+      const voteUrl = `${base}/poll?id=${poll.id}&p=${encodeURIComponent(p.player_id)}&t=${tok}`;
+
+      const firstName = (p.name || '').split(' ')[0] || 'Joueur';
+      const subj = `Vote SMBHL : ${poll.title} / SMBHL Poll`;
+      const text = `Salut ${firstName} / Hi ${firstName},
+
+Un vote officiel de la SMBHL est maintenant ouvert : ${poll.title}
+${poll.description ? '\n' + poll.description + '\n' : ''}
+Pour soumettre ou modifier ton vote, clique sur ce lien direct :
+${voteUrl}
+
+—
+SMBHL · smbhl.com`;
+
+      const html = emailWrap(
+        subj,
+        `<p style="font-size:16px;margin:0 0 6px;font-weight:700;">Salut <b>${esc(firstName)}</b> / Hi <b>${esc(firstName)}</b>,</p>
+         <div style="background:#faf5ff;border:1px solid #e9d5ff;border-left:4px solid #8b5cf6;border-radius:6px;padding:12px 14px;margin:12px 0 16px;">
+           <div style="font-size:12px;font-weight:700;color:#6b21a8;text-transform:uppercase;margin-bottom:4px;">Scrutin officiel / Official Ballot</div>
+           <div style="font-size:16px;font-weight:700;color:var(--ink);">${esc(poll.title)}</div>
+           ${poll.description ? `<div style="font-size:13px;color:#475569;margin-top:6px;line-height:1.4;">${esc(poll.description)}</div>` : ''}
+         </div>
+         <p style="font-size:14px;color:#334155;margin:0 0 16px;line-height:1.4;">
+           Ton vote est important ! Clique sur le bouton ci-dessous pour voter en 1 clic :<br>
+           <span style="color:#64748b;font-size:13px;">Your vote matters! Click below to cast your ballot with 1 click:</span>
+         </p>
+         <div style="margin:0 0 20px;">
+           ${emailBtn(voteUrl, 'Voter / Vote', '#8b5cf6', '#ffffff')}
+         </div>
+         <p style="font-size:12px;color:#94a3b8;margin:16px 0 0;border-top:1px solid #e2e8f0;padding-top:10px;">
+           Ce lien de vote t'est réservé. Tu peux modifier ton choix en tout temps tant que le scrutin est ouvert.
+         </p>`
+      );
+
+      await sendMail(env, p.email, subj, text, html);
+      sentCount++;
+    } catch (_) {
+      failedCount++;
+    }
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(`UPDATE polls SET last_sent_at = ?, sent_count = sent_count + ? WHERE id = ?`)
+    .bind(now, sentCount, poll.id).run();
+
+  return Response.json({
+    ok: true,
+    poll_id: poll.id,
+    sent_count: sentCount,
+    failed_count: failedCount,
+    total_eligible: recipients.length,
+    last_sent_at: now
+  });
+}
+
+async function pollsPage(env = null, isAuthed = false) {
+  const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  return page('Sondages', `
+  ${adminTabs('polls', isAuthed)}
+  <h1 data-i18n="title">Sondages & Trophées</h1>
+  ${renderKeyGate(isAuthed)}
+  <div id="main"${isAuthed ? '' : ' style="display:none"'}>
+    <div class="card" style="margin-bottom:16px;">
+      <h2><span data-i18n="newPollTitle">Nouveau sondage</span></h2>
+      <div style="margin-bottom:10px;">
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--soft);margin-bottom:4px;" data-i18n="presetLbl">Modèle prédéfini</label>
+        <select id="preset-sel" style="width:100%;font:inherit;font-size:14px;padding:8px;border:1px solid var(--rule2);border-radius:3px;background:var(--card);">
+          <option value="" data-i18n="optPresetPrompt">— Choisir un modèle ou créer sur mesure —</option>
+          <option value="norris" data-i18n="optPresetNorris">🏆 Candidat Trophée Norris (Défenseurs uniquement)</option>
+          <option value="mvp" data-i18n="optPresetMvp">👑 Candidat Trophée Hart / MVP (Tous les patineurs)</option>
+          <option value="custom" data-i18n="optPresetCustom">❓ Question personnalisée</option>
+        </select>
+      </div>
+      <div style="margin-bottom:8px;">
+        <input id="ptitle" data-i18n-ph="titlePh" placeholder="Titre du sondage" style="width:100%;font:inherit;padding:10px;border:1px solid var(--rule2);border-radius:3px;">
+      </div>
+      <div style="margin-bottom:8px;">
+        <textarea id="pdesc" data-i18n-ph="descPh" placeholder="Description ou instructions de vote..." style="width:100%;font:inherit;padding:10px;border:1px solid var(--rule2);border-radius:3px;height:60px;resize:vertical;"></textarea>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div>
+          <label style="display:block;font-size:12px;font-weight:600;color:var(--soft);margin-bottom:3px;" data-i18n="catLbl">Catégorie</label>
+          <select id="pcat" style="width:100%;font:inherit;padding:8px;border:1px solid var(--rule2);border-radius:3px;background:var(--card);">
+            <option value="norris" data-i18n="optCatNorris">Trophée Norris (norris)</option>
+            <option value="mvp" data-i18n="optCatMvp">Trophée MVP (mvp)</option>
+            <option value="general" data-i18n="optCatGeneral">Général (general)</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;font-weight:600;color:var(--soft);margin-bottom:3px;" data-i18n="targetLbl">Candidats éligibles</label>
+          <select id="ptarget" style="width:100%;font:inherit;padding:8px;border:1px solid var(--rule2);border-radius:3px;background:var(--card);">
+            <option value="D" data-i18n="optTargetD">Défenseurs seulement (position = 'D')</option>
+            <option value="F" data-i18n="optTargetF">Attaquants seulement (position = 'F')</option>
+            <option value="" data-i18n="optTargetAll">Tous les patineurs</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+        <div>
+          <input id="pseason" value="Fall 2026" data-i18n-ph="seasonPh" placeholder="Saison" style="font:inherit;padding:8px;border:1px solid var(--rule2);border-radius:3px;width:140px;">
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input id="pallowsubs" type="checkbox" checked style="transform:scale(1.2);">
+            <span data-i18n="allowSubsLbl">Permettre aux substituts de voter</span>
+          </label>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input id="pshowonrsvp" type="checkbox" style="transform:scale(1.2);">
+            <span data-i18n="showOnRsvpLbl">Afficher aussi sur la page RSVP personnalisée (/rsvp)</span>
+          </label>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input id="pshowresults" type="checkbox" style="transform:scale(1.2);">
+            <span data-i18n="showResultsLbl">Rendre les résultats visibles aux votants (par défaut : scrutin secret 🔒)</span>
+          </label>
+        </div>
+      </div>
+      <div class="btns">
+        <button class="btn" id="create-poll-btn" data-i18n="createPollBtn">CRÉER LE SONDAGE</button>
+      </div>
+      <p class="state" id="createmsg"></p>
+    </div>
+
+    <div id="polls-list"></div>
+  </div>
+<script>
+const I18N_POLLS = {
+  fr: {
+    title: "Sondages & Trophées",
+    newPollTitle: "Nouveau sondage",
+    presetLbl: "Modèle prédéfini",
+    optPresetPrompt: "— Choisir un modèle ou créer sur mesure —",
+    optPresetNorris: "🏆 Candidat Trophée Norris (Défenseurs uniquement)",
+    optPresetMvp: "👑 Candidat Trophée Hart / MVP (Tous les patineurs)",
+    optPresetCustom: "❓ Question personnalisée",
+    titlePh: "Titre du sondage",
+    descPh: "Description ou instructions de vote...",
+    catLbl: "Catégorie",
+    optCatNorris: "Trophée Norris (norris)",
+    optCatMvp: "Trophée MVP (mvp)",
+    optCatGeneral: "Général (general)",
+    targetLbl: "Candidats éligibles",
+    optTargetD: "Défenseurs seulement (position = 'D')",
+    optTargetF: "Attaquants seulement (position = 'F')",
+    optTargetAll: "Tous les patineurs",
+    seasonPh: "Saison",
+    allowSubsLbl: "Permettre aux substituts de voter",
+    showOnRsvpLbl: "Afficher aussi sur la page RSVP personnalisée (/rsvp)",
+    showResultsLbl: "Rendre les résultats visibles aux votants (par défaut : scrutin secret 🔒)",
+    createPollBtn: "CRÉER LE SONDAGE",
+    creatingPoll: "Création en cours...",
+    pollCreatedSuccess: "✓ Sondage créé avec succès !",
+    titleReq: "Le titre est requis",
+    noPolls: "Aucun sondage enregistré pour le moment.",
+    noVotesYet: "Aucun vote enregistré pour l'instant.",
+    voteSingle: "vote",
+    votePlural: "votes",
+    active: "ACTIF",
+    closed: "FERMÉ",
+    btnClose: "FERMER",
+    btnReopen: "ROUVRIR",
+    btnLaunchEmail: "✉️ LANCER PAR COURRIEL",
+    rsvpActive: "📱 SUR RSVP : ACTIF",
+    rsvpHidden: "📱 SUR RSVP : MASQUÉ",
+    resultsPublic: "👁️ RÉSULTATS : PUBLICS",
+    ballotSecret: "🔒 SCRUTIN : SECRET",
+    ballotLink: "🔗 Bulletin",
+    sentBadge: "✉️ Envoyé le {dt} ({n} courriels)",
+    sendPanelTitle: "✉️ Lancement officiel du sondage par courriel",
+    sendPanelDesc: "Destinataires éligibles pour <b>{season}</b> : <b>{total} joueurs</b> ({roster} réguliers + {subs} substituts actifs). Chaque joueur recevra une invitation avec son bouton de vote sécurisé en 1 clic.",
+    btnSendTest: "Envoyer un test à l'admin 🧪",
+    btnSendAll: "🚀 Lancer & envoyer à tous ({total})",
+    btnCancelSend: "Annuler",
+    sendingTest: "Envoi du test à l'admin...",
+    testSentSuccess: "✓ Courriel de test envoyé avec succès à {to} !",
+    confirmBroadcast: "Confirmer le lancement et l'envoi des courriels d'invitation à voter à tous les électeurs éligibles ?",
+    sendingBroadcast: "Envoi des courriels en cours...",
+    broadcastSuccess: "✓ Envoyé à {sent} joueurs ({failed} échecs) !",
+    resultsHeading: "📊 Résultats ({total} votes au total) :",
+    auditSummary: "Voir le détail des votes ({n}) ▾",
+    colVoter: "Votant",
+    colChoice: "Choix",
+    colDate: "Date",
+    norrisPresetTitle: "Candidat au Trophée Norris (Meilleur défenseur)",
+    norrisPresetDesc: "Vote pour le joueur qui mérite le plus d'être en nomination pour le trophée Norris (meilleur défenseur de la saison).",
+    mvpPresetTitle: "Candidat au Trophée Hart (Joueur le plus utile)",
+    mvpPresetDesc: "Vote pour le joueur le plus utile à son équipe cette saison."
+  },
+  en: {
+    title: "Polls & Awards Voting",
+    newPollTitle: "New Poll",
+    presetLbl: "Preset template",
+    optPresetPrompt: "— Choose a template or create custom —",
+    optPresetNorris: "🏆 Norris Trophy Candidate (Defensemen only)",
+    optPresetMvp: "👑 Hart Trophy Candidate / MVP (All skaters)",
+    optPresetCustom: "❓ Custom Poll",
+    titlePh: "Poll title",
+    descPh: "Description or voting instructions...",
+    catLbl: "Category",
+    optCatNorris: "Norris Trophy (norris)",
+    optCatMvp: "MVP Trophy (mvp)",
+    optCatGeneral: "General (general)",
+    targetLbl: "Eligible candidates",
+    optTargetD: "Defensemen only (position = 'D')",
+    optTargetF: "Forwards only (position = 'F')",
+    optTargetAll: "All skaters",
+    seasonPh: "Season",
+    allowSubsLbl: "Allow substitutes to vote",
+    showOnRsvpLbl: "Display on personalized RSVP page (/rsvp)",
+    showResultsLbl: "Make results visible to voters (default: secret ballot 🔒)",
+    createPollBtn: "CREATE POLL",
+    creatingPoll: "Creating poll...",
+    pollCreatedSuccess: "✓ Poll successfully created!",
+    titleReq: "Title is required",
+    noPolls: "No polls registered yet.",
+    noVotesYet: "No votes cast yet.",
+    voteSingle: "vote",
+    votePlural: "votes",
+    active: "ACTIVE",
+    closed: "CLOSED",
+    btnClose: "CLOSE",
+    btnReopen: "REOPEN",
+    btnLaunchEmail: "✉️ LAUNCH VIA EMAIL",
+    rsvpActive: "📱 ON RSVP: ACTIVE",
+    rsvpHidden: "📱 ON RSVP: HIDDEN",
+    resultsPublic: "👁️ RESULTS: PUBLIC",
+    ballotSecret: "🔒 BALLOT: SECRET",
+    ballotLink: "🔗 Ballot",
+    sentBadge: "✉️ Sent on {dt} ({n} emails)",
+    sendPanelTitle: "✉️ Official Poll Email Launch",
+    sendPanelDesc: "Eligible recipients for <b>{season}</b>: <b>{total} players</b> ({roster} regular + {subs} active subs). Each player receives an invitation with their secure 1-click voting button.",
+    btnSendTest: "Send test to admin 🧪",
+    btnSendAll: "🚀 Launch & send to all ({total})",
+    btnCancelSend: "Cancel",
+    sendingTest: "Sending test to admin...",
+    testSentSuccess: "✓ Test email successfully sent to {to}!",
+    confirmBroadcast: "Confirm launching and sending voting invitations to all eligible voters?",
+    sendingBroadcast: "Sending emails in progress...",
+    broadcastSuccess: "✓ Sent to {sent} players ({failed} failed)!",
+    resultsHeading: "📊 Results ({total} total votes):",
+    auditSummary: "View vote details ({n}) ▾",
+    colVoter: "Voter",
+    colChoice: "Choice",
+    colDate: "Date",
+    norrisPresetTitle: "Norris Trophy Candidate (Best Defenseman)",
+    norrisPresetDesc: "Vote for the player who most deserves nomination for the Norris trophy (best defenseman of the season).",
+    mvpPresetTitle: "Hart Trophy Candidate (Most Valuable Player)",
+    mvpPresetDesc: "Vote for the player most valuable to their team this season."
+  }
+};
+
+let currentLang = (localStorage.getItem('admin_lang') || 'fr').toLowerCase();
+function t(k) {
+  const dict = I18N_POLLS[currentLang] || I18N_POLLS.fr;
+  return dict[k] !== undefined ? dict[k] : (I18N_POLLS.fr[k] || k);
+}
+
+let pollsData = null;
+
+function applyLanguage(lang) {
+  currentLang = (lang || 'fr').toLowerCase();
+  const dict = I18N_POLLS[currentLang] || I18N_POLLS.fr;
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (dict[key] !== undefined) el.textContent = dict[key];
+  });
+  document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+    const key = el.getAttribute('data-i18n-ph');
+    if (dict[key] !== undefined) el.setAttribute('placeholder', dict[key]);
+  });
+  if (pollsData) renderPolls(pollsData);
+}
+
+window.addEventListener('admin_lang_changed', e => {
+  applyLanguage(e.detail.lang);
+});
+
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+const $ = i => document.getElementById(i);
+const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function api(path, opts) {
+  const headers = { 'content-type': 'application/json' };
+  if (K) headers['x-admin'] = K;
+  const r = await fetch(path, Object.assign({ headers }, opts));
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function renderPolls(d) {
+  if (!d.polls || !d.polls.length) {
+    $('polls-list').innerHTML = '<div class="card"><p style="color:var(--soft);">' + esc(t('noPolls')) + '</p></div>';
+    return;
+  }
+  let h = '';
+  for (const p of d.polls) {
+    const total = p.results?.totalVotes || 0;
+    const bars = (p.results?.votes || []).map(c => {
+      const voteUnit = c.votes > 1 ? t('votePlural') : t('voteSingle');
+      return '<div style="margin-bottom:8px;">' +
+        '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px;">' +
+          '<b>' + esc(c.candidate_name) + '</b>' +
+          '<span style="color:var(--soft);">' + c.votes + ' ' + voteUnit + ' (' + c.pct + '%)</span>' +
+        '</div>' +
+        '<div style="background:#e9d5ff;border-radius:4px;height:8px;overflow:hidden;">' +
+          '<div style="background:#8b5cf6;width:' + c.pct + '%;height:100%;border-radius:4px;"></div>' +
+        '</div>' +
+      '</div>';
+    }).join('') || '<p style="font-size:13px;color:var(--soft);margin:6px 0;">' + esc(t('noVotesYet')) + '</p>';
+
+    const auditRows = (p.votes_list || []).map(v => {
+      const dtLocale = currentLang === 'en' ? 'en-US' : 'fr-CA';
+      const dt = v.updated_at ? new Date(v.updated_at).toLocaleString(dtLocale, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+      return '<tr>' +
+        '<td><b>' + esc(v.voter_name || v.voter_id) + '</b>' + (v.voter_team ? ' <span class="by">' + esc(v.voter_team) + '</span>' : '') + '</td>' +
+        '<td>' + esc(v.candidate_name) + '</td>' +
+        '<td style="color:var(--soft);font-size:12px;">' + esc(dt) + '</td>' +
+      '</tr>';
+    }).join('');
+
+    const toggleBtn = p.state === 'open'
+      ? '<button class="mini out" data-close-poll="' + p.id + '" data-state="closed">' + esc(t('btnClose')) + '</button>'
+      : '<button class="mini in" data-close-poll="' + p.id + '" data-state="open">' + esc(t('btnReopen')) + '</button>';
+
+    const sendBtn = p.state === 'open'
+      ? '<button class="mini" style="background:#2563eb;color:#fff;border-color:#1d4ed8;margin-left:6px;font-weight:600;" data-send-poll="' + p.id + '">' + esc(t('btnLaunchEmail')) + '</button>'
+      : '';
+
+    const rsvpToggleBtn = p.show_on_rsvp === 1
+      ? '<button class="mini in" style="font-weight:700;margin-left:6px;" data-toggle-rsvp="' + p.id + '" data-val="0">' + esc(t('rsvpActive')) + '</button>'
+      : '<button class="mini" style="background:#f1f5f9;color:var(--soft);border:1px solid var(--rule2);margin-left:6px;" data-toggle-rsvp="' + p.id + '" data-val="1">' + esc(t('rsvpHidden')) + '</button>';
+
+    const resultsToggleBtn = p.show_results === 1
+      ? '<button class="mini in" style="font-weight:700;margin-left:6px;" data-toggle-results="' + p.id + '" data-val="0">' + esc(t('resultsPublic')) + '</button>'
+      : '<button class="mini" style="background:#f1f5f9;color:var(--soft);border:1px solid var(--rule2);margin-left:6px;" data-toggle-results="' + p.id + '" data-val="1">' + esc(t('ballotSecret')) + '</button>';
+
+    const viewLink = '<a href="/poll?id=' + p.id + '&admin=1" target="_blank" style="font-size:12px;color:var(--blue);text-decoration:none;margin-left:8px;font-weight:600;">' + esc(t('ballotLink')) + '</a>';
+
+    const dtSentLocale = currentLang === 'en' ? 'en-US' : 'fr-CA';
+    const lastSentBadge = p.last_sent_at
+      ? '<span class="by" style="background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;margin-left:4px;">' +
+          esc(t('sentBadge').replace('{dt}', new Date(p.last_sent_at).toLocaleString(dtSentLocale, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })).replace('{n}', p.sent_count || 0)) +
+        '</span>'
+      : '';
+
+    const recTotal = p.recipients?.total || 0;
+    const recRoster = p.recipients?.roster || 0;
+    const recSubs = p.recipients?.subs || 0;
+
+    const panelDesc = t('sendPanelDesc')
+      .replace('{season}', esc(p.season))
+      .replace('{total}', recTotal)
+      .replace('{roster}', recRoster)
+      .replace('{subs}', recSubs);
+
+    const sendPanel =
+      '<div id="send-panel-' + p.id + '" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:12px;margin:12px 0;">' +
+        '<div style="font-weight:700;color:#1e40af;margin-bottom:4px;font-size:14px;">' + esc(t('sendPanelTitle')) + '</div>' +
+        '<p style="font-size:13px;color:#1e293b;margin:0 0 10px;line-height:1.4;">' + panelDesc + '</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">' +
+          '<button class="mini" data-do-test="' + p.id + '" style="background:#fff;color:var(--ink);border:1px solid var(--rule2);">' + esc(t('btnSendTest')) + '</button>' +
+          '<button class="mini" data-do-send="' + p.id + '" style="background:#2563eb;color:#fff;border-color:#1d4ed8;font-weight:700;">' + esc(t('btnSendAll').replace('{total}', recTotal)) + '</button>' +
+          '<button class="mini" data-cancel-send="' + p.id + '" style="background:transparent;border:none;color:var(--soft);cursor:pointer;">' + esc(t('btnCancelSend')) + '</button>' +
+        '</div>' +
+        '<p id="send-msg-' + p.id + '" style="font-size:13px;font-weight:600;margin-top:8px;display:none;"></p>' +
+      '</div>';
+
+    const stateLabel = p.state === 'open' ? t('active') : t('closed');
+
+    h += '<div class="card" style="margin-bottom:16px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:8px;">' +
+        '<div>' +
+          '<span class="by" style="background:' + (p.state === 'open' ? '#8b5cf6' : '#94a3b8') + ';color:#fff;font-weight:700;margin-right:6px;">' + esc(stateLabel) + '</span>' +
+          '<span class="by">' + esc(p.season) + '</span>' +
+          '<span class="by" style="margin-left:4px;">' + esc(p.category) + '</span>' +
+          (p.target_position ? ' <span class="by">pos: ' + esc(p.target_position) + '</span>' : '') +
+          lastSentBadge +
+          '<h2 style="margin:6px 0 2px;font-size:18px;">' + esc(p.title) + '</h2>' +
+          (p.description ? '<p style="margin:0;font-size:13px;color:var(--soft);">' + esc(p.description) + '</p>' : '') +
+        '</div>' +
+        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;">' + toggleBtn + rsvpToggleBtn + resultsToggleBtn + sendBtn + viewLink + '</div>' +
+      '</div>' +
+      sendPanel +
+      '<div style="background:#faf5ff;border:1px solid #f3e8ff;border-radius:6px;padding:12px;margin:12px 0;">' +
+        '<div style="font-size:13px;font-weight:700;color:#6b21a8;margin-bottom:8px;">' + esc(t('resultsHeading').replace('{total}', total)) + '</div>' +
+        bars +
+      '</div>' +
+      (auditRows ? '<details style="margin-top:10px;border-top:1px solid var(--rule);padding-top:8px;">' +
+        '<summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--soft);">' + esc(t('auditSummary').replace('{n}', (p.votes_list || []).length)) + '</summary>' +
+        '<table style="margin-top:8px;font-size:13px;"><thead><tr><th>' + esc(t('colVoter')) + '</th><th>' + esc(t('colChoice')) + '</th><th>' + esc(t('colDate')) + '</th></tr></thead><tbody>' + auditRows + '</tbody></table>' +
+      '</details>' : '') +
+    '</div>';
+  }
+  $('polls-list').innerHTML = h;
+
+  document.querySelectorAll('[data-close-poll]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = btn.dataset.closePoll;
+      const st = btn.dataset.state;
+      btn.disabled = true;
+      try {
+        await api('/admin/polls/close', { method: 'POST', body: JSON.stringify({ id: Number(pid), state: st }) });
+        load();
+      } catch (e) {
+        alert('Erreur: ' + e.message);
+        btn.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-send-poll]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pid = btn.dataset.sendPoll;
+      const panel = $('send-panel-' + pid);
+      if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    });
+  });
+
+  document.querySelectorAll('[data-cancel-send]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pid = btn.dataset.cancelSend;
+      const panel = $('send-panel-' + pid);
+      if (panel) panel.style.display = 'none';
+    });
+  });
+
+  document.querySelectorAll('[data-do-test]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = btn.dataset.doTest;
+      const msg = $('send-msg-' + pid);
+      btn.disabled = true;
+      if (msg) { msg.textContent = t('sendingTest'); msg.style.color = 'var(--soft)'; msg.style.display = 'block'; }
+      try {
+        const res = await api('/admin/polls/send', { method: 'POST', body: JSON.stringify({ poll_id: Number(pid), test_only: true }) });
+        if (msg) { msg.textContent = t('testSentSuccess').replace('{to}', res.sent_to || 'admin'); msg.style.color = 'var(--green)'; }
+      } catch (err) {
+        if (msg) { msg.textContent = 'Erreur: ' + err.message; msg.style.color = 'var(--red)'; }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-do-send]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = btn.dataset.doSend;
+      const msg = $('send-msg-' + pid);
+      if (!confirm(t('confirmBroadcast'))) return;
+      btn.disabled = true;
+      if (msg) { msg.textContent = t('sendingBroadcast'); msg.style.color = 'var(--soft)'; msg.style.display = 'block'; }
+      try {
+        const res = await api('/admin/polls/send', { method: 'POST', body: JSON.stringify({ poll_id: Number(pid), test_only: false }) });
+        if (msg) { msg.textContent = t('broadcastSuccess').replace('{sent}', res.sent_count).replace('{failed}', res.failed_count || 0); msg.style.color = 'var(--green)'; }
+        setTimeout(load, 1500);
+      } catch (err) {
+        if (msg) { msg.textContent = 'Erreur: ' + err.message; msg.style.color = 'var(--red)'; }
+        btn.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-toggle-rsvp]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = btn.dataset.toggleRsvp;
+      const val = Number(btn.dataset.val);
+      btn.disabled = true;
+      try {
+        await api('/admin/polls/toggle-rsvp', { method: 'POST', body: JSON.stringify({ id: Number(pid), show_on_rsvp: val }) });
+        load();
+      } catch (e) {
+        alert('Erreur: ' + e.message);
+        btn.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-toggle-results]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = btn.dataset.toggleResults;
+      const val = Number(btn.dataset.val);
+      btn.disabled = true;
+      try {
+        await api('/admin/polls/toggle-results', { method: 'POST', body: JSON.stringify({ id: Number(pid), show_results: val }) });
+        load();
+      } catch (e) {
+        alert('Erreur: ' + e.message);
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+async function load() {
+  pollsData = await api('/admin/polls/data');
+  renderPolls(pollsData);
+}
+
+$('preset-sel').addEventListener('change', () => {
+  const v = $('preset-sel').value;
+  if (v === 'norris') {
+    $('ptitle').value = t('norrisPresetTitle');
+    $('pdesc').value = t('norrisPresetDesc');
+    $('pcat').value = 'norris';
+    $('ptarget').value = 'D';
+  } else if (v === 'mvp') {
+    $('ptitle').value = t('mvpPresetTitle');
+    $('pdesc').value = t('mvpPresetDesc');
+    $('pcat').value = 'mvp';
+    $('ptarget').value = '';
+  }
+});
+
+$('create-poll-btn').addEventListener('click', async () => {
+  const btn = $('create-poll-btn');
+  const msg = $('createmsg');
+  msg.textContent = '';
+  const title = $('ptitle').value.trim();
+  const desc = $('pdesc').value.trim();
+  const cat = $('pcat').value;
+  const target = $('ptarget').value;
+  const season = $('pseason').value.trim() || 'Fall 2026';
+  const allowSubs = $('pallowsubs').checked ? 1 : 0;
+  const showOnRsvp = $('pshowonrsvp') && $('pshowonrsvp').checked ? 1 : 0;
+  const showResults = $('pshowresults') && $('pshowresults').checked ? 1 : 0;
+  if (!title) {
+    msg.textContent = t('titleReq');
+    msg.style.color = 'var(--red)';
+    return;
+  }
+  btn.disabled = true;
+  msg.textContent = t('creatingPoll');
+  msg.style.color = 'var(--soft)';
+  try {
+    await api('/admin/polls/create', {
+      method: 'POST',
+      body: JSON.stringify({
+        season,
+        title,
+        description: desc,
+        category: cat,
+        target_position: target || null,
+        allow_subs: allowSubs,
+        show_on_rsvp: showOnRsvp,
+        show_results: showResults
+      })
+    });
+    msg.textContent = t('pollCreatedSuccess');
+    msg.style.color = 'var(--green)';
+    $('ptitle').value = '';
+    $('pdesc').value = '';
+    load();
+  } catch (e) {
+    msg.textContent = 'Erreur: ' + e.message;
+    msg.style.color = 'var(--red)';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function unlock(candidate) {
+  const prev = K;
+  K = candidate;
+  try {
+    await api('/admin/polls/data');
+    localStorage.setItem('adminkey', K);
+    try {
+      document.cookie = 'admin_key=' + encodeURIComponent(K) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure';
+    } catch (_) {}
+    if (window.history && window.history.replaceState) {
+      const u = new URL(location);
+      u.searchParams.delete('key'); u.searchParams.delete('k'); u.searchParams.delete('t');
+      window.history.replaceState({}, document.title, u.pathname + u.search);
+    }
+    $('gate').style.display = 'none';
+    $('main').style.display = '';
+    document.querySelectorAll('.picker').forEach(p => {
+      p.style.display = 'flex';
+      p.querySelectorAll('a').forEach(a => {
+        try {
+          const u = new URL(a.href, location.origin);
+          if (K) u.searchParams.set('key', K);
+          a.href = u.pathname + u.search;
+        } catch (_) {}
+      });
+    });
+    load();
+    return true;
+  } catch (e) { K = prev; return false; }
+}
+
+$('go').addEventListener('click', async () => {
+  const val = $('key').value.trim();
+  if (!val) { $('err').textContent = 'Entrez une clé svp'; return; }
+  $('go').disabled = true;
+  $('err').textContent = 'Vérification...';
+  const ok = await unlock(val);
+  $('go').disabled = false;
+  if (!ok) $('err').textContent = 'Clé invalide / Invalid key';
+});
+
+$('key').addEventListener('keydown', e => {
+  if (e.key === 'Enter') $('go').click();
+});
+
+if (currentLang !== 'fr') {
+  applyLanguage(currentLang);
+}
+
+if (K) {
+  unlock(K).then(ok => {
+    if (!ok) $('err').textContent = 'Clé invalide / Invalid key';
+  });
+} else if (${isAuthed ? 'true' : 'false'}) {
+  $('gate').style.display = 'none';
+  $('main').style.display = '';
+  document.querySelectorAll('.picker').forEach(p => p.style.display = 'flex');
+  load();
+}
+</script>`, logoTooltip);
+}
+
+async function seasonPage(env = null, isAuthed = false) {
+  const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  const tabsHtml = adminTabs('season', isAuthed);
+  const gateHtml = renderKeyGate(isAuthed);
+  const bodyHtml = await renderSeasonPage(env, isAuthed, tabsHtml, gateHtml);
+  return page('Saison', bodyHtml, logoTooltip);
+}
+
+async function schedulePage(env = null, isAuthed = false) {
+  const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  return page('Calendrier', `
+  <style>
+    .wrap { max-width: 1100px !important; }
+    .sch-top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+    .badge { display:inline-block; font-size:12px; font-weight:700; padding:3px 8px; border-radius:3px; }
+    .badge-open { background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }
+    .badge-closed { background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; }
+    .badge-cancelled { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+    .badge-imported { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+    .table-container { background:#fff; border:1px solid var(--rule); border-radius:4px; overflow-x:auto; margin-bottom:24px; }
+    table.sch-tbl { width:100%; border-collapse:collapse; font-size:14px; text-align:left; min-width:700px; }
+    table.sch-tbl th { background:#f8fafc; color:var(--soft); font-weight:700; font-size:12px; text-transform:uppercase; letter-spacing:0.04em; padding:10px 14px; border-bottom:1px solid var(--rule); }
+    table.sch-tbl td { padding:12px 14px; border-bottom:1px solid var(--rule); vertical-align:middle; }
+    table.sch-tbl tr:last-child td { border-bottom:none; }
+    table.sch-tbl tr:hover { background:#fbfcfe; }
+    .sec-title { font-family:'Barlow Condensed',sans-serif; font-size:22px; font-weight:700; margin:24px 0 10px; display:flex; align-items:center; justify-content:space-between; }
+    .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:9999; padding:16px; }
+    .modal-card { background:#fff; border-radius:6px; max-width:520px; width:100%; max-height:90vh; overflow-y:auto; padding:24px; box-shadow:0 10px 25px rgba(0,0,0,0.2); }
+    .form-group { margin-bottom:14px; }
+    .form-group label { display:block; font-size:12px; font-weight:700; color:var(--soft); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.03em; }
+    .form-control { width:100%; font:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; box-sizing:border-box; }
+    .form-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .act-btn { font:inherit; font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:13px; padding:5px 9px; border-radius:3px; cursor:pointer; border:1px solid var(--rule2); background:#fff; text-decoration:none; display:inline-flex; align-items:center; gap:4px; line-height:1.2; }
+    .act-btn:hover { background:#f1f5f9; }
+    .act-btn.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .act-btn.primary:hover { opacity:0.9; }
+    .act-btn.danger { color:var(--red); border-color:#fca5a5; }
+    .act-btn.danger:hover { background:#fee2e2; }
+    .act-btn.success { color:var(--green); border-color:#86efac; }
+    .act-btn.success:hover { background:#dcfce7; }
+    .rsvp-pill { display:inline-flex; gap:6px; font-size:12px; font-weight:600; padding:3px 7px; border-radius:4px; background:#f8fafc; border:1px solid var(--rule); }
+    .rsvp-pill span.in { color:var(--green); font-weight:700; }
+    .rsvp-pill span.out { color:var(--red); font-weight:700; }
+    .rsvp-pill span.pend { color:var(--soft); }
+    @media (max-width: 768px) {
+      .sch-top { flex-direction:column; align-items:stretch; }
+      .sch-top > div { justify-content:space-between; width:100%; }
+      .sch-top button { width:100%; justify-content:center; }
+      .table-container { background:transparent; border:none; overflow-x:visible; }
+      table.sch-tbl { min-width:100% !important; }
+      table.sch-tbl thead { display:none; }
+      table.sch-tbl, table.sch-tbl tbody, table.sch-tbl tr, table.sch-tbl td { display:block; width:100%; box-sizing:border-box; }
+      table.sch-tbl tr {
+        margin-bottom:14px; background:#fff; border:1px solid var(--rule); border-radius:6px; padding:12px 14px;
+        box-shadow:0 1px 3px rgba(0,0,0,0.04);
+      }
+      table.sch-tbl td {
+        display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px dashed var(--rule); font-size:14px;
+      }
+      table.sch-tbl td:first-child {
+        font-size:16px; font-weight:700; border-bottom:1px solid var(--rule); padding-bottom:8px; margin-bottom:4px;
+      }
+      table.sch-tbl td:last-child {
+        border-bottom:none; padding-top:10px; margin-top:6px; justify-content:flex-end;
+      }
+      table.sch-tbl td::before {
+        content: attr(data-label); font-weight:700; font-size:11px; text-transform:uppercase; color:var(--soft);
+        letter-spacing:0.04em; margin-right:12px;
+      }
+      table.sch-tbl td:first-child::before, table.sch-tbl td:last-child::before { display:none; }
+      .act-btn { padding:7px 11px; font-size:13px; }
+      .form-row { grid-template-columns:1fr; }
+    }
+  </style>
+  ${adminTabs('schedule', isAuthed)}
+  <h1 data-i18n="title">Gestion du calendrier</h1>
+  ${renderKeyGate(isAuthed)}
+  <div id="main"${isAuthed ? '' : ' style="display:none"'}>
+    <div class="sch-top">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <label for="season-filter" style="font-weight:700; font-size:15px;" data-i18n="seasonLbl">Saison :</label>
+        <select id="season-filter" style="font:inherit; font-weight:600; padding:6px 12px; border:1px solid var(--rule2); border-radius:3px; background:#fff;"></select>
+      </div>
+      <button class="act-btn primary" id="btn-add-game" style="font-size:15px; padding:8px 14px;" data-i18n="btnAddGame">+ Ajouter un match sur mesure</button>
+    </div>
+
+    <div class="sec-title">
+      <span data-i18n="secD1Matches">Matchs de la saison dans la base de données (D1)</span>
+      <span id="events-count" style="font-size:14px; font-weight:normal; color:var(--soft);"></span>
+    </div>
+
+    <div class="table-container">
+      <table class="sch-tbl" id="events-table">
+        <thead>
+          <tr>
+            <th style="width:70px;" data-i18n="colWeek">Semaine</th>
+            <th style="width:170px;" data-i18n="colDateTime">Date & Heures</th>
+            <th data-i18n="colVenue">Lieu / Salle</th>
+            <th style="width:110px;" data-i18n="colStatus">Statut</th>
+            <th style="width:170px;" data-i18n="colAttendance">Présences</th>
+            <th style="text-align:right; width:250px;" data-i18n="colActions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="events-tbody">
+          <tr><td colspan="6" style="text-align:center; color:var(--soft); padding:20px;" data-i18n="loadingSchedule">Chargement du calendrier...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sec-title">
+      <span data-i18n="secPlannedMatches">Matchs prévus au calendrier officiel (data.json)</span>
+    </div>
+    <div class="table-container">
+      <table class="sch-tbl" id="planned-table">
+        <thead>
+          <tr>
+            <th style="width:70px;" data-i18n="colWeek">Semaine</th>
+            <th style="width:170px;" data-i18n="colDateTime">Date & Heures</th>
+            <th data-i18n="colVenue">Lieu / Salle</th>
+            <th data-i18n="colMatchups">Matchs prévus</th>
+            <th style="width:110px;" data-i18n="colD1State">État D1</th>
+            <th style="text-align:right; width:150px;" data-i18n="colAction">Action</th>
+          </tr>
+        </thead>
+        <tbody id="planned-tbody">
+          <tr><td colspan="6" style="text-align:center; color:var(--soft); padding:20px;" data-i18n="loadingPlanned">Chargement des matchs prévus...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Modal Add / Edit Event -->
+  <div class="modal-overlay" id="sch-modal">
+    <div class="modal-card">
+      <h2 id="modal-title" style="margin-top:0; margin-bottom:16px; font-size:20px;" data-i18n="editModalTitle">Modifier le match</h2>
+      <input type="hidden" id="edit-old-id">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="edit-id" data-i18n="lblId">Identifiant (ID unique)</label>
+          <input class="form-control" id="edit-id" placeholder="ex: 2026-10-04" required>
+        </div>
+        <div class="form-group">
+          <label for="edit-season" data-i18n="lblSeason">Saison</label>
+          <input class="form-control" id="edit-season" placeholder="ex: Fall 2026" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="edit-week" data-i18n="lblWeek">Semaine #</label>
+          <input class="form-control" id="edit-week" type="number" min="1" max="50" required>
+        </div>
+        <div class="form-group">
+          <label for="edit-date" data-i18n="lblDisplayDate">Date affichée</label>
+          <input class="form-control" id="edit-date" placeholder="ex: 4 oct. 2026" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="edit-start" data-i18n="lblStartTime">Heure début</label>
+          <input class="form-control" id="edit-start" placeholder="ex: 08:30" value="08:30">
+        </div>
+        <div class="form-group">
+          <label for="edit-end" data-i18n="lblEndTime">Heure fin</label>
+          <input class="form-control" id="edit-end" placeholder="ex: 11:30" value="11:30">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="edit-venue" data-i18n="lblVenue">Lieu / Gymnase</label>
+        <input class="form-control" id="edit-venue" placeholder="ex: Collège Laval" value="Collège Laval">
+      </div>
+      <div class="form-group">
+        <label for="edit-state" data-i18n="lblGameStatus">Statut du match</label>
+        <select class="form-control" id="edit-state">
+          <option value="upcoming" data-i18n="optStateUpcoming">À venir (upcoming) - Pas encore ouvert aux RSVP</option>
+          <option value="open" data-i18n="optStateOpen">Ouvert (open) - Les présences / convocations sont actives</option>
+          <option value="closed" data-i18n="optStateClosed">Fermé (closed) - Match terminé</option>
+          <option value="cancelled" data-i18n="optStateCancelled">Annulé (cancelled)</option>
+        </select>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+        <button type="button" class="act-btn" id="modal-cancel" data-i18n="btnCancel">Annuler</button>
+        <button type="button" class="act-btn primary" id="modal-save" data-i18n="btnSave">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Cancellation Notice Confirmation & Preview -->
+  <div class="modal-overlay" id="cancel-modal">
+    <div class="modal-card" style="max-width:600px;">
+      <h2 style="margin-top:0; color:var(--red); font-size:20px; display:flex; align-items:center; gap:8px;">
+        <span>⚠️</span> <span data-i18n="cancelNoticeTitle">Annulation officielle du match</span>
+      </h2>
+      <p style="font-size:14px; color:var(--soft); margin-bottom:14px;" data-i18n="cancelNoticeDesc">
+        Ce match a été marqué <b>ANNULÉ</b>. Souhaitez-vous envoyer automatiquement un avis d'annulation par courriel à tous les joueurs de la ligue ?
+      </p>
+      <div class="form-group">
+        <label for="cancel-reason" data-i18n="lblCancelReason">Motif de l'annulation (optionnel, affiché dans le courriel)</label>
+        <input class="form-control" id="cancel-reason" data-i18n-ph="cancelReasonPh" placeholder="ex: Tempête de neige / Fermeture de l'établissement">
+      </div>
+      <div class="form-group">
+        <label data-i18n="lblCancelPreview">Aperçu du courriel qui sera envoyé</label>
+        <div id="cancel-preview-box" style="border:1px solid var(--rule); border-radius:4px; padding:12px; background:#f8fafc; font-size:13px; max-height:160px; overflow-y:auto;">
+          Chargement de l'aperçu...
+        </div>
+      </div>
+      <p class="state" id="cancel-status" style="font-size:13px; font-weight:600;"></p>
+      <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
+        <button type="button" class="act-btn" id="cancel-modal-close" data-i18n="btnClose">Fermer</button>
+        <button type="button" class="act-btn" id="cancel-modal-test" style="border-color:var(--blue); color:var(--blue);" data-i18n="btnTestAdmin">Tester (aperçu admin)</button>
+        <button type="button" class="act-btn danger" id="cancel-modal-blast" style="font-weight:700;" data-i18n="btnBlastPlayers">🚀 Diffuser aux joueurs</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  const I18N_SCHEDULE = {
+    fr: {
+      title: "Gestion du calendrier",
+      seasonLbl: "Saison :",
+      btnAddGame: "+ Ajouter un match sur mesure",
+      secD1Matches: "Matchs de la saison dans la base de données (D1)",
+      secPlannedMatches: "Matchs prévus au calendrier officiel (data.json)",
+      colWeek: "Semaine",
+      colDateTime: "Date & Heures",
+      colVenue: "Lieu / Salle",
+      colStatus: "Statut",
+      colAttendance: "Présences",
+      colActions: "Actions",
+      colMatchups: "Matchs prévus",
+      colD1State: "État D1",
+      colAction: "Action",
+      loadingSchedule: "Chargement du calendrier...",
+      loadingPlanned: "Chargement des matchs prévus...",
+      noGamesSeason: "Aucun match dans la base de données pour {season}. Vous pouvez importer une semaine ci-dessous ou ajouter un match sur mesure.",
+      noPlannedGames: "Aucun match planifié dans le fichier data.json pour cette saison.",
+      matchSingle: "match",
+      matchPlural: "matchs",
+      badgeOpen: "🟢 Ouvert",
+      badgeClosed: "⚪ Fermé",
+      badgeCancelled: "🔴 Annulé",
+      badgeInD1: "✓ Dans D1",
+      badgeAlreadyActive: "Déjà actif",
+      badgePast: "Passé",
+      badgeUpcoming: "À venir",
+      btnEdit: "✎ Modifier",
+      btnSheet: "📋 Feuille",
+      btnCloseState: "Fermer",
+      btnCancelState: "Annuler",
+      btnOpenState: "Ouvrir",
+      btnReopenState: "Rouvrir",
+      btnNotifyCancelled: "✉️ Avis joueurs",
+      btnImportArchive: "📥 Importer (Archive)",
+      btnImportActive: "🚀 Importer & Activer",
+      btnImporting: "Importation...",
+      confirmCancelGame: "Êtes-vous certain de vouloir annuler ce match ? Les courriels de rappel en attente seront annulés.",
+      confirmDeleteGame: "Supprimer définitivement le match {id} ainsi que tous ses enregistrements de présence ?",
+      confirmImportWeek: "Importer la semaine {week} ({season}) et pré-remplir les présences des joueurs de la ligue ?",
+      confirmBroadcastCancel: "Êtes-vous certain de vouloir envoyer l'avis officiel d'annulation par courriel à TOUS les joueurs et remplaçants inscrits ?",
+      editModalTitle: "Modifier le match",
+      addModalTitle: "Ajouter un match sur mesure",
+      lblId: "Identifiant (ID unique)",
+      lblSeason: "Saison",
+      lblWeek: "Semaine #",
+      lblDisplayDate: "Date affichée",
+      lblStartTime: "Heure début",
+      lblEndTime: "Heure fin",
+      lblVenue: "Lieu / Gymnase",
+      lblGameStatus: "Statut du match",
+      optStateUpcoming: "À venir (upcoming) - Pas encore ouvert aux RSVP",
+      optStateOpen: "Ouvert (open) - Les présences / convocations sont actives",
+      optStateClosed: "Fermé (closed) - Match terminé",
+      optStateCancelled: "Annulé (cancelled)",
+      btnCancel: "Annuler",
+      btnSave: "Enregistrer",
+      btnSaving: "Enregistrement...",
+      cancelNoticeTitle: "Annulation officielle du match",
+      cancelNoticeDesc: "Ce match a été marqué ANNULÉ. Souhaitez-vous envoyer automatiquement un avis d'annulation par courriel à tous les joueurs de la ligue ?",
+      lblCancelReason: "Motif de l'annulation (optionnel, affiché dans le courriel)",
+      cancelReasonPh: "ex: Tempête de neige / Fermeture de l'établissement",
+      lblCancelPreview: "Aperçu du courriel qui sera envoyé",
+      btnClose: "Fermer",
+      btnTestAdmin: "Tester (aperçu admin)",
+      btnBlastPlayers: "🚀 Diffuser aux joueurs",
+      sendingTest: "Envoi du test à l'admin...",
+      testSentSuccess: "✓ Courriel de test envoyé à {to} ({n} joueurs concernés) !",
+      sendingBlast: "Diffusion en cours...",
+      blastSuccess: "✓ Avis d'annulation envoyé à {sent} joueurs ({failed} échecs) !",
+      fillReqFields: "Veuillez remplir les champs obligatoires (ID, saison, semaine, date)."
+    },
+    en: {
+      title: "Schedule Management",
+      seasonLbl: "Season:",
+      btnAddGame: "+ Add Custom Game",
+      secD1Matches: "Season Games in Database (D1)",
+      secPlannedMatches: "Official Scheduled Fixtures (data.json)",
+      colWeek: "Week",
+      colDateTime: "Date & Time",
+      colVenue: "Venue / Gym",
+      colStatus: "Status",
+      colAttendance: "RSVP Attendance",
+      colActions: "Actions",
+      colMatchups: "Scheduled Games",
+      colD1State: "D1 State",
+      colAction: "Action",
+      loadingSchedule: "Loading schedule...",
+      loadingPlanned: "Loading scheduled fixtures...",
+      noGamesSeason: "No games in database for {season}. You can import a week below or add a custom game.",
+      noPlannedGames: "No fixtures found in data.json for this season.",
+      matchSingle: "game",
+      matchPlural: "games",
+      badgeOpen: "🟢 Open",
+      badgeClosed: "⚪ Closed",
+      badgeCancelled: "🔴 Cancelled",
+      badgeInD1: "✓ In D1",
+      badgeAlreadyActive: "Already active",
+      badgePast: "Past",
+      badgeUpcoming: "Upcoming",
+      btnEdit: "✎ Edit",
+      btnSheet: "📋 Sheet",
+      btnCloseState: "Close",
+      btnCancelState: "Cancel",
+      btnOpenState: "Open",
+      btnReopenState: "Reopen",
+      btnNotifyCancelled: "✉️ Notify Players",
+      btnImportArchive: "📥 Import (Archive)",
+      btnImportActive: "🚀 Import & Activate",
+      btnImporting: "Importing...",
+      confirmCancelGame: "Are you sure you want to cancel this game? Pending reminder emails will be cancelled.",
+      confirmDeleteGame: "Permanently delete game {id} along with all attendance records?",
+      confirmImportWeek: "Import week {week} ({season}) and pre-populate player RSVPs?",
+      confirmBroadcastCancel: "Are you sure you want to send the official cancellation email to ALL registered players and subs?",
+      editModalTitle: "Edit Game",
+      addModalTitle: "Add Custom Game",
+      lblId: "Identifier (Unique ID)",
+      lblSeason: "Season",
+      lblWeek: "Week #",
+      lblDisplayDate: "Displayed Date",
+      lblStartTime: "Start Time",
+      lblEndTime: "End Time",
+      lblVenue: "Venue / Gym",
+      lblGameStatus: "Game Status",
+      optStateUpcoming: "Upcoming - Not yet open for RSVPs",
+      optStateOpen: "Open - RSVPs & invitations are active",
+      optStateClosed: "Closed - Game completed",
+      optStateCancelled: "Cancelled",
+      btnCancel: "Cancel",
+      btnSave: "Save",
+      btnSaving: "Saving...",
+      cancelNoticeTitle: "Official Game Cancellation",
+      cancelNoticeDesc: "This game was marked CANCELLED. Would you like to automatically send a cancellation email notice to all league players?",
+      lblCancelReason: "Cancellation reason (optional, displayed in email)",
+      cancelReasonPh: "e.g. Snow storm / Facility closed",
+      lblCancelPreview: "Preview of email to be sent",
+      btnClose: "Close",
+      btnTestAdmin: "Test (Admin Preview)",
+      btnBlastPlayers: "🚀 Broadcast to Players",
+      sendingTest: "Sending test to admin...",
+      testSentSuccess: "✓ Test email sent to {to} ({n} players affected)!",
+      sendingBlast: "Broadcasting in progress...",
+      blastSuccess: "✓ Cancellation notice sent to {sent} players ({failed} failed)!",
+      fillReqFields: "Please fill required fields (ID, season, week, date)."
+    }
+  };
+
+  let currentLang = (localStorage.getItem('admin_lang') || 'fr').toLowerCase();
+  function t(k) {
+    const dict = I18N_SCHEDULE[currentLang] || I18N_SCHEDULE.fr;
+    return dict[k] !== undefined ? dict[k] : (I18N_SCHEDULE.fr[k] || k);
+  }
+
+  function applyLanguage(lang) {
+    currentLang = (lang || 'fr').toLowerCase();
+    const dict = I18N_SCHEDULE[currentLang] || I18N_SCHEDULE.fr;
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.getAttribute('data-i18n');
+      if (dict[key] !== undefined) el.textContent = dict[key];
+    });
+    document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+      const key = el.getAttribute('data-i18n-ph');
+      if (dict[key] !== undefined) el.setAttribute('placeholder', dict[key]);
+    });
+    if (scheduleData) render();
+  }
+
+  window.addEventListener('admin_lang_changed', e => {
+    applyLanguage(e.detail.lang);
+  });
+
+  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+  const $ = i => document.getElementById(i);
+  const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let scheduleData = null;
+
+  async function api(path, opts = {}) {
+    const headers = {};
+    if (K) headers['x-admin'] = K;
+    if (opts.body || (opts.method && opts.method !== 'GET')) {
+      headers['content-type'] = 'application/json';
+    }
+    const r = await fetch(path, Object.assign({ headers }, opts));
+    if (!r.ok) {
+      let errText = await r.text();
+      try { const errObj = JSON.parse(errText); if (errObj.error) errText = errObj.error; } catch(_) {}
+      throw new Error(errText || ('HTTP ' + r.status));
+    }
+    return r.json();
+  }
+
+  async function load() {
+    try {
+      scheduleData = await api('/admin/schedule/data');
+      render();
+    } catch (e) {
+      $('events-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--red); padding:20px;">Erreur de chargement: ' + esc(e.message) + '</td></tr>';
+    }
+  }
+
+  function render() {
+    if (!scheduleData) return;
+    const seasons = scheduleData.seasons || [];
+    const curSeason = $('season-filter').value || scheduleData.current_season || (seasons[0] || 'Fall 2026');
+
+    // Populate season filter dropdown once
+    if ($('season-filter').options.length === 0) {
+      seasons.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        if (s === curSeason) opt.selected = true;
+        $('season-filter').appendChild(opt);
+      });
+      $('season-filter').addEventListener('change', () => render());
+    }
+
+    const selectedSeason = $('season-filter').value;
+    const filteredEvents = (scheduleData.events || []).filter(e => !selectedSeason || e.season === selectedSeason);
+    const matchCountStr = '(' + filteredEvents.length + ' ' + (filteredEvents.length > 1 ? t('matchPlural') : t('matchSingle')) + ')';
+    $('events-count').textContent = matchCountStr;
+
+    if (filteredEvents.length === 0) {
+      $('events-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--soft); padding:24px;">' + esc(t('noGamesSeason').replace('{season}', selectedSeason)) + '</td></tr>';
+    } else {
+      let h = '';
+      filteredEvents.forEach(e => {
+        let stateBadge = '';
+        if (e.state === 'open') stateBadge = '<span class="badge badge-open">' + esc(t('badgeOpen')) + '</span>';
+        else if (e.state === 'cancelled') stateBadge = '<span class="badge badge-cancelled">' + esc(t('badgeCancelled')) + '</span>';
+        else stateBadge = '<span class="badge badge-closed">' + esc(t('badgeClosed')) + '</span>';
+
+        const stats = e.stats || { total_in: 0, total_out: 0, total_pending: 0, by_team: {} };
+        let teamTooltip = '';
+        if (stats.by_team) {
+          teamTooltip = Object.entries(stats.by_team).map(([tm, c]) => tm + ': ' + c.in + ' in' + (c.goalies_in ? ' (' + c.goalies_in + 'G)' : '')).join(' · ');
+        }
+
+        const timeStr = e.start_time ? (esc(e.start_time) + (e.end_time ? '–' + esc(e.end_time) : '')) : '—';
+
+        // Quick state action buttons
+        let quickBtns = '';
+        if (e.state === 'open') {
+          quickBtns += '<button class="act-btn" data-set-state="' + esc(e.id) + '" data-st="closed">' + esc(t('btnCloseState')) + '</button>';
+          quickBtns += '<button class="act-btn danger" data-set-state="' + esc(e.id) + '" data-st="cancelled">' + esc(t('btnCancelState')) + '</button>';
+        } else if (e.state === 'closed') {
+          quickBtns += '<button class="act-btn success" data-set-state="' + esc(e.id) + '" data-st="open">' + esc(t('btnOpenState')) + '</button>';
+          quickBtns += '<button class="act-btn danger" data-set-state="' + esc(e.id) + '" data-st="cancelled">' + esc(t('btnCancelState')) + '</button>';
+        } else if (e.state === 'cancelled') {
+          quickBtns += '<button class="act-btn success" data-set-state="' + esc(e.id) + '" data-st="open">' + esc(t('btnReopenState')) + '</button>';
+          quickBtns += '<button class="act-btn danger" data-notify-cancelled="' + esc(e.id) + '">' + esc(t('btnNotifyCancelled')) + '</button>';
+        }
+
+        const weekLabel = currentLang === 'en' ? 'Wk ' : 'Sem. ';
+        h += '<tr>' +
+          '<td><b>' + weekLabel + esc(e.week) + '</b></td>' +
+          '<td data-label="Date & Heure"><b>' + esc(e.date) + '</b><br><span style="font-size:12px; color:var(--soft);">' + timeStr + '</span></td>' +
+          '<td data-label="Lieu">' + (e.venue ? esc(e.venue) : '<span style="color:var(--soft);">—</span>') + '</td>' +
+          '<td data-label="Statut">' + stateBadge + '</td>' +
+          '<td data-label="Présences">' +
+            '<div class="rsvp-pill" title="' + esc(teamTooltip) + '">' +
+              '<span class="in">✓ ' + stats.total_in + '</span>' +
+              '<span class="out">✗ ' + stats.total_out + '</span>' +
+              '<span class="pend">⏳ ' + stats.total_pending + '</span>' +
+            '</div>' +
+          '</td>' +
+          '<td>' +
+            '<div style="display:inline-flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; width:100%;">' +
+              '<button class="act-btn" data-edit-event="' + esc(e.id) + '">' + esc(t('btnEdit')) + '</button>' +
+              quickBtns +
+              '<a class="act-btn" href="https://smbhl.com/team-sheets.html?week=' + encodeURIComponent(e.week) + '" target="_blank">' + esc(t('btnSheet')) + '</a>' +
+              '<button class="act-btn danger" data-del-event="' + esc(e.id) + '">🗑️</button>' +
+            '</div>' +
+          '</td>' +
+        '</tr>';
+      });
+      $('events-tbody').innerHTML = h;
+    }
+
+    // Planned fixtures table
+    const filteredPlanned = (scheduleData.planned || []).filter(p => !selectedSeason || p.season === selectedSeason);
+    if (filteredPlanned.length === 0) {
+      $('planned-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--soft); padding:20px;">' + esc(t('noPlannedGames')) + '</td></tr>';
+    } else {
+      let ph = '';
+      filteredPlanned.forEach(p => {
+        const timeStr = p.start_time ? (esc(p.start_time) + (p.end_time ? '–' + esc(p.end_time) : '')) : '—';
+        const matchups = (p.games || []).map(g => g.home + ' vs ' + g.away + ' (' + g.time + ')').join(', ') || '—';
+
+        let badge = '';
+        let actBtn = '';
+        if (p.is_imported) {
+          badge = '<span class="badge badge-imported">' + esc(t('badgeInD1')) + '</span>';
+          actBtn = '<span style="font-size:12px; color:var(--soft);">' + esc(t('badgeAlreadyActive')) + '</span>';
+        } else if (p.is_past) {
+          badge = '<span class="badge" style="background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1;">' + esc(t('badgePast')) + '</span>';
+          actBtn = '<button class="act-btn" data-import-week="' + p.week + '" data-season="' + esc(p.season) + '">' + esc(t('btnImportArchive')) + '</button>';
+        } else {
+          badge = '<span class="badge badge-closed">' + esc(t('badgeUpcoming')) + '</span>';
+          actBtn = '<button class="act-btn primary" data-import-week="' + p.week + '" data-season="' + esc(p.season) + '">' + esc(t('btnImportActive')) + '</button>';
+        }
+
+        const weekLabel = currentLang === 'en' ? 'Wk ' : 'Sem. ';
+        ph += '<tr>' +
+          '<td><b>' + weekLabel + esc(p.week) + '</b></td>' +
+          '<td data-label="Date & Heure"><b>' + esc(p.date) + '</b><br><span style="font-size:12px; color:var(--soft);">' + timeStr + '</span></td>' +
+          '<td data-label="Lieu">' + (p.venue ? esc(p.venue) : '<span style="color:var(--soft);">—</span>') + '</td>' +
+          '<td data-label="Matchs" style="font-size:13px; color:var(--soft);">' + esc(matchups) + '</td>' +
+          '<td data-label="État D1">' + badge + '</td>' +
+          '<td style="text-align:right;">' + actBtn + '</td>' +
+        '</tr>';
+      });
+      $('planned-tbody').innerHTML = ph;
+    }
+
+    bindActions();
+  }
+
+  function bindActions() {
+    // Quick state buttons
+    document.querySelectorAll('[data-set-state]').forEach(b => {
+      b.onclick = async () => {
+        const id = b.dataset.setState;
+        const st = b.dataset.st;
+        if (st === 'cancelled') {
+          if (!confirm(t('confirmCancelGame'))) return;
+        }
+        b.disabled = true;
+        try {
+          await api('/admin/schedule/set-state', { method: 'POST', body: JSON.stringify({ id, state: st }) });
+          load();
+        } catch (err) {
+          alert('Erreur: ' + err.message);
+          b.disabled = false;
+        }
+      };
+    });
+
+    // Delete event buttons
+    document.querySelectorAll('[data-del-event]').forEach(b => {
+      b.onclick = async () => {
+        const id = b.dataset.delEvent;
+        if (!confirm(t('confirmDeleteGame').replace('{id}', id))) return;
+        b.disabled = true;
+        try {
+          await api('/admin/schedule/delete', { method: 'POST', body: JSON.stringify({ id }) });
+          load();
+        } catch (err) {
+          alert('Erreur: ' + err.message);
+          b.disabled = false;
+        }
+      };
+    });
+
+    // Edit event buttons
+    document.querySelectorAll('[data-edit-event]').forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.editEvent;
+        const ev = (scheduleData.events || []).find(x => x.id === id);
+        if (!ev) return;
+        openEditModal(ev);
+      };
+    });
+
+    // Cancellation notification buttons
+    document.querySelectorAll('[data-notify-cancelled]').forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.notifyCancelled;
+        const ev = (scheduleData.events || []).find(x => x.id === id);
+        if (!ev) return;
+        openCancelModal(ev);
+      };
+    });
+
+    // Import fixture buttons
+    document.querySelectorAll('[data-import-week]').forEach(b => {
+      b.onclick = async () => {
+        const week = b.dataset.importWeek;
+        const season = b.dataset.season;
+        if (!confirm(t('confirmImportWeek').replace('{week}', week).replace('{season}', season))) return;
+        b.disabled = true;
+        b.textContent = t('btnImporting');
+        try {
+          await api('/admin/schedule/import-fixture', { method: 'POST', body: JSON.stringify({ week: Number(week), season }) });
+          load();
+        } catch (err) {
+          alert('Erreur: ' + err.message);
+          b.disabled = false;
+          b.textContent = t('btnImportActive');
+        }
+      };
+    });
+  }
+
+  function openCancelModal(ev) {
+    $('cancel-event-id').value = ev.id;
+    const matchLabel = currentLang === 'en' ? 'Game:' : 'Match :';
+    const weekLabel = currentLang === 'en' ? 'Week ' : 'Semaine ';
+    $('cancel-event-info').innerHTML = '<b>' + matchLabel + '</b> ' + weekLabel + esc(ev.week) + ' · ' + esc(ev.date) + (ev.venue ? ' (' + esc(ev.venue) + ')' : '');
+    $('cancel-modal-msg').style.display = 'none';
+    $('cancel-modal-msg').textContent = '';
+    $('cancel-email-modal').style.display = 'flex';
+  }
+
+  $('cancel-modal-close').onclick = () => { $('cancel-email-modal').style.display = 'none'; };
+
+  $('cancel-modal-test').onclick = async () => {
+    const id = $('cancel-event-id').value;
+    const btn = $('cancel-modal-test');
+    const msg = $('cancel-modal-msg');
+    btn.disabled = true;
+    msg.style.display = 'block';
+    msg.style.color = 'var(--soft)';
+    msg.textContent = t('sendingTest');
+    try {
+      const res = await api('/admin/schedule/send-cancellation', {
+        method: 'POST',
+        body: JSON.stringify({ event_id: id, test_only: true })
+      });
+      msg.style.color = 'var(--green)';
+      msg.textContent = t('testSentSuccess').replace('{to}', res.sent_to || 'admin').replace('{n}', res.total_recipients || 0);
+    } catch (err) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = 'Erreur: ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  $('cancel-modal-blast').onclick = async () => {
+    const id = $('cancel-event-id').value;
+    const btn = $('cancel-modal-blast');
+    const msg = $('cancel-modal-msg');
+    if (!confirm(t('confirmBroadcastCancel'))) return;
+    btn.disabled = true;
+    msg.style.display = 'block';
+    msg.style.color = 'var(--soft)';
+    msg.textContent = t('sendingBlast');
+    try {
+      const res = await api('/admin/schedule/send-cancellation', {
+        method: 'POST',
+        body: JSON.stringify({ event_id: id, test_only: false })
+      });
+      msg.style.color = 'var(--green)';
+      msg.textContent = t('blastSuccess').replace('{sent}', res.sent_count).replace('{failed}', res.failed_count || 0);
+      setTimeout(() => { $('cancel-email-modal').style.display = 'none'; }, 2000);
+    } catch (err) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = 'Erreur: ' + err.message;
+      btn.disabled = false;
+    }
+  };
+
+  function openEditModal(ev) {
+    const isNew = !ev;
+    $('modal-title').textContent = isNew ? t('addModalTitle') : t('editModalTitle') + ' ' + ev.id;
+    $('edit-old-id').value = isNew ? '' : ev.id;
+    $('edit-id').value = isNew ? '' : ev.id;
+    $('edit-season').value = isNew ? ($('season-filter').value || 'Fall 2026') : ev.season;
+    $('edit-week').value = isNew ? '' : ev.week;
+    $('edit-date').value = isNew ? '' : ev.date;
+    $('edit-start-time').value = isNew ? '18:00' : (ev.start_time || '');
+    $('edit-end-time').value = isNew ? '21:00' : (ev.end_time || '');
+    $('edit-venue').value = isNew ? 'Collège de Maisonneuve' : (ev.venue || '');
+    $('edit-state').value = isNew ? 'open' : ev.state;
+    $('modal-err').style.display = 'none';
+    $('modal-err').textContent = '';
+    $('sch-modal').style.display = 'flex';
+  }
+
+  $('btn-add-game').onclick = () => openEditModal(null);
+  $('modal-cancel').onclick = () => { $('sch-modal').style.display = 'none'; };
+
+  $('modal-save').onclick = async () => {
+    const isNew = !$('edit-old-id').value;
+    const id = $('edit-id').value.trim();
+    const oldId = $('edit-old-id').value.trim();
+    const season = $('edit-season').value.trim();
+    const week = parseInt($('edit-week').value, 10);
+    const date = $('edit-date').value.trim();
+    const startTime = $('edit-start-time').value.trim();
+    const endTime = $('edit-end-time').value.trim();
+    const venue = $('edit-venue').value.trim();
+    const state = $('edit-state').value;
+
+    if (!id || !season || isNaN(week) || !date) {
+      $('modal-err').textContent = t('fillReqFields');
+      $('modal-err').style.display = 'block';
+      return;
+    }
+
+    $('modal-save').disabled = true;
+    $('modal-save').textContent = t('btnSaving');
+    try {
+      await api('/admin/schedule/save', {
+        method: 'POST',
+        body: JSON.stringify({
+          id,
+          old_id: oldId,
+          season,
+          week,
+          date,
+          start_time: startTime,
+          end_time: endTime,
+          venue,
+          state,
+          is_new: isNew
+        })
+      });
+      $('sch-modal').style.display = 'none';
+      load();
+    } catch (err) {
+      $('modal-err').textContent = 'Erreur: ' + err.message;
+      $('modal-err').style.display = 'block';
+    } finally {
+      $('modal-save').disabled = false;
+      $('modal-save').textContent = t('btnSave');
+    }
+  };
+
+  async function unlock(candidate) {
+    const prev = K;
+    K = candidate.trim();
+    try {
+      await api('/admin/schedule/data');
+      localStorage.setItem('adminkey', K);
+      try {
+        document.cookie = 'admin_key=' + encodeURIComponent(K) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure';
+      } catch (_) {}
+      if (window.history && window.history.replaceState) {
+        const u = new URL(location);
+        u.searchParams.delete('key'); u.searchParams.delete('k'); u.searchParams.delete('t');
+        window.history.replaceState({}, document.title, u.pathname + u.search);
+      }
+      $('gate').style.display = 'none';
+      $('main').style.display = '';
+      document.querySelectorAll('.picker').forEach(p => {
+        p.style.display = 'flex';
+        p.querySelectorAll('a').forEach(a => {
+          try {
+            const u = new URL(a.href, location.origin);
+            if (K) u.searchParams.set('key', K);
+            a.href = u.pathname + u.search;
+          } catch (_) {}
+        });
+      });
+      load();
+      return true;
+    } catch (e) {
+      K = prev;
+      $('err').textContent = e.message || 'Clé refusée / key rejected';
+      return false;
+    }
+  }
+
+  $('go').addEventListener('click', async () => {
+    const val = $('key').value.trim();
+    if (!val) { $('err').textContent = 'Entrez une clé svp'; return; }
+    $('go').disabled = true;
+    $('err').textContent = 'Vérification...';
+    const ok = await unlock(val);
+    $('go').disabled = false;
+    if (!ok && !$('err').textContent) $('err').textContent = 'Clé invalide / Invalid key';
+  });
+
+  $('key').addEventListener('keydown', e => {
+    if (e.key === 'Enter') $('go').click();
+  });
+
+  if (currentLang !== 'fr') {
+    applyLanguage(currentLang);
+  }
+
+  if (K) {
+    unlock(K).then(ok => {
+      if (!ok && !$('err').textContent) $('err').textContent = 'Clé invalide / Invalid key';
+    });
+  } else if (${isAuthed ? 'true' : 'false'}) {
+    $('gate').style.display = 'none';
+    $('main').style.display = '';
+    document.querySelectorAll('.picker').forEach(p => p.style.display = 'flex');
+    load();
+  }
+  </script>`, logoTooltip);
+}
+
+async function handleScheduleData(req, env, url) {
+  try {
+    const events = (await env.DB.prepare(
+      `SELECT id, season, week, date, venue, state, start_time, end_time
+         FROM events
+        ORDER BY date DESC, week DESC`
+    ).all()).results || [];
+
+    const rsvpCounts = (await env.DB.prepare(
+      `SELECT r.event_id, r.team, r.status, c.is_goalie, count(*) AS cnt
+         FROM rsvp r
+         LEFT JOIN contacts c ON c.player_id = r.player_id
+        GROUP BY r.event_id, r.team, r.status, c.is_goalie`
+    ).all()).results || [];
+
+    const statsByEvent = {};
+    for (const row of rsvpCounts) {
+      if (!statsByEvent[row.event_id]) {
+        statsByEvent[row.event_id] = {
+          total_in: 0,
+          total_out: 0,
+          total_pending: 0,
+          by_team: {}
+        };
+      }
+      const s = statsByEvent[row.event_id];
+      if (row.status === 'in') s.total_in += row.cnt;
+      else if (row.status === 'out') s.total_out += row.cnt;
+      else s.total_pending += row.cnt;
+
+      const team = row.team || 'None';
+      if (!s.by_team[team]) s.by_team[team] = { in: 0, out: 0, pending: 0, goalies_in: 0 };
+      if (row.status === 'in') {
+        s.by_team[team].in += row.cnt;
+        if (row.is_goalie === 1) s.by_team[team].goalies_in += row.cnt;
+      } else if (row.status === 'out') {
+        s.by_team[team].out += row.cnt;
+      } else {
+        s.by_team[team].pending += row.cnt;
+      }
+    }
+
+    for (const ev of events) {
+      ev.stats = statsByEvent[ev.id] || { total_in: 0, total_out: 0, total_pending: 0, by_team: {} };
+    }
+
+    let planned = [];
+    let seasons = [];
+    let currentSeason = 'Fall 2026';
+    try {
+      const rawData = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+        || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+      const d = JSON.parse(rawData);
+      currentSeason = d.current_season || (d.seasons && d.seasons[0]?.name) || 'Fall 2026';
+      seasons = (d.seasons || []).map(s => s.name);
+
+      const existingIds = new Set(events.map(e => e.id));
+      const existingSeasonWeeks = new Set(events.map(e => `${e.season}::${e.week}`));
+
+      for (const s of (d.seasons || [])) {
+        const byWeek = new Map();
+        for (const f of s.fixtures || []) {
+          if (!byWeek.has(f.week)) {
+            byWeek.set(f.week, {
+              season: s.name,
+              week: f.week,
+              date: f.date,
+              venue: f.venue || '',
+              times: [],
+              games: []
+            });
+          }
+          const wInfo = byWeek.get(f.week);
+          wInfo.games.push({ time: f.time, home: f.home, away: f.away });
+          const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(String(f.time || '').trim());
+          if (m) {
+            let h = +m[1]; const ap = m[3].toUpperCase();
+            if (ap === 'PM' && h < 12) h += 12;
+            if (ap === 'AM' && h === 12) h = 0;
+            wInfo.times.push(h * 60 + (+m[2]));
+          }
+        }
+
+        for (const [wNum, info] of [...byWeek.entries()].sort((a, b) => a[0] - b[0])) {
+          const fmt = m => String(Math.floor(m/60)).padStart(2,'0') + ':' + String(m%60).padStart(2,'0');
+          const startT = info.times.length ? fmt(Math.min(...info.times)) : '';
+          const endT = info.times.length ? fmt(Math.max(...info.times) + 60) : '';
+          let calcId = '';
+          let isPast = false;
+          const dt = new Date(String(info.date).replace(/^[A-Za-z]+\s+/, ''));
+          if (!isNaN(dt)) {
+            calcId = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+            const dEnd = new Date(dt);
+            dEnd.setHours(23, 59, 59, 999);
+            isPast = dEnd < new Date();
+          } else {
+            calcId = `week-${info.week}`;
+          }
+          const isImported = existingIds.has(calcId) || existingSeasonWeeks.has(`${s.name}::${info.week}`);
+          planned.push({
+            season: s.name,
+            week: info.week,
+            date: info.date,
+            venue: info.venue,
+            start_time: startT,
+            end_time: endT,
+            suggested_id: calcId,
+            games: info.games,
+            is_imported: isImported,
+            is_past: isPast
+          });
+        }
+      }
+    } catch (_) {}
+
+    // If no seasons loaded from data.json, extract distinct from events
+    if (!seasons.length) {
+      seasons = [...new Set(events.map(e => e.season).filter(Boolean))];
+      if (!seasons.length) seasons = ['Fall 2026'];
+    }
+
+    return Response.json({
+      ok: true,
+      events,
+      planned,
+      seasons,
+      current_season: currentSeason
+    });
+  } catch (err) {
+    console.error('handleScheduleData error:', err);
+    return Response.json({ ok: false, error: err.message || String(err) }, { status: 500 });
+  }
+}
+
+async function handleScheduleSave(req, env) {
+  const body = await req.json().catch(() => ({}));
+  let { id, old_id, season, week, date, venue, start_time, end_time, state, is_new } = body;
+  id = String(id || '').trim();
+  old_id = String(old_id || '').trim();
+  season = String(season || '').trim() || 'Fall 2026';
+  week = Number(week);
+  date = String(date || '').trim();
+  venue = String(venue || '').trim();
+  start_time = String(start_time || '').trim();
+  end_time = String(end_time || '').trim();
+  state = String(state || 'open').toLowerCase().trim();
+
+  if (!['open', 'closed', 'cancelled'].includes(state)) {
+    state = 'open';
+  }
+
+  if (!id || !season || isNaN(week) || !date) {
+    return new Response(JSON.stringify({ error: 'Champs obligatoires manquants (ID, saison, semaine, date)' }), { status: 400 });
+  }
+
+  const now = new Date();
+
+  if (is_new) {
+    const existing = await env.DB.prepare('SELECT 1 FROM events WHERE id = ?').bind(id).first();
+    if (existing) {
+      return new Response(JSON.stringify({ error: `Un événement avec l'identifiant ${id} existe déjà.` }), { status: 400 });
+    }
+
+    await env.DB.prepare(
+      `INSERT INTO events (id, season, week, date, venue, state, start_time, end_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, season, week, date, venue, state, start_time, end_time).run();
+
+    try {
+      const rawData = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+        || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+      const d = JSON.parse(rawData);
+      let plannedAbsences = new Set();
+      try {
+        plannedAbsences = new Set(
+          ((await env.DB.prepare('SELECT player_id FROM planned_absences WHERE date = ? OR date = ?')
+            .bind(id, date).all()).results || []).map(r => r.player_id)
+        );
+      } catch (_) {}
+
+      const seen = new Set();
+      for (const p of (d.players || [])) {
+        const v = p.seasons?.[season], g = (p.gseasons || {})[season];
+        const team = (v && v.team) || (g && g.team);
+        if (!team || seen.has(p.id)) continue;
+        seen.add(p.id);
+        const isAbsent = plannedAbsences.has(p.id);
+        const st = isAbsent ? 'out' : 'pending';
+        const stBy = isAbsent ? 'prefill' : 'auto';
+        await env.DB.prepare(
+          `INSERT OR IGNORE INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at)
+           VALUES (?, ?, ?, ?, 'roster', ?, ?)`
+        ).bind(id, p.id, team, st, stBy, now.toISOString()).run();
+      }
+    } catch (_) {}
+
+    return Response.json({ ok: true, id });
+  } else {
+    const targetId = old_id || id;
+    const existing = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(targetId).first();
+    if (!existing) {
+      return new Response(JSON.stringify({ error: `Événement ${targetId} introuvable.` }), { status: 404 });
+    }
+
+    if (old_id && old_id !== id) {
+      const idConflict = await env.DB.prepare('SELECT 1 FROM events WHERE id = ?').bind(id).first();
+      if (idConflict) {
+        return new Response(JSON.stringify({ error: `Un événement avec l'identifiant ${id} existe déjà.` }), { status: 400 });
+      }
+      await env.DB.batch([
+        env.DB.prepare('UPDATE events SET id = ? WHERE id = ?').bind(id, old_id),
+        env.DB.prepare('UPDATE rsvp SET event_id = ? WHERE event_id = ?').bind(id, old_id),
+        env.DB.prepare('UPDATE outbox SET event_id = ? WHERE event_id = ?').bind(id, old_id),
+        env.DB.prepare('UPDATE jobs SET event_id = ? WHERE event_id = ?').bind(id, old_id),
+      ]);
+    }
+
+    await env.DB.prepare(
+      `UPDATE events SET season = ?, week = ?, date = ?, venue = ?, start_time = ?, end_time = ?, state = ? WHERE id = ?`
+    ).bind(season, week, date, venue, start_time, end_time, state, id).run();
+
+    if (state === 'cancelled') {
+      await env.DB.prepare('UPDATE outbox SET cancelled = 1 WHERE event_id = ? AND sent_at IS NULL').bind(id).run();
+    }
+
+    return Response.json({ ok: true, id });
+  }
+}
+
+async function handleScheduleSetState(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const id = String(body.id || '').trim();
+  const state = String(body.state || '').toLowerCase().trim();
+  if (!id || !['open', 'closed', 'cancelled'].includes(state)) {
+    return new Response(JSON.stringify({ error: 'Paramètres invalides' }), { status: 400 });
+  }
+  const existing = await env.DB.prepare('SELECT id FROM events WHERE id = ?').bind(id).first();
+  if (!existing) {
+    return new Response(JSON.stringify({ error: 'Événement introuvable' }), { status: 404 });
+  }
+
+  await env.DB.prepare('UPDATE events SET state = ? WHERE id = ?').bind(state, id).run();
+  let cancelledCount = 0;
+  if (state === 'cancelled') {
+    const res = await env.DB.prepare(
+      'UPDATE outbox SET cancelled = 1 WHERE event_id = ? AND sent_at IS NULL'
+    ).bind(id).run();
+    cancelledCount = res.meta?.changes || 0;
+  }
+  return Response.json({ ok: true, id, state, cancelled_outbox: cancelledCount });
+}
+
+async function handleScheduleDelete(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const id = String(body.id || '').trim();
+  if (!id) return new Response(JSON.stringify({ error: 'ID manquant' }), { status: 400 });
+
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM rsvp WHERE event_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM outbox WHERE event_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM jobs WHERE event_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM events WHERE id = ?').bind(id)
+  ]);
+  return Response.json({ ok: true, id });
+}
+
+async function handleScheduleImportFixture(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const weekNum = Number(body.week);
+  const seasonName = String(body.season || '').trim();
+  if (isNaN(weekNum)) {
+    return new Response(JSON.stringify({ error: 'Numéro de semaine invalide' }), { status: 400 });
+  }
+
+  const rawData = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+    || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+  const d = JSON.parse(rawData);
+  const targetSeasonName = seasonName || d.current_season;
+  const season = (d.seasons || []).find(s => s.name === targetSeasonName);
+  if (!season) {
+    return new Response(JSON.stringify({ error: `Saison ${targetSeasonName} introuvable dans data.json` }), { status: 404 });
+  }
+
+  const weekFixtures = (season.fixtures || []).filter(f => Number(f.week) === weekNum);
+  if (!weekFixtures.length) {
+    return new Response(JSON.stringify({ error: `Aucun match trouvé pour la semaine ${weekNum}` }), { status: 404 });
+  }
+
+  const firstF = weekFixtures[0];
+  const times = [];
+  for (const f of weekFixtures) {
+    const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(String(f.time || '').trim());
+    if (m) {
+      let h = +m[1]; const ap = m[3].toUpperCase();
+      if (ap === 'PM' && h < 12) h += 12;
+      if (ap === 'AM' && h === 12) h = 0;
+      times.push(h * 60 + (+m[2]));
+    }
+  }
+  const fmt = m => String(Math.floor(m/60)).padStart(2,'0') + ':' + String(m%60).padStart(2,'0');
+  const startT = times.length ? fmt(Math.min(...times)) : '';
+  const endT = times.length ? fmt(Math.max(...times) + 60) : '';
+
+  const dt = new Date(String(firstF.date).replace(/^[A-Za-z]+\s+/, ''));
+  const id = !isNaN(dt)
+    ? `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
+    : `week-${weekNum}`;
+
+  const existing = await env.DB.prepare('SELECT id FROM events WHERE id = ?').bind(id).first();
+  if (existing) {
+    return new Response(JSON.stringify({ error: `Le match ${id} est déjà importé.` }), { status: 400 });
+  }
+
+  const now = new Date();
+  await env.DB.prepare(
+    `INSERT INTO events (id, season, week, date, venue, state, start_time, end_time)
+     VALUES (?, ?, ?, ?, ?, 'open', ?, ?)`
+  ).bind(id, targetSeasonName, weekNum, firstF.date, firstF.venue || '', startT, endT).run();
+
+  let plannedAbsences = new Set();
+  try {
+    plannedAbsences = new Set(
+      ((await env.DB.prepare('SELECT player_id FROM planned_absences WHERE date = ? OR date = ?')
+        .bind(id, firstF.date).all()).results || []).map(r => r.player_id)
+    );
+  } catch (_) {}
+
+  const seen = new Set();
+  let rosterCount = 0;
+  for (const p of (d.players || [])) {
+    const v = p.seasons?.[targetSeasonName], g = (p.gseasons || {})[targetSeasonName];
+    const team = (v && v.team) || (g && g.team);
+    if (!team || seen.has(p.id)) continue;
+    seen.add(p.id);
+    const isAbsent = plannedAbsences.has(p.id);
+    const st = isAbsent ? 'out' : 'pending';
+    const stBy = isAbsent ? 'prefill' : 'auto';
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at)
+       VALUES (?, ?, ?, ?, 'roster', ?, ?)`
+    ).bind(id, p.id, team, st, stBy, now.toISOString()).run();
+    rosterCount++;
+  }
+
+  return Response.json({ ok: true, event_id: id, week: weekNum, players: rosterCount });
+}
+
+async function handleScheduleSendCancellation(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const eventId = String(body.event_id || '').trim();
+  const testOnly = Boolean(body.test_only);
+  if (!eventId) {
+    return new Response(JSON.stringify({ error: 'event_id requis' }), { status: 400 });
+  }
+
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(eventId).first();
+  if (!ev) {
+    return new Response(JSON.stringify({ error: 'Événement introuvable' }), { status: 404 });
+  }
+
+  // Cancel any pending outbox items for this event
+  await env.DB.prepare('UPDATE outbox SET cancelled = 1 WHERE event_id = ? AND sent_at IS NULL').bind(eventId).run();
+
+  // Find recipients: roster players and active subs confirmed 'in' for this event
+  const recipients = (await env.DB.prepare(`
+    SELECT DISTINCT c.player_id, c.name, c.email, r.team, r.status, r.role
+      FROM rsvp r
+      JOIN contacts c ON c.player_id = r.player_id
+     WHERE r.event_id = ?
+       AND c.email IS NOT NULL AND c.email != '' AND c.opted_out = 0
+       AND (r.role = 'roster' OR r.status = 'in')
+     ORDER BY r.team, c.name
+  `).bind(eventId).all()).results || [];
+
+  const subj = `Match annulé : ${ev.date} / Game Cancelled: ${ev.date}`;
+  const plain = `Bonjour / Hello,
+
+Veuillez noter que les matchs de la SMBHL prévus le ${ev.date} (Semaine ${ev.week}) à ${ev.venue || 'Gymnase'} sont ANNULÉS.
+Toutes les présences et convocations pour cette date ont été fermées et annulées.
+
+---
+
+Please note that SMBHL games scheduled for ${ev.date} (Week ${ev.week}) at ${ev.venue || 'Gymnasium'} have been CANCELLED.
+All RSVPs and call-ups for this date have been cancelled.
+
+SMBHL · Ligue de Dek Hockey / Ball Hockey League
+scores@smbhl.com · https://smbhl.com`;
+
+  const html = emailWrap(
+    subj,
+    `<div style="text-align:center;margin:0 0 20px;">
+       <span style="display:inline-block;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">
+         Avis Officiel d'Annulation / Cancellation Notice
+       </span>
+     </div>
+     <div style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #ef4444;border-radius:6px;padding:16px 18px;margin-bottom:20px;">
+       <h2 style="margin:0 0 8px;font-size:18px;color:#991b1b;">Match annulé · Semaine ${esc(ev.week)} (${esc(ev.date)})</h2>
+       <p style="margin:0;font-size:14px;color:#475569;line-height:1.5;">
+         <b>Lieu :</b> ${esc(ev.venue || 'Gymnase')}<br>
+         <b>Saison :</b> ${esc(ev.season)}
+       </p>
+     </div>
+     <p style="font-size:15px;color:#1e293b;line-height:1.5;margin:0 0 14px;">
+       Veuillez prendre note que les matchs de hockey balle de la SMBHL prévus pour le <b>${esc(ev.date)}</b> sont <b>officiellement annulés</b>.
+     </p>
+     <p style="font-size:13px;color:#64748b;line-height:1.5;margin:0 0 20px;">
+       Please be advised that the SMBHL ball hockey games scheduled for <b>${esc(ev.date)}</b> have been <b>officially cancelled</b>.
+     </p>
+     <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px 14px;margin-bottom:20px;font-size:13px;color:#475569;">
+       ℹ️ Les présences pour cette semaine ont été clôturées et aucun autre rappel ne sera envoyé. Consultez le calendrier pour les prochaines parties.<br>
+       <span style="color:#64748b;font-size:12px;">RSVPs for this week have been closed. Please check the schedule for upcoming games.</span>
+     </div>`
+  );
+
+  if (testOnly) {
+    const adminEmail = env.ADMIN_EMAIL || ADMIN_EMAIL;
+    await sendMail(env, adminEmail, `[TEST ADMIN] ${subj}`, plain, html);
+    return Response.json({ ok: true, test: true, sent_to: adminEmail, total_recipients: recipients.length });
+  }
+
+  let sent = 0, failed = 0;
+  for (const r of recipients) {
+    try {
+      await sendMail(env, r.email, subj, plain, html);
+      sent++;
+    } catch (e) {
+      failed++;
+    }
+  }
+
+  return Response.json({ ok: true, sent_count: sent, failed_count: failed, total: recipients.length });
+}
+
+async function handleSendSampleInvites(req, env) {
+  const b = await req.json().catch(() => ({}));
+  const defaultRecipients = ['emailrobertosantana@gmail.com', 'rsantana@live.ca'];
+  let recipients = defaultRecipients;
+  if (Array.isArray(b.recipients) && b.recipients.length > 0) {
+    const filtered = b.recipients.map(r => String(r).trim().toLowerCase()).filter(r => defaultRecipients.includes(r));
+    if (filtered.length > 0) recipients = filtered;
+  }
+
+  // 1. Target Event
+  const eventId = b.event_id || '2026-09-27';
+  let ev = await getEvent(env.DB, eventId);
+  if (!ev) {
+    ev = await env.DB.prepare("SELECT * FROM events WHERE state = 'open' ORDER BY week LIMIT 1").first();
+  }
+  if (!ev) {
+    ev = await env.DB.prepare("SELECT * FROM events ORDER BY week DESC LIMIT 1").first();
+  }
+  if (!ev) {
+    return Response.json({ ok: false, error: 'No event found' }, { status: 404 });
+  }
+
+  // Load pricing
+  let pricing = await env.DB.prepare('SELECT * FROM season_pricing WHERE season = ?').bind(ev.season).first();
+  const phone = (pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '514-575-5251');
+
+  // Load league message if configured
+  let leagueMessage = null;
+  const lmRow = await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(`league_message:${ev.id}`).first();
+  if (lmRow && lmRow.value) leagueMessage = lmRow.value.trim();
+
+  // Load weekly highlights
+  const highlights = await getWeeklyHighlights(env, ev.week, ev.season);
+  const base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+
+  const results = [];
+
+  // 2. Regular player sample: Adam Albanese (P0001)
+  const regId = b.reg_player_id || 'P0001';
+  const cReg = await getContact(env.DB, regId);
+  if (cReg) {
+    const rsvpReg = await env.DB.prepare('SELECT team FROM rsvp WHERE event_id = ? AND player_id = ?').bind(ev.id, regId).first();
+    const teamReg = rsvpReg?.team || cReg.preferred_team || 'Red';
+    const tReg = await hmac(env.RSVP_SECRET, playerMsg(ev.id, regId, cReg.token_salt));
+    const linkReg = `${base}/rsvp?e=${encodeURIComponent(ev.id)}&p=${regId}&t=${tReg}`;
+
+    // Balance calculation
+    const duesRow = await env.DB.prepare('SELECT custom_due, amount_paid FROM player_dues WHERE season = ? AND player_id = ?').bind(ev.season, regId).first();
+    const isGoalie = (cReg.is_goalie === 1 || cReg.role === 'sub_goalie');
+    const basePrice = isGoalie ? Number(pricing?.price_goalie ?? 0) : Number(pricing?.price_player ?? 170);
+    const totalDue = (duesRow && duesRow.custom_due !== null && duesRow.custom_due !== undefined)
+      ? Number(duesRow.custom_due) : basePrice;
+    const amountPaid = Number(duesRow?.amount_paid || 0);
+    const balance = totalDue - amountPaid;
+
+    const payloadReg = {
+      yes: `${linkReg}&v=in`,
+      no: `${linkReg}&v=out`,
+      duesReminder: balance > 0 ? { balance, phone } : null,
+      leagueMessage,
+      highlights
+    };
+
+    if (teamReg) {
+      const salt = await teamSalt(env.DB, ev.season, teamReg);
+      const tt = await hmac(env.RSVP_SECRET, teamMsg(ev.season, teamReg, salt));
+      payloadReg.teamLink = `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${teamReg}&t=${tt}&p=${regId}`;
+      const matches = await getTeamFixtures(env, ev, teamReg);
+      payloadReg.fixtureText = formatFixtureText(matches, teamReg, cReg.is_goalie === 1);
+    }
+
+    const msgReg = body('invite', {
+      ev,
+      name: cReg.name.split(' ')[0],
+      team: teamReg,
+      link: linkReg,
+      payload: payloadReg
+    });
+
+    const regSubject = `[TEST APERÇU / REGULAR - ${cReg.name}] ${msgReg.subject}`;
+    for (const to of recipients) {
+      await sendMail(env, to, regSubject, msgReg.text, msgReg.html);
+    }
+    results.push({
+      type: 'regular',
+      player: cReg.name,
+      balance,
+      subject: regSubject
+    });
+  }
+
+  // 3. Sub player sample: Armando Tempestilli (P0036)
+  const subId = b.sub_player_id || 'P0036';
+  const cSub = await getContact(env.DB, subId);
+  if (cSub) {
+    const tSub = await hmac(env.RSVP_SECRET, playerMsg(ev.id, subId, cSub.token_salt));
+    const linkSub = `${base}/rsvp?e=${encodeURIComponent(ev.id)}&p=${subId}&t=${tSub}`;
+    const need = (cSub.is_goalie === 1 || cSub.role === 'sub_goalie') ? 'goalie' : 'skater';
+    const atSub = await hmac(env.RSVP_SECRET, `a:${ev.id}:${subId}:${need}:${cSub.token_salt}`);
+    const q = `e=${encodeURIComponent(ev.id)}&p=${subId}&n=${need}&t=${atSub}`;
+
+    // Sub balance calculation
+    const duesRow = await env.DB.prepare('SELECT custom_due, amount_paid FROM player_dues WHERE season = ? AND player_id = ?').bind(ev.season, subId).first();
+    let totalDue;
+    if (duesRow && duesRow.custom_due !== null && duesRow.custom_due !== undefined) {
+      totalDue = Math.max(0, Number(duesRow.custom_due));
+    } else {
+      let gamesPlayed = 0;
+      if (env.SHEETS_KV) {
+        try {
+          const rawData = await env.SHEETS_KV.get('data_json');
+          if (rawData) {
+            const dj = JSON.parse(rawData);
+            const pData = (dj.players || []).find(p => p.id === subId);
+            gamesPlayed = Number(pData?.seasons?.[ev.season]?.gp || 0);
+          }
+        } catch (_) {}
+      }
+      const subGpRow = await env.DB.prepare(
+        `SELECT count(*) as count
+           FROM rsvp r JOIN events e ON e.id = r.event_id
+          WHERE e.season = ? AND r.player_id = ? AND r.status = 'in'
+            AND (e.state = 'done' OR (e.week IS NOT NULL AND ? IS NOT NULL AND e.week < ?))
+            AND e.id != ?`
+      ).bind(ev.season, subId, ev.week, ev.week, ev.id).first();
+      const gpFromRsvp = (Number(subGpRow?.count || 0)) * 2;
+      gamesPlayed = Math.max(gamesPlayed, gpFromRsvp);
+      const priceSub = Number(pricing?.price_sub_player ?? 5);
+      totalDue = gamesPlayed * priceSub;
+    }
+    const amountPaid = Number(duesRow?.amount_paid || 0);
+    const balance = totalDue - amountPaid;
+
+    const payloadSub = {
+      isSubInvite: true,
+      yes: `${base}/avail?${q}&a=yes`,
+      no: `${base}/avail?${q}&a=no`,
+      duesReminder: balance > 0 ? { balance, phone } : null,
+      leagueMessage,
+      highlights
+    };
+
+    const msgSub = body('invite', {
+      ev,
+      name: cSub.name.split(' ')[0],
+      team: null,
+      link: linkSub,
+      payload: payloadSub
+    });
+
+    const subSubject = `[TEST APERÇU / SUB - ${cSub.name}] ${msgSub.subject}`;
+    for (const to of recipients) {
+      await sendMail(env, to, subSubject, msgSub.text, msgSub.html);
+    }
+    results.push({
+      type: 'sub',
+      player: cSub.name,
+      balance,
+      subject: subSubject
+    });
+  }
+
+  return Response.json({
+    ok: true,
+    recipients,
+    sent_samples: results
+  });
+}
+
+async function handleEmailsData(req, env, url) {
+  try {
+    const settings = await getEmailSettings(env.DB);
+    const outbox = (await env.DB.prepare(
+      `SELECT o.id, o.kind, o.event_id, o.player_id, o.team, o.dedup_key, o.payload, o.send_after, o.sent_at, o.cancelled, o.error, o.created_at,
+              c.name AS player_name, c.email AS player_email,
+              e.date AS event_date, e.week AS event_week
+         FROM outbox o
+         LEFT JOIN contacts c ON c.player_id = o.player_id
+         LEFT JOIN events e ON e.id = o.event_id
+        ORDER BY o.id DESC LIMIT 150`
+    ).all()).results || [];
+
+    const counts = (await env.DB.prepare(
+      `SELECT count(*) as total,
+              sum(case when sent_at is not null then 1 else 0 end) as sent,
+              sum(case when cancelled = 1 then 1 else 0 end) as cancelled,
+              sum(case when error is not null and cancelled = 0 and sent_at is null then 1 else 0 end) as failed,
+              sum(case when sent_at is null and cancelled = 0 then 1 else 0 end) as pending
+         FROM outbox`
+    ).first()) || { total: 0, sent: 0, cancelled: 0, failed: 0, pending: 0 };
+
+    const openEvents = (await env.DB.prepare(
+      `SELECT id, season, week, date, venue FROM events WHERE state = 'open' ORDER BY week`
+    ).all()).results || [];
+
+    const firstOpenEvent = openEvents[0];
+    let initialLeagueMessage = '';
+    if (firstOpenEvent) {
+      const lmRow = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(`league_message:${firstOpenEvent.id}`).first();
+      initialLeagueMessage = lmRow ? lmRow.value : '';
+    }
+
+    return Response.json({
+      ok: true,
+      settings,
+      outbox,
+      stats: {
+        total: counts.total || 0,
+        sent: counts.sent || 0,
+        cancelled: counts.cancelled || 0,
+        failed: counts.failed || 0,
+        pending: counts.pending || 0
+      },
+      open_events: openEvents,
+      initial_league_message: initialLeagueMessage
+    });
+  } catch (err) {
+    console.error('handleEmailsData error:', err);
+    return Response.json({ ok: false, error: err.message || String(err) }, { status: 500 });
+  }
+}
+
+async function handleEmailsSaveSettings(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const current = await getEmailSettings(env.DB);
+
+  const newSettings = {
+    invite_hours: Number(body.invite_hours) || current.invite_hours,
+    invite_hour_of_day: Number(body.invite_hour_of_day) || current.invite_hour_of_day,
+    r72_hours: Number(body.r72_hours) || current.r72_hours,
+    r72_hour_of_day: Number(body.r72_hour_of_day) || current.r72_hour_of_day,
+    r49_hours: Number(body.r49_hours) || current.r49_hours,
+    short48_hours: Number(body.short48_hours) || current.short48_hours,
+    pool_hours: Number(body.pool_hours) || current.pool_hours,
+    r24_hours: Number(body.r24_hours) || current.r24_hours,
+    r24_hour_of_day: (body.r24_hour_of_day !== undefined && body.r24_hour_of_day !== '') ? Number(body.r24_hour_of_day) : (current.r24_hour_of_day ?? 18),
+    gameday_morning_hours: Number(body.gameday_morning_hours) || current.gameday_morning_hours,
+    quiet_hours_enabled: Boolean(body.quiet_hours_enabled),
+    quiet_hours_start: Number(body.quiet_hours_start) ?? current.quiet_hours_start,
+    quiet_hours_end: Number(body.quiet_hours_end) ?? current.quiet_hours_end
+  };
+
+  await env.DB.prepare(
+    `INSERT INTO settings (key, value) VALUES ('email_cadence_settings', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).bind(JSON.stringify(newSettings)).run();
+
+  return Response.json({ ok: true, settings: newSettings });
+}
+
+async function handleLeagueMessageGet(req, env, url) {
+  const eventId = url.searchParams.get('e');
+  if (!eventId) return Response.json({ ok: false, error: 'missing eventId' }, { status: 400 });
+  const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(`league_message:${eventId}`).first();
+  return Response.json({ ok: true, event_id: eventId, message: row ? row.value : '' });
+}
+
+async function handleLeagueMessageSave(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const eventId = body.event_id;
+  const message = (body.message || '').trim();
+  if (!eventId) return Response.json({ ok: false, error: 'missing event_id' }, { status: 400 });
+
+  if (!message) {
+    await env.DB.prepare('DELETE FROM settings WHERE key = ?').bind(`league_message:${eventId}`).run();
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    ).bind(`league_message:${eventId}`, message).run();
+  }
+  return Response.json({ ok: true, event_id: eventId, message });
+}
+
+async function handleEmailsDrain(req, env) {
+  const res = await drain(env, 50, true);
+  return Response.json({ ok: true, drain: res });
+}
+
+async function handleEmailsCancelOutbox(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const id = Number(body.id);
+  if (!id) return new Response(JSON.stringify({ error: 'id manquant' }), { status: 400 });
+
+  const r = await env.DB.prepare('UPDATE outbox SET cancelled = 1 WHERE id = ? AND sent_at IS NULL').bind(id).run();
+  return Response.json({ ok: true, changed: r.meta?.changes || 0 });
+}
+
+async function handleEmailsBroadcast(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const { target, event_id, subject, message, test_only } = body;
+
+  const subj = String(subject || '').trim();
+  const msg = String(message || '').trim();
+  if (!subj || !msg) {
+    return new Response(JSON.stringify({ error: 'Sujet et message requis' }), { status: 400 });
+  }
+
+  let recipients = [];
+  if (target === 'all') {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).all()).results || [];
+  } else if (target === 'roster') {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE role = 'roster' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).all()).results || [];
+  } else if (target === 'subs') {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE role LIKE 'sub_%' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).all()).results || [];
+  } else if (['Red', 'Blue', 'White', 'Black'].includes(target)) {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE preferred_team = ? AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).bind(target).all()).results || [];
+  } else if (target === 'pending' || target === 'in') {
+    if (!event_id) {
+      return new Response(JSON.stringify({ error: 'event_id requis pour cibler selon le statut' }), { status: 400 });
+    }
+    recipients = (await env.DB.prepare(`
+      SELECT DISTINCT c.player_id, c.name, c.email
+        FROM rsvp r
+        JOIN contacts c ON c.player_id = r.player_id
+       WHERE r.event_id = ? AND r.status = ?
+         AND c.email IS NOT NULL AND c.email != '' AND c.opted_out = 0
+       ORDER BY c.name
+    `).bind(event_id, target).all()).results || [];
+  } else {
+    return new Response(JSON.stringify({ error: 'Cible de destinataires invalide' }), { status: 400 });
+  }
+
+  const plain = `${msg}\n\n—\nSMBHL · Ligue de Dek Hockey / Ball Hockey League\nscores@smbhl.com · https://smbhl.com`;
+  const formattedHtmlMsg = msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+  const html = emailWrap(
+    subj,
+    `<div style="font-size:15px;color:#1e293b;line-height:1.6;margin-bottom:20px;">
+       ${formattedHtmlMsg}
+     </div>
+     <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding-top:14px;margin-top:20px;font-size:12px;color:#64748b;">
+       Ce message a été envoyé par l'administration de la SMBHL. / Sent by SMBHL league administration.
+     </div>`
+  );
+
+  if (test_only) {
+    const adminEmail = env.ADMIN_EMAIL || ADMIN_EMAIL;
+    await sendMail(env, adminEmail, `[TEST ADMIN] ${subj}`, plain, html);
+    return Response.json({ ok: true, test: true, sent_to: adminEmail, total_recipients: recipients.length });
+  }
+
+  let sent = 0, failed = 0;
+  for (const r of recipients) {
+    try {
+      await sendMail(env, r.email, subj, plain, html);
+      sent++;
+    } catch (e) {
+      failed++;
+    }
+  }
+
+  return Response.json({ ok: true, sent_count: sent, failed_count: failed, total: recipients.length });
+}
+
+async function emailsPage(env = null, isAuthed = false) {
+  const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  return page('Comms', `
+  <style>
+    .wrap { max-width: 1150px !important; }
+    .email-top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+    .subtabs { display:flex; gap:8px; margin-bottom:18px; border-bottom:1px solid var(--rule); padding-bottom:8px; }
+    .subtab { font:inherit; font-family:'Barlow Condensed',sans-serif; font-size:16px; font-weight:700; padding:6px 14px; border-radius:4px; border:1px solid var(--rule); background:#f8fafc; color:var(--soft); cursor:pointer; text-decoration:none; }
+    .subtab.on { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .stat-cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:12px; margin-bottom:20px; }
+    .stat-card { background:#fff; border:1px solid var(--rule); border-radius:6px; padding:14px; text-align:center; }
+    .stat-card .num { font-size:26px; font-weight:800; font-family:'Barlow Condensed',sans-serif; color:var(--ink); }
+    .stat-card .lbl { font-size:11px; text-transform:uppercase; color:var(--soft); font-weight:700; letter-spacing:0.04em; margin-top:2px; }
+    .card-box { background:#fff; border:1px solid var(--rule); border-radius:6px; padding:20px; margin-bottom:20px; }
+    .form-group { margin-bottom:14px; }
+    .form-group label { display:block; font-size:12px; font-weight:700; color:var(--soft); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.03em; }
+    .form-control { width:100%; font:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; box-sizing:border-box; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .grid-3 { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:14px; }
+    .act-btn { font:inherit; font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:13px; padding:6px 12px; border-radius:3px; cursor:pointer; border:1px solid var(--rule2); background:#fff; text-decoration:none; display:inline-flex; align-items:center; gap:4px; line-height:1.2; }
+    .act-btn:hover { background:#f1f5f9; }
+    .act-btn.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .act-btn.primary:hover { opacity:0.9; }
+    .act-btn.danger { color:var(--red); border-color:#fca5a5; }
+    .act-btn.danger:hover { background:#fee2e2; }
+    .table-container { background:#fff; border:1px solid var(--rule); border-radius:4px; overflow-x:auto; margin-bottom:20px; }
+    table.data-tbl { width:100%; border-collapse:collapse; font-size:13px; text-align:left; min-width:850px; }
+    table.data-tbl th { background:#f8fafc; color:var(--soft); font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; padding:10px 12px; border-bottom:1px solid var(--rule); }
+    table.data-tbl td { padding:10px 12px; border-bottom:1px solid var(--rule); vertical-align:middle; }
+    table.data-tbl tr:last-child td { border-bottom:none; }
+    table.data-tbl tr:hover { background:#fbfcfe; }
+    .badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 7px; border-radius:3px; }
+    .badge-pending { background:#fef3c7; color:#b45309; border:1px solid #fde68a; }
+    .badge-sent { background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }
+    .badge-cancelled { background:#f1f5f9; color:#64748b; border:1px solid #cbd5e1; }
+    .badge-error { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+    .badge-notice { background:#f3e8ff; color:#7e22ce; border:1px solid #d8b4fe; }
+    .badge-invite { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+    .badge-reminder { background:#fffbeb; color:#b45309; border:1px solid #fde68a; }
+    .badge-alert { background:#ffedd5; color:#c2410c; border:1px solid #fed7aa; }
+    .badge-pool { background:#ecfeff; color:#0e7490; border:1px solid #a5f3fc; }
+    .badge-morning { background:#fef9c3; color:#a16207; border:1px solid #fef08a; }
+    .badge-broadcast { background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; }
+    .cad-hint { font-size:11px; color:#64748b; margin-top:6px; line-height:1.3; }
+    .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:9999; padding:16px; }
+    .modal-card { background:#fff; border-radius:6px; max-width:560px; width:100%; max-height:90vh; overflow-y:auto; padding:22px; box-shadow:0 10px 25px rgba(0,0,0,0.2); }
+    @media (max-width: 768px) {
+      .subtabs { overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:6px; }
+      .subtab { white-space:nowrap; padding:6px 11px; font-size:14px; }
+      .stat-cards { grid-template-columns: 1fr 1fr; gap:8px; }
+      .stat-card { padding:10px 8px; }
+      .stat-card .num { font-size:22px; }
+      .grid-3, .grid-2 { grid-template-columns: 1fr !important; }
+      .table-container { background:transparent; border:none; overflow-x:visible; }
+      table.data-tbl { min-width:100% !important; }
+      table.data-tbl thead { display:none; }
+      table.data-tbl, table.data-tbl tbody, table.data-tbl tr, table.data-tbl td { display:block; width:100%; box-sizing:border-box; }
+      table.data-tbl tr {
+        margin-bottom:12px; background:#fff; border:1px solid var(--rule); border-radius:6px; padding:12px 14px;
+        box-shadow:0 1px 3px rgba(0,0,0,0.04);
+      }
+      table.data-tbl td {
+        display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px dashed var(--rule); font-size:13.5px;
+      }
+      table.data-tbl td:first-child {
+        font-weight:700; color:var(--soft); font-size:13px; border-bottom:1px solid var(--rule); padding-bottom:6px; margin-bottom:4px;
+      }
+      table.data-tbl td:last-child {
+        border-bottom:none; padding-top:8px; margin-top:4px; justify-content:flex-end;
+      }
+      table.data-tbl td::before {
+        content: attr(data-label); font-weight:700; font-size:11px; text-transform:uppercase; color:var(--soft);
+        letter-spacing:0.04em; margin-right:12px;
+      }
+      table.data-tbl td:first-child::before, table.data-tbl td:last-child::before { display:none; }
+      .act-btn { padding:6px 11px; font-size:12.5px; }
+    }
+  </style>
+  ${adminTabs('comms', isAuthed)}
+  <h1 data-i18n="title">Gestion des communications</h1>
+  ${renderKeyGate(isAuthed)}
+  <div id="main"${isAuthed ? '' : ' style="display:none"'}>
+    <div class="subtabs">
+      <button class="subtab on" id="tab-btn-cadence" data-i18n="tabCadence">⚡ Automatisations & Cadence</button>
+      <button class="subtab" id="tab-btn-outbox" data-i18n="tabOutbox">📬 File d'envois (Outbox)</button>
+      <button class="subtab" id="tab-btn-broadcast" data-i18n="tabBroadcast">🚀 Diffusion manuelle</button>
+    </div>
+
+    <!-- Section 1: Cadence Settings -->
+    <div id="sec-cadence" class="card-box">
+      <h2 style="margin-top:0; margin-bottom:6px; font-size:20px;" data-i18n="cadenceTitle">Cadence des rappels automatiques</h2>
+      <p style="color:var(--soft); font-size:14px; margin-bottom:18px;" data-i18n="cadenceSubtitle">
+        Définissez le calendrier des envois en <b>jours et heures</b> avant chaque match. Les valeurs sont appliquées automatiquement par le système d'automatisation.
+      </p>
+      <form id="cadence-form">
+        <div class="grid-3">
+          <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin:0;" data-i18n="card1Title">🚀 1. Invitation initiale</label>
+            </div>
+            <div style="font-size:12px; margin-bottom:8px;">
+              <span class="badge badge-invite" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
+              <span style="font-weight:600; margin-left:4px; color:#1e293b;" data-i18n="destRoster">Tous les réguliers (Roster) + Substituts du match précédent</span>
+            </div>
+            <div style="font-size:12px; color:var(--soft); margin-bottom:8px;" data-i18n="descInvite">Envoi de l'invitation de présence (IN / OUT)</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="number" id="cad-invite-days" class="form-control" style="width:70px;" min="1" max="14">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblDaysAnd">jours et</span>
+              <input type="number" id="cad-invite-hrs" class="form-control" style="width:65px;" min="0" max="23">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblHBefore">h avant</span>
+            </div>
+            <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+              <span style="font-size:12px; color:var(--soft);" data-i18n="lblSentAt">Envoyé à</span>
+              <input type="number" id="cad-invite-hod" class="form-control" style="width:65px;" min="0" max="23">
+              <span style="font-size:12px; color:var(--soft);" data-i18n="lblLocalTime">h00 (heure locale)</span>
+            </div>
+            <div class="cad-hint" id="hint-invite"></div>
+          </div>
+
+          <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin:0;" data-i18n="card2Title">⏳ 2. Rappel 72h (Indécis)</label>
+            </div>
+            <div style="font-size:12px; margin-bottom:8px;">
+              <span class="badge badge-reminder" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
+              <span style="font-weight:600; margin-left:4px; color:#1e293b;" data-i18n="destR72">Réguliers sans réponse ('pending')</span>
+            </div>
+            <div style="font-size:12px; color:var(--soft); margin-bottom:8px;" data-i18n="descR72">Première relance aux joueurs sans réponse</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="number" id="cad-r72-days" class="form-control" style="width:70px;" min="0" max="10">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblDaysAnd">jours et</span>
+              <input type="number" id="cad-r72-hrs" class="form-control" style="width:65px;" min="0" max="23">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblHBefore">h avant</span>
+            </div>
+            <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+              <span style="font-size:12px; color:var(--soft);" data-i18n="lblSentAt">Envoyé à</span>
+              <input type="number" id="cad-r72-hod" class="form-control" style="width:65px;" min="0" max="23">
+              <span style="font-size:12px; color:var(--soft);" data-i18n="lblLocalTime">h00 (heure locale)</span>
+            </div>
+            <div class="cad-hint" id="hint-r72"></div>
+          </div>
+
+          <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin:0;" data-i18n="card3Title">⚡ 3. Rappel 49h (Dernière chance)</label>
+            </div>
+            <div style="font-size:12px; margin-bottom:8px;">
+              <span class="badge badge-reminder" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
+              <span style="font-weight:600; margin-left:4px; color:#1e293b;" data-i18n="destR49">Réguliers toujours indécis ('pending')</span>
+            </div>
+            <div style="font-size:12px; color:var(--soft); margin-bottom:8px;" data-i18n="descR49">Deuxième relance urgente avant appel aux substituts</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="number" id="cad-r49-days" class="form-control" style="width:70px;" min="0" max="5">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblDaysAnd">jours et</span>
+              <input type="number" id="cad-r49-hrs" class="form-control" style="width:65px;" min="0" max="23">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblHBefore">h avant</span>
+            </div>
+            <div class="cad-hint" id="hint-r49"></div>
+          </div>
+
+          <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin:0;" data-i18n="card4Title">👥 4. Alerte effectif incomplet</label>
+            </div>
+            <div style="font-size:12px; margin-bottom:8px;">
+              <span class="badge badge-alert" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
+              <span style="font-weight:600; margin-left:4px; color:#1e293b;" data-i18n="destShort48">Tous les joueurs de l'équipe en manque</span>
+            </div>
+            <div style="font-size:12px; color:var(--soft); margin-bottom:8px;" data-i18n="descShort48">Avis d'équipe si manque de joueurs ou gardien</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="number" id="cad-short48-days" class="form-control" style="width:70px;" min="0" max="5">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblDaysAnd">jours et</span>
+              <input type="number" id="cad-short48-hrs" class="form-control" style="width:65px;" min="0" max="23">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblHBefore">h avant</span>
+            </div>
+            <div class="cad-hint" id="hint-short48"></div>
+          </div>
+
+          <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin:0;" data-i18n="card5Title">🧤 5. Convocations substituts (Pool)</label>
+            </div>
+            <div style="font-size:12px; margin-bottom:8px;">
+              <span class="badge badge-pool" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
+              <span style="font-weight:600; margin-left:4px; color:#1e293b;" data-i18n="destPool">Substituts de réserve selon le poste</span>
+            </div>
+            <div style="font-size:12px; color:var(--soft); margin-bottom:8px;" data-i18n="descPool">Déclenchement des appels au pool de réserve</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="number" id="cad-pool-days" class="form-control" style="width:70px;" min="0" max="5">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblDaysAnd">jours et</span>
+              <input type="number" id="cad-pool-hrs" class="form-control" style="width:65px;" min="0" max="23">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblHBefore">h avant</span>
+            </div>
+            <div class="cad-hint" id="hint-pool"></div>
+          </div>
+
+          <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin:0;" data-i18n="card6Title">🚨 6. Veille de match (Rappel 24h)</label>
+            </div>
+            <div style="font-size:12px; margin-bottom:8px;">
+              <span class="badge badge-alert" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
+              <span style="font-weight:600; margin-left:4px; color:#1e293b;" data-i18n="destR24">Joueurs confirmés ('in') + réguliers indécis</span>
+            </div>
+            <div style="font-size:12px; color:var(--soft); margin-bottom:8px;" data-i18n="descR24">Alignement confirmé, gymnase &amp; notes d'équipe (« À demain pour le match ! »)</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="number" id="cad-r24-days" class="form-control" style="width:70px;" min="0" max="3">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblDaysAnd">jours et</span>
+              <input type="number" id="cad-r24-hrs" class="form-control" style="width:65px;" min="0" max="23">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblHBefore">h avant</span>
+            </div>
+            <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+              <span style="font-size:12px; color:var(--soft);" data-i18n="lblSentAt">Envoyé à</span>
+              <input type="number" id="cad-r24-hod" class="form-control" style="width:65px;" min="0" max="23">
+              <span style="font-size:12px; color:var(--soft);" data-i18n="lblLocalTimeEve">h00 (heure locale la veille)</span>
+            </div>
+            <div class="cad-hint" id="hint-r24"></div>
+          </div>
+
+          <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin:0;" data-i18n="card7Title">🌅 7. Matin du match</label>
+            </div>
+            <div style="font-size:12px; margin-bottom:8px;">
+              <span class="badge badge-morning" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
+              <span style="font-weight:600; margin-left:4px; color:#1e293b;" data-i18n="destMorning">Joueurs confirmés ('in') pour le match du jour</span>
+            </div>
+            <div style="font-size:12px; color:var(--soft); margin-bottom:8px;" data-i18n="descMorning">Rappel des messages d'équipe récents</div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="number" id="cad-gameday-morning-hrs" class="form-control" style="width:70px;" min="1" max="12">
+              <span style="font-size:13px; font-weight:600;" data-i18n="lblHrsBeforePuckDrop">heures avant le coup d'envoi</span>
+            </div>
+            <div class="cad-hint" id="hint-morning"></div>
+          </div>
+
+          <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <label style="margin:0;" data-i18n="cardQuietTitle">🌙 Heures de silence</label>
+              <span id="quiet-status-badge" class="badge" style="font-size:11px;"></span>
+            </div>
+            <div style="font-size:12px; color:var(--soft); margin-bottom:10px;" data-i18n="descQuiet">Suspendre les envois pendant la nuit</div>
+            <div style="margin-bottom:8px;">
+              <label style="font-weight:600; text-transform:none; cursor:pointer; font-size:13px; display:inline-flex; align-items:center; gap:6px;">
+                <input type="checkbox" id="cad-quiet-enabled" style="transform:scale(1.2);"> <span data-i18n="lblQuietActive">Activer la période de silence</span>
+              </label>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; font-size:13px; margin-bottom:10px;">
+              <span data-i18n="lblQuietFrom">De</span>
+              <input type="number" id="cad-quiet-start" class="form-control" style="width:65px;" min="0" max="23">
+              <span data-i18n="lblQuietTo">h00 à</span>
+              <input type="number" id="cad-quiet-end" class="form-control" style="width:65px;" min="0" max="23">
+              <span data-i18n="lblQuietEnd">h00</span>
+            </div>
+            <div id="quiet-info-box" style="padding:8px 10px; background:#fff; border:1px solid var(--rule); border-radius:4px; font-size:11px; line-height:1.4; color:var(--soft);" data-i18n="quietInfoHtml">
+              <b style="color:var(--ink);">ℹ️ À quoi sert cette option ?</b><br>
+              • <b>Décoché (Inactif) :</b> Les courriels et rappels partent à toute heure (24h/24) dès qu'ils arrivent à échéance.<br>
+              • <b>Coché (Actif) :</b> Les courriels dus la nuit sont mis en pause et expédiés le matin dès l'heure de réveil.
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:16px; display:flex; align-items:center; gap:12px;">
+          <button type="submit" class="act-btn primary" id="btn-save-cadence" style="padding:8px 18px; font-size:15px;" data-i18n="btnSaveCadence">💾 Enregistrer la cadence</button>
+          <span id="cadence-msg" style="font-size:14px;"></span>
+        </div>
+      </form>
+
+      <!-- Sub-card: League Message for Weekly Invite -->
+      <div style="margin-top:24px; padding-top:20px; border-top:1px solid var(--rule);">
+        <h3 style="margin-top:0; margin-bottom:6px; font-size:18px;" data-i18n="lmTitle">📢 Message de la ligue (Invitation initiale)</h3>
+        <p style="color:var(--soft); font-size:13.5px; margin-bottom:14px;" data-i18n="lmSubtitle">
+          Ajoutez une annonce spéciale ou note pour la semaine. Elle apparaîtra en haut du courriel d'invitation initiale pour tous les réguliers et substituts invités.
+        </p>
+        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+          <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--soft);" data-i18n="lblLmEvent">Semaine / Match ciblé :</label>
+          <select id="lm-event-select" class="form-control" style="max-width:320px;"></select>
+        </div>
+        <div class="form-group">
+          <label for="lm-content" data-i18n="lblLmContent">Contenu du message / Note de la semaine :</label>
+          <textarea id="lm-content" class="form-control" rows="4" placeholder="Ex: Bienvenue à la semaine 3 ! Veuillez noter que..." data-i18n-ph="phLmContent" style="resize:vertical;"></textarea>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button type="button" id="lm-save-btn" class="act-btn primary" data-i18n="btnLmSave">💾 Enregistrer le message</button>
+          <button type="button" id="lm-clear-btn" class="act-btn" data-i18n="btnLmClear">Effacer</button>
+          <span id="lm-status" style="font-size:13px; font-weight:600; margin-left:8px;"></span>
+        </div>
+        <div id="lm-preview-box" style="margin-top:14px; display:none; background:#eff6ff; border:1px solid #bfdbfe; border-left:4px solid #1d4ed8; border-radius:6px; padding:12px 14px;">
+          <div style="font-size:12px; font-weight:800; color:#1d4ed8; text-transform:uppercase; margin-bottom:4px;" data-i18n="lblLmPreview">
+            📢 Aperçu : Message de la ligue / Note from the League
+          </div>
+          <div id="lm-preview-text" style="font-size:13.5px; color:#1e293b; line-height:1.4; white-space:pre-line;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2: Outbox -->
+    <div id="sec-outbox" class="card-box" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px;">
+        <div>
+          <h2 style="margin:0; font-size:20px;" data-i18n="outboxTitle">File d'envoi en direct (Outbox)</h2>
+          <p style="margin:4px 0 0; font-size:13px; color:var(--soft);" data-i18n="outboxSubtitle">Surveillez, prévisualisez ou annulez les avis programmés et envoyés.</p>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="act-btn" id="btn-refresh-outbox" data-i18n="btnRefresh">🔄 Rafraîchir</button>
+          <button class="act-btn primary" id="btn-drain-outbox" data-i18n="btnDrain">⚡ Forcer l'envoi immédiat (Drain)</button>
+        </div>
+      </div>
+
+      <div class="stat-cards">
+        <div class="stat-card">
+          <div class="num" id="cnt-pending" style="color:#b45309;">0</div>
+          <div class="lbl" data-i18n="statPending">En attente</div>
+        </div>
+        <div class="stat-card">
+          <div class="num" id="cnt-sent" style="color:#047857;">0</div>
+          <div class="lbl" data-i18n="statSent">Envoyés</div>
+        </div>
+        <div class="stat-card">
+          <div class="num" id="cnt-cancelled" style="color:#64748b;">0</div>
+          <div class="lbl" data-i18n="statCancelled">Annulés</div>
+        </div>
+        <div class="stat-card">
+          <div class="num" id="cnt-failed" style="color:#991b1b;">0</div>
+          <div class="lbl" data-i18n="statFailed">En erreur</div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+        <label style="font-size:12px; font-weight:700; color:var(--soft); text-transform:uppercase;" data-i18n="lblFilter">Filtrer :</label>
+        <button class="act-btn on" data-filter-outbox="all" data-i18n="filterAll">Tous</button>
+        <button class="act-btn" data-filter-outbox="pending" data-i18n="filterPending">En attente</button>
+        <button class="act-btn" data-filter-outbox="sent" data-i18n="filterSent">Envoyés</button>
+        <button class="act-btn" data-filter-outbox="cancelled" data-i18n="filterCancelled">Annulés</button>
+        <button class="act-btn" data-filter-outbox="failed" data-i18n="filterFailed">Erreurs</button>
+      </div>
+
+      <div class="table-container">
+        <table class="data-tbl" id="outbox-table">
+          <thead>
+            <tr>
+              <th style="width:55px;" data-i18n="thId">ID</th>
+              <th style="width:140px;" data-i18n="thType">Type d'avis</th>
+              <th style="width:120px;" data-i18n="thGame">Match</th>
+              <th data-i18n="thRecipient">Destinataire</th>
+              <th style="width:75px;" data-i18n="thTeam">Équipe</th>
+              <th style="width:150px;"><span data-i18n="thScheduled">Prévu pour</span> <span style="font-size:10px; font-weight:normal; text-transform:none; color:var(--soft);">(Montréal)</span></th>
+              <th style="width:95px;" data-i18n="thStatus">Statut</th>
+              <th style="width:135px; text-align:right;" data-i18n="thActions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="outbox-tbody">
+            <tr><td colspan="8" style="text-align:center; padding:20px; color:var(--soft);" data-i18n="loadingOutbox">Chargement de la file d'envois...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Section 3: Broadcast -->
+    <div id="sec-broadcast" class="card-box" style="display:none;">
+      <h2 style="margin-top:0; margin-bottom:6px; font-size:20px;" data-i18n="bcTitle">Diffusion d'un courriel personnalisé</h2>
+      <p style="color:var(--soft); font-size:14px; margin-bottom:18px;" data-i18n="bcSubtitle">
+        Envoyez un message direct à un groupe cible ou à tous les joueurs de la ligue. Vous pouvez tester l'envoi sur votre adresse avant de diffuser.
+      </p>
+      <form id="broadcast-form">
+        <div class="grid-2">
+          <div class="form-group">
+            <label for="bc-target" data-i18n="lblBcTarget">Cible des destinataires</label>
+            <select id="bc-target" class="form-control">
+              <option value="all">👥 Toute la ligue (Réguliers & Substituts)</option>
+              <option value="roster">🏒 Joueurs réguliers (Roster) uniquement</option>
+              <option value="subs">🧤 Substituts actifs uniquement</option>
+              <optgroup label="Par équipe">
+                <option value="Red">🔴 Équipe Red</option>
+                <option value="Blue">🔵 Équipe Blue</option>
+                <option value="White">⚪ Équipe White</option>
+                <option value="Black">⚫ Équipe Black</option>
+              </optgroup>
+              <optgroup label="Par statut de présence (prochain match)">
+                <option value="pending">⏳ Joueurs sans réponse (Pending)</option>
+                <option value="in">✅ Joueurs confirmés (In)</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <div class="form-group" id="group-bc-event" style="display:none;">
+            <label for="bc-event" data-i18n="lblBcEvent">Match ciblé</label>
+            <select id="bc-event" class="form-control"></select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="bc-subject" data-i18n="lblBcSubject">Sujet du courriel</label>
+          <input type="text" id="bc-subject" class="form-control" placeholder="ex: Info importante pour les séries éliminatoires" data-i18n-ph="phBcSubject" required>
+        </div>
+
+        <div class="form-group">
+          <label for="bc-msg" data-i18n="lblBcMsg">Contenu du message</label>
+          <textarea id="bc-msg" class="form-control" rows="8" placeholder="Écrivez votre message ici..." data-i18n-ph="phBcMsg" required style="resize:vertical;"></textarea>
+        </div>
+
+        <div id="bc-feedback" style="font-size:14px; margin-bottom:14px; display:none;"></div>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button type="button" class="act-btn" id="btn-bc-test" style="border-color:var(--blue); color:var(--blue); padding:8px 16px; font-size:14px;" data-i18n="btnBcTest">🧪 Tester (Aperçu admin)</button>
+          <button type="submit" class="act-btn primary" id="btn-bc-send" style="padding:8px 20px; font-size:14px;" data-i18n="btnBcSend">🚀 Diffuser aux destinataires</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Modal Outbox Preview -->
+    <div class="modal-overlay" id="outbox-preview-modal">
+      <div class="modal-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid var(--rule); padding-bottom:10px;">
+          <h2 style="margin:0; font-size:19px;" data-i18n="modalPreviewTitle">👁️ Détails & Contexte du courriel</h2>
+          <button type="button" class="mini-btn" id="btn-close-outbox-preview" style="font-size:16px; padding:2px 8px; border:none; background:transparent; cursor:pointer;">✕</button>
+        </div>
+        <div id="outbox-preview-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+  const $ = i => document.getElementById(i);
+  const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let emailsData = null;
+  let currentFilter = 'all';
+  let currentLang = window.__currentLang || (function() {
+    try {
+      const s = localStorage.getItem('smbhl_admin_lang');
+      if (s === 'en' || s === 'fr') return s;
+    } catch (_) {}
+    return 'fr';
+  })();
+
+  const I18N_COMMS = {
+    fr: {
+      title: "Gestion des communications",
+      tabCadence: "⚡ Automatisations & Cadence",
+      tabOutbox: "📬 File d'envois (Outbox)",
+      tabBroadcast: "🚀 Diffusion manuelle",
+      cadenceTitle: "Cadence des rappels automatiques",
+      cadenceSubtitle: "Définissez le calendrier des envois en <b>jours et heures</b> avant chaque match. Les valeurs sont appliquées automatiquement par le système d'automatisation.",
+      card1Title: "🚀 1. Invitation initiale",
+      badgeRecipients: "🎯 Destinataires",
+      destRoster: "Tous les réguliers (Roster) + Substituts du match précédent",
+      descInvite: "Envoi de l'invitation de présence (IN / OUT)",
+      lblDaysAnd: "jours et",
+      lblHBefore: "h avant",
+      lblSentAt: "Envoyé à",
+      lblLocalTime: "h00 (heure locale)",
+      card2Title: "⏳ 2. Rappel 72h (Indécis)",
+      destR72: "Réguliers sans réponse ('pending')",
+      descR72: "Première relance aux joueurs sans réponse",
+      card3Title: "⚡ 3. Rappel 49h (Dernière chance)",
+      destR49: "Réguliers toujours indécis ('pending')",
+      descR49: "Deuxième relance urgente avant appel aux substituts",
+      card4Title: "👥 4. Alerte effectif incomplet",
+      destShort48: "Tous les joueurs de l'équipe en manque",
+      descShort48: "Avis d'équipe si manque de joueurs ou gardien",
+      card5Title: "🧤 5. Convocations substituts (Pool)",
+      destPool: "Substituts de réserve selon le poste",
+      descPool: "Déclenchement des appels au pool de réserve",
+      card6Title: "🚨 6. Veille de match (Rappel 24h)",
+      destR24: "Joueurs confirmés ('in') + réguliers indécis",
+      descR24: "Alignement confirmé, gymnase &amp; notes d'équipe (« À demain pour le match ! »)",
+      lblLocalTimeEve: "h00 (heure locale la veille)",
+      card7Title: "🌅 7. Matin du match",
+      destMorning: "Joueurs confirmés ('in') pour le match du jour",
+      descMorning: "Rappel des messages d'équipe récents",
+      lblHrsBeforePuckDrop: "heures avant le coup d'envoi",
+      cardQuietTitle: "🌙 Heures de silence",
+      descQuiet: "Suspendre les envois pendant la nuit",
+      lblQuietActive: "Activer la période de silence",
+      lblQuietFrom: "De",
+      lblQuietTo: "h00 à",
+      lblQuietEnd: "h00",
+      quietInfoHtml: '<b style="color:var(--ink);">ℹ️ À quoi sert cette option ?</b><br>• <b>Décoché (Inactif) :</b> Les courriels et rappels partent à toute heure (24h/24) dès qu’ils arrivent à échéance.<br>• <b>Coché (Actif) :</b> Les courriels dus la nuit sont mis en pause et expédiés le matin dès l’heure de réveil.',
+      btnSaveCadence: "💾 Enregistrer la cadence",
+      lmTitle: "📢 Message de la ligue (Invitation initiale)",
+      lmSubtitle: "Ajoutez une annonce spéciale ou note pour la semaine. Elle apparaîtra en haut du courriel d'invitation initiale pour tous les réguliers et substituts invités.",
+      lblLmEvent: "Semaine / Match ciblé :",
+      lblLmContent: "Contenu du message / Note de la semaine :",
+      phLmContent: "Ex: Bienvenue à la semaine 3 ! Veuillez noter que...",
+      btnLmSave: "💾 Enregistrer le message",
+      btnLmClear: "Effacer",
+      lblLmPreview: "📢 Aperçu : Message de la ligue / Note from the League",
+      outboxTitle: "File d'envoi en direct (Outbox)",
+      outboxSubtitle: "Surveillez, prévisualisez ou annulez les avis programmés et envoyés.",
+      btnRefresh: "🔄 Rafraîchir",
+      btnDrain: "⚡ Forcer l'envoi immédiat (Drain)",
+      statPending: "En attente",
+      statSent: "Envoyés",
+      statCancelled: "Annulés",
+      statFailed: "En erreur",
+      lblFilter: "Filtrer :",
+      filterAll: "Tous",
+      filterPending: "En attente",
+      filterSent: "Envoyés",
+      filterCancelled: "Annulés",
+      filterFailed: "Erreurs",
+      thId: "ID",
+      thType: "Type d'avis",
+      thGame: "Match",
+      thRecipient: "Destinataire",
+      thTeam: "Équipe",
+      thScheduled: "Prévu pour",
+      thStatus: "Statut",
+      thActions: "Actions",
+      loadingOutbox: "Chargement de la file d'envois...",
+      noOutbox: "Aucun courriel pour ce filtre.",
+      badgeSent: "✓ Envoyé",
+      badgeCancelled: "Annulé",
+      badgeError: "Erreur",
+      badgePending: "⏳ En attente",
+      actionPreview: "👁️ Aperçu",
+      actionCancel: "Annuler",
+      bcTitle: "Diffusion d'un courriel personnalisé",
+      bcSubtitle: "Envoyez un message direct à un groupe cible ou à tous les joueurs de la ligue. Vous pouvez tester l'envoi sur votre adresse avant de diffuser.",
+      lblBcTarget: "Cible des destinataires",
+      lblBcEvent: "Match ciblé",
+      lblBcSubject: "Sujet du courriel",
+      phBcSubject: "ex: Info importante pour les séries éliminatoires",
+      lblBcMsg: "Contenu du message",
+      phBcMsg: "Écrivez votre message ici...",
+      btnBcTest: "🧪 Tester (Aperçu admin)",
+      btnBcSend: "🚀 Diffuser aux destinataires",
+      modalPreviewTitle: "👁️ Détails & Contexte du courriel",
+      btnModalClose: "Fermer",
+      adminKeyTitle: "Clé admin",
+      adminKeyPlaceholder: "clé",
+      adminKeyBtn: "OUVRIR",
+      errEnterKey: "Entrez une clé svp",
+      errKeyRejected: "Clé refusée",
+      errInvalidKey: "Clé invalide"
+    },
+    en: {
+      title: "Communications & Alerts",
+      tabCadence: "⚡ Automations & Cadence",
+      tabOutbox: "📬 Outbox Queue",
+      tabBroadcast: "🚀 Manual Broadcast",
+      cadenceTitle: "Automated Reminder Cadence",
+      cadenceSubtitle: "Configure the delivery schedule in <b>days and hours</b> prior to each game. Values are applied automatically by the automation worker.",
+      card1Title: "🚀 1. Initial Invitation",
+      badgeRecipients: "🎯 Recipients",
+      destRoster: "All regular players (Roster) + Previous week subs",
+      descInvite: "Dispatch game attendance invite (IN / OUT)",
+      lblDaysAnd: "days and",
+      lblHBefore: "hrs before",
+      lblSentAt: "Sent at",
+      lblLocalTime: ":00 (local time)",
+      card2Title: "⏳ 2. 72h Reminder (Pending)",
+      destR72: "Regulars with no response ('pending')",
+      descR72: "First reminder sent to undecided players",
+      card3Title: "⚡ 3. 49h Reminder (Last Call)",
+      destR49: "Regulars still undecided ('pending')",
+      descR49: "Urgent second reminder before calling sub pool",
+      card4Title: "👥 4. Short Roster Alert",
+      destShort48: "All players of the short team",
+      descShort48: "Team notice if short on skaters or goalie",
+      card5Title: "🧤 5. Sub Pool Invites (Pool)",
+      destPool: "Reserve subs by requested position",
+      descPool: "Trigger invitations to the substitute pool",
+      card6Title: "🚨 6. Eve of Game (24h Reminder)",
+      destR24: "Confirmed players ('in') + undecided regulars",
+      descR24: 'Confirmed lineup, gym &amp; team notes ("See you tomorrow at the game!")',
+      lblLocalTimeEve: ":00 (local time the day before)",
+      card7Title: "🌅 7. Game Morning",
+      destMorning: "Confirmed players ('in') for today's game",
+      descMorning: "Recap of recent team board messages",
+      lblHrsBeforePuckDrop: "hours before puck drop",
+      cardQuietTitle: "🌙 Quiet Hours",
+      descQuiet: "Pause dispatches overnight",
+      lblQuietActive: "Enable quiet overnight window",
+      lblQuietFrom: "From",
+      lblQuietTo: ":00 to",
+      lblQuietEnd: ":00",
+      quietInfoHtml: '<b style="color:var(--ink);">ℹ️ What does this setting do?</b><br>• <b>Unchecked (Disabled):</b> Emails and reminders fire around the clock (24/7) as soon as due.<br>• <b>Checked (Active):</b> Emails due overnight are held in queue and dispatched in the morning upon wake-up time.',
+      btnSaveCadence: "💾 Save Cadence Settings",
+      lmTitle: "📢 Message from the League (Initial Invitation)",
+      lmSubtitle: "Add a special announcement or note for the week. It will appear at the top of the initial invite email for all regular players and invited substitutes.",
+      lblLmEvent: "Target Week / Game:",
+      lblLmContent: "Message content / League note:",
+      phLmContent: "e.g. Welcome to Week 3! Please note that gym entry...",
+      btnLmSave: "💾 Save League Note",
+      btnLmClear: "Clear",
+      lblLmPreview: "📢 Preview : Message from the League",
+      outboxTitle: "Live Outbox Queue",
+      outboxSubtitle: "Monitor, preview, or cancel scheduled and sent communications.",
+      btnRefresh: "🔄 Refresh",
+      btnDrain: "⚡ Drain Queue Now (Send All)",
+      statPending: "Pending",
+      statSent: "Sent",
+      statCancelled: "Cancelled",
+      statFailed: "Errors",
+      lblFilter: "Filter:",
+      filterAll: "All",
+      filterPending: "Pending",
+      filterSent: "Sent",
+      filterCancelled: "Cancelled",
+      filterFailed: "Errors",
+      thId: "ID",
+      thType: "Notice Type",
+      thGame: "Game",
+      thRecipient: "Recipient",
+      thTeam: "Team",
+      thScheduled: "Scheduled For",
+      thStatus: "Status",
+      thActions: "Actions",
+      loadingOutbox: "Loading outbox queue...",
+      noOutbox: "No emails found for this filter.",
+      badgeSent: "✓ Sent",
+      badgeCancelled: "Cancelled",
+      badgeError: "Error",
+      badgePending: "⏳ Pending",
+      actionPreview: "👁️ Preview",
+      actionCancel: "Cancel",
+      bcTitle: "Custom Email Broadcast",
+      bcSubtitle: "Send a direct email message to a targeted group or all players in the league. You can test delivery to your address before broadcasting.",
+      lblBcTarget: "Recipient Target Audience",
+      lblBcEvent: "Target Game",
+      lblBcSubject: "Email Subject",
+      phBcSubject: "e.g. Important playoff update",
+      lblBcMsg: "Message Content",
+      phBcMsg: "Write your message here...",
+      btnBcTest: "🧪 Send Test (Admin Preview)",
+      btnBcSend: "🚀 Broadcast to Recipients",
+      modalPreviewTitle: "👁️ Email Context & Details",
+      btnModalClose: "Close",
+      adminKeyTitle: "Admin Key",
+      adminKeyPlaceholder: "key",
+      adminKeyBtn: "UNLOCK",
+      errEnterKey: "Please enter key",
+      errKeyRejected: "Key rejected",
+      errInvalidKey: "Invalid key"
+    }
+  };
+
+  const KIND_INFO = {
+    fr: {
+      'gameday': {
+        label: "🚨 Veille de match (24h)",
+        badgeClass: "badge-alert",
+        audience: "Joueurs confirmés ('in') + réguliers indécis",
+        desc: "Courriel officiel de veille (« À demain pour le match ! »). Confirme l'alignement de l'équipe, l'heure et le lieu (gymnase), les notes du tableau d'équipe, les consignes pour les frais de substituts et permet de signaler un imprévu."
+      },
+      'gameday_morning': {
+        label: "🌅 Matin du match",
+        badgeClass: "badge-morning",
+        audience: "Joueurs confirmés ('in') pour le match du jour",
+        desc: "Dernier rappel envoyé le matin du match récapitulant les nouveaux messages laissés sur le tableau d'équipe."
+      },
+      'invite': {
+        label: "✉️ Invitation initiale",
+        badgeClass: "badge-invite",
+        audience: "Tous les réguliers de l'alignement (Roster)",
+        desc: "Courriel officiel demandant au joueur de confirmer sa présence (IN ou OUT) en un clic."
+      },
+      'chase': {
+        label: "⏳ Relance de présence",
+        badgeClass: "badge-reminder",
+        audience: "Joueurs réguliers indécis sans réponse ('pending')",
+        desc: "Rappel automatique envoyé aux joueurs réguliers qui n'ont pas encore répondu à l'invitation."
+      },
+      'reminder72': {
+        label: "⏳ Rappel 72h",
+        badgeClass: "badge-reminder",
+        audience: "Joueurs réguliers indécis sans réponse ('pending')",
+        desc: "Première relance automatique envoyée aux joueurs sans réponse."
+      },
+      'reminder49': {
+        label: "⚡ Rappel 49h",
+        badgeClass: "badge-reminder",
+        audience: "Joueurs réguliers toujours indécis ('pending')",
+        desc: "Deuxième relance de dernière chance avant l'appel aux substituts de la réserve."
+      },
+      'team_short': {
+        label: "👥 Alerte effectif",
+        badgeClass: "badge-alert",
+        audience: "Tous les joueurs de l'équipe manquant d'effectif",
+        desc: "Avis informant l'équipe qu'il manque des joueurs pour le match à venir."
+      },
+      'short48': {
+        label: "👥 Alerte effectif",
+        badgeClass: "badge-alert",
+        audience: "Tous les joueurs de l'équipe manquant d'effectif",
+        desc: "Avis informant l'équipe qu'il manque des joueurs pour le match à venir."
+      },
+      'sub_call': {
+        label: "🧤 Appel substitut (Pool)",
+        badgeClass: "badge-pool",
+        audience: "Substituts actifs de la réserve selon le poste requis",
+        desc: "Offre de remplacement envoyée à un substitut de la liste de réserve pour combler un poste vacant."
+      },
+      'call': {
+        label: "🧤 Appel substitut (Pool)",
+        badgeClass: "badge-pool",
+        audience: "Substituts actifs de la réserve selon le poste requis",
+        desc: "Offre de remplacement envoyée à un substitut de la liste de réserve pour combler un poste vacant."
+      },
+      'assigned': {
+        label: "✅ Assignation confirmée",
+        badgeClass: "badge-pool",
+        audience: "Substitut ayant confirmé sa place",
+        desc: "Confirmation officielle envoyée au joueur avec l'équipe assignée et la couleur de chandail."
+      },
+      'notice': {
+        label: "🔄 Changement de présence",
+        badgeClass: "badge-notice",
+        audience: "Joueur dont le statut a été modifié",
+        desc: "Avis automatique envoyé au joueur lorsqu'un coéquipier (ou l'admin) a modifié son statut (PRÉSENT ou ABSENT) sur le tableau d'équipe, avec bouton direct pour confirmer ou corriger."
+      },
+      'released': {
+        label: "↩️ Libération",
+        badgeClass: "badge-cancelled",
+        audience: "Substitut libéré",
+        desc: "Avis informant un substitut qu'un régulier s'est libéré et reprend sa place dans l'alignement."
+      },
+      'friday_board': {
+        label: "💬 Récap Vendredi",
+        badgeClass: "badge-invite",
+        audience: "Joueurs confirmés et réguliers indécis",
+        desc: "Résumé du vendredi des derniers messages publiés sur le tableau d'équipe."
+      },
+      'summary': {
+        label: "📊 Bilan Capitaines",
+        badgeClass: "badge-broadcast",
+        audience: "Responsables et capitaines d'équipe",
+        desc: "Bilan global des alignements transmis 24h avant le match."
+      },
+      'season_recap': {
+        label: "🏆 Bilan de saison",
+        badgeClass: "badge-broadcast",
+        audience: "Tous les joueurs de la ligue",
+        desc: "Courriel récapitulatif de clôture de saison envoyé à tous les joueurs."
+      },
+      'season_recap_prompt': {
+        label: "📝 Rappel Bilan admin",
+        badgeClass: "badge-reminder",
+        audience: "Administrateur de la ligue",
+        desc: "Rappel à l'administrateur pour rédiger et diffuser le bilan de clôture de saison."
+      },
+      'cancellation': {
+        label: "⚠️ Annulation",
+        badgeClass: "badge-error",
+        audience: "Tous les joueurs inscrits à la semaine",
+        desc: "Avis officiel informant tous les joueurs de l'annulation de la semaine de jeu."
+      },
+      'broadcast': {
+        label: "📢 Diffusion",
+        badgeClass: "badge-broadcast",
+        audience: "Groupe ciblé par l'administrateur",
+        desc: "Courriel personnalisé diffusé par l'administration à un groupe de joueurs."
+      }
+    },
+    en: {
+      'gameday': {
+        label: "🚨 Eve of Game (24h)",
+        badgeClass: "badge-alert",
+        audience: "Confirmed players ('in') + undecided regulars",
+        desc: 'Official eve-of-game reminder ("See you tomorrow at the game!"). Confirms lineup, gym time/location, team board notes, sub fee directions, and quick excuse button.'
+      },
+      'gameday_morning': {
+        label: "🌅 Game Morning",
+        badgeClass: "badge-morning",
+        audience: "Confirmed players ('in') for today's game",
+        desc: "Morning reminder summarizing latest messages posted to the team board."
+      },
+      'invite': {
+        label: "✉️ Initial Invite",
+        badgeClass: "badge-invite",
+        audience: "All regular roster players",
+        desc: "Official invite requesting the player confirm attendance (IN or OUT) in one click."
+      },
+      'chase': {
+        label: "⏳ RSVP Reminder",
+        badgeClass: "badge-reminder",
+        audience: "Undecided regular players ('pending')",
+        desc: "Automated reminder dispatched to regular players who have not yet responded."
+      },
+      'reminder72': {
+        label: "⏳ 72h Reminder",
+        badgeClass: "badge-reminder",
+        audience: "Undecided regular players ('pending')",
+        desc: "First automated reminder sent to players without a response."
+      },
+      'reminder49': {
+        label: "⚡ 49h Reminder",
+        badgeClass: "badge-reminder",
+        audience: "Regulars still undecided ('pending')",
+        desc: "Second last-call reminder before calling reserve substitutes."
+      },
+      'team_short': {
+        label: "👥 Short Roster Alert",
+        badgeClass: "badge-alert",
+        audience: "All players on the short team",
+        desc: "Team notice informing members that the roster is missing players for the upcoming game."
+      },
+      'short48': {
+        label: "👥 Short Roster Alert",
+        badgeClass: "badge-alert",
+        audience: "All players on the short team",
+        desc: "Team notice informing members that the roster is missing players for the upcoming game."
+      },
+      'sub_call': {
+        label: "🧤 Sub Pool Call",
+        badgeClass: "badge-pool",
+        audience: "Active reserve subs by requested position",
+        desc: "Replacement invitation dispatched to reserve pool substitute to fill a vacancy."
+      },
+      'call': {
+        label: "🧤 Sub Pool Call",
+        badgeClass: "badge-pool",
+        audience: "Active reserve subs by requested position",
+        desc: "Replacement invitation dispatched to reserve pool substitute to fill a vacancy."
+      },
+      'assigned': {
+        label: "✅ Assignment Confirmed",
+        badgeClass: "badge-pool",
+        audience: "Substitute who confirmed attendance",
+        desc: "Official confirmation sent to substitute with assigned team and jersey color."
+      },
+      'notice': {
+        label: "🔄 Attendance Changed",
+        badgeClass: "badge-notice",
+        audience: "Player whose status was updated",
+        desc: "Notice sent when a teammate or admin adjusted attendance (IN/OUT) on the team board, with direct button to verify or correct."
+      },
+      'released': {
+        label: "↩️ Release Notice",
+        badgeClass: "badge-cancelled",
+        audience: "Released substitute",
+        desc: "Notice sent to substitute when a regular player becomes available again."
+      },
+      'friday_board': {
+        label: "💬 Friday Recap",
+        badgeClass: "badge-invite",
+        audience: "Confirmed and undecided players",
+        desc: "Friday recap of recent messages posted to the team board."
+      },
+      'summary': {
+        label: "📊 Captains Brief",
+        badgeClass: "badge-broadcast",
+        audience: "Team captains and reps",
+        desc: "Overall lineup overview sent 24 hours prior to game time."
+      },
+      'season_recap': {
+        label: "🏆 Season Recap",
+        badgeClass: "badge-broadcast",
+        audience: "All league players",
+        desc: "End-of-season summary email sent to all players in the league."
+      },
+      'season_recap_prompt': {
+        label: "📝 Admin Recap Prompt",
+        badgeClass: "badge-reminder",
+        audience: "League administrator",
+        desc: "Prompt reminding the administrator to draft and broadcast the season recap."
+      },
+      'cancellation': {
+        label: "⚠️ Game Cancellation",
+        badgeClass: "badge-error",
+        audience: "All players enrolled for the week",
+        desc: "Official cancellation alert sent to all players."
+      },
+      'broadcast': {
+        label: "📢 Broadcast",
+        badgeClass: "badge-broadcast",
+        audience: "Target group selected by admin",
+        desc: "Custom email broadcast sent by league management."
+      }
+    }
+  };
+
+  function applyLanguage(lang) {
+    currentLang = lang || 'fr';
+    const dict = I18N_COMMS[currentLang] || I18N_COMMS.fr;
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const k = el.getAttribute('data-i18n');
+      if (dict[k] != null) {
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = dict[k];
+        else el.innerHTML = dict[k];
+      }
+    });
+    document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+      const k = el.getAttribute('data-i18n-ph');
+      if (dict[k] != null) el.placeholder = dict[k];
+    });
+    if (window.__updateAdminTabsLang) window.__updateAdminTabsLang(currentLang);
+    renderBroadcastOptions();
+    renderBroadcastEvents();
+    updateQuietBadge();
+    updateCadenceHints();
+    if (emailsData) renderOutbox();
+  }
+  window.addEventListener('admin_lang_changed', e => applyLanguage(e.detail.lang));
+
+  function renderBroadcastOptions() {
+    const isEn = currentLang === 'en';
+    const sel = $('bc-target');
+    if (!sel) return;
+    const curVal = sel.value;
+    sel.innerHTML = '<option value="all">' + (isEn ? '👥 Entire League (Regulars & Substitutes)' : '👥 Toute la ligue (Réguliers & Substituts)') + '</option>' +
+      '<option value="roster">' + (isEn ? '🏒 Regular Roster Players Only' : '🏒 Joueurs réguliers (Roster) uniquement') + '</option>' +
+      '<option value="subs">' + (isEn ? '🧤 Active Substitutes Only' : '🧤 Substituts actifs uniquement') + '</option>' +
+      '<optgroup label="' + (isEn ? 'By Team' : 'Par équipe') + '">' +
+        '<option value="Red">' + (isEn ? '🔴 Red Team' : '🔴 Équipe Red') + '</option>' +
+        '<option value="Blue">' + (isEn ? '🔵 Blue Team' : '🔵 Équipe Blue') + '</option>' +
+        '<option value="White">' + (isEn ? '⚪ White Team' : '⚪ Équipe White') + '</option>' +
+        '<option value="Black">' + (isEn ? '⚫ Black Team' : '⚫ Équipe Black') + '</option>' +
+      '</optgroup>' +
+      '<optgroup label="' + (isEn ? 'By Attendance (Next Game)' : 'Par statut de présence (prochain match)') + '">' +
+        '<option value="pending">' + (isEn ? '⏳ Undecided Players (Pending)' : '⏳ Joueurs sans réponse (Pending)') + '</option>' +
+        '<option value="in">' + (isEn ? '✅ Confirmed Players (In)' : '✅ Joueurs confirmés (In)') + '</option>' +
+      '</optgroup>';
+    if (curVal) sel.value = curVal;
+  }
+
+  async function api(path, opts = {}) {
+    const headers = {};
+    if (K) headers['x-admin'] = K;
+    if (opts.body || (opts.method && opts.method !== 'GET')) {
+      headers['content-type'] = 'application/json';
+    }
+    const r = await fetch(path, Object.assign({ headers }, opts));
+    if (!r.ok) {
+      let errText = await r.text();
+      try { const errObj = JSON.parse(errText); if (errObj.error) errText = errObj.error; } catch(_) {}
+      throw new Error(errText || ('HTTP ' + r.status));
+    }
+    return r.json();
+  }
+
+  async function load() {
+    try {
+      emailsData = await api('/admin/emails/data');
+      renderSettings();
+      renderOutbox();
+      renderBroadcastEvents();
+      renderLeagueMessageSection();
+      applyLanguage(currentLang);
+    } catch (e) {
+      alert((currentLang === 'en' ? 'Error: ' : 'Erreur: ') + e.message);
+    }
+  }
+
+  function toDH(totalHours) {
+    const tot = Number(totalHours) || 0;
+    return { days: Math.floor(tot / 24), hrs: tot % 24 };
+  }
+
+  function fromDH(dId, hId) {
+    const d = Number($(dId)?.value) || 0;
+    const h = Number($(hId)?.value) || 0;
+    return (d * 24) + h;
+  }
+
+  function fmtLocalTime(isoStr, includeSec = false) {
+    if (!isoStr) return '—';
+    const s = (isoStr.endsWith('Z') || isoStr.includes('+')) ? isoStr : (isoStr + 'Z');
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return esc(isoStr);
+    return d.toLocaleString('sv-SE', {
+      timeZone: 'America/Toronto',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      ...(includeSec ? { second: '2-digit' } : {}),
+      hour12: false
+    });
+  }
+
+  function updateQuietBadge() {
+    const en = $('cad-quiet-enabled')?.checked;
+    const s = $('cad-quiet-start')?.value ?? 23;
+    const e = $('cad-quiet-end')?.value ?? 7;
+    const badge = $('quiet-status-badge');
+    if (!badge) return;
+    const isEn = currentLang === 'en';
+    if (en) {
+      badge.className = 'badge badge-sent';
+      badge.textContent = isEn
+        ? "🟢 Active (night pause from " + s + ":00 to " + e + ":00)"
+        : "🟢 Actif (pause nocturne de " + s + "h à " + e + "h)";
+    } else {
+      badge.className = 'badge badge-cancelled';
+      badge.textContent = isEn
+        ? "🔴 Inactive (box unchecked: dispatches 24/7 without night pause)"
+        : "🔴 Inactif (la case n'est pas cochée : envois 24h/24 sans interruption nocturne)";
+    }
+  }
+
+  function updateCadenceHints() {
+    const isEn = currentLang === 'en';
+    // 1. Invite
+    const invTot = fromDH('cad-invite-days', 'cad-invite-hrs');
+    const invHod = $('cad-invite-hod')?.value ?? 18;
+    const invD = $('cad-invite-days')?.value ?? 5;
+    const invH = $('cad-invite-hrs')?.value ?? 0;
+    if ($('hint-invite')) {
+      const daysEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const daysFr = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+      const invDayIdx = (70 - Number(invD || 0)) % 7;
+      $('hint-invite').textContent = isEn
+        ? 'Total: ' + invTot + ' hrs (' + invD + 'd ' + invH + 'h before) · e.g. Sunday game: initial invite sent ' + daysEn[invDayIdx] + ' at ' + invHod + ':00.'
+        : 'Total : ' + invTot + ' h (' + invD + 'j ' + invH + 'h avant) · Ex. match dimanche : invitation initiale le ' + daysFr[invDayIdx] + ' à ' + invHod + 'h00.';
+    }
+
+    // 2. R72
+    const r72Tot = fromDH('cad-r72-days', 'cad-r72-hrs');
+    const r72Hod = $('cad-r72-hod')?.value ?? 15;
+    const r72D = $('cad-r72-days')?.value ?? 3;
+    const r72H = $('cad-r72-hrs')?.value ?? 0;
+    if ($('hint-r72')) {
+      $('hint-r72').textContent = isEn
+        ? 'Total: ' + r72Tot + ' hrs (' + r72D + 'd ' + r72H + 'h before) · e.g. Sunday 6:00 PM game: reminder Thursday at ' + r72Hod + ':00.'
+        : 'Total : ' + r72Tot + ' h (' + r72D + 'j ' + r72H + 'h avant) · Ex. match dimanche 18h : rappel le jeudi à ' + r72Hod + 'h00.';
+    }
+
+    // 3. R49
+    const r49Tot = fromDH('cad-r49-days', 'cad-r49-hrs');
+    if ($('hint-r49')) {
+      $('hint-r49').textContent = isEn
+        ? 'Total: ' + r49Tot + ' hrs (' + ($('cad-r49-days')?.value ?? 2) + 'd ' + ($('cad-r49-hrs')?.value ?? 1) + 'h before) · e.g. Sunday 6:00 PM game: reminder Friday around 5:00 PM.'
+        : 'Total : ' + r49Tot + ' h (' + ($('cad-r49-days')?.value ?? 2) + 'j ' + ($('cad-r49-hrs')?.value ?? 1) + 'h avant) · Ex. match dimanche 18h : rappel vendredi vers 17h00.';
+    }
+
+    // 4. Short48
+    const s48Tot = fromDH('cad-short48-days', 'cad-short48-hrs');
+    if ($('hint-short48')) {
+      $('hint-short48').textContent = isEn
+        ? 'Total: ' + s48Tot + ' hrs (' + ($('cad-short48-days')?.value ?? 2) + 'd ' + ($('cad-short48-hrs')?.value ?? 0) + 'h before) · e.g. Sunday 6:00 PM game: alert Friday at 6:00 PM.'
+        : 'Total : ' + s48Tot + ' h (' + ($('cad-short48-days')?.value ?? 2) + 'j ' + ($('cad-short48-hrs')?.value ?? 0) + 'h avant) · Ex. match dimanche 18h : alerte vendredi à 18h00.';
+    }
+
+    // 5. Pool
+    const poolTot = fromDH('cad-pool-days', 'cad-pool-hrs');
+    if ($('hint-pool')) {
+      $('hint-pool').textContent = isEn
+        ? 'Total: ' + poolTot + ' hrs (' + ($('cad-pool-days')?.value ?? 1) + 'd ' + ($('cad-pool-hrs')?.value ?? 12) + 'h before) · e.g. Sunday 6:00 PM game: invites Saturday at 6:00 AM.'
+        : 'Total : ' + poolTot + ' h (' + ($('cad-pool-days')?.value ?? 1) + 'j ' + ($('cad-pool-hrs')?.value ?? 12) + 'h avant) · Ex. match dimanche 18h : appels samedi à 06h00.';
+    }
+
+    // 6. R24
+    const r24Tot = fromDH('cad-r24-days', 'cad-r24-hrs');
+    const r24Hod = $('cad-r24-hod')?.value ?? 18;
+    const r24D = $('cad-r24-days')?.value ?? 1;
+    const r24H = $('cad-r24-hrs')?.value ?? 0;
+    if ($('hint-r24')) {
+      $('hint-r24').textContent = isEn
+        ? 'Total: ' + r24Tot + ' hrs (' + r24D + 'd ' + r24H + 'h before) · e.g. Sunday 6:00 PM game: email sent Saturday at ' + r24Hod + ':00 (local time).'
+        : 'Total : ' + r24Tot + ' h (' + r24D + 'j ' + r24H + 'h avant) · Ex. match dimanche 18h : courriel envoyé le samedi à ' + r24Hod + 'h00 (heure locale).';
+    }
+
+    // 7. Morning
+    const gmH = $('cad-gameday-morning-hrs')?.value ?? 2;
+    if ($('hint-morning')) {
+      $('hint-morning').textContent = isEn
+        ? 'Triggered ' + gmH + ' hrs before puck drop (e.g. Sunday at 4:00 PM if game at 6:00 PM).'
+        : 'Déclenché ' + gmH + " h avant le match (ex. dimanche à 16h00 si coup d'envoi à 18h00).";
+    }
+  }
+
+  function renderSettings() {
+    if (!emailsData || !emailsData.settings) return;
+    const s = emailsData.settings;
+
+    const inv = toDH(s.invite_hours ?? 120);
+    $('cad-invite-days').value = inv.days;
+    $('cad-invite-hrs').value = inv.hrs;
+    $('cad-invite-hod').value = s.invite_hour_of_day ?? 18;
+
+    const r72 = toDH(s.r72_hours ?? 72);
+    $('cad-r72-days').value = r72.days;
+    $('cad-r72-hrs').value = r72.hrs;
+    $('cad-r72-hod').value = s.r72_hour_of_day ?? 15;
+
+    const r49 = toDH(s.r49_hours ?? 49);
+    $('cad-r49-days').value = r49.days;
+    $('cad-r49-hrs').value = r49.hrs;
+
+    const s48 = toDH(s.short48_hours ?? 48);
+    $('cad-short48-days').value = s48.days;
+    $('cad-short48-hrs').value = s48.hrs;
+
+    const pool = toDH(s.pool_hours ?? 36);
+    $('cad-pool-days').value = pool.days;
+    $('cad-pool-hrs').value = pool.hrs;
+
+    const r24 = toDH(s.r24_hours ?? 24);
+    $('cad-r24-days').value = r24.days;
+    $('cad-r24-hrs').value = r24.hrs;
+    $('cad-r24-hod').value = s.r24_hour_of_day ?? 18;
+
+    $('cad-gameday-morning-hrs').value = s.gameday_morning_hours ?? 2;
+
+    $('cad-quiet-enabled').checked = Boolean(s.quiet_hours_enabled);
+    $('cad-quiet-start').value = s.quiet_hours_start ?? 23;
+    $('cad-quiet-end').value = s.quiet_hours_end ?? 7;
+
+    updateQuietBadge();
+    updateCadenceHints();
+
+    ['cad-invite-days','cad-invite-hrs','cad-invite-hod','cad-r72-days','cad-r72-hrs','cad-r72-hod',
+     'cad-r49-days','cad-r49-hrs','cad-short48-days','cad-short48-hrs','cad-pool-days','cad-pool-hrs',
+     'cad-r24-days','cad-r24-hrs','cad-r24-hod','cad-gameday-morning-hrs'].forEach(id => {
+      const el = $(id);
+      if (el) el.oninput = updateCadenceHints;
+    });
+    ['cad-quiet-enabled','cad-quiet-start','cad-quiet-end'].forEach(id => {
+      const el = $(id);
+      if (el) el.onchange = updateQuietBadge;
+    });
+  }
+
+  function renderOutbox() {
+    if (!emailsData) return;
+    const dict = I18N_COMMS[currentLang] || I18N_COMMS.fr;
+    const kinds = (KIND_INFO[currentLang] || KIND_INFO.fr);
+    const stats = emailsData.stats || {};
+    $('cnt-pending').textContent = stats.pending || 0;
+    $('cnt-sent').textContent = stats.sent || 0;
+    $('cnt-cancelled').textContent = stats.cancelled || 0;
+    $('cnt-failed').textContent = stats.failed || 0;
+
+    const outbox = emailsData.outbox || [];
+    const filtered = outbox.filter(o => {
+      if (currentFilter === 'all') return true;
+      if (currentFilter === 'pending') return !o.sent_at && !o.cancelled;
+      if (currentFilter === 'sent') return !!o.sent_at;
+      if (currentFilter === 'cancelled') return !!o.cancelled;
+      if (currentFilter === 'failed') return !o.sent_at && !o.cancelled && !!o.error;
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      $('outbox-tbody').innerHTML = '<tr><td colspan="8" style="text-align:center; padding:20px; color:var(--soft);">' + esc(dict.noOutbox) + '</td></tr>';
+      return;
+    }
+
+    let h = '';
+    filtered.forEach(o => {
+      let badge = '';
+      if (o.sent_at) badge = '<span class="badge badge-sent">' + esc(dict.badgeSent) + '</span>';
+      else if (o.cancelled) badge = '<span class="badge badge-cancelled">' + esc(dict.badgeCancelled) + '</span>';
+      else if (o.error) badge = '<span class="badge badge-error" title="' + esc(o.error) + '">' + esc(dict.badgeError) + '</span>';
+      else badge = '<span class="badge badge-pending">' + esc(dict.badgePending) + '</span>';
+
+      const ki = kinds[o.kind] || { label: o.kind, badgeClass: 'badge-pending', desc: (currentLang === 'en' ? 'System notice' : 'Avis système') };
+      const subKind = o.kind === 'notice' ? '<div style="font-size:10px; color:#7e22ce; font-weight:700; margin-top:2px;">' + (currentLang === 'en' ? '(By teammate)' : '(Par coéquipier)') + '</div>' : '';
+      const typeBadge = '<span class="badge ' + ki.badgeClass + '" title="' + esc(ki.desc) + '" style="cursor:help;">' + esc(ki.label) + '</span>' + subKind;
+
+      let evText = esc(o.event_id || '—');
+      if (o.event_week) {
+        evText = '<div style="font-weight:700;">' + (currentLang === 'en' ? 'Wk ' : 'Sem. ') + esc(o.event_week) + '</div>' +
+          (o.event_date ? '<div style="font-size:11px; color:var(--soft);">' + esc(o.event_date) + '</div>' : '');
+      }
+
+      const playerText = '<div style="font-weight:600;">' + esc(o.player_name || o.player_id || (currentLang === 'en' ? 'All / Admin' : 'Tous / Admin')) + '</div>' +
+        (o.player_email ? '<div style="font-size:11px; color:var(--soft); font-family:monospace;">' + esc(o.player_email) + '</div>' : '');
+
+      const sendAfterFmt = fmtLocalTime(o.send_after);
+      const canCancel = !o.sent_at && !o.cancelled;
+
+      h += '<tr>' +
+        '<td><b>#' + o.id + '</b></td>' +
+        '<td data-label="' + esc(dict.thType) + '">' + typeBadge + '</td>' +
+        '<td data-label="' + esc(dict.thGame) + '">' + evText + '</td>' +
+        '<td data-label="' + esc(dict.thRecipient) + '">' + playerText + '</td>' +
+        '<td data-label="' + esc(dict.thTeam) + '"><b>' + esc(o.team || '—') + '</b></td>' +
+        '<td data-label="' + esc(dict.thScheduled) + '" style="font-family:monospace; font-size:12px;" title="' + (currentLang === 'en' ? 'Montreal local time' : 'Heure locale Montréal') + '">' + esc(sendAfterFmt) + '</td>' +
+        '<td data-label="' + esc(dict.thStatus) + '">' + badge + '</td>' +
+        '<td>' +
+          '<div style="display:inline-flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; width:100%;">' +
+            '<button class="act-btn" style="padding:4px 9px; font-size:12px;" data-preview-id="' + o.id + '">' + esc(dict.actionPreview) + '</button>' +
+            (canCancel ? '<button class="act-btn danger" style="padding:4px 9px; font-size:12px;" data-cancel-id="' + o.id + '">' + esc(dict.actionCancel) + '</button>' : '') +
+          '</div>' +
+        '</td>' +
+      '</tr>';
+    });
+    $('outbox-tbody').innerHTML = h;
+
+    document.querySelectorAll('[data-preview-id]').forEach(b => {
+      b.onclick = () => {
+        const id = Number(b.dataset.previewId);
+        const item = (emailsData.outbox || []).find(x => x.id === id);
+        if (!item) return;
+        openOutboxPreview(item);
+      };
+    });
+
+    document.querySelectorAll('[data-cancel-id]').forEach(b => {
+      b.onclick = async () => {
+        const id = b.dataset.cancelId;
+        const confirmMsg = currentLang === 'en' ? 'Cancel delivery for message #' + id + ' ?' : 'Annuler l\u2019envoi du message #' + id + ' ?';
+        if (!confirm(confirmMsg)) return;
+        b.disabled = true;
+        try {
+          await api('/admin/emails/cancel', { method: 'POST', body: JSON.stringify({ id: Number(id) }) });
+          load();
+        } catch (e) {
+          alert((currentLang === 'en' ? 'Error: ' : 'Erreur: ') + e.message);
+        }
+      };
+    });
+  }
+
+  function openOutboxPreview(o) {
+    const isEn = currentLang === 'en';
+    const kinds = KIND_INFO[currentLang] || KIND_INFO.fr;
+    const ki = kinds[o.kind] || { label: o.kind, badgeClass: 'badge-pending', desc: (isEn ? 'Message' : 'Message') };
+    let statusText = isEn ? '⏳ Pending delivery' : '⏳ En attente d\u2019envoi';
+    if (o.sent_at) statusText = isEn ? ('✅ Sent (' + fmtLocalTime(o.sent_at, true) + ' local)') : ('✅ Envoyé (' + fmtLocalTime(o.sent_at, true) + ' locale)');
+    else if (o.cancelled) statusText = isEn ? '🚫 Cancelled' : '🚫 Annulé';
+    else if (o.error) statusText = isEn ? ('❌ Failed: ' + esc(o.error)) : ('❌ Échec : ' + esc(o.error));
+
+    let parsedPayload = null;
+    try {
+      if (typeof o.payload === 'string') parsedPayload = JSON.parse(o.payload);
+      else if (o.payload) parsedPayload = o.payload;
+    } catch (_) {}
+
+    let contextExplain = ki.desc;
+    let emailPreviewBox = '';
+    if (o.kind === 'notice') {
+      const byWhom = (parsedPayload && parsedPayload.by === 'manager')
+        ? (isEn ? "the administrator" : "l'administrateur")
+        : (isEn ? "a teammate" : "un coéquipier");
+      const st = (parsedPayload && parsedPayload.status === 'in')
+        ? (isEn ? 'CONFIRMED ✅' : 'PRÉSENT ✅')
+        : (isEn ? 'OUT ❌' : 'ABSENT ❌');
+      const stColor = (parsedPayload && parsedPayload.status === 'in') ? '#15803d' : '#b91c1c';
+      const dtStr = o.event_date || ((isEn ? 'Week ' : 'Semaine ') + (o.event_week || ''));
+      contextExplain = isEn
+        ? ('<b>Direct Trigger:</b> ' + byWhom + ' marked this player as <b>' + st + '</b> on the team board for Week ' + esc(o.event_week || '') + '. The player receives this email notification with a direct button to correct their attendance if inaccurate.')
+        : ('<b>Déclencheur direct :</b> ' + byWhom + ' a inscrit ce joueur comme <b>' + st + '</b> sur le tableau d\u2019équipe pour la Semaine ' + esc(o.event_week || '') + '. Le joueur reçoit ce courriel pour l\u2019aviser et lui donner un bouton lui permettant de corriger lui-même si ce n\u2019est pas exact.');
+      emailPreviewBox = '<div style="margin-bottom:14px;">' +
+        '<label style="font-size:11px; font-weight:700; color:var(--soft); text-transform:uppercase; display:block; margin-bottom:4px;">' + (isEn ? 'Email content sent to player' : 'Contenu du courriel envoyé au joueur') + '</label>' +
+        '<div style="background:#fff; border:1px solid var(--rule); border-radius:4px; padding:12px 14px; font-size:13px; line-height:1.5;">' +
+          '<div style="border-bottom:1px solid #e2e8f0; padding-bottom:6px; margin-bottom:8px;"><b>' + (isEn ? 'Subject:' : 'Objet :') + '</b> ' + (isEn ? ('Status updated for ' + esc(dtStr)) : ('Statut modifié pour ' + esc(dtStr))) + '</div>' +
+          '<div>' + (isEn ? 'Hi ' : 'Salut ') + '<b>' + esc(o.player_name || (isEn ? 'Player' : 'Joueur')) + '</b>,</div>' +
+          '<div style="margin:6px 0;">' + (parsedPayload && parsedPayload.by === 'manager' ? (isEn ? "The admin" : "L&apos;admin") : (isEn ? "A teammate" : "Un coéquipier")) + (isEn ? " marked you as " : " t&apos;a marqué ") + '<b style="color:' + stColor + ';">' + st + '</b> ' + (isEn ? 'for ' : 'pour ') + esc(dtStr) + '.</div>' +
+          '<div style="margin-top:8px; font-size:12px; color:var(--soft);">' + (isEn ? 'If incorrect, update it: [Button: ✏️ Correct attendance (personalized link included)]' : 'Si ce n&apos;est pas exact, corrige-le : [Bouton : ✏️ Corriger mon statut (lien personnalisé inclus)]') + '</div>' +
+        '</div>' +
+      '</div>';
+    } else if (o.kind === 'gameday') {
+      const dtStr = o.event_date || ((isEn ? 'Week ' : 'Semaine ') + (o.event_week || ''));
+      const tmStr = o.team ? ((isEn ? 'Team ' : 'Équipe ') + o.team) : (isEn ? 'your team' : 'ton équipe');
+      emailPreviewBox = '<div style="margin-bottom:14px;">' +
+        '<label style="font-size:11px; font-weight:700; color:var(--soft); text-transform:uppercase; display:block; margin-bottom:4px;">' + (isEn ? 'Email content sent to player' : 'Contenu du courriel envoyé au joueur') + '</label>' +
+        '<div style="background:#fff; border:1px solid var(--rule); border-radius:4px; padding:12px 14px; font-size:13px; line-height:1.5;">' +
+          '<div style="border-bottom:1px solid #e2e8f0; padding-bottom:6px; margin-bottom:8px;"><b>' + (isEn ? 'Subject:' : 'Objet :') + '</b> ' + (isEn ? 'See you at the gym tomorrow! 🏑' : 'À demain pour le match ! 🏑') + '</div>' +
+          '<div>' + (isEn ? 'Hi ' : 'Salut ') + '<b>' + esc(o.player_name || (isEn ? 'Player' : 'Joueur')) + '</b>,</div>' +
+          '<div style="margin:6px 0; color:#1e293b;">' + (isEn ? ('Reminder: you are confirmed with <b>' + esc(tmStr) + '</b> for tomorrow, <b>' + esc(dtStr) + '</b>!') : ('Rappel : tu es confirmé(e) avec <b>' + esc(tmStr) + '</b> pour demain, <b>' + esc(dtStr) + '</b> !')) + '</div>' +
+          '<div style="background:#f8fafc; border:1px dashed #cbd5e1; border-radius:4px; padding:8px 10px; font-size:12px; margin-bottom:10px;">' +
+            '<div>• <b>' + (isEn ? 'Schedule & Gym:' : 'Horaire &amp; Gymnase :') + '</b> ' + (isEn ? 'Game details and weekly matchup' : 'Détails du match et adversaire de la semaine') + '</div>' +
+            '<div>• <b>' + (isEn ? 'Team Notes:' : 'Messages d&apos;équipe :') + '</b> ' + (isEn ? 'Latest notes published to the team board' : 'Dernières notes publiées sur le tableau d&apos;équipe') + '</div>' +
+            '<div>• <b>' + (isEn ? 'Sub Fees:' : 'Frais de substitut :') + '</b> ' + (isEn ? 'Interac / cash instructions (for substitute players)' : 'Consignes Interac / comptant (si joueur remplaçant)') + '</div>' +
+          '</div>' +
+          '<div style="display:flex; gap:8px; flex-wrap:wrap; font-size:12px; margin-top:8px;">' +
+            '<span style="background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; padding:4px 8px; border-radius:3px;">📋 [' + (isEn ? 'Button: View team lineup' : 'Bouton : Voir l&apos;alignement de l&apos;équipe') + ']</span>' +
+            '<span style="background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; padding:4px 8px; border-radius:3px;">⚠️ [' + (isEn ? 'Button: NO - Can no longer play (Emergency)' : 'Bouton : NON - Ne peux plus jouer (Imprévu)') + ']</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    } else if (o.kind === 'chase' || o.kind === 'invite') {
+      const dtStr = o.event_date || ((isEn ? 'Week ' : 'Semaine ') + (o.event_week || ''));
+      const isChase = o.kind === 'chase';
+      const subj = isEn
+        ? (isChase ? ('RSVP Reminder: Attendance required for ' + esc(dtStr)) : ('Game on ' + esc(dtStr) + ' - RSVP Attendance Confirmation'))
+        : (isChase ? ('Rappel : présence requise pour ' + esc(dtStr)) : ('Match du ' + esc(dtStr) + ' - Confirmation de présence'));
+      const bodyPrompt = isEn
+        ? ('Hi <b>' + esc(o.player_name || 'Player') + '</b>, will you be playing with <b>' + esc(o.team ? ('Team ' + o.team) : 'your team') + '</b> on <b>' + esc(dtStr) + '</b>?')
+        : ('Salut <b>' + esc(o.player_name || 'Joueur') + '</b>, seras-tu présent avec <b>' + esc(o.team ? ('Équipe ' + o.team) : 'ton équipe') + '</b> le <b>' + esc(dtStr) + '</b> ?');
+      emailPreviewBox = '<div style="margin-bottom:14px;">' +
+        '<label style="font-size:11px; font-weight:700; color:var(--soft); text-transform:uppercase; display:block; margin-bottom:4px;">' + (isEn ? 'Email content sent to player' : 'Contenu du courriel envoyé au joueur') + '</label>' +
+        '<div style="background:#fff; border:1px solid var(--rule); border-radius:4px; padding:12px 14px; font-size:13px; line-height:1.5;">' +
+          '<div style="border-bottom:1px solid #e2e8f0; padding-bottom:6px; margin-bottom:8px;"><b>' + (isEn ? 'Subject:' : 'Objet :') + '</b> ' + subj + '</div>' +
+          '<div>' + bodyPrompt + '</div>' +
+          '<div style="display:flex; gap:10px; margin-top:10px;">' +
+            '<span style="background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; padding:4px 12px; border-radius:3px; font-weight:700;">✅ [ ' + (isEn ? 'YES / IN' : 'OUI / PRÉSENT') + ' ]</span>' +
+            '<span style="background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; padding:4px 12px; border-radius:3px; font-weight:700;">❌ [ ' + (isEn ? 'NO / OUT' : 'NON / ABSENT') + ' ]</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    const audBadge = ki.audience ? '<div style="margin-top:6px;"><span class="badge ' + ki.badgeClass + '" style="font-weight:700;">🎯 ' + (isEn ? 'Recipients' : 'Destinataires') + '</span> <span style="font-weight:600; margin-left:4px; color:#1e293b;">' + esc(ki.audience) + '</span></div>' : '';
+
+    let h = '<div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">' +
+      '<div>' +
+        '<span class="badge ' + ki.badgeClass + '" style="font-size:13px; padding:3px 9px;">' + esc(ki.label) + '</span>' +
+        '<span style="font-size:12px; color:var(--soft); margin-left:8px;">Message #' + o.id + '</span>' +
+      '</div>' +
+      '<div style="font-size:12px; font-weight:700;">' + statusText + '</div>' +
+    '</div>' +
+    '<div style="background:#f8fafc; border:1px solid var(--rule); border-radius:6px; padding:12px 14px; margin-bottom:14px; font-size:13px; line-height:1.5;">' +
+      '<div><b>' + (isEn ? '👤 Recipient: ' : '👤 Destinataire : ') + '</b>' + esc(o.player_name || o.player_id || (isEn ? 'All' : 'Tous')) + (o.player_email ? ' &lt;' + esc(o.player_email) + '&gt;' : '') + '</div>' +
+      '<div><b>' + (isEn ? '🏒 Team: ' : '🏒 Équipe : ') + '</b>' + esc(o.team || '—') + '</div>' +
+      '<div><b>' + (isEn ? '📅 Game: ' : '📅 Match : ') + '</b>' + (isEn ? 'Week ' : 'Semaine ') + esc(o.event_week || '—') + (o.event_date ? ' (' + esc(o.event_date) + ')' : '') + '</div>' +
+      '<div><b>' + (isEn ? '⏰ Scheduled for: ' : '⏰ Prévu pour : ') + '</b>' + esc(fmtLocalTime(o.send_after)) + ' <span style="font-size:11px; color:var(--soft);">' + (isEn ? '(Montreal local time)' : '(Heure locale Montréal)') + '</span></div>' +
+      (o.sent_at ? '<div><b>' + (isEn ? '✅ Sent on: ' : '✅ Envoyé le : ') + '</b>' + esc(fmtLocalTime(o.sent_at, true)) + ' <span style="font-size:11px; color:var(--soft);">' + (isEn ? '(Montreal local time)' : '(Heure locale Montréal)') + '</span></div>' : '') +
+      audBadge +
+    '</div>' +
+    '<div style="margin-bottom:16px;">' +
+      '<label style="font-size:11px; font-weight:700; color:var(--soft); text-transform:uppercase; display:block; margin-bottom:4px;">' + (isEn ? 'Context & Explanation' : 'Contexte et explication') + '</label>' +
+      '<div style="background:#eff6ff; border:1px solid #bfdbfe; border-left:4px solid var(--blue); padding:10px 12px; border-radius:4px; font-size:13px; line-height:1.4; color:#1e293b;">' +
+        contextExplain +
+      '</div>' +
+    '</div>' +
+    emailPreviewBox;
+
+    if (parsedPayload && Object.keys(parsedPayload).length > 0) {
+      h += '<div style="margin-bottom:12px;">' +
+        '<label style="font-size:11px; font-weight:700; color:var(--soft); text-transform:uppercase; display:block; margin-bottom:4px;">' + (isEn ? 'Context Data (Send Parameters)' : 'Données contextuelles (Paramètres d\u2019envoi)') + '</label>' +
+        '<pre style="background:#f1f5f9; padding:8px 10px; border-radius:4px; font-size:12px; overflow-x:auto; margin:0;">' + esc(JSON.stringify(parsedPayload, null, 2)) + '</pre>' +
+      '</div>';
+    }
+
+    h += '<div style="display:flex; justify-content:flex-end; margin-top:16px;">' +
+      '<button type="button" class="act-btn" id="btn-modal-close-preview" style="padding:6px 14px;">' + (isEn ? 'Close' : 'Fermer') + '</button>' +
+    '</div>';
+
+    $('outbox-preview-body').innerHTML = h;
+    $('outbox-preview-modal').style.display = 'flex';
+
+    $('btn-modal-close-preview').onclick = () => { $('outbox-preview-modal').style.display = 'none'; };
+    $('btn-close-outbox-preview').onclick = () => { $('outbox-preview-modal').style.display = 'none'; };
+  }
+
+  function renderBroadcastEvents() {
+    const sel = $('bc-event');
+    sel.innerHTML = '';
+    const evs = (emailsData && emailsData.open_events) || [];
+    const isEn = currentLang === 'en';
+    evs.forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = (isEn ? 'Week ' : 'Semaine ') + e.week + ' · ' + e.date + (e.venue ? ' (' + e.venue + ')' : '');
+      sel.appendChild(opt);
+    });
+  }
+
+  function renderLeagueMessageSection() {
+    const sel = $('lm-event-select');
+    if (!sel) return;
+    const curVal = sel.value;
+    sel.innerHTML = '';
+    const evs = (emailsData && emailsData.open_events) || [];
+    const isEn = currentLang === 'en';
+    evs.forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = (isEn ? 'Week ' : 'Semaine ') + e.week + ' · ' + e.date + (e.venue ? ' (' + e.venue + ')' : '');
+      sel.appendChild(opt);
+    });
+    if (curVal && Array.from(sel.options).some(o => o.value === curVal)) {
+      sel.value = curVal;
+    } else if (evs.length > 0) {
+      sel.value = evs[0].id;
+      if (emailsData.initial_league_message !== undefined) {
+        $('lm-content').value = emailsData.initial_league_message || '';
+        updateLeagueMessagePreview();
+      }
+    }
+  }
+
+  function updateLeagueMessagePreview() {
+    const txt = ($('lm-content')?.value || '').trim();
+    const box = $('lm-preview-box');
+    const pText = $('lm-preview-text');
+    if (!box || !pText) return;
+    if (txt) {
+      pText.textContent = txt;
+      box.style.display = 'block';
+    } else {
+      box.style.display = 'none';
+    }
+  }
+
+  async function loadLeagueMessageForEvent(eventId) {
+    if (!eventId) return;
+    try {
+      const res = await api('/admin/emails/league-message?e=' + encodeURIComponent(eventId));
+      $('lm-content').value = res.message || '';
+      updateLeagueMessagePreview();
+    } catch (e) {
+      console.error('Error loading league message:', e);
+    }
+  }
+
+  // Subtabs switching
+  $('tab-btn-cadence').onclick = () => {
+    $('tab-btn-cadence').classList.add('on');
+    $('tab-btn-outbox').classList.remove('on');
+    $('tab-btn-broadcast').classList.remove('on');
+    $('sec-cadence').style.display = 'block';
+    $('sec-outbox').style.display = 'none';
+    $('sec-broadcast').style.display = 'none';
+  };
+  $('tab-btn-outbox').onclick = () => {
+    $('tab-btn-outbox').classList.add('on');
+    $('tab-btn-cadence').classList.remove('on');
+    $('tab-btn-broadcast').classList.remove('on');
+    $('sec-outbox').style.display = 'block';
+    $('sec-cadence').style.display = 'none';
+    $('sec-broadcast').style.display = 'none';
+  };
+  $('tab-btn-broadcast').onclick = () => {
+    $('tab-btn-broadcast').classList.add('on');
+    $('tab-btn-cadence').classList.remove('on');
+    $('tab-btn-outbox').classList.remove('on');
+    $('sec-broadcast').style.display = 'block';
+    $('sec-cadence').style.display = 'none';
+    $('sec-outbox').style.display = 'none';
+  };
+
+  // Filter outbox
+  document.querySelectorAll('[data-filter-outbox]').forEach(b => {
+    b.onclick = () => {
+      document.querySelectorAll('[data-filter-outbox]').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      currentFilter = b.dataset.filterOutbox;
+      renderOutbox();
+    };
+  });
+
+  // Save cadence settings
+  $('cadence-form').onsubmit = async e => {
+    e.preventDefault();
+    const btn = $('btn-save-cadence');
+    const msg = $('cadence-msg');
+    const isEn = currentLang === 'en';
+    btn.disabled = true;
+    msg.style.color = 'var(--soft)';
+    msg.textContent = isEn ? 'Saving...' : 'Enregistrement...';
+    try {
+      await api('/admin/emails/settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          invite_hours: fromDH('cad-invite-days', 'cad-invite-hrs'),
+          invite_hour_of_day: $('cad-invite-hod').value,
+          r72_hours: fromDH('cad-r72-days', 'cad-r72-hrs'),
+          r72_hour_of_day: $('cad-r72-hod').value,
+          r49_hours: fromDH('cad-r49-days', 'cad-r49-hrs'),
+          short48_hours: fromDH('cad-short48-days', 'cad-short48-hrs'),
+          pool_hours: fromDH('cad-pool-days', 'cad-pool-hrs'),
+          r24_hours: fromDH('cad-r24-days', 'cad-r24-hrs'),
+          r24_hour_of_day: $('cad-r24-hod').value,
+          gameday_morning_hours: $('cad-gameday-morning-hrs').value,
+          quiet_hours_enabled: $('cad-quiet-enabled').checked,
+          quiet_hours_start: $('cad-quiet-start').value,
+          quiet_hours_end: $('cad-quiet-end').value
+        })
+      });
+      msg.style.color = 'var(--green)';
+      msg.textContent = isEn ? '✓ Cadence settings saved!' : '✓ Paramètres de cadence enregistrés !';
+      setTimeout(() => { msg.textContent = ''; }, 3000);
+    } catch (err) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = (isEn ? 'Error: ' : 'Erreur: ') + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  // Refresh outbox
+  $('btn-refresh-outbox').onclick = () => load();
+
+  // Drain outbox
+  $('btn-drain-outbox').onclick = async () => {
+    const isEn = currentLang === 'en';
+    const btn = $('btn-drain-outbox');
+    const confirmMsg = isEn ? 'Trigger immediate delivery of all pending queued emails?' : 'Déclencher l\u2019envoi immédiat de tous les courriels en attente ?';
+    if (!confirm(confirmMsg)) return;
+    btn.disabled = true;
+    btn.textContent = isEn ? 'Sending...' : 'Envoi en cours...';
+    try {
+      await api('/admin/emails/drain', { method: 'POST' });
+      await load();
+      alert(isEn ? 'Outbox queue successfully drained!' : 'File d\u2019envois vidée avec succès !');
+    } catch (e) {
+      alert((isEn ? 'Error: ' : 'Erreur: ') + e.message);
+    } finally {
+      btn.disabled = false;
+      const dict = I18N_COMMS[currentLang] || I18N_COMMS.fr;
+      btn.textContent = dict.btnDrain;
+    }
+  };
+
+  // Target change shows event dropdown
+  $('bc-target').onchange = () => {
+    const v = $('bc-target').value;
+    $('group-bc-event').style.display = (v === 'pending' || v === 'in') ? 'block' : 'none';
+  };
+
+  // Broadcast test
+  $('btn-bc-test').onclick = async () => {
+    const isEn = currentLang === 'en';
+    const subj = $('bc-subject').value.trim();
+    const msg = $('bc-msg').value.trim();
+    const fb = $('bc-feedback');
+    if (!subj || !msg) { alert(isEn ? 'Subject and message are required' : 'Sujet et message requis'); return; }
+    $('btn-bc-test').disabled = true;
+    fb.style.display = 'block';
+    fb.style.color = 'var(--soft)';
+    fb.textContent = isEn ? 'Sending test to admin...' : 'Envoi du test à l\u2019admin...';
+    try {
+      const res = await api('/admin/emails/broadcast', {
+        method: 'POST',
+        body: JSON.stringify({
+          target: $('bc-target').value,
+          event_id: $('bc-event').value || null,
+          subject: subj,
+          message: msg,
+          test_only: true
+        })
+      });
+      fb.style.color = 'var(--green)';
+      fb.textContent = isEn
+        ? ('✓ Test sent successfully to ' + (res.sent_to || 'admin') + ' (' + (res.total_recipients || 0) + ' target recipients)')
+        : ('✓ Test envoyé avec succès à ' + (res.sent_to || 'l\u2019admin') + ' (' + (res.total_recipients || 0) + ' destinataires concernés)');
+    } catch (e) {
+      fb.style.color = 'var(--red)';
+      fb.textContent = (isEn ? 'Error: ' : 'Erreur: ') + e.message;
+    } finally {
+      $('btn-bc-test').disabled = false;
+    }
+  };
+
+  // Broadcast submit
+  $('broadcast-form').onsubmit = async e => {
+    e.preventDefault();
+    const isEn = currentLang === 'en';
+    const subj = $('bc-subject').value.trim();
+    const msg = $('bc-msg').value.trim();
+    const fb = $('bc-feedback');
+    if (!subj || !msg) return;
+    const confirmMsg = isEn ? 'Are you sure you want to broadcast this message to the selected group?' : 'Êtes-vous certain de vouloir envoyer ce message à la cible sélectionnée ?';
+    if (!confirm(confirmMsg)) return;
+
+    $('btn-bc-send').disabled = true;
+    fb.style.display = 'block';
+    fb.style.color = 'var(--soft)';
+    fb.textContent = isEn ? 'Broadcasting in progress...' : 'Diffusion en cours...';
+    try {
+      const res = await api('/admin/emails/broadcast', {
+        method: 'POST',
+        body: JSON.stringify({
+          target: $('bc-target').value,
+          event_id: $('bc-event').value || null,
+          subject: subj,
+          message: msg,
+          test_only: false
+        })
+      });
+      fb.style.color = 'var(--green)';
+      fb.textContent = isEn
+        ? ('✓ Message broadcast to ' + res.sent_count + ' recipients (' + (res.failed_count || 0) + ' failures)!')
+        : ('✓ Message diffusé à ' + res.sent_count + ' destinataires (' + (res.failed_count || 0) + ' échecs) !');
+      $('bc-subject').value = '';
+      $('bc-msg').value = '';
+      load();
+    } catch (err) {
+      fb.style.color = 'var(--red)';
+      fb.textContent = (isEn ? 'Error: ' : 'Erreur: ') + err.message;
+    } finally {
+      $('btn-bc-send').disabled = false;
+    }
+  };
+
+  // League message handlers
+  if ($('lm-event-select')) {
+    $('lm-event-select').onchange = () => {
+      loadLeagueMessageForEvent($('lm-event-select').value);
+    };
+  }
+  if ($('lm-content')) {
+    $('lm-content').oninput = () => {
+      updateLeagueMessagePreview();
+    };
+  }
+  if ($('lm-save-btn')) {
+    $('lm-save-btn').onclick = async () => {
+      const eventId = $('lm-event-select')?.value;
+      const msg = $('lm-content')?.value || '';
+      const status = $('lm-status');
+      const btn = $('lm-save-btn');
+      if (!eventId) return;
+      btn.disabled = true;
+      status.style.color = 'var(--soft)';
+      status.textContent = currentLang === 'en' ? 'Saving...' : 'Enregistrement...';
+      try {
+        await api('/admin/emails/league-message', {
+          method: 'POST',
+          body: JSON.stringify({ event_id: eventId, message: msg })
+        });
+        status.style.color = 'var(--green)';
+        status.textContent = currentLang === 'en' ? '✓ Saved!' : '✓ Enregistré !';
+        updateLeagueMessagePreview();
+        setTimeout(() => { status.textContent = ''; }, 3000);
+      } catch (e) {
+        status.style.color = 'var(--red)';
+        status.textContent = (currentLang === 'en' ? 'Error: ' : 'Erreur: ') + e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  }
+  if ($('lm-clear-btn')) {
+    $('lm-clear-btn').onclick = async () => {
+      const eventId = $('lm-event-select')?.value;
+      const isEn = currentLang === 'en';
+      if (!confirm(isEn ? 'Clear the league note for this week?' : 'Effacer le message de la ligue pour cette semaine ?')) return;
+      $('lm-content').value = '';
+      updateLeagueMessagePreview();
+      try {
+        await api('/admin/emails/league-message', {
+          method: 'POST',
+          body: JSON.stringify({ event_id: eventId, message: '' })
+        });
+        const status = $('lm-status');
+        status.style.color = 'var(--soft)';
+        status.textContent = isEn ? 'Cleared' : 'Effacé';
+        setTimeout(() => { status.textContent = ''; }, 2000);
+      } catch (e) {
+        alert((isEn ? 'Error: ' : 'Erreur: ') + e.message);
+      }
+    };
+  }
+
+  async function unlock(candidate) {
+    const prev = K;
+    K = candidate.trim();
+    try {
+      await api('/admin/emails/data');
+      localStorage.setItem('adminkey', K);
+      try {
+        document.cookie = 'admin_key=' + encodeURIComponent(K) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure';
+      } catch (_) {}
+      if (window.history && window.history.replaceState) {
+        const u = new URL(location);
+        u.searchParams.delete('key'); u.searchParams.delete('k'); u.searchParams.delete('t');
+        window.history.replaceState({}, document.title, u.pathname + u.search);
+      }
+      $('gate').style.display = 'none';
+      $('main').style.display = '';
+      document.querySelectorAll('.picker').forEach(p => {
+        p.style.display = 'flex';
+        p.querySelectorAll('a').forEach(a => {
+          try {
+            const u = new URL(a.href, location.origin);
+            if (K) u.searchParams.set('key', K);
+            a.href = u.pathname + u.search;
+          } catch (_) {}
+        });
+      });
+      load();
+      return true;
+    } catch (e) {
+      K = prev;
+      $('err').textContent = e.message || (currentLang === 'en' ? 'Key rejected' : 'Clé refusée');
+      return false;
+    }
+  }
+
+  $('go').addEventListener('click', async () => {
+    const val = $('key').value.trim();
+    if (!val) { $('err').textContent = currentLang === 'en' ? 'Please enter key' : 'Entrez une clé svp'; return; }
+    $('go').disabled = true;
+    $('err').textContent = currentLang === 'en' ? 'Checking...' : 'Vérification...';
+    const ok = await unlock(val);
+    $('go').disabled = false;
+    if (!ok && !$('err').textContent) $('err').textContent = currentLang === 'en' ? 'Invalid key' : 'Clé invalide';
+  });
+
+  $('key').addEventListener('keydown', e => {
+    if (e.key === 'Enter') $('go').click();
+  });
+
+  applyLanguage(currentLang);
+
+  if (K) {
+    unlock(K).then(ok => {
+      if (!ok && !$('err').textContent) $('err').textContent = currentLang === 'en' ? 'Invalid key' : 'Clé invalide';
+    });
+  } else if (${isAuthed ? 'true' : 'false'}) {
+    $('gate').style.display = 'none';
+    $('main').style.display = '';
+    document.querySelectorAll('.picker').forEach(p => p.style.display = 'flex');
+    load();
+  }
+  </script>`, logoTooltip);
+}
+
+async function handleTeamsData(req, env, url) {
+  let d = null;
+  try {
+    const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
+      || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+    d = JSON.parse(raw);
+  } catch (_) {
+    d = { seasons: [], players: [] };
+  }
+
+  const currentSeason = d.current_season || (d.seasons && d.seasons[0]?.name) || 'Fall 2026';
+  const season = url.searchParams.get('season') || currentSeason;
+
+  // Only show active current season and the most recent past season (view-only archive)
+  const allSeasonNames = (d.seasons || []).map(s => s.name);
+  const curIdx = allSeasonNames.indexOf(currentSeason);
+  let pastSeason = null;
+  if (curIdx >= 0 && curIdx + 1 < allSeasonNames.length) {
+    pastSeason = allSeasonNames[curIdx + 1];
+  } else {
+    pastSeason = allSeasonNames.find(s => s !== currentSeason) || null;
+  }
+
+  const seasons = [currentSeason];
+  if (pastSeason && !seasons.includes(pastSeason)) seasons.push(pastSeason);
+  if (!seasons.includes(season)) seasons.push(season);
+
+  const isReadOnly = season !== currentSeason;
+
+  const contacts = (await env.DB.prepare(
+    `SELECT player_id, name, email, phone, role, is_goalie, preferred_team, position
+       FROM contacts ORDER BY name`
+  ).all()).results || [];
+
+  const contactMap = new Map();
+  for (const c of contacts) {
+    contactMap.set(c.player_id, c);
+  }
+
+  const teams = {
+    Red: [],
+    Blue: [],
+    White: [],
+    Black: []
+  };
+  const assignedPlayerIds = new Set();
+
+  for (const p of (d.players || [])) {
+    const v = p.seasons?.[season];
+    const g = p.gseasons?.[season];
+    const contact = contactMap.get(p.id);
+
+    if (g && g.team && teams[g.team]) {
+      assignedPlayerIds.add(p.id);
+      teams[g.team].push({
+        id: p.id,
+        name: p.name,
+        email: contact?.email || '',
+        team: g.team,
+        position: 'G',
+        is_goalie: true,
+        gp: g.gp || 0,
+        ga: g.ga || 0,
+        so: g.so || 0
+      });
+    } else if (v && v.team && teams[v.team]) {
+      assignedPlayerIds.add(p.id);
+      teams[v.team].push({
+        id: p.id,
+        name: p.name,
+        email: contact?.email || '',
+        team: v.team,
+        position: v.pos || contact?.position || 'A',
+        is_goalie: false,
+        gp: v.gp || 0,
+        pts: v.pts || 0,
+        g: v.g || 0,
+        a: v.a || 0
+      });
+    }
+  }
+
+  for (const t of Object.keys(teams)) {
+    teams[t].sort((a, b) => {
+      if (a.is_goalie && !b.is_goalie) return -1;
+      if (!a.is_goalie && b.is_goalie) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  const subs = [];
+  const available = [];
+  for (const c of contacts) {
+    if (assignedPlayerIds.has(c.player_id)) continue;
+    if (c.role && c.role.startsWith('sub_')) {
+      subs.push(c);
+    } else {
+      available.push(c);
+    }
+  }
+
+  return Response.json({
+    ok: true,
+    season,
+    seasons,
+    current_season: currentSeason,
+    is_read_only: isReadOnly,
+    teams,
+    subs,
+    available
+  });
+}
+
+async function handleTeamsMove(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const playerId = String(body.player_id || '').trim();
+  const season = String(body.season || '').trim() || 'Fall 2026';
+  const targetTeam = String(body.target_team || '').trim();
+  const pos = String(body.position || 'A').toUpperCase().trim();
+
+  if (!playerId) {
+    return new Response(JSON.stringify({ error: 'player_id requis' }), { status: 400 });
+  }
+
+  let raw = env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null;
+  if (!raw) {
+    const res = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
+    if (res.ok) raw = await res.text();
+  }
+  let d = raw ? JSON.parse(raw) : { players: [] };
+  const currentSeason = d.current_season || (d.seasons && d.seasons[0]?.name) || 'Fall 2026';
+  if (season !== currentSeason) {
+    return new Response(JSON.stringify({ error: 'Seule la saison active (' + currentSeason + ') peut être modifiée. Les saisons archivées sont en lecture seule.' }), { status: 400 });
+  }
+  let p = (d.players || []).find(x => x.id === playerId);
+  const contact = await env.DB.prepare('SELECT * FROM contacts WHERE player_id = ?').bind(playerId).first();
+
+  if (!p && contact) {
+    p = { id: contact.player_id, key: contact.name.toUpperCase(), name: contact.name, seasons: {}, gseasons: {} };
+    d.players.push(p);
+  }
+  if (!p) {
+    return new Response(JSON.stringify({ error: 'Joueur introuvable' }), { status: 404 });
+  }
+
+  p.seasons = p.seasons || {};
+  p.gseasons = p.gseasons || {};
+
+  const validTeams = ['Red', 'Blue', 'White', 'Black'];
+  if (validTeams.includes(targetTeam)) {
+    if (pos === 'G') {
+      delete p.seasons[season];
+      p.gseasons[season] = p.gseasons[season] || { gp: 0, w: 0, l: 0, ga: 0, so: 0 };
+      p.gseasons[season].team = targetTeam;
+    } else {
+      delete p.gseasons[season];
+      p.seasons[season] = p.seasons[season] || { gp: 0, g: 0, a: 0, pts: 0 };
+      p.seasons[season].team = targetTeam;
+      p.seasons[season].pos = pos;
+    }
+
+    if (env.SHEETS_KV) {
+      await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+    }
+
+    await env.DB.prepare(
+      `UPDATE contacts
+          SET preferred_team = ?, role = 'roster', position = ?, is_goalie = ?, is_sub = 0
+        WHERE player_id = ?`
+    ).bind(targetTeam, pos, pos === 'G' ? 1 : 0, playerId).run();
+
+    const openEvents = (await env.DB.prepare(
+      "SELECT id FROM events WHERE season = ? AND state = 'open'"
+    ).bind(season).all()).results || [];
+    const now = new Date().toISOString();
+    for (const ev of openEvents) {
+      await env.DB.prepare(`
+        INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at)
+        VALUES (?, ?, ?, 'pending', 'roster', 'admin', ?)
+        ON CONFLICT(event_id, player_id) DO UPDATE SET
+          team = excluded.team,
+          role = 'roster',
+          status_by = 'admin',
+          updated_at = excluded.updated_at
+      `).bind(ev.id, playerId, targetTeam, now).run();
+    }
+  } else {
+    delete p.seasons[season];
+    delete p.gseasons[season];
+
+    if (env.SHEETS_KV) {
+      await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+    }
+
+    const isGoalie = contact?.is_goalie === 1 || pos === 'G';
+    const newRole = targetTeam === 'sub' ? (isGoalie ? 'sub_goalie' : 'sub_skater') : 'inactive';
+
+    await env.DB.prepare(
+      `UPDATE contacts
+          SET preferred_team = NULL, role = ?, is_sub = 1
+        WHERE player_id = ?`
+    ).bind(newRole, playerId).run();
+
+    await env.DB.prepare(`
+      DELETE FROM rsvp
+       WHERE player_id = ? AND role = 'roster'
+         AND event_id IN (SELECT id FROM events WHERE season = ? AND state = 'open')
+    `).bind(playerId, season).run();
+  }
+
+  return Response.json({ ok: true, player_id: playerId, target_team: targetTeam });
+}
+
+async function handleTeamsTrade(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const season = String(body.season || '').trim() || 'Fall 2026';
+  const playerAId = String(body.player_a_id || '').trim();
+  const playerBId = String(body.player_b_id || '').trim();
+
+  if (!playerAId || !playerBId) {
+    return new Response(JSON.stringify({ error: 'Deux identifiants de joueurs requis (player_a_id, player_b_id)' }), { status: 400 });
+  }
+
+  let raw = env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null;
+  if (!raw) {
+    const res = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
+    if (res.ok) raw = await res.text();
+  }
+  let d = raw ? JSON.parse(raw) : { players: [] };
+  const currentSeason = d.current_season || (d.seasons && d.seasons[0]?.name) || 'Fall 2026';
+  if (season !== currentSeason) {
+    return new Response(JSON.stringify({ error: 'Seule la saison active (' + currentSeason + ') peut être modifiée. Les saisons archivées sont en lecture seule.' }), { status: 400 });
+  }
+  const pA = (d.players || []).find(x => x.id === playerAId);
+  const pB = (d.players || []).find(x => x.id === playerBId);
+
+  if (!pA || !pB) {
+    return new Response(JSON.stringify({ error: 'Un ou plusieurs joueurs introuvables dans data.json' }), { status: 404 });
+  }
+
+  const teamA = (pA.seasons?.[season]?.team) || (pA.gseasons?.[season]?.team);
+  const teamB = (pB.seasons?.[season]?.team) || (pB.gseasons?.[season]?.team);
+
+  if (!teamA || !teamB) {
+    return new Response(JSON.stringify({ error: 'Les deux joueurs doivent être assignés à une équipe pour la saison' }), { status: 400 });
+  }
+  if (teamA === teamB) {
+    return new Response(JSON.stringify({ error: 'Les deux joueurs sont déjà dans la même équipe' }), { status: 400 });
+  }
+
+  if (pA.seasons?.[season]) pA.seasons[season].team = teamB;
+  if (pA.gseasons?.[season]) pA.gseasons[season].team = teamB;
+
+  if (pB.seasons?.[season]) pB.seasons[season].team = teamA;
+  if (pB.gseasons?.[season]) pB.gseasons[season].team = teamA;
+
+  if (env.SHEETS_KV) {
+    await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+  }
+
+  await env.DB.prepare('UPDATE contacts SET preferred_team = ? WHERE player_id = ?').bind(teamB, playerAId).run();
+  await env.DB.prepare('UPDATE contacts SET preferred_team = ? WHERE player_id = ?').bind(teamA, playerBId).run();
+
+  await env.DB.prepare(`
+    UPDATE rsvp
+       SET team = ?
+     WHERE player_id = ?
+       AND event_id IN (SELECT id FROM events WHERE season = ? AND state = 'open')
+  `).bind(teamB, playerAId, season).run();
+
+  await env.DB.prepare(`
+    UPDATE rsvp
+       SET team = ?
+     WHERE player_id = ?
+       AND event_id IN (SELECT id FROM events WHERE season = ? AND state = 'open')
+  `).bind(teamA, playerBId, season).run();
+
+  return Response.json({
+    ok: true,
+    trade: {
+      player_a: { id: playerAId, name: pA.name, new_team: teamB },
+      player_b: { id: playerBId, name: pB.name, new_team: teamA }
+    }
+  });
+}
+
+async function handleTeamsAdd(req, env) {
+  const body = await req.json().catch(() => ({}));
+  let { player_id, name, email, phone, season, target_team, position } = body;
+  season = String(season || '').trim() || 'Fall 2026';
+  target_team = String(target_team || '').trim();
+  position = String(position || 'A').toUpperCase().trim();
+
+  if (!['Red', 'Blue', 'White', 'Black'].includes(target_team)) {
+    return new Response(JSON.stringify({ error: 'Équipe cible invalide' }), { status: 400 });
+  }
+
+  let raw = env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null;
+  if (!raw) {
+    const res = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
+    if (res.ok) raw = await res.text();
+  }
+  let d = raw ? JSON.parse(raw) : { players: [] };
+  const currentSeason = d.current_season || (d.seasons && d.seasons[0]?.name) || 'Fall 2026';
+  if (season !== currentSeason) {
+    return new Response(JSON.stringify({ error: 'Seule la saison active (' + currentSeason + ') peut être modifiée. Les saisons archivées sont en lecture seule.' }), { status: 400 });
+  }
+
+  let pid = String(player_id || '').trim();
+  let contact = null;
+
+  if (pid) {
+    contact = await env.DB.prepare('SELECT * FROM contacts WHERE player_id = ?').bind(pid).first();
+  } else {
+    name = String(name || '').trim();
+    if (!name || name.split(' ').length < 2) {
+      return new Response(JSON.stringify({ error: 'Nom complet requis (Prénom et Nom)' }), { status: 400 });
+    }
+    const maxP = await env.DB.prepare("SELECT player_id FROM contacts WHERE player_id LIKE 'P%' ORDER BY player_id DESC LIMIT 1").first();
+    let nextNum = 500;
+    if (maxP && maxP.player_id) {
+      const match = maxP.player_id.match(/P(\d+)/);
+      if (match) nextNum = parseInt(match[1], 10) + 1;
+    }
+    pid = 'P' + String(nextNum).padStart(4, '0');
+
+    const salt = crypto.randomUUID().replace(/-/g, '');
+    await env.DB.prepare(
+      `INSERT INTO contacts (player_id, name, email, phone, role, is_goalie, preferred_team, position, token_salt)
+       VALUES (?, ?, ?, ?, 'roster', ?, ?, ?, ?)`
+    ).bind(pid, name, email || null, phone || null, position === 'G' ? 1 : 0, target_team, position, salt).run();
+  }
+
+  let p = (d.players || []).find(x => x.id === pid);
+  if (!p) {
+    p = {
+      id: pid,
+      key: (name || contact?.name || pid).toUpperCase(),
+      name: name || contact?.name || pid,
+      seasons: {},
+      gseasons: {}
+    };
+    d.players.push(p);
+  }
+
+  p.seasons = p.seasons || {};
+  p.gseasons = p.gseasons || {};
+
+  if (position === 'G') {
+    delete p.seasons[season];
+    p.gseasons[season] = { team: target_team, gp: 0, w: 0, l: 0, ga: 0, so: 0 };
+  } else {
+    delete p.gseasons[season];
+    p.seasons[season] = { team: target_team, pos: position, gp: 0, g: 0, a: 0, pts: 0 };
+  }
+
+  if (env.SHEETS_KV) {
+    await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+  }
+
+  await env.DB.prepare(
+    `UPDATE contacts
+        SET preferred_team = ?, role = 'roster', position = ?, is_goalie = ?, is_sub = 0
+      WHERE player_id = ?`
+  ).bind(target_team, position, position === 'G' ? 1 : 0, pid).run();
+
+  const openEvents = (await env.DB.prepare('SELECT id FROM events WHERE season = ? AND state = \'open\'').bind(season).all()).results || [];
+  const now = new Date().toISOString();
+  for (const ev of openEvents) {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at)
+       VALUES (?, ?, ?, 'pending', 'roster', 'auto', ?)`
+    ).bind(ev.id, pid, target_team, now).run();
+  }
+
+  return Response.json({ ok: true, player_id: pid, team: target_team });
+}
+
+async function teamsPage(env = null, isAuthed = false) {
+  const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  return page('Équipes', `
+  <style>
+    .wrap { max-width: 1200px !important; }
+    .teams-top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:20px; }
+    .teams-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(270px, 1fr)); gap:16px; margin-bottom:28px; }
+    .team-card { background:#fff; border-radius:6px; border:1px solid var(--rule); overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.05); display:flex; flex-direction:column; }
+    .team-card-header { padding:12px 14px; font-weight:700; display:flex; justify-content:space-between; align-items:center; }
+    .team-card-header.red { background:#c9152f; color:#fff; }
+    .team-card-header.blue { background:#2a5fa8; color:#fff; }
+    .team-card-header.white { background:#ffffff; color:#0f172a; border-bottom:1px solid #cbd5e1; }
+    .team-card-header.black { background:#1c1f24; color:#fff; }
+    .team-title { font-family:'Barlow Condensed',sans-serif; font-size:22px; font-weight:800; letter-spacing:0.02em; display:flex; align-items:center; gap:8px; }
+    .team-stats-lbl { font-size:12px; font-weight:600; opacity:0.9; }
+    .team-card-body { padding:10px 14px; flex-grow:1; }
+    .player-row { display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--rule); font-size:13px; gap:8px; }
+    .player-row:last-child { border-bottom:none; }
+    .player-left { display:flex; align-items:center; gap:8px; overflow:hidden; }
+    .pos-pill { display:inline-block; font-size:11px; font-weight:800; width:22px; height:22px; line-height:22px; text-align:center; border-radius:3px; flex-shrink:0; font-family:'Barlow Condensed',sans-serif; }
+    .pos-a { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+    .pos-d { background:#ecfdf5; color:#047857; border:1px solid #a7f3d0; }
+    .pos-g { background:#faf5ff; color:#6b21a8; border:1px solid #e9d5ff; font-weight:900; }
+    .player-name { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .player-stats { font-size:11px; color:var(--soft); margin-left:4px; }
+    .player-actions { display:flex; gap:4px; flex-shrink:0; }
+    .mini-btn { font:inherit; font-family:'Barlow Condensed',sans-serif; font-size:12px; font-weight:700; padding:2px 6px; border-radius:3px; border:1px solid var(--rule2); background:#fff; cursor:pointer; line-height:1.2; }
+    .mini-btn:hover { background:#f1f5f9; }
+    .mini-btn.trade { color:var(--blue); border-color:#93c5fd; }
+    .mini-btn.move { color:#0f766e; border-color:#99f6e4; }
+    .mini-btn.remove { color:var(--red); border-color:#fca5a5; }
+    .sec-box { background:#fff; border:1px solid var(--rule); border-radius:6px; padding:18px; margin-bottom:24px; }
+    .sec-title { font-family:'Barlow Condensed',sans-serif; font-size:20px; font-weight:700; margin-top:0; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
+    .act-btn { font:inherit; font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:13px; padding:6px 12px; border-radius:3px; cursor:pointer; border:1px solid var(--rule2); background:#fff; text-decoration:none; display:inline-flex; align-items:center; gap:4px; line-height:1.2; }
+    .act-btn:hover { background:#f1f5f9; }
+    .act-btn.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .act-btn.primary:hover { opacity:0.9; }
+    .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); display:none; align-items:center; justify-content:center; z-index:9999; padding:16px; }
+    .modal-card { background:#fff; border-radius:6px; max-width:520px; width:100%; max-height:90vh; overflow-y:auto; padding:24px; box-shadow:0 10px 25px rgba(0,0,0,0.2); }
+    .form-group { margin-bottom:14px; }
+    .form-group label { display:block; font-size:12px; font-weight:700; color:var(--soft); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.03em; }
+    .form-control { width:100%; font:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; box-sizing:border-box; }
+    .form-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  </style>
+  ${adminTabs('teams', isAuthed)}
+  <h1 data-i18n="title">Alignements & Équipes</h1>
+  ${renderKeyGate(isAuthed)}
+  <div id="main"${isAuthed ? '' : ' style="display:none"'}>
+    <div class="teams-top">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <label for="teams-season-sel" style="font-weight:700; font-size:15px;" data-i18n="seasonLbl">Saison :</label>
+        <select id="teams-season-sel" style="font:inherit; font-weight:600; padding:6px 12px; border:1px solid var(--rule2); border-radius:3px; background:#fff;"></select>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="act-btn" id="btn-refresh-teams" data-i18n="refreshBtn">🔄 Rafraîchir</button>
+        <button class="act-btn primary" id="btn-open-add-player" data-i18n="addPlayerBtn">+ Ajouter un joueur</button>
+      </div>
+    </div>
+
+    <!-- Read-only archive banner -->
+    <div id="teams-readonly-banner" style="display:none; background:#fffbeb; border:1px solid #fde68a; border-left:4px solid #f59e0b; color:#92400e; padding:12px 16px; border-radius:4px; margin-bottom:20px; font-size:14px; font-weight:600; align-items:center; gap:10px;">
+      <span style="font-size:18px;">🔒</span>
+      <div id="teams-readonly-banner-text" data-i18n="readonlyBanner">
+        <b>Saison archivée (Mode consultation seule)</b> — Les alignements, échanges et ajouts sont verrouillés pour cette saison passée.
+      </div>
+    </div>
+
+    <!-- 4 Team Cards Grid -->
+    <div class="teams-grid">
+      <!-- Red -->
+      <div class="team-card">
+        <div class="team-card-header red">
+          <div class="team-title">🔴 Red</div>
+          <div class="team-stats-lbl" id="stats-red">0 joueur</div>
+        </div>
+        <div class="team-card-body" id="list-red">
+          <div style="color:var(--soft); font-size:13px; text-align:center; padding:16px;" data-i18n="loading">Chargement...</div>
+        </div>
+      </div>
+
+      <!-- Blue -->
+      <div class="team-card">
+        <div class="team-card-header blue">
+          <div class="team-title">🔵 Blue</div>
+          <div class="team-stats-lbl" id="stats-blue">0 joueur</div>
+        </div>
+        <div class="team-card-body" id="list-blue">
+          <div style="color:var(--soft); font-size:13px; text-align:center; padding:16px;" data-i18n="loading">Chargement...</div>
+        </div>
+      </div>
+
+      <!-- White -->
+      <div class="team-card">
+        <div class="team-card-header white">
+          <div class="team-title">⚪ White</div>
+          <div class="team-stats-lbl" id="stats-white">0 joueur</div>
+        </div>
+        <div class="team-card-body" id="list-white">
+          <div style="color:var(--soft); font-size:13px; text-align:center; padding:16px;" data-i18n="loading">Chargement...</div>
+        </div>
+      </div>
+
+      <!-- Black -->
+      <div class="team-card">
+        <div class="team-card-header black">
+          <div class="team-title">⚫ Black</div>
+          <div class="team-stats-lbl" id="stats-black">0 joueur</div>
+        </div>
+        <div class="team-card-body" id="list-black">
+          <div style="color:var(--soft); font-size:13px; text-align:center; padding:16px;" data-i18n="loading">Chargement...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sub Pool & Free Agents Section -->
+    <div class="sec-box">
+      <div class="sec-title">
+        <span>🧤 <span data-i18n="subPoolTitle">Pool de substituts & Joueurs libres</span></span>
+        <span id="subs-count" style="font-size:14px; font-weight:normal; color:var(--soft);"></span>
+      </div>
+      <div id="subs-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">
+        <div style="color:var(--soft); font-size:13px; padding:10px;" data-i18n="loadingSubs">Chargement des substituts...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Trade -->
+  <div class="modal-overlay" id="trade-modal">
+    <div class="modal-card">
+      <h2 style="margin-top:0; margin-bottom:12px; font-size:20px;" data-i18n="tradeModalTitle">⇄ Échanger un joueur (Trade)</h2>
+      <p style="font-size:13px; color:var(--soft); margin-bottom:16px;" data-i18n="tradeModalDesc">
+        Sélectionnez le joueur de l'autre équipe à échanger. Les alignements officiels et les présences pour les matchs ouverts de la saison seront immédiatement mis à jour.
+      </p>
+      <input type="hidden" id="trade-player-a-id">
+      <div class="form-group">
+        <label data-i18n="tradePlayerALabel">Joueur à échanger (Équipe actuelle)</label>
+        <div id="trade-player-a-info" style="font-weight:700; font-size:15px; padding:8px 10px; background:#f1f5f9; border-radius:3px;"></div>
+      </div>
+      <div class="form-group">
+        <label for="trade-player-b-sel" data-i18n="tradePlayerBLabel">Échanger contre :</label>
+        <select id="trade-player-b-sel" class="form-control" required></select>
+      </div>
+      <div id="trade-msg" style="font-size:13px; margin-bottom:12px; display:none;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" class="act-btn" id="trade-cancel" data-i18n="cancelBtn">Annuler</button>
+        <button type="button" class="act-btn primary" id="trade-submit" data-i18n="tradeConfirmBtn">Confirmer l'échange ⇄</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Move -->
+  <div class="modal-overlay" id="move-modal">
+    <div class="modal-card">
+      <h2 style="margin-top:0; margin-bottom:12px; font-size:20px;" data-i18n="moveModalTitle">➔ Transférer un joueur</h2>
+      <p style="font-size:13px; color:var(--soft); margin-bottom:16px;" data-i18n="moveModalDesc">
+        Déplacer le joueur vers une nouvelle équipe ou vers le pool de substituts / inactif (abandon de saison).
+      </p>
+      <input type="hidden" id="move-player-id">
+      <div class="form-group">
+        <label data-i18n="movePlayerLabel">Joueur</label>
+        <div id="move-player-info" style="font-weight:700; font-size:15px; padding:8px 10px; background:#f1f5f9; border-radius:3px;"></div>
+      </div>
+      <div class="form-group">
+        <label for="move-target-team" data-i18n="newDestLabel">Nouvelle destination</label>
+        <select id="move-target-team" class="form-control" required>
+          <option value="Red" data-i18n="optTeamRed">🔴 Équipe Red</option>
+          <option value="Blue" data-i18n="optTeamBlue">🔵 Équipe Blue</option>
+          <option value="White" data-i18n="optTeamWhite">⚪ Équipe White</option>
+          <option value="Black" data-i18n="optTeamBlack">⚫ Équipe Black</option>
+          <option value="sub" data-i18n="optSubPool">🧤 Pool de substituts</option>
+          <option value="none" data-i18n="optDropout">🚫 Inactif / Abandon (Drop-out)</option>
+        </select>
+      </div>
+      <div class="form-group" id="group-move-pos">
+        <label for="move-pos" data-i18n="posLabel">Position</label>
+        <select id="move-pos" class="form-control">
+          <option value="A" data-i18n="posAtt">Attaquant (A)</option>
+          <option value="D" data-i18n="posDef">Défenseur (D)</option>
+          <option value="G" data-i18n="posGoalie">Gardien (G)</option>
+        </select>
+      </div>
+      <div id="move-msg" style="font-size:13px; margin-bottom:12px; display:none;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" class="act-btn" id="move-cancel" data-i18n="cancelBtn">Annuler</button>
+        <button type="button" class="act-btn primary" id="move-submit" data-i18n="moveConfirmBtn">Confirmer le transfert</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Add Player -->
+  <div class="modal-overlay" id="add-player-modal">
+    <div class="modal-card">
+      <h2 style="margin-top:0; margin-bottom:12px; font-size:20px;" data-i18n="addModalTitle">+ Ajouter un joueur à l'alignement</h2>
+      <div style="display:flex; gap:10px; margin-bottom:14px;">
+        <label style="cursor:pointer;"><input type="radio" name="add-type" id="add-type-existing" value="existing" checked> <span data-i18n="chooseExisting">Choisir parmi les joueurs de la ligue</span></label>
+        <label style="cursor:pointer;"><input type="radio" name="add-type" id="add-type-new" value="new"> <span data-i18n="createNew">Créer un nouveau joueur</span></label>
+      </div>
+
+      <form id="add-player-form">
+        <div id="section-add-existing" class="form-group">
+          <label for="add-player-sel" data-i18n="selectExistingLabel">Sélectionner le joueur</label>
+          <select id="add-player-sel" class="form-control"></select>
+        </div>
+
+        <div id="section-add-new" style="display:none;">
+          <div class="form-group">
+            <label for="add-new-name" data-i18n="fullNameLabel">Nom complet (Prénom et Nom)</label>
+            <input type="text" id="add-new-name" class="form-control" data-i18n-ph="fullNamePh" placeholder="ex: Marc Tremblay">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="add-new-email" data-i18n="emailLabel">Courriel</label>
+              <input type="email" id="add-new-email" class="form-control" placeholder="ex: marc@example.com">
+            </div>
+            <div class="form-group">
+              <label for="add-new-phone" data-i18n="phoneLabel">Téléphone</label>
+              <input type="tel" id="add-new-phone" class="form-control" placeholder="ex: 514-555-0123">
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="add-target-team" data-i18n="teamLabel">Équipe</label>
+            <select id="add-target-team" class="form-control" required>
+              <option value="Red">🔴 Red</option>
+              <option value="Blue">🔵 Blue</option>
+              <option value="White">⚪ White</option>
+              <option value="Black">⚫ Black</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="add-position" data-i18n="posLabel">Position</label>
+            <select id="add-position" class="form-control">
+              <option value="A" data-i18n="posAtt">Attaquant (A)</option>
+              <option value="D" data-i18n="posDef">Défenseur (D)</option>
+              <option value="G" data-i18n="posGoalie">Gardien (G)</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="add-player-msg" style="font-size:13px; margin-bottom:12px; display:none;"></div>
+
+        <div style="display:flex; justify-content:flex-end; gap:10px;">
+          <button type="button" class="act-btn" id="add-player-cancel" data-i18n="cancelBtn">Annuler</button>
+          <button type="submit" class="act-btn primary" id="add-player-submit" data-i18n="addSubmitBtn">Ajouter à l'alignement</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+  const I18N_TEAMS = {
+    fr: {
+      title: "Alignements & Équipes",
+      seasonLbl: "Saison :",
+      refreshBtn: "🔄 Rafraîchir",
+      addPlayerBtn: "+ Ajouter un joueur",
+      readonlyBanner: "<b>Saison archivée (Mode consultation seule)</b> — Les alignements, échanges et ajouts sont verrouillés pour cette saison passée.",
+      activeSeason: "(Active)",
+      archiveSeason: "(Archive - Lecture seule)",
+      playerSingle: "joueur",
+      playerPlural: "joueurs",
+      goalieSingle: "gardien",
+      goaliePlural: "gardiens",
+      loading: "Chargement...",
+      loadingSubs: "Chargement des substituts...",
+      noPlayers: "Aucun joueur assigné.",
+      locked: "Verrouillé",
+      tradeBtn: "Échanger",
+      tradeTitle: "Échanger avec un joueur d'une autre équipe",
+      moveBtn: "Déplacer",
+      moveTitle: "Déplacer vers une autre équipe",
+      removeTitle: "Retirer de l'équipe",
+      removeConfirm: "Retirer {name} de l'équipe {team} (le joueur sera transféré aux substituts) ?",
+      subPoolTitle: "Pool de substituts & Joueurs libres",
+      availCount: "({n} disponibles)",
+      assignBtn: "Assigner",
+      noSubsPool: "Aucun joueur disponible dans le pool.",
+      tradeModalTitle: "⇄ Échanger un joueur (Trade)",
+      tradeModalDesc: "Sélectionnez le joueur de l'autre équipe à échanger. Les alignements officiels et les présences pour les matchs ouverts de la saison seront immédiatement mis à jour.",
+      tradePlayerALabel: "Joueur à échanger (Équipe actuelle)",
+      tradePlayerBLabel: "Échanger contre :",
+      cancelBtn: "Annuler",
+      tradeConfirmBtn: "Confirmer l'échange ⇄",
+      selectPlayerAlert: "Sélectionnez un joueur",
+      executingTrade: "Exécution de l'échange...",
+      moveModalTitle: "➔ Transférer un joueur",
+      moveModalDesc: "Déplacer le joueur vers une nouvelle équipe ou vers le pool de substituts / inactif (abandon de saison).",
+      movePlayerLabel: "Joueur",
+      currently: "actuellement :",
+      newDestLabel: "Nouvelle destination",
+      optTeamRed: "🔴 Équipe Red",
+      optTeamBlue: "🔵 Équipe Blue",
+      optTeamWhite: "⚪ Équipe White",
+      optTeamBlack: "⚫ Équipe Black",
+      optSubPool: "🧤 Pool de substituts",
+      optDropout: "🚫 Inactif / Abandon (Drop-out)",
+      posLabel: "Position",
+      posAtt: "Attaquant (A)",
+      posDef: "Défenseur (D)",
+      posGoalie: "Gardien (G)",
+      moveConfirmBtn: "Confirmer le transfert",
+      movingInProgress: "Transfert en cours...",
+      addModalTitle: "+ Ajouter un joueur à l'alignement",
+      chooseExisting: "Choisir parmi les joueurs de la ligue",
+      createNew: "Créer un nouveau joueur",
+      selectExistingLabel: "Sélectionner le joueur",
+      fullNameLabel: "Nom complet (Prénom et Nom)",
+      fullNamePh: "ex: Marc Tremblay",
+      emailLabel: "Courriel",
+      phoneLabel: "Téléphone",
+      teamLabel: "Équipe",
+      addSubmitBtn: "Ajouter à l'alignement",
+      addingInProgress: "Ajout en cours...",
+      nameReqAlert: "Nom complet requis",
+      teamPrefix: "Équipe"
+    },
+    en: {
+      title: "Rosters & Teams",
+      seasonLbl: "Season:",
+      refreshBtn: "🔄 Refresh",
+      addPlayerBtn: "+ Add a Player",
+      readonlyBanner: "<b>Archived Season (Read-Only)</b> — Rosters, trades, and additions are locked for this past season.",
+      activeSeason: "(Active)",
+      archiveSeason: "(Archive - Read-Only)",
+      playerSingle: "skater",
+      playerPlural: "skaters",
+      goalieSingle: "goalie",
+      goaliePlural: "goalies",
+      loading: "Loading...",
+      loadingSubs: "Loading substitutes...",
+      noPlayers: "No players assigned.",
+      locked: "Locked",
+      tradeBtn: "Trade",
+      tradeTitle: "Trade with a player from another team",
+      moveBtn: "Move",
+      moveTitle: "Move to another team",
+      removeTitle: "Remove from team",
+      removeConfirm: "Remove {name} from team {team} (player will be moved to sub pool)?",
+      subPoolTitle: "Sub Pool & Free Agents",
+      availCount: "({n} available)",
+      assignBtn: "Assign",
+      noSubsPool: "No players available in the pool.",
+      tradeModalTitle: "⇄ Trade Player",
+      tradeModalDesc: "Select a player from another team to trade with. Official rosters and RSVPs for upcoming games will update immediately.",
+      tradePlayerALabel: "Player to trade (Current team)",
+      tradePlayerBLabel: "Trade for:",
+      cancelBtn: "Cancel",
+      tradeConfirmBtn: "Confirm Trade ⇄",
+      selectPlayerAlert: "Please select a player",
+      executingTrade: "Processing trade...",
+      moveModalTitle: "➔ Transfer Player",
+      moveModalDesc: "Move player to a new team or to the sub pool / inactive (season drop-out).",
+      movePlayerLabel: "Player",
+      currently: "currently:",
+      newDestLabel: "New destination",
+      optTeamRed: "🔴 Team Red",
+      optTeamBlue: "🔵 Team Blue",
+      optTeamWhite: "⚪ Team White",
+      optTeamBlack: "⚫ Team Black",
+      optSubPool: "🧤 Sub Pool",
+      optDropout: "🚫 Inactive / Season Drop-out",
+      posLabel: "Position",
+      posAtt: "Forward (F)",
+      posDef: "Defenseman (D)",
+      posGoalie: "Goalie (G)",
+      moveConfirmBtn: "Confirm Transfer",
+      movingInProgress: "Transfer in progress...",
+      addModalTitle: "+ Add Player to Roster",
+      chooseExisting: "Choose from league player database",
+      createNew: "Create a new player",
+      selectExistingLabel: "Select player",
+      fullNameLabel: "Full name (First & Last)",
+      fullNamePh: "e.g. Marc Tremblay",
+      emailLabel: "Email",
+      phoneLabel: "Phone",
+      teamLabel: "Team",
+      addSubmitBtn: "Add to Roster",
+      addingInProgress: "Adding player...",
+      nameReqAlert: "Full name is required",
+      teamPrefix: "Team"
+    }
+  };
+
+  let currentLang = (localStorage.getItem('admin_lang') || 'fr').toLowerCase();
+  function t(k) {
+    const dict = I18N_TEAMS[currentLang] || I18N_TEAMS.fr;
+    return dict[k] !== undefined ? dict[k] : (I18N_TEAMS.fr[k] || k);
+  }
+
+  function applyLanguage(lang) {
+    currentLang = (lang || 'fr').toLowerCase();
+    const dict = I18N_TEAMS[currentLang] || I18N_TEAMS.fr;
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.getAttribute('data-i18n');
+      if (dict[key] !== undefined) {
+        if (key === 'readonlyBanner') el.innerHTML = dict[key];
+        else el.textContent = dict[key];
+      }
+    });
+    document.querySelectorAll('[data-i18n-ph]').forEach(el => {
+      const key = el.getAttribute('data-i18n-ph');
+      if (dict[key] !== undefined) el.setAttribute('placeholder', dict[key]);
+    });
+    if (teamsData) render();
+  }
+
+  window.addEventListener('admin_lang_changed', e => {
+    applyLanguage(e.detail.lang);
+  });
+
+  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+  const $ = i => document.getElementById(i);
+  const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let teamsData = null;
+
+  async function api(path, opts) {
+    const headers = { 'content-type': 'application/json' };
+    if (K) headers['x-admin'] = K;
+    const r = await fetch(path, Object.assign({ headers }, opts));
+    if (!r.ok) {
+      let errText = await r.text();
+      try { const errObj = JSON.parse(errText); if (errObj.error) errText = errObj.error; } catch(_) {}
+      throw new Error(errText);
+    }
+    return r.json();
+  }
+
+  async function load() {
+    try {
+      const season = $('teams-season-sel').value || '';
+      teamsData = await api('/admin/teams/data' + (season ? '?season=' + encodeURIComponent(season) : ''));
+      render();
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+  }
+
+  function render() {
+    if (!teamsData) return;
+    const seasons = teamsData.seasons || [];
+    const curSeason = teamsData.season || 'Fall 2026';
+    const isReadOnly = Boolean(teamsData.is_read_only);
+
+    const banner = $('teams-readonly-banner');
+    if (banner) banner.style.display = isReadOnly ? 'flex' : 'none';
+    const addBtn = $('btn-open-add-player');
+    if (addBtn) addBtn.style.display = isReadOnly ? 'none' : 'inline-flex';
+
+    const seasonSel = $('teams-season-sel');
+    const selectedVal = seasonSel.value || curSeason;
+    seasonSel.innerHTML = '';
+    seasons.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s + (s === teamsData.current_season ? ' ' + t('activeSeason') : ' ' + t('archiveSeason'));
+      if (s === selectedVal) opt.selected = true;
+      seasonSel.appendChild(opt);
+    });
+    seasonSel.onchange = () => load();
+
+    const TEAMS = ['Red', 'Blue', 'White', 'Black'];
+    TEAMS.forEach(tName => {
+      const listId = 'list-' + tName.toLowerCase();
+      const statsId = 'stats-' + tName.toLowerCase();
+      const players = (teamsData.teams && teamsData.teams[tName]) || [];
+
+      const goalies = players.filter(p => p.is_goalie || p.position === 'G').length;
+      const skaters = players.length - goalies;
+      $(statsId).textContent = skaters + ' ' + (skaters > 1 ? t('playerPlural') : t('playerSingle')) + ' · ' + goalies + ' ' + (goalies > 1 ? t('goaliePlural') : t('goalieSingle'));
+
+      if (players.length === 0) {
+        $(listId).innerHTML = '<div style="color:var(--soft); font-size:13px; text-align:center; padding:16px;">' + esc(t('noPlayers')) + '</div>';
+        return;
+      }
+
+      let h = '';
+      players.forEach(p => {
+        let posClass = 'pos-a';
+        if (p.position === 'D') posClass = 'pos-d';
+        if (p.is_goalie || p.position === 'G') posClass = 'pos-g';
+
+        const actionsHtml = isReadOnly
+          ? '<span style="font-size:11px; color:var(--soft); font-weight:600;">🔒 ' + esc(t('locked')) + '</span>'
+          : '<button class="mini-btn trade" data-trade-id="' + esc(p.id) + '" data-trade-team="' + esc(tName) + '" data-trade-name="' + esc(p.name) + '" title="' + esc(t('tradeTitle')) + '">⇄ ' + esc(t('tradeBtn')) + '</button>' +
+            '<button class="mini-btn move" data-move-id="' + esc(p.id) + '" data-move-team="' + esc(tName) + '" data-move-name="' + esc(p.name) + '" data-move-pos="' + esc(p.position || 'A') + '" title="' + esc(t('moveTitle')) + '">➔ ' + esc(t('moveBtn')) + '</button>' +
+            '<button class="mini-btn remove" data-remove-id="' + esc(p.id) + '" data-remove-team="' + esc(tName) + '" data-remove-name="' + esc(p.name) + '" title="' + esc(t('removeTitle')) + '">✕</button>';
+
+        h += '<div class="player-row">' +
+          '<div class="player-left">' +
+            '<span class="pos-pill ' + posClass + '">' + esc(p.position || 'A') + '</span>' +
+            '<span class="player-name">' + esc(p.name) + '</span>' +
+            (p.gp ? '<span class="player-stats">(' + p.gp + ' ' + (currentLang === 'en' ? 'GP' : 'PJ') + (p.pts ? ', ' + p.pts + ' PTS' : '') + ')</span>' : '') +
+          '</div>' +
+          '<div class="player-actions">' + actionsHtml + '</div>' +
+        '</div>';
+      });
+      $(listId).innerHTML = h;
+    });
+
+    // Subs & Available
+    const subs = teamsData.subs || [];
+    const available = teamsData.available || [];
+    $('subs-count').textContent = t('availCount').replace('{n}', subs.length + available.length);
+
+    let subH = '';
+    [...subs, ...available].forEach(c => {
+      const isG = c.is_goalie === 1 || (c.role && c.role.includes('goalie'));
+      const pos = isG ? 'G' : (c.position || 'A');
+      const posClass = isG ? 'pos-g' : (pos === 'D' ? 'pos-d' : 'pos-a');
+
+      const assignBtn = isReadOnly
+        ? ''
+        : '<button class="mini-btn" style="border-color:var(--blue); color:var(--blue); font-weight:700;" data-assign-id="' + esc(c.player_id) + '" data-assign-name="' + esc(c.name) + '" data-assign-pos="' + esc(pos) + '">+ ' + esc(t('assignBtn')) + '</button>';
+
+      subH += '<div style="background:#f8fafc; border:1px solid var(--rule); border-radius:4px; padding:8px 10px; display:flex; justify-content:space-between; align-items:center;">' +
+        '<div style="display:flex; align-items:center; gap:8px;">' +
+          '<span class="pos-pill ' + posClass + '">' + pos + '</span>' +
+          '<span style="font-weight:600; font-size:13px;">' + esc(c.name) + '</span>' +
+        '</div>' +
+        assignBtn +
+      '</div>';
+    });
+    $('subs-list').innerHTML = subH || '<div style="color:var(--soft); font-size:13px;">' + esc(t('noSubsPool')) + '</div>';
+
+    attachActions();
+  }
+
+  function attachActions() {
+    document.querySelectorAll('[data-trade-id]').forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.tradeId;
+        const name = b.dataset.tradeName;
+        const team = b.dataset.tradeTeam;
+        openTradeModal(id, name, team);
+      };
+    });
+
+    document.querySelectorAll('[data-move-id]').forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.moveId;
+        const name = b.dataset.moveName;
+        const team = b.dataset.moveTeam;
+        const pos = b.dataset.movePos;
+        openMoveModal(id, name, team, pos);
+      };
+    });
+
+    document.querySelectorAll('[data-remove-id]').forEach(b => {
+      b.onclick = async () => {
+        const id = b.dataset.removeId;
+        const name = b.dataset.removeName;
+        const team = b.dataset.removeTeam;
+        const confirmMsg = t('removeConfirm').replace('{name}', name).replace('{team}', team);
+        if (!confirm(confirmMsg)) return;
+        try {
+          await api('/admin/teams/move', {
+            method: 'POST',
+            body: JSON.stringify({
+              season: $('teams-season-sel').value,
+              player_id: id,
+              target_team: 'sub'
+            })
+          });
+          load();
+        } catch (e) {
+          alert('Erreur: ' + e.message);
+        }
+      };
+    });
+
+    document.querySelectorAll('[data-assign-id]').forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.assignId;
+        const name = b.dataset.assignName;
+        const pos = b.dataset.assignPos;
+        openMoveModal(id, name, 'Pool', pos);
+      };
+    });
+  }
+
+  function openTradeModal(id, name, team) {
+    $('trade-player-a-id').value = id;
+    $('trade-player-a-info').textContent = name + ' (' + team + ')';
+    $('trade-msg').style.display = 'none';
+
+    const sel = $('trade-player-b-sel');
+    sel.innerHTML = '';
+    const TEAMS = ['Red', 'Blue', 'White', 'Black'].filter(tName => tName !== team);
+    TEAMS.forEach(tName => {
+      const players = (teamsData.teams && teamsData.teams[tName]) || [];
+      if (!players.length) return;
+      const grp = document.createElement('optgroup');
+      grp.label = t('teamPrefix') + ' ' + tName;
+      players.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name + ' (' + (p.position || 'A') + ')';
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    });
+
+    $('trade-modal').style.display = 'flex';
+  }
+
+  $('trade-cancel').onclick = () => { $('trade-modal').style.display = 'none'; };
+
+  $('trade-submit').onclick = async () => {
+    const playerAId = $('trade-player-a-id').value;
+    const playerBId = $('trade-player-b-sel').value;
+    const btn = $('trade-submit');
+    const msg = $('trade-msg');
+    if (!playerAId || !playerBId) { alert(t('selectPlayerAlert')); return; }
+
+    btn.disabled = true;
+    msg.style.display = 'block';
+    msg.style.color = 'var(--soft)';
+    msg.textContent = t('executingTrade');
+    try {
+      await api('/admin/teams/trade', {
+        method: 'POST',
+        body: JSON.stringify({
+          season: $('teams-season-sel').value,
+          player_a_id: playerAId,
+          player_b_id: playerBId
+        })
+      });
+      $('trade-modal').style.display = 'none';
+      load();
+    } catch (e) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = 'Erreur: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  function openMoveModal(id, name, currentTeam, pos) {
+    $('move-player-id').value = id;
+    $('move-player-info').textContent = name + (currentTeam ? ' (' + t('currently') + ' ' + currentTeam + ')' : '');
+    $('move-pos').value = pos || 'A';
+    $('move-msg').style.display = 'none';
+    $('move-modal').style.display = 'flex';
+  }
+
+  $('move-cancel').onclick = () => { $('move-modal').style.display = 'none'; };
+
+  $('move-submit').onclick = async () => {
+    const id = $('move-player-id').value;
+    const targetTeam = $('move-target-team').value;
+    const pos = $('move-pos').value;
+    const btn = $('move-submit');
+    const msg = $('move-msg');
+
+    btn.disabled = true;
+    msg.style.display = 'block';
+    msg.style.color = 'var(--soft)';
+    msg.textContent = t('movingInProgress');
+    try {
+      await api('/admin/teams/move', {
+        method: 'POST',
+        body: JSON.stringify({
+          season: $('teams-season-sel').value,
+          player_id: id,
+          target_team: targetTeam,
+          position: pos
+        })
+      });
+      $('move-modal').style.display = 'none';
+      load();
+    } catch (e) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = 'Erreur: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  $('btn-open-add-player').onclick = () => {
+    const sel = $('add-player-sel');
+    sel.innerHTML = '';
+    const pool = [...(teamsData.subs || []), ...(teamsData.available || [])];
+    pool.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.player_id;
+      opt.textContent = c.name + (c.is_goalie ? ' (' + (currentLang === 'en' ? 'Goalie' : 'Gardien') + ')' : '');
+      sel.appendChild(opt);
+    });
+
+    $('add-player-msg').style.display = 'none';
+    $('add-player-modal').style.display = 'flex';
+  };
+
+  $('add-type-existing').onchange = () => {
+    $('section-add-existing').style.display = 'block';
+    $('section-add-new').style.display = 'none';
+  };
+  $('add-type-new').onchange = () => {
+    $('section-add-existing').style.display = 'none';
+    $('section-add-new').style.display = 'block';
+  };
+
+  $('add-player-cancel').onclick = () => { $('add-player-modal').style.display = 'none'; };
+
+  $('add-player-form').onsubmit = async e => {
+    e.preventDefault();
+    const isNew = $('add-type-new').checked;
+    const btn = $('add-player-submit');
+    const msg = $('add-player-msg');
+
+    const payload = {
+      season: $('teams-season-sel').value,
+      target_team: $('add-target-team').value,
+      position: $('add-position').value
+    };
+
+    if (isNew) {
+      payload.name = $('add-new-name').value.trim();
+      payload.email = $('add-new-email').value.trim();
+      payload.phone = $('add-new-phone').value.trim();
+      if (!payload.name) { alert(t('nameReqAlert')); return; }
+    } else {
+      payload.player_id = $('add-player-sel').value;
+      if (!payload.player_id) { alert(t('selectPlayerAlert')); return; }
+    }
+
+    btn.disabled = true;
+    msg.style.display = 'block';
+    msg.style.color = 'var(--soft)';
+    msg.textContent = t('addingInProgress');
+    try {
+      await api('/admin/teams/add', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      $('add-player-modal').style.display = 'none';
+      load();
+    } catch (err) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = 'Erreur: ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  $('btn-refresh-teams').onclick = () => load();
+
+  async function unlock(candidate) {
+    const prev = K;
+    K = candidate;
+    try {
+      await api('/admin/teams/data');
+      localStorage.setItem('adminkey', K);
+      try {
+        document.cookie = 'admin_key=' + encodeURIComponent(K) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure';
+      } catch (_) {}
+      if (window.history && window.history.replaceState) {
+        const u = new URL(location);
+        u.searchParams.delete('key'); u.searchParams.delete('k'); u.searchParams.delete('t');
+        window.history.replaceState({}, document.title, u.pathname + u.search);
+      }
+      $('gate').style.display = 'none';
+      $('main').style.display = '';
+      document.querySelectorAll('.picker').forEach(p => {
+        p.style.display = 'flex';
+        p.querySelectorAll('a').forEach(a => {
+          try {
+            const u = new URL(a.href, location.origin);
+            if (K) u.searchParams.set('key', K);
+            a.href = u.pathname + u.search;
+          } catch (_) {}
+        });
+      });
+      load();
+      return true;
+    } catch (e) { K = prev; return false; }
+  }
+
+  $('go').addEventListener('click', async () => {
+    const val = $('key').value.trim();
+    if (!val) { $('err').textContent = 'Entrez une clé svp'; return; }
+    $('go').disabled = true;
+    $('err').textContent = 'Vérification...';
+    const ok = await unlock(val);
+    $('go').disabled = false;
+    if (!ok) $('err').textContent = 'Clé invalide / Invalid key';
+  });
+
+  $('key').addEventListener('keydown', e => {
+    if (e.key === 'Enter') $('go').click();
+  });
+
+  if (currentLang !== 'fr') {
+    applyLanguage(currentLang);
+  }
+
+  if (K) {
+    unlock(K).then(ok => {
+      if (!ok) $('err').textContent = 'Clé invalide / Invalid key';
+    });
+  } else if (${isAuthed ? 'true' : 'false'}) {
+    $('gate').style.display = 'none';
+    $('main').style.display = '';
+    document.querySelectorAll('.picker').forEach(p => p.style.display = 'flex');
+    load();
+  }
+  </script>`, logoTooltip);
+}
+
+const TEAM_COLORS = {
+  'Black': '#1c1f24',
+  'Blue': '#2a5fa8',
+  'Red': '#c9152f',
+  'White': '#ffffff'
+};
+
+export async function handleLogoSvg(req, env) {
+  let rects = `
+    <rect y="0" width="30" height="22" fill="#2a5fa8"></rect>
+    <rect y="26" width="30" height="22" fill="#1c1f24"></rect>
+    <rect y="52" width="30" height="22" fill="#ffffff"></rect>
+    <rect y="78" width="30" height="22" fill="#c9152f"></rect>
+    <rect x="0.8" y="26.8" width="28.4" height="20.4" fill="none" stroke="#eef0f3" stroke-width="1.6"></rect>
+  `;
+
+  try {
+    let kv = env?.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null;
+    if (!kv) {
+      const res = await fetch(`${env?.SITE_URL || 'https://smbhl.com'}/data.json`);
+      if (res.ok) kv = await res.text();
+    }
+    if (kv) {
+      const data = JSON.parse(kv);
+      const s = data.seasons?.find(x => x.name === data.current_season) || data.seasons?.[0];
+      if (s && s.standings && s.standings.some(t => t.gp > 0)) {
+        const regGoals = getRegularGoalsByTeam(data, s.name);
+        const sorted = sortStandings(s.standings, regGoals);
+        const yPos = [0, 26, 52, 78];
+        let blackY = 26;
+        let dynamicRects = '';
+        sorted.forEach((t, i) => {
+          const y = yPos[i];
+          if (t.team === 'Black') blackY = y;
+          dynamicRects += `<rect y="${y}" width="30" height="22" fill="${TEAM_COLORS[t.team] || '#1c1f24'}"></rect>`;
+        });
+        dynamicRects += `<rect x="0.8" y="${(blackY + 0.8).toFixed(1)}" width="28.4" height="20.4" fill="none" stroke="#eef0f3" stroke-width="1.6"></rect>`;
+        rects = dynamicRects;
+      }
+    }
+  } catch (e) {}
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 342 104" width="342" height="104" role="img" aria-label="SMBHL"><title>SMBHL horizontal lockup</title><g transform="scale(1,1.04)">${rects}</g><g transform="translate(52,0) scale(0.74)"><path fill="#eef0f3" d="M32 0C48 0 58.5 8.5 60 23H41C40 17 36.5 14.5 31.5 14.5C25.5 14.5 21.5 18.5 21.5 25.5C21.5 31.5 24.5 34.5 34 38.5L44 43C55 48 61 56.5 61 71C61 88 49 100.5 31 100.5C13 100.5 1.5 89.5 0 73.5H19C20 80.5 24 85 30.5 85C37 85 41 81 41 74.5C41 68.5 38 65.5 28 61.5L18 57C7 52 1 43.5 1 29C1 12 15 0 32 0Z" transform="translate(0,0)"></path><path fill="#eef0f3" d="M0 0H23L39 41L55 0H78V100H58V36L45 68H33L20 36V100H0Z" transform="translate(71,0)"></path><path fill="#eef0f3" fill-rule="evenodd" d="M0 0H40C52.5 0 61 8.5 61 22.5C61 33 56 40.5 48 44.5C57.5 48 63 56.5 63 68.5C63 84.5 52 100 37.5 100H0ZM20 15.5V38H37C43.5 38 46.5 33 46.5 27C46.5 20.5 43.5 15.5 37 15.5ZM20 55V84.5H36C43 84.5 46.5 79 46.5 70C46.5 61 43 55 36 55Z" transform="translate(159,0)"></path><path fill="#eef0f3" d="M0 0H20V40H42V0H62V100H42V60H20V100H0Z" transform="translate(232,0)"></path><path fill="#eef0f3" d="M0 0H20V80H55V100H0Z" transform="translate(304,0)"></path></g><circle cx="330" cy="66" r="8" fill="#f2731f"></circle><g transform="translate(52,84) scale(0.2)"><path fill="#eef0f3" d="M32 0C48 0 58.5 8.5 60 23H41C40 17 36.5 14.5 31.5 14.5C25.5 14.5 21.5 18.5 21.5 25.5C21.5 31.5 24.5 34.5 34 38.5L44 43C55 48 61 56.5 61 71C61 88 49 100.5 31 100.5C13 100.5 1.5 89.5 0 73.5H19C20 80.5 24 85 30.5 85C37 85 41 81 41 74.5C41 68.5 38 65.5 28 61.5L18 57C7 52 1 43.5 1 29C1 12 15 0 32 0Z" transform="translate(0,0)"></path><path fill="#eef0f3" d="M0 0H20V100H0Z" transform="translate(79,0)"></path><path fill="#eef0f3" d="M0 0H22L42 56V0H62V100H40L20 44V100H0Z" transform="translate(117,0)"></path><path fill="#eef0f3" d="M32 0C50 0 60.5 12 61.5 28.5H41.5C40.5 20.5 37.5 16 31.5 16C24.5 16 21 22 21 34V66C21 78 24.5 84 31.5 84C37.5 84 40.5 79.5 41.5 71.5H61.5C60.5 88 50 100 32 100C13 100 1 88 1 68V32C1 12 13 0 32 0Z" transform="translate(197,0)"></path><path fill="#eef0f3" d="M0 0H54V16H20V42H48V58H20V84H54V100H0Z" transform="translate(276,0)"></path><path fill="#eef0f3" d="M2 32C2 12 14 0 31 0C48 0 58 11 58 28C58 41 52 50 40 61L23 76H58V100H1V79L31 51C36 46 38 42 38 34C38 24 35 17 30 17C24 17 21 24 21 36H2Z" transform="translate(374,0)"></path><path fill="#eef0f3" fill-rule="evenodd" d="M28 0C46 0 56 12 56 32V68C56 88 46 100 28 100C10 100 0 88 0 68V32C0 12 10 0 28 0ZM20 32V68C20 80 22.5 84.5 28 84.5C33.5 84.5 36 80 36 68V32C36 20 33.5 15.5 28 15.5C22.5 15.5 20 20 20 32Z" transform="translate(450,0)"></path><path fill="#eef0f3" fill-rule="evenodd" d="M28 0C46 0 56 12 56 32V68C56 88 46 100 28 100C10 100 0 88 0 68V32C0 12 10 0 28 0ZM20 32V68C20 80 22.5 84.5 28 84.5C33.5 84.5 36 80 36 68V32C36 20 33.5 15.5 28 15.5C22.5 15.5 20 20 20 32Z" transform="translate(524,0)"></path><path fill="#eef0f3" d="M8 0H54V18H27V37H34C50 37 60 48 60 67C60 86 47 100 30 100C13 100 1 89 0 73H20C21 80 25 84 30 84C36 84 40 78 40 67C40 57 36 52 29 52H8Z" transform="translate(598,0)"></path></g></svg>`;
+
+  return new Response(svg, {
+    headers: {
+      'content-type': 'image/svg+xml; charset=utf-8',
+      'access-control-allow-origin': '*',
+      'cache-control': 'public, max-age=300'
+    }
+  });
+}
+
+async function handleChampionPhoto(req, env, url) {
+  const season = url.searchParams.get('s') || url.searchParams.get('season') || 'Fall 2026';
+  const photo = await env.SHEETS_KV.get(`champion_photo:${season}`, { type: 'arrayBuffer' });
+  if (!photo) return new Response('Photo not found', { status: 404 });
+  const mime = await env.SHEETS_KV.get(`champion_photo_mime:${season}`) || 'image/jpeg';
+  return new Response(photo, {
+    headers: {
+      'content-type': mime,
+      'access-control-allow-origin': '*',
+      'cache-control': 'public, max-age=86400'
+    }
+  });
+}
+
+export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runSchedule(env).then(log => console.log('cron:', log.join(' | '))));
+    ctx.waitUntil(cleanupOldReviews(env));
+  },
+
+  async email(message, env, ctx) {
+    ctx.waitUntil(handleScoresheetEmail(message, env, sendMail, env.ADMIN_EMAIL || ADMIN_EMAIL));
+  },
+
+  async fetch(req, env, ctx) {
+    const url = new URL(req.url);
+    try {
+      if (url.pathname.startsWith('/admin') && url.hostname.endsWith('workers.dev')) {
+        const canonicalBase = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+        return Response.redirect(`${canonicalBase}${url.pathname}${url.search}`, 302);
+      }
+      if ((url.pathname === '/api/logo.svg' || url.pathname === '/img/logo.svg' || url.pathname === '/img/smbhl-horizontal-reversed.svg') && req.method === 'GET')
+        return await handleLogoSvg(req, env);
+      if (url.pathname === '/rsvp' && req.method === 'GET')
+        return new Response(await rsvpGet(req, env, url),
+          { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if (url.pathname === '/rsvp' && req.method === 'POST')
+        return await rsvpPost(req, env, url);
+      if (url.pathname === '/rsvp/absences' && req.method === 'POST')
+        return await rsvpAbsencesPost(req, env, url);
+      if (url.pathname === '/team-rsvp' && req.method === 'GET')
+        return new Response(await teamGet(req, env, url),
+          { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if (url.pathname === '/team-rsvp' && req.method === 'POST')
+        return await teamPost(req, env, url);
+      const teamRedirectMatch = url.pathname.match(/^\/(?:t|team)\/(red|blue|white|black)$/i);
+      if (teamRedirectMatch && (req.method === 'GET' || req.method === 'HEAD')) {
+        const teamName = teamRedirectMatch[1].charAt(0).toUpperCase() + teamRedirectMatch[1].slice(1).toLowerCase();
+        const ev = (await env.DB.prepare(
+          `SELECT season FROM events WHERE state='open' ORDER BY week LIMIT 1`).first())
+          || (await env.DB.prepare(`SELECT season FROM events ORDER BY date DESC LIMIT 1`).first());
+        if (!ev) return notice('Aucun match ouvert', 'No open game');
+        const salt = await teamSalt(env.DB, ev.season, teamName);
+        const t = await hmac(env.RSVP_SECRET, teamMsg(ev.season, teamName, salt));
+        const target = `${url.origin}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${teamName}&t=${t}`;
+        return Response.redirect(target, 302);
+      }
+      if (url.pathname === '/admin' || url.pathname === '/admin/')
+        return Response.redirect(url.origin + '/admin/board', 302);
+      if ((url.pathname === '/admin/board' || url.pathname === '/admin/board/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(await boardPage(env, isAuthed),
+          { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname === '/admin/board/data') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        return await boardData(env, url);
+      }
+      if ((url.pathname === '/admin/subs' || url.pathname === '/admin/subs/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(await subsPage(env, isAuthed),
+          { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname === '/admin/subs/data') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        return await subsData(env, url);
+      }
+      if (url.pathname === '/admin/subs/reassign' && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        return await reassignSub(req, env);
+      }
+      if (url.pathname === '/admin/subs/call' && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const { event_id, team, need } = await req.json().catch(() => ({}));
+        const ev = await getEvent(env.DB, event_id);
+        if (!ev) return new Response('no event', { status: 404 });
+        const count = await callSubs(env, ev, team, need);
+        return Response.json({ ok: true, count });
+      }
+      if (url.pathname === '/admin/absences' && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        return await adminAbsenceAction(req, env);
+      }
+      if (url.pathname === '/api/sheet-data') {
+        if (req.method === 'OPTIONS') {
+          return new Response(null, {
+            headers: {
+              'access-control-allow-origin': '*',
+              'access-control-allow-methods': 'GET, OPTIONS',
+              'access-control-allow-headers': 'content-type'
+            }
+          });
+        }
+        return await sheetData(env, url);
+      }
+      if (url.pathname === '/admin/review' && req.method === 'GET')
+        return await handleReviewGet(req, env, url);
+      if (url.pathname === '/admin/review/upload' && req.method === 'POST')
+        return await handleReviewUpload(req, env);
+      if (url.pathname === '/admin/review/image' && req.method === 'GET')
+        return await handleReviewImage(req, env, url);
+      if (url.pathname === '/admin/review/publish' && req.method === 'POST')
+        return await handleReviewPublish(req, env, sendMail, env.ADMIN_EMAIL || ADMIN_EMAIL, ensureNextEvent);
+      if (url.pathname === '/admin/review/discard' && req.method === 'POST')
+        return await handleReviewDiscard(req, env);
+      if (url.pathname === '/admin/review/add-sheet' && req.method === 'POST')
+        return await handleReviewAddSheet(req, env);
+      if (url.pathname === '/admin/review/reprocess' && req.method === 'POST')
+        return await handleReviewReprocess(req, env);
+      if (url.pathname === '/api/data-json' && req.method === 'GET')
+        return await handleDataJson(env);
+      if (url.pathname === '/api/backups' && req.method === 'GET')
+        return await handleListBackups(env);
+      if (url.pathname === '/api/backups/download' && req.method === 'GET')
+        return await handleDownloadBackup(env, url);
+      if (url.pathname === '/api/team-whatsapp-links' && req.method === 'GET') {
+        const ev = await env.DB.prepare(
+          `SELECT * FROM events WHERE state='open' ORDER BY week LIMIT 1`).first();
+        if (!ev) return Response.json({ error: 'no open event' });
+        const base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+        const links = {};
+        for (const team of TEAMS) {
+          const salt = await teamSalt(env.DB, ev.season, team);
+          const t = await hmac(env.RSVP_SECRET, teamMsg(ev.season, team, salt));
+          links[team] = `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${team}&t=${t}`;
+        }
+        return Response.json({ season: ev.season, week: ev.week, date: ev.date, links });
+      }
+      if ((url.pathname === '/admin/schedule' || url.pathname === '/admin/schedule/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(await schedulePage(env, isAuthed),
+          { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname.startsWith('/admin/schedule')) {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const sub = url.pathname.replace(/^\/admin\/schedule/, '');
+        if ((sub === '/data' || sub === '/data/') && req.method === 'GET')
+          return await handleScheduleData(req, env, url);
+        if (sub === '/save' && req.method === 'POST')
+          return await handleScheduleSave(req, env);
+        if (sub === '/set-state' && req.method === 'POST')
+          return await handleScheduleSetState(req, env);
+        if (sub === '/delete' && req.method === 'POST')
+          return await handleScheduleDelete(req, env);
+        if (sub === '/import-fixture' && req.method === 'POST')
+          return await handleScheduleImportFixture(req, env);
+        if (sub === '/send-cancellation' && req.method === 'POST')
+          return await handleScheduleSendCancellation(req, env);
+        return new Response('not found', { status: 404 });
+      }
+      if ((url.pathname === '/admin/teams' || url.pathname === '/admin/teams/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(await teamsPage(env, isAuthed),
+          { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname.startsWith('/admin/teams')) {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const sub = url.pathname.replace(/^\/admin\/teams/, '');
+        if ((sub === '/data' || sub === '/data/') && req.method === 'GET')
+          return await handleTeamsData(req, env, url);
+        if (sub === '/move' && req.method === 'POST')
+          return await handleTeamsMove(req, env);
+        if (sub === '/trade' && req.method === 'POST')
+          return await handleTeamsTrade(req, env);
+        if (sub === '/add' && req.method === 'POST')
+          return await handleTeamsAdd(req, env);
+        return new Response('not found', { status: 404 });
+      }
+      if ((url.pathname === '/admin/emails' || url.pathname === '/admin/emails/' || url.pathname === '/admin/comms' || url.pathname === '/admin/comms/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(await emailsPage(env, isAuthed),
+          { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname.startsWith('/admin/emails') || url.pathname.startsWith('/admin/comms')) {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const sub = url.pathname.replace(/^\/admin\/(?:emails|comms)/, '');
+        if ((sub === '/data' || sub === '/data/') && req.method === 'GET')
+          return await handleEmailsData(req, env, url);
+        if (sub === '/settings' && req.method === 'POST')
+          return await handleEmailsSaveSettings(req, env);
+        if (sub === '/drain' && req.method === 'POST')
+          return await handleEmailsDrain(req, env);
+        if (sub === '/cancel' && req.method === 'POST')
+          return await handleEmailsCancelOutbox(req, env);
+        if (sub === '/broadcast' && req.method === 'POST')
+          return await handleEmailsBroadcast(req, env);
+        if (sub === '/league-message' && req.method === 'GET')
+          return await handleLeagueMessageGet(req, env, url);
+        if (sub === '/league-message' && req.method === 'POST')
+          return await handleLeagueMessageSave(req, env);
+        return new Response('not found', { status: 404 });
+      }
+      if ((url.pathname === '/admin/people' || url.pathname === '/admin/people/' || url.pathname === '/admin/contacts' || url.pathname === '/admin/contacts/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(await peoplePage(env, isAuthed),
+          { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname.startsWith('/admin/people') || url.pathname.startsWith('/admin/contacts')) {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const sub = url.pathname.replace(/^\/admin\/(?:people|contacts)/, '');
+        if ((sub === '/data' || sub === '/data/') && req.method === 'GET') return await peopleData(env);
+        if ((sub === '/search' || sub === '/search/') && req.method === 'GET') return await peopleSearch(env, url);
+        if ((sub === '' || sub === '/') && req.method === 'POST')
+          return await peopleAction(req, env);
+        return new Response('not found', { status: 404 });
+      }
+      if ((url.pathname === '/admin/finances' || url.pathname === '/admin/finances/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(await financesPage(env, isAuthed),
+          { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname.startsWith('/admin/finances')) {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        if (url.pathname === '/admin/finances/data' && req.method === 'GET')
+          return await handleFinancesData(req, env, url);
+        if (url.pathname === '/admin/finances/pricing' && req.method === 'POST')
+          return await handleFinancesPricingSave(req, env);
+        if (url.pathname === '/admin/finances/player' && req.method === 'POST')
+          return await handleFinancesPlayerSave(req, env);
+        if (url.pathname === '/admin/finances/cost' && req.method === 'POST')
+          return await handleFinancesCostSave(req, env);
+        if ((url.pathname === '/admin/finances/cost/delete' && req.method === 'POST') || (url.pathname === '/admin/finances/cost' && req.method === 'DELETE'))
+          return await handleFinancesCostDelete(req, env);
+        return new Response('not found', { status: 404 });
+      }
+      if ((url.pathname === '/admin/season' || url.pathname === '/admin/season/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(await seasonPage(env, isAuthed),
+          { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname.startsWith('/admin/season/')) {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const sub = url.pathname.replace(/^\/admin\/season/, '');
+        if ((sub === '/data' || sub === '/data/') && req.method === 'GET')
+          return await handleSeasonData(req, env, url);
+        if (sub === '/rollcall' && req.method === 'POST')
+          return await handleSeasonRollCall(req, env);
+        if (sub === '/autodraft' && req.method === 'POST')
+          return await handleSeasonAutoDraft(req, env);
+        if (sub === '/suggest-swap' && req.method === 'POST')
+          return await handleSeasonSuggestSwap(req, env);
+        if (sub === '/schedule' && req.method === 'POST')
+          return await handleSeasonGenerateSchedule(req, env);
+        if (sub === '/config' && req.method === 'POST')
+          return await handleSeasonSaveConfig(req, env);
+        if (sub === '/launch' && req.method === 'POST')
+          return await handleSeasonLaunch(req, env);
+        return new Response('not found', { status: 404 });
+      }
+      if (url.pathname === '/admin/run') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        return Response.json({ ran: await runSchedule(env) });
+      }
+      if (url.pathname === '/admin/outbox') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const rows = (await env.DB.prepare(
+          `SELECT id,kind,event_id,player_id,team,send_after,sent_at,cancelled,error
+             FROM outbox ORDER BY id DESC LIMIT 60`).all()).results || [];
+        return Response.json({ now: new Date().toISOString(), local: localParts(), rows });
+      }
+      if (url.pathname === '/admin/drain') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        return Response.json(await drain(env));
+      }
+      if (url.pathname === '/admin/team-links')
+        return await teamLinksRoute(req, env, url);
+      if (url.pathname === '/admin/links')
+        return await linksRoute(req, env, url);
+      if ((url.pathname === '/admin/polls' || url.pathname === '/admin/polls/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(await pollsPage(env, isAuthed),
+          { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname.startsWith('/admin/polls')) {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        if (url.pathname === '/admin/polls/data' && req.method === 'GET')
+          return await handlePollsData(req, env);
+        if (url.pathname === '/admin/polls/create' && req.method === 'POST')
+          return await handlePollCreate(req, env);
+        if (url.pathname === '/admin/polls/toggle-rsvp' && req.method === 'POST')
+          return await handlePollToggleRsvp(req, env);
+        if (url.pathname === '/admin/polls/toggle-results' && req.method === 'POST')
+          return await handlePollToggleResults(req, env);
+        if (url.pathname === '/admin/polls/close' && req.method === 'POST')
+          return await handlePollClose(req, env);
+        if (url.pathname === '/admin/polls/send' && req.method === 'POST')
+          return await handlePollSend(req, env);
+        return new Response('not found', { status: 404 });
+      }
+      if (url.pathname === '/poll' && req.method === 'GET')
+        return new Response(await pollGet(req, env, url),
+          { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if (url.pathname === '/api/player-position' && req.method === 'POST')
+        return await handlePlayerPosition(req, env);
+      if (url.pathname === '/api/poll/vote' && req.method === 'POST')
+        return await handlePollVote(req, env);
+      if (url.pathname === '/api/send-sample-invites' && req.method === 'POST')
+        return await handleSendSampleInvites(req, env);
+      if ((url.pathname === '/admin/season-recap' || url.pathname === '/admin/season-recap/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(await seasonRecapPage(env, isAuthed),
+          { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname === '/admin/season-recap/data' && req.method === 'GET')
+        return await handleSeasonRecapData(req, env, url);
+      if (url.pathname === '/admin/season-recap/save' && req.method === 'POST')
+        return await handleSeasonRecapSave(req, env);
+      if (url.pathname === '/admin/season-recap/upload-photo' && req.method === 'POST')
+        return await handleSeasonRecapUploadPhoto(req, env);
+      if (url.pathname === '/admin/season-recap/send' && req.method === 'POST')
+        return await handleSeasonRecapSend(req, env);
+      if (url.pathname === '/api/champion-photo' && req.method === 'GET')
+        return await handleChampionPhoto(req, env, url);
+      if (url.pathname === '/avail' && req.method === 'GET')
+        return new Response(await availRoute(req, env, url),
+          { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if (url.pathname === '/health')
+        return new Response('ok');
+      if (url.pathname === '/' || url.pathname === '')
+        return Response.redirect('https://smbhl.com', 302);
+      return new Response('not found', { status: 404 });
+    } catch (e) {
+      return new Response('error: ' + e.message, { status: 500 });
+    }
+  }
+};
+
+export {
+  body,
+  drain,
+  runSchedule,
+  notifyAdminGoalieCancel,
+  getTeamMessages,
+  addTeamMessage,
+  getStandingsTooltip,
+  seasonRecapPage,
+  handleSeasonRecapData,
+  handleSeasonRecapSave,
+  handleSeasonRecapUploadPhoto,
+  handleSeasonRecapSend,
+  handleChampionPhoto,
+  financesPage,
+  handleFinancesData,
+  handleFinancesPricingSave,
+  handleFinancesPlayerSave,
+  handleFinancesCostSave,
+  handleFinancesCostDelete,
+  sortTeamBoardRows,
+  computeTeamBalance,
+  resolveTeamGoalies,
+  pollsPage,
+  handlePollsData,
+  handlePollCreate,
+  handlePollToggleRsvp,
+  handlePollToggleResults,
+  handlePollClose,
+  handlePollSend,
+  pollGet,
+  pollMsg,
+  handlePlayerPosition,
+  handlePollVote,
+  getActivePollForSeason,
+  getPollCandidates,
+  getPollResults,
+  getPollVote,
+  schedulePage,
+  handleScheduleData,
+  handleScheduleSave,
+  handleScheduleSetState,
+  handleScheduleDelete,
+  handleScheduleImportFixture,
+  handleScheduleSendCancellation,
+  teamsPage,
+  handleTeamsData,
+  handleTeamsMove,
+  handleTeamsTrade,
+  handleTeamsAdd,
+  emailsPage,
+  handleEmailsData,
+  handleEmailsSaveSettings,
+  handleEmailsDrain,
+  handleEmailsCancelOutbox,
+  handleEmailsBroadcast,
+  handleLeagueMessageGet,
+  handleLeagueMessageSave,
+  handleSendSampleInvites,
+  getEmailSettings,
+  DEFAULT_EMAIL_SETTINGS,
+  seasonPage,
+  handleSeasonData,
+  handleSeasonRollCall,
+  handleSeasonAutoDraft,
+  handleSeasonSuggestSwap,
+  handleSeasonGenerateSchedule,
+  handleSeasonSaveConfig,
+  handleSeasonLaunch,
+  ensureNextEvent,
+  boardData,
+  renderInviteEmail,
+  formatInviteDate
+};

@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "smbhl-rsvp",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-11",
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "PUBLIC_URL": "https://rsvp.smbhl.com"
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "smbhl-rsvp",
+      "database_id": "6f1838cf-30b0-4b4b-b9fe-716b61b961e4"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "SHEETS_KV",
+      "id": "e5af34ebf39b4c5d8851d7b071368a0e"
+    }
+  ]
+}
