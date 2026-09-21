@@ -10,7 +10,16 @@
  * 6. 1-Click Season Publishing Engine (D1 SQLite ⇄ KV data.json)
  */
 
-export const TEAM_COLORS = ['Red', 'Blue', 'White', 'Black'];
+import {
+  DEFAULT_SEASON_CONFIG,
+  normalizeSeasonConfig,
+  getSeasonConfig,
+  getTeamNames,
+  getTeamNameFr,
+  getTeamColour
+} from './season_config.js';
+
+export const TEAM_COLORS = getTeamNames(DEFAULT_SEASON_CONFIG);
 export const TEAM_LABELS = {
   Red: { fr: 'Rouge', en: 'Red', color: '#b3122c', text: '#fff' },
   Blue: { fr: 'Bleu', en: 'Blue', color: '#17457f', text: '#fff' },
@@ -892,11 +901,42 @@ export async function publishSeasonToProduction(env, { seasonName, startDate, ro
   const newSeasonIndex = keys.length > 0 ? (Math.max(...keys) + 1).toString() : '42';
 
   const rosterTeams = Object.keys(rosters).length > 0 ? Object.keys(rosters) : TEAM_COLORS;
+  
+  // Assemble season config
+  const teamsInput = (rosterConfig && Array.isArray(rosterConfig.teams) && rosterConfig.teams.length > 0)
+    ? rosterConfig.teams
+    : rosterTeams;
+
+  const configTeams = teamsInput.map(t => {
+    if (typeof t === 'object' && t !== null && t.name) {
+      const name = String(t.name).trim();
+      return {
+        name,
+        name_fr: t.name_fr ? String(t.name_fr).trim() : name,
+        colour: t.colour || '#64748b',
+        aliases: Array.isArray(t.aliases) ? t.aliases.map(a => String(a).trim()).filter(Boolean) : []
+      };
+    }
+    const name = String(t).trim();
+    const def = DEFAULT_SEASON_CONFIG.teams.find(x => x.name.toLowerCase() === name.toLowerCase());
+    return def
+      ? { ...def, aliases: [...def.aliases] }
+      : { name, name_fr: name, colour: '#64748b', aliases: [] };
+  });
+
+  const seasonConfig = {
+    teams: configTeams,
+    goaliesPerTeam: Number(rosterConfig.goaliesPerTeam) || DEFAULT_SEASON_CONFIG.goaliesPerTeam,
+    skatersPerTeam: Number(rosterConfig.skatersPerTeam) || DEFAULT_SEASON_CONFIG.skatersPerTeam,
+    minSkaters: Number(rosterConfig.minSkaters) || DEFAULT_SEASON_CONFIG.minSkaters,
+    playoffFormat: rosterConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat
+  };
+
   const newSeasonObj = {
     name: seasonName,
     order: (dataJson.seasons['0']?.order || 0) + 1,
-    standings: rosterTeams.map(team => ({
-      team,
+    standings: configTeams.map(t => ({
+      team: t.name,
       gp: 0,
       w: 0,
       l: 0,
@@ -905,6 +945,7 @@ export async function publishSeasonToProduction(env, { seasonName, startDate, ro
       gf: 0,
       ga: 0
     })),
+    config: seasonConfig,
     games: 0,
     goals_per_game: null,
     champion: null,
@@ -974,11 +1015,14 @@ export async function publishSeasonToProduction(env, { seasonName, startDate, ro
     } catch (_) {}
   }
 
-  if (rosterConfig && (rosterConfig.skatersPerTeam || rosterConfig.goaliesPerTeam || rosterConfig.maxAssistsPerGoal)) {
+  if (rosterConfig && (rosterConfig.skatersPerTeam || rosterConfig.goaliesPerTeam || rosterConfig.minSkaters || rosterConfig.maxAssistsPerGoal || rosterConfig.teams || rosterConfig.playoffFormat)) {
     const existingRow = await db.prepare("SELECT value FROM settings WHERE key = 'season_draft_config'").first();
     const existing = existingRow ? JSON.parse(existingRow.value) : {};
-    if (rosterConfig.skatersPerTeam) existing.skatersPerTeam = parseInt(rosterConfig.skatersPerTeam, 10) || 7;
+    if (rosterConfig.teams) existing.teams = rosterConfig.teams;
+    if (rosterConfig.skatersPerTeam) existing.skatersPerTeam = parseInt(rosterConfig.skatersPerTeam, 10) || 8;
     if (rosterConfig.goaliesPerTeam) existing.goaliesPerTeam = parseInt(rosterConfig.goaliesPerTeam, 10) || 1;
+    if (rosterConfig.minSkaters) existing.minSkaters = parseInt(rosterConfig.minSkaters, 10) || 5;
+    if (rosterConfig.playoffFormat) existing.playoffFormat = rosterConfig.playoffFormat;
     if (rosterConfig.maxAssistsPerGoal) {
       existing.maxAssistsPerGoal = parseInt(rosterConfig.maxAssistsPerGoal, 10) || 1;
       await db.prepare(`
@@ -1109,9 +1153,11 @@ export async function handleSeasonData(req, env, url) {
     fees,
     teamColors: (draftConfig?.teams && Array.isArray(draftConfig.teams) && draftConfig.teams.length > 0) ? draftConfig.teams : TEAM_COLORS,
     teamLabels: TEAM_LABELS,
-    skatersPerTeam: draftConfig?.skatersPerTeam || 7,
+    skatersPerTeam: draftConfig?.skatersPerTeam || 8,
     goaliesPerTeam: draftConfig?.goaliesPerTeam || 1,
-    maxAssistsPerGoal: draftConfig?.maxAssistsPerGoal || 1
+    minSkaters: draftConfig?.minSkaters || 5,
+    maxAssistsPerGoal: draftConfig?.maxAssistsPerGoal || 1,
+    playoffFormat: draftConfig?.playoffFormat || 'top4_single_day'
   });
 }
 
@@ -1286,7 +1332,7 @@ export async function handleSeasonGenerateSchedule(req, env) {
 
 export async function handleSeasonSaveConfig(req, env) {
   const body = await req.json().catch(() => ({}));
-  const { teams, skatersPerTeam, goaliesPerTeam, fees, rules } = body;
+  const { teams, skatersPerTeam, goaliesPerTeam, minSkaters, playoffFormat, fees, rules } = body;
   const db = env.DB;
 
   const existingRow = await db.prepare("SELECT value FROM settings WHERE key = 'season_draft_config'").first();
@@ -1296,10 +1342,16 @@ export async function handleSeasonSaveConfig(req, env) {
     existing.teams = teams;
   }
   if (skatersPerTeam != null) {
-    existing.skatersPerTeam = parseInt(skatersPerTeam, 10) || 7;
+    existing.skatersPerTeam = parseInt(skatersPerTeam, 10) || 8;
   }
   if (goaliesPerTeam != null) {
     existing.goaliesPerTeam = parseInt(goaliesPerTeam, 10) || 1;
+  }
+  if (minSkaters != null) {
+    existing.minSkaters = parseInt(minSkaters, 10) || 5;
+  }
+  if (playoffFormat != null) {
+    existing.playoffFormat = playoffFormat;
   }
   if (rules && rules.maxAssistsPerGoal != null) {
     existing.maxAssistsPerGoal = parseInt(rules.maxAssistsPerGoal, 10) || 1;
@@ -1488,7 +1540,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
           </div>
           <div>
             <label style="font-size:12px; font-weight:700; color:var(--soft); text-transform:uppercase;" data-i18n="playoffFormatLbl">Format des Séries Éliminatoires 🏆</label>
-            <select id="sched-playoff-format" style="width:100%; padding:8px; font:inherit; border:1px solid var(--rule2); border-radius:3px; margin-top:4px;">
+            <select id="sched-playoff-format" onchange="saveStructureConfig()" style="width:100%; padding:8px; font:inherit; border:1px solid var(--rule2); border-radius:3px; margin-top:4px;">
               <option value="top4_single_day" data-i18n="playoffOpt1">🏆 Format SMBHL Classique (Top 4 en 1 journée : Demi-finales + Finale + 3e place)</option>
               <option value="top4_two_weeks" data-i18n="playoffOpt2">🥈 Séries sur 2 semaines (Top 4 : Semaine N Demi-finales, Semaine N+1 Finale)</option>
               <option value="none" data-i18n="playoffOpt3">⏸️ Aucune série (Saison régulière seulement)</option>
@@ -1496,7 +1548,11 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
           </div>
           <div>
             <label style="font-size:12px; font-weight:700; color:var(--soft); text-transform:uppercase;" data-i18n="skatersPerTeamLbl">Patineurs par Équipe 🏃</label>
-            <input type="number" id="param-skaters-per-team" value="7" min="3" max="15" oninput="updateRosterSettings()" style="width:100%; padding:8px; font:inherit; border:1px solid var(--rule2); border-radius:3px; margin-top:4px;">
+            <input type="number" id="param-skaters-per-team" value="8" min="3" max="15" oninput="updateRosterSettings()" style="width:100%; padding:8px; font:inherit; border:1px solid var(--rule2); border-radius:3px; margin-top:4px;">
+          </div>
+          <div>
+            <label style="font-size:12px; font-weight:700; color:var(--soft); text-transform:uppercase;" data-i18n="minSkatersLbl">Patineurs Min par Match ⚠️</label>
+            <input type="number" id="param-min-skaters" value="5" min="3" max="10" oninput="saveStructureConfig()" style="width:100%; padding:8px; font:inherit; border:1px solid var(--rule2); border-radius:3px; margin-top:4px;">
           </div>
           <div>
             <label style="font-size:12px; font-weight:700; color:var(--soft); text-transform:uppercase;" data-i18n="goaliesPerTeamLbl">Gardiens par Équipe 🧤</label>
@@ -1774,6 +1830,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
       playoffOpt2: '🥈 Séries sur 2 semaines (Top 4 : Semaine N Demi-finales, Semaine N+1 Finale)',
       playoffOpt3: '⏸️ Aucune série (Saison régulière seulement)',
       skatersPerTeamLbl: 'Patineurs par Équipe 🏃',
+      minSkatersLbl: 'Patineurs Min par Match ⚠️',
       goaliesPerTeamLbl: 'Gardiens par Équipe 🧤',
       regularDuesLbl: 'Frais Joueur Régulier ($)',
       subFeeLbl: 'Coût par Match Substitut ($)',
@@ -1880,6 +1937,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
       playoffOpt2: '🥈 2-Week Playoffs (Top 4: Week N Semifinals, Week N+1 Final)',
       playoffOpt3: '⏸️ No playoffs (Regular season only)',
       skatersPerTeamLbl: 'Skaters per Team 🏃',
+      minSkatersLbl: 'Min Skaters per Game ⚠️',
       goaliesPerTeamLbl: 'Goalies per Team 🧤',
       regularDuesLbl: 'Regular Player Fee ($)',
       subFeeLbl: 'Sub Fee per Game ($)',
@@ -2032,6 +2090,12 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
 
   let seasonData = null;
   let activeTeamsList = ['Red', 'Blue', 'White', 'Black'];
+  let teamDetails = {
+    Red: { name: 'Red', name_fr: 'Rouge', colour: '#c9152f', aliases: ['Red Wings'] },
+    Blue: { name: 'Blue', name_fr: 'Bleu', colour: '#2a5fa8', aliases: ['Blues'] },
+    White: { name: 'White', name_fr: 'Blanc', colour: '#ffffff', aliases: ['Capitals'] },
+    Black: { name: 'Black', name_fr: 'Noir', colour: '#1c1f24', aliases: ['Bruins'] }
+  };
   let availableDateSlots = [];
   let currentRosters = { Red: [], Blue: [], White: [], Black: [] };
   let currentGoalies = {};
@@ -2039,6 +2103,19 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
   let tandemsList = [];
   let generatedFixtures = [];
   let generatedEvents = [];
+
+  function getTeamsPayload() {
+    return activeTeamsList.map(tKey => {
+      const d = teamDetails[tKey] || {};
+      const pal = teamPalette[tKey] || {};
+      return {
+        name: tKey,
+        name_fr: d.name_fr || (pal.label ? pal.label.replace(/^[^\w\s]+\s*/, '') : tKey),
+        colour: d.colour || pal.border || '#64748b',
+        aliases: Array.isArray(d.aliases) ? d.aliases : []
+      };
+    });
+  }
 
   async function api(p, opts = {}) {
     const r = await fetch(p, {
@@ -2071,13 +2148,27 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
     const banner = $('team-quota-banner');
     if (!banner) return;
     const n = activeTeamsList.length;
-    const sPerTeam = parseInt($('param-skaters-per-team')?.value, 10) || 7;
+    const sPerTeam = parseInt($('param-skaters-per-team')?.value, 10) || 8;
     const gPerTeam = parseInt($('param-goalies-per-team')?.value, 10) || 1;
     const totalSkaters = n * sPerTeam;
     const totalGoalies = n * gPerTeam;
     const totalPlayers = totalSkaters + totalGoalies;
     banner.innerHTML = t('quotaBannerText', n, sPerTeam, gPerTeam, totalGoalies, totalSkaters, totalPlayers);
     if ($('sched-teams-count-display')) $('sched-teams-count-display').textContent = t('teamsCountDisplay', n);
+
+    // Disable / block top 4 playoff formats when fewer than 4 teams
+    const playoffSelect = $('sched-playoff-format');
+    if (playoffSelect) {
+      const top4Opts = playoffSelect.querySelectorAll('option[value^="top4"]');
+      if (n < 4) {
+        top4Opts.forEach(opt => { opt.disabled = true; });
+        if (playoffSelect.value.startsWith('top4')) {
+          playoffSelect.value = 'none';
+        }
+      } else {
+        top4Opts.forEach(opt => { opt.disabled = false; });
+      }
+    }
   }
 
   function updateRosterSettings() {
@@ -2091,8 +2182,10 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
   async function saveStructureConfig() {
     try {
       const sName = ($('sched-season-name')?.value || 'Hiver 2027').trim();
-      const sPerTeam = parseInt($('param-skaters-per-team')?.value, 10) || 7;
+      const sPerTeam = parseInt($('param-skaters-per-team')?.value, 10) || 8;
       const gPerTeam = parseInt($('param-goalies-per-team')?.value, 10) || 1;
+      const minSkaters = parseInt($('param-min-skaters')?.value, 10) || 5;
+      const playoffFormat = $('sched-playoff-format')?.value || 'top4_single_day';
       const regularDues = parseFloat($('param-regular-dues')?.value) || 220;
       const subFee = parseFloat($('param-sub-fee')?.value) || 15;
       const maxAssistsPerGoal = parseInt($('param-max-assists-per-goal')?.value, 10) || 1;
@@ -2100,9 +2193,11 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
         method: 'POST',
         body: JSON.stringify({
           seasonName: sName,
-          teams: activeTeamsList,
+          teams: getTeamsPayload(),
           skatersPerTeam: sPerTeam,
           goaliesPerTeam: gPerTeam,
+          minSkaters,
+          playoffFormat,
           fees: { regularDues, subFee },
           rules: { maxAssistsPerGoal }
         })
@@ -2118,8 +2213,10 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
       if ($('cur-season-name')) $('cur-season-name').textContent = seasonData.currentSeason;
       if ($('sched-season-name')) $('sched-season-name').value = 'Hiver 2027';
       if ($('sched-season-display')) $('sched-season-display').textContent = 'Hiver 2027';
-      if ($('param-skaters-per-team')) $('param-skaters-per-team').value = seasonData?.skatersPerTeam || 7;
+      if ($('param-skaters-per-team')) $('param-skaters-per-team').value = seasonData?.skatersPerTeam || 8;
       if ($('param-goalies-per-team')) $('param-goalies-per-team').value = seasonData?.goaliesPerTeam || 1;
+      if ($('param-min-skaters')) $('param-min-skaters').value = seasonData?.minSkaters || 5;
+      if ($('sched-playoff-format')) $('sched-playoff-format').value = seasonData?.playoffFormat || 'top4_single_day';
       if ($('param-regular-dues')) $('param-regular-dues').value = seasonData?.fees?.regularDues || 220;
       if ($('param-sub-fee')) $('param-sub-fee').value = seasonData?.fees?.subFee || 15;
       if ($('param-max-assists-per-goal')) $('param-max-assists-per-goal').value = String(seasonData?.maxAssistsPerGoal || 1);
@@ -2128,11 +2225,23 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
       pinnedPlayers = seasonData.draftConfig?.pinned || {};
       tandemsList = seasonData.draftConfig?.tandems || [];
       if (seasonData.draftConfig?.teams && Array.isArray(seasonData.draftConfig.teams) && seasonData.draftConfig.teams.length > 0) {
-        activeTeamsList = seasonData.draftConfig.teams;
+        activeTeamsList = seasonData.draftConfig.teams.map(t => {
+          if (typeof t === 'object' && t !== null && t.name) {
+            teamDetails[t.name] = {
+              name: t.name,
+              name_fr: t.name_fr || t.name,
+              colour: t.colour || '#64748b',
+              aliases: Array.isArray(t.aliases) ? t.aliases : []
+            };
+            return t.name;
+          }
+          return String(t);
+        });
       }
       for (const t of activeTeamsList) {
         if (!teamPalette[t]) {
-          teamPalette[t] = { label: '🏒 ' + t, labelEn: '🏒 ' + t, bg: '#f1f5f9', border: 'var(--rule2)', color: 'var(--ink)' };
+          const c = teamDetails[t]?.colour || '#64748b';
+          teamPalette[t] = { label: '🏒 ' + t, labelEn: '🏒 ' + t, bg: '#f1f5f9', border: c, color: 'var(--ink)' };
         }
       }
       if (seasonData.draftConfig?.rosters) {
@@ -2158,9 +2267,13 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
       const canRemove = activeTeamsList.length > 2;
       const pal = teamPalette[tKey] || { label: '🏒 ' + tKey, labelEn: '🏒 ' + tKey, bg: '#f1f5f9', border: 'var(--rule2)', color: 'var(--ink)' };
       const displayLabel = getTeamLabel(tKey);
-      return '<span style="display:inline-flex; align-items:center; gap:6px; background:' + pal.bg + '; border:1px solid ' + pal.border + '; color:' + pal.color + '; padding:6px 12px; border-radius:16px; font-size:13px; font-weight:700;">' +
-        '<span role="button" title="' + (currentLang === 'en' ? 'Click to rename' : 'Modifier le nom') + '" data-team="' + esc(tKey) + '" onclick="editTeamNamePrompt(this.dataset.team)" style="cursor:pointer; display:inline-flex; align-items:center; gap:5px;">' +
-          esc(displayLabel) +
+      const d = teamDetails[tKey] || {};
+      const c = d.colour || pal.border || '#64748b';
+      const aliasBadge = (d.aliases && d.aliases.length > 0) ? (' <span style="font-size:10px; opacity:0.75; font-weight:normal;">[' + esc(d.aliases.join(', ')) + ']</span>') : '';
+      return '<span style="display:inline-flex; align-items:center; gap:6px; background:' + pal.bg + '; border:2px solid ' + c + '; color:' + pal.color + '; padding:6px 12px; border-radius:16px; font-size:13px; font-weight:700;">' +
+        '<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:' + c + '; border:1px solid rgba(0,0,0,0.25);"></span>' +
+        '<span role="button" title="' + (currentLang === 'en' ? 'Click to edit team' : 'Modifier l\\'équipe') + '" data-team="' + esc(tKey) + '" onclick="editTeamPrompt(this.dataset.team)" style="cursor:pointer; display:inline-flex; align-items:center; gap:5px;">' +
+          esc(displayLabel) + aliasBadge +
           '<span style="font-size:11px; opacity:0.65;">✏️</span>' +
         '</span>' +
         (canRemove ? '<button type="button" data-team="' + esc(tKey) + '" onclick="removeTeamTag(this.dataset.team)" style="background:none; border:none; cursor:pointer; color:' + pal.color + '; font-size:16px; padding:0 2px; line-height:1; opacity:0.7;" title="' + (currentLang === 'en' ? 'Remove' : 'Retirer') + '">&times;</button>' : '') +
@@ -2170,12 +2283,54 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
     updateQuotaBanner();
   }
 
-  function editTeamNamePrompt(oldName) {
-    const promptMsg = currentLang === 'en' ? ("Modify team name (" + oldName + "):") : ("Modifier le nom de l'équipe (" + oldName + ") :");
-    const newName = prompt(promptMsg, oldName);
-    if (newName && newName.trim() && newName.trim() !== oldName) {
-      renameTeam(oldName, newName.trim());
+  function editTeamPrompt(oldName) {
+    const cur = teamDetails[oldName] || { name: oldName, name_fr: oldName, colour: '#64748b', aliases: [] };
+    const promptNameMsg = currentLang === 'en' ? "Team key/name:" : "Nom / Clé de l'équipe :";
+    const newName = prompt(promptNameMsg, cur.name || oldName);
+    if (!newName || !newName.trim()) return;
+    const cleanName = newName.trim();
+
+    const promptFrMsg = currentLang === 'en' ? "French display name (or blank to match):" : "Nom francophone affiché :";
+    const newFr = prompt(promptFrMsg, cur.name_fr || cleanName);
+
+    const promptColourMsg = currentLang === 'en'
+      ? "Hex colour or palette name (e.g. #c9152f, Red, Blue, Green, Gold, Purple):"
+      : "Couleur hex ou nom de palette (ex: #c9152f, Red, Blue, Green, Gold, Purple) :";
+    const newColour = prompt(promptColourMsg, cur.colour || '#64748b');
+
+    const promptAliasesMsg = currentLang === 'en'
+      ? "Aliases / alternative names (comma-separated, e.g. Red Wings, Rouges):"
+      : "Alias / noms alternatifs (séparés par des virgules, ex: Red Wings, Rouges) :";
+    const curAliasesStr = (cur.aliases || []).join(', ');
+    const newAliases = prompt(promptAliasesMsg, curAliasesStr);
+
+    let resolvedColour = (newColour || '#64748b').trim();
+    if (teamPalette[resolvedColour] && teamPalette[resolvedColour].border) {
+      resolvedColour = teamPalette[resolvedColour].border;
     }
+
+    const aliasesArr = (newAliases || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    if (cleanName !== oldName) {
+      renameTeam(oldName, cleanName);
+    }
+
+    teamDetails[cleanName] = {
+      name: cleanName,
+      name_fr: (newFr || cleanName).trim(),
+      colour: resolvedColour,
+      aliases: aliasesArr
+    };
+
+    if (teamPalette[cleanName]) {
+      teamPalette[cleanName].border = resolvedColour;
+    }
+
+    renderTeamsTags();
+    saveStructureConfig();
   }
 
   function renameTeam(oldName, newName) {
@@ -2192,6 +2347,12 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
       activeTeamsList[idx] = clean;
     } else {
       activeTeamsList.push(clean);
+    }
+
+    // Transfer details
+    if (teamDetails[oldName]) {
+      teamDetails[clean] = { ...teamDetails[oldName], name: clean };
+      delete teamDetails[oldName];
     }
 
     // Transfer rosters
@@ -2239,13 +2400,20 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
   }
 
   function addTeamTagPrompt() {
-    const promptMsg = currentLang === 'en' ? "Name of new team (e.g. Green, Gold, Orange, Grey):" : "Nom de la nouvelle équipe (ex: Green, Gold, Orange, Grey) :";
+    const promptMsg = currentLang === 'en' ? "Name of new team (e.g. Green, Gold, Orange, Grey, Hawks):" : "Nom de la nouvelle équipe (ex: Green, Gold, Orange, Grey, Hawks) :";
     const name = prompt(promptMsg);
     if (name && name.trim()) {
       const clean = name.trim();
       if (!activeTeamsList.includes(clean)) {
         activeTeamsList.push(clean);
         if (!currentRosters[clean]) currentRosters[clean] = [];
+        const pal = teamPalette[clean];
+        teamDetails[clean] = {
+          name: clean,
+          name_fr: clean,
+          colour: pal ? pal.border : '#64748b',
+          aliases: []
+        };
         renderTeamsTags();
         updateQuotaBanner();
         renderCandidatesTable();
@@ -2264,6 +2432,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
     activeTeamsList = activeTeamsList.filter(t => t !== teamName);
     delete currentRosters[teamName];
     delete currentGoalies[teamName];
+    delete teamDetails[teamName];
     renderTeamsTags();
     updateQuotaBanner();
     renderCandidatesTable();
@@ -2812,8 +2981,10 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
     if ($('launch-result-msg')) $('launch-result-msg').textContent = currentLang === 'en' ? "Publishing..." : "Publication en cours...";
 
     try {
-      const sPerTeam = parseInt($('param-skaters-per-team')?.value, 10) || 7;
+      const sPerTeam = parseInt($('param-skaters-per-team')?.value, 10) || 8;
       const gPerTeam = parseInt($('param-goalies-per-team')?.value, 10) || 1;
+      const minSkaters = parseInt($('param-min-skaters')?.value, 10) || 5;
+      const playoffFormat = $('sched-playoff-format')?.value || 'top4_single_day';
       const regularDues = parseFloat($('param-regular-dues')?.value) || seasonData?.fees?.regularDues || 220;
       const subFee = parseFloat($('param-sub-fee')?.value) || seasonData?.fees?.subFee || 15;
 
@@ -2826,7 +2997,13 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
           fixtures: generatedFixtures,
           events: generatedEvents,
           fees: { regularDues, subFee },
-          rosterConfig: { skatersPerTeam: sPerTeam, goaliesPerTeam: gPerTeam }
+          rosterConfig: {
+            teams: getTeamsPayload(),
+            skatersPerTeam: sPerTeam,
+            goaliesPerTeam: gPerTeam,
+            minSkaters,
+            playoffFormat
+          }
         })
       });
 
