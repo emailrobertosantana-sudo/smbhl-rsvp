@@ -1,5 +1,5 @@
 import PostalMime from 'postal-mime';
-import { adminPageHeaders } from './admin_auth.js';
+import { checkAdminAuth, adminPageHeaders, generateReviewToken } from './admin_auth.js';
 import { computeWeeklyRecap } from './highlights.js';
 import { sortStandings, getRegularGoalsByTeam, updatePlayoffSchedule } from './awards.js';
 import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getSeasonConfigFromEnv, getTeamNames, normalizeTeamWithConfig, tracksStats, getLeagueConfig } from './season_config.js';
@@ -847,6 +847,12 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
   const isPublished = review.status === 'published';
   const isDiscarded = review.status === 'discarded';
   const showStatsTabs = tracksStats(options.config);
+  // Present only for a scoped single-review token visitor (the scoresheet
+  // email link) — empty for the normal admin-key flow. Safe to embed as-is:
+  // unlike the ADMIN_KEY, this is already scoped to this one review and the
+  // recipient already has it via the URL that got them here.
+  const reviewToken = options.reviewToken || { rt: '', exp: '' };
+  const reviewTokenQS = reviewToken.rt ? `&rt=${encodeURIComponent(reviewToken.rt)}&exp=${encodeURIComponent(reviewToken.exp)}` : '';
 
   return `<!DOCTYPE html>
 <html lang="fr">
@@ -1084,8 +1090,8 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
   </div>
   <div class="photo-gallery">
     ${images.map((imgKey, idx) => `
-      <div class="photo-card" onclick="openModal('/admin/review/image?key=${encodeURIComponent(imgKey)}&id=${encodeURIComponent(review.id)}')">
-        <img src="/admin/review/image?key=${encodeURIComponent(imgKey)}&id=${encodeURIComponent(review.id)}" alt="Feuille ${idx + 1}" loading="lazy">
+      <div class="photo-card" onclick="openModal('/admin/review/image?key=${encodeURIComponent(imgKey)}&id=${encodeURIComponent(review.id)}${reviewTokenQS}')">
+        <img src="/admin/review/image?key=${encodeURIComponent(imgKey)}&id=${encodeURIComponent(review.id)}${reviewTokenQS}" alt="Feuille ${idx + 1}" loading="lazy">
         <div class="label photo-label" data-idx="${idx + 1}">Feuille #${idx + 1} ↗</div>
       </div>
     `).join('')}
@@ -1124,6 +1130,8 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
       ${!isPublished && !isDiscarded && missingTeams.length > 0 ? `
         <form action="/admin/review/add-sheet" method="POST" enctype="multipart/form-data" style="margin:0;">
           <input type="hidden" name="review_id" value="${review.id}">
+          <input type="hidden" name="rt" value="${esc(reviewToken.rt)}">
+          <input type="hidden" name="exp" value="${esc(String(reviewToken.exp))}">
           <input type="file" id="addSheetInput" name="sheets" multiple accept="image/*" style="display:none" onchange="this.form.submit()">
           <button type="button" class="btn-step" id="btnAddMissingSheets" data-missing="${esc(missingTeams.join(', '))}" style="width:auto; padding:6px 14px; font-size:13px; font-weight:600; cursor:pointer; background:#f8fafc; border-color:var(--rule-dark); color:var(--ink);" onclick="document.getElementById('addSheetInput').click()">
             + Ajouter feuille(s) manquante(s) (${esc(missingTeams.join(', '))}) 📸
@@ -1378,6 +1386,12 @@ if (window.history && window.history.replaceState) {
   }
 }
 const reviewId = ${JSON.stringify(review.id)};
+// Scoped single-review token, present only for a scoresheet-email link
+// visitor. Forwarded on every subsequent action below alongside x-admin —
+// checkReviewAuth accepts either. Never a substitute for the ADMIN_KEY on
+// any route outside this one review.
+const RT = ${JSON.stringify(reviewToken.rt)};
+const REXP = ${JSON.stringify(String(reviewToken.exp))};
 const reviewWeek = ${JSON.stringify(review.week)};
 const candidatePlayers = ${JSON.stringify(candidatePlayers)};
 let gamesData = ${JSON.stringify(games)};
@@ -2053,7 +2067,7 @@ async function publishReview() {
   try {
     const res = await fetch('/admin/review/publish', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-admin': K },
+      headers: { 'content-type': 'application/json', 'x-admin': K, 'x-review-token': RT, 'x-review-exp': REXP },
       body: JSON.stringify({ review_id: reviewId, week: reviewWeek, games: gamesData })
     });
     const data = await res.json();
@@ -2078,7 +2092,7 @@ async function discardReview() {
   try {
     const res = await fetch('/admin/review/discard', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-admin': K },
+      headers: { 'content-type': 'application/json', 'x-admin': K, 'x-review-token': RT, 'x-review-exp': REXP },
       body: JSON.stringify({ review_id: reviewId })
     });
     const data = await res.json();
@@ -2101,7 +2115,7 @@ async function reprocessWithAI() {
   try {
     const res = await fetch('/admin/review/reprocess', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-admin': K },
+      headers: { 'content-type': 'application/json', 'x-admin': K, 'x-review-token': RT, 'x-review-exp': REXP },
       body: JSON.stringify({ review_id: reviewId })
     });
     const data = await res.json();
@@ -2672,7 +2686,11 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
     }
 
     const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
-    const magicLink = `${publicUrl}/admin/review?id=${encodeURIComponent(reviewId)}`;
+    // Scoped to this one review only (see admin_auth.js's checkReviewAuth) —
+    // never the shared ADMIN_KEY, so this link can't unlock any other admin
+    // route or review even if the email is forwarded or the inbox leaks.
+    const { rt, exp } = await generateReviewToken(env, reviewId);
+    const magicLink = `${publicUrl}/admin/review?id=${encodeURIComponent(reviewId)}&rt=${encodeURIComponent(rt)}&exp=${exp}`;
     const hasWarnings = games.some(g => !g.balanced) || missingTeams.length > 0;
     const notifyLeagueCfg = getLeagueConfig(cfg);
 
@@ -2898,9 +2916,9 @@ export async function handleReviewManualStart(req, env) {
   }
 }
 
-export async function handleReviewAddSheet(req, env) {
+export async function handleReviewAddSheet(req, env, preParsedFormData = null) {
   try {
-    const formData = await req.formData();
+    const formData = preParsedFormData || await req.formData();
     const reviewId = formData.get('review_id');
     const files = formData.getAll('sheets');
     if (!reviewId || !files || files.length === 0) {
@@ -2957,7 +2975,14 @@ export async function handleReviewAddSheet(req, env) {
       reviewId
     ).run();
 
-    return Response.redirect(`${new URL(req.url).origin}/admin/review?id=${encodeURIComponent(reviewId)}`, 303);
+    // Carry the scoped review token forward through the redirect, if this
+    // request was authenticated with one (the scoresheet-email link flow) —
+    // otherwise a token-only visitor would follow this redirect straight into
+    // a 403, since the target URL would have no credential on it at all.
+    const rt = formData.get('rt');
+    const exp = formData.get('exp');
+    const tokenQS = rt ? `&rt=${encodeURIComponent(rt)}&exp=${encodeURIComponent(exp)}` : '';
+    return Response.redirect(`${new URL(req.url).origin}/admin/review?id=${encodeURIComponent(reviewId)}${tokenQS}`, 303);
   } catch (err) {
     return new Response('Add sheet failed: ' + err.message, { status: 500 });
   }
@@ -3141,10 +3166,17 @@ export async function handleReviewGet(req, env, url) {
       if (assistRuleRow?.value) maxAssistsPerGoal = Number(assistRuleRow.value) || 1;
     } catch (_) {}
 
-    // The router already required a valid admin key to reach this point, so
-    // this always refreshes the admin_key cookie (same as /admin/board etc.) —
-    // it never renders the page for an unauthenticated caller.
-    return new Response(renderReviewPage(review, candidatePlayers, { maxAssistsPerGoal, config: seasonCfg }), { headers: adminPageHeaders(true, env) });
+    // The router already required valid auth to reach this point — either the
+    // full ADMIN_KEY or a scoped single-review token (see admin_auth.js). Only
+    // the former gets the admin_key cookie refreshed: a scoped-token visitor
+    // (the scoresheet-email link) must never receive the real admin secret,
+    // or the token would be a full admin bypass instead of a narrow one.
+    const isFullAdmin = checkAdminAuth(req, env) === 'ok';
+    const headers = isFullAdmin
+      ? adminPageHeaders(true, env)
+      : { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' };
+    const reviewToken = { rt: url.searchParams.get('rt') || '', exp: url.searchParams.get('exp') || '' };
+    return new Response(renderReviewPage(review, candidatePlayers, { maxAssistsPerGoal, config: seasonCfg, reviewToken }), { headers });
   }
 
   const reviews = (await env.DB.prepare('SELECT id, season, week, created_at, status FROM sheet_reviews ORDER BY created_at DESC LIMIT 25').all()).results || [];

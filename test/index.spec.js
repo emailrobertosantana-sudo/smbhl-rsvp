@@ -6,7 +6,8 @@ import {
 } from "cloudflare:test";
 import { describe, it, expect, beforeAll } from "vitest";
 import worker, { body, drain, notifyAdminGoalieCancel, getTeamMessages, addTeamMessage, getStandingsTooltip, sanitizeAndValidateEmail, acceptAvailability, sortTeamBoardRows, computeTeamBalance, resolveTeamGoalies, boardData, ensureNextEvent, teamState, expected, handleLeagueMessageGet, handleLeagueMessageSave, runSchedule, handleSendSampleInvites } from "../src";
-import { handleReviewPublish, handleReviewManualStart } from "../src/review.js";
+import { handleReviewPublish, handleReviewManualStart, handleScoresheetEmail } from "../src/review.js";
+import { generateReviewToken } from "../src/admin_auth.js";
 
 describe("SMBHL Worker", () => {
 	beforeAll(async () => {
@@ -257,6 +258,224 @@ describe("SMBHL Worker", () => {
 			expect(publishRes.status).toBe(200);
 			const publishJson = await publishRes.json();
 			expect(publishJson.ok).toBe(true);
+		});
+	});
+
+	describe("Scoped single-review access tokens (scoresheet-email magic link)", () => {
+		const RT_ADMIN_KEY = "test-review-token-admin-key";
+		const RT_SECRET = "test-review-token-rsvp-secret";
+		const RT_SEASON = "ReviewTokenSeason2027";
+		let reviewA, reviewB;
+
+		async function computeReviewToken(secret, reviewId, exp) {
+			const encoder = new TextEncoder();
+			const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+			const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(`review:${reviewId}:${exp}`));
+			return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+		}
+
+		beforeAll(async () => {
+			env.ADMIN_KEY = RT_ADMIN_KEY;
+			env.RSVP_SECRET = RT_SECRET;
+			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time, end_time)
+				 VALUES ('rt-evt-1', ?, 1, 'Sunday', 'Court A', 'open', '10:00', '11:00')`
+			).bind(RT_SEASON).run();
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				current_season: RT_SEASON,
+				seasons: [{
+					name: RT_SEASON,
+					standings: [],
+					fixtures: [
+						{ week: 1, date: "Sunday", venue: "Court A", time: "10:00 AM", gym: "Court A", home: "Red", away: "Blue", hg: null, ag: null }
+					]
+				}],
+				players: []
+			}));
+
+			reviewA = "rev_token_test_A";
+			reviewB = "rev_token_test_B";
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO sheet_reviews (id, event_id, season, week, created_at, status, images_json, extracted_json, validated_json)
+				 VALUES (?, 'rt-evt-1', ?, 1, '2026-09-22T12:00:00Z', 'draft', '[]', '[]', '[]')`
+			).bind(reviewA, RT_SEASON).run();
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO sheet_reviews (id, event_id, season, week, created_at, status, images_json, extracted_json, validated_json)
+				 VALUES (?, 'rt-evt-1', ?, 1, '2026-09-22T12:00:00Z', 'draft', '[]', '[]', '[]')`
+			).bind(reviewB, RT_SEASON).run();
+		});
+
+		it("a valid scoped token for review A grants access to review A's own view/publish/discard/reprocess routes", async () => {
+			const exp = Date.now() + 60 * 60 * 1000; // 1h out, well within the 48h TTL
+			const rt = await computeReviewToken(RT_SECRET, reviewA, exp);
+
+			const viewRes = await SELF.fetch(`http://example.com/admin/review?id=${reviewA}&rt=${rt}&exp=${exp}`);
+			expect(viewRes.status).toBe(200);
+			const html = await viewRes.text();
+			expect(html).not.toContain(RT_ADMIN_KEY);
+
+			const addSheetForm = new FormData();
+			addSheetForm.append('review_id', reviewA);
+			addSheetForm.append('rt', rt);
+			addSheetForm.append('exp', String(exp));
+			addSheetForm.append('sheets', new Blob(['fake-image-bytes'], { type: 'image/jpeg' }), 'sheet1.jpg');
+			const addSheetRes = await SELF.fetch("http://example.com/admin/review/add-sheet", {
+				method: "POST",
+				body: addSheetForm
+			});
+			// Same idea as reprocess: what matters is auth passed (not a 403), regardless
+			// of how the (Gemini-less, in test) OCR attempt on the fake image resolves.
+			expect(addSheetRes.status).not.toBe(403);
+
+			const reprocessRes = await SELF.fetch("http://example.com/admin/review/reprocess", {
+				method: "POST",
+				headers: { "content-type": "application/json", "x-review-token": rt, "x-review-exp": String(exp) },
+				body: JSON.stringify({ review_id: reviewA })
+			});
+			// Reprocessing with zero photos fails on its own business logic (no images to
+			// re-parse) — what matters here is that it's not a 403, i.e. auth passed.
+			expect(reprocessRes.status).not.toBe(403);
+
+			const publishRes = await SELF.fetch("http://example.com/admin/review/publish", {
+				method: "POST",
+				headers: { "content-type": "application/json", "x-review-token": rt, "x-review-exp": String(exp) },
+				body: JSON.stringify({
+					review_id: reviewA, week: 1,
+					games: [{ home_team: "Red", away_team: "Blue", home_score: 2, away_score: 0, home_players: [], away_players: [] }]
+				})
+			});
+			expect(publishRes.status).toBe(200);
+			const publishJson = await publishRes.json();
+			expect(publishJson.ok).toBe(true);
+		});
+
+		it("a scoped token for review A is REJECTED on review B's routes — it does not generalize across reviews", async () => {
+			const exp = Date.now() + 60 * 60 * 1000;
+			const rtForA = await computeReviewToken(RT_SECRET, reviewA, exp);
+
+			const viewRes = await SELF.fetch(`http://example.com/admin/review?id=${reviewB}&rt=${rtForA}&exp=${exp}`);
+			expect(viewRes.status).toBe(403);
+			expect(await viewRes.text()).toBe("nope");
+
+			const discardRes = await SELF.fetch("http://example.com/admin/review/discard", {
+				method: "POST",
+				headers: { "content-type": "application/json", "x-review-token": rtForA, "x-review-exp": String(exp) },
+				body: JSON.stringify({ review_id: reviewB })
+			});
+			expect(discardRes.status).toBe(403);
+		});
+
+		it("a scoped review token is REJECTED on non-review admin routes — it is not a general admin bypass", async () => {
+			const exp = Date.now() + 60 * 60 * 1000;
+			const rt = await computeReviewToken(RT_SECRET, reviewA, exp);
+
+			// Neither /admin/board's own GET (which never even looks for rt/exp) nor its
+			// protected /data endpoint (which only ever accepts the real ADMIN_KEY) can be
+			// unlocked by a review token, whether it's sent as a header, a query param, or
+			// literally as the x-admin/`key` value checkAdminAuth itself reads.
+			const boardDataViaHeader = await SELF.fetch("http://example.com/admin/board/data", {
+				headers: { "x-review-token": rt, "x-review-exp": String(exp) }
+			});
+			expect(boardDataViaHeader.status).toBe(403);
+
+			const boardDataAsAdminKey = await SELF.fetch("http://example.com/admin/board/data", {
+				headers: { "x-admin": rt }
+			});
+			expect(boardDataAsAdminKey.status).toBe(403);
+
+			const boardDataAsKeyParam = await SELF.fetch(`http://example.com/admin/board/data?key=${rt}`);
+			expect(boardDataAsKeyParam.status).toBe(403);
+
+			const teamsDataAsAdminKey = await SELF.fetch("http://example.com/admin/teams/data", {
+				headers: { "x-admin": rt }
+			});
+			expect(teamsDataAsAdminKey.status).toBe(403);
+		});
+
+		it("the normal ADMIN_KEY flow is unaffected — it still works on every /admin/review/* action for a review with no token at all", async () => {
+			const res = await SELF.fetch(`http://example.com/admin/review?id=${reviewA}`, {
+				headers: { "x-admin": RT_ADMIN_KEY }
+			});
+			expect(res.status).toBe(200);
+
+			const publishRes = await SELF.fetch("http://example.com/admin/review/discard", {
+				method: "POST",
+				headers: { "x-admin": RT_ADMIN_KEY, "content-type": "application/json" },
+				body: JSON.stringify({ review_id: reviewB })
+			});
+			expect(publishRes.status).toBe(200);
+			expect((await publishRes.json()).ok).toBe(true);
+		});
+
+		it("an expired scoped token is rejected", async () => {
+			const exp = Date.now() - 1000; // already expired
+			const rt = await computeReviewToken(RT_SECRET, reviewA, exp);
+
+			const res = await SELF.fetch(`http://example.com/admin/review?id=${reviewA}&rt=${rt}&exp=${exp}`);
+			expect(res.status).toBe(403);
+		});
+
+		it("handleScoresheetEmail's generated link works end-to-end: view and publish using only the emailed link, no ADMIN_KEY", async () => {
+			const sentEmails = [];
+			const mockSendMail = async (env2, to, subject, text, html) => {
+				sentEmails.push({ to, subject, text, html });
+			};
+
+			const rawEmail =
+				'From: coach@example.com\r\n' +
+				'To: scores@smbhl.com\r\n' +
+				'Subject: Scoresheet Week 1\r\n' +
+				'MIME-Version: 1.0\r\n' +
+				'Content-Type: multipart/mixed; boundary="BOUNDARY123"\r\n' +
+				'\r\n' +
+				'--BOUNDARY123\r\n' +
+				'Content-Type: text/plain\r\n' +
+				'\r\n' +
+				'Photo attached.\r\n' +
+				'\r\n' +
+				'--BOUNDARY123\r\n' +
+				'Content-Type: image/jpeg; name="sheet1.jpg"\r\n' +
+				'Content-Disposition: attachment; filename="sheet1.jpg"\r\n' +
+				'Content-Transfer-Encoding: base64\r\n' +
+				'\r\n' +
+				btoa('fake-image-bytes') + '\r\n' +
+				'\r\n' +
+				'--BOUNDARY123--\r\n';
+
+			await handleScoresheetEmail({ raw: rawEmail, from: 'coach@example.com' }, env, mockSendMail, 'admin@example.com');
+
+			expect(sentEmails.length).toBe(1);
+			const linkMatch = sentEmails[0].text.match(/https?:\/\/\S+\/admin\/review\?id=\S+/);
+			expect(linkMatch).toBeTruthy();
+			const magicLink = linkMatch[0].replace(/\.$/, '');
+			const magicUrl = new URL(magicLink);
+			expect(magicUrl.searchParams.get('rt')).toBeTruthy();
+			expect(magicUrl.searchParams.get('exp')).toBeTruthy();
+			expect(magicLink).not.toContain(RT_ADMIN_KEY);
+
+			// View the review using ONLY the emailed link — no x-admin header anywhere.
+			const viewRes = await SELF.fetch(`http://example.com${magicUrl.pathname}${magicUrl.search}`);
+			expect(viewRes.status).toBe(200);
+			const html = await viewRes.text();
+			expect(html).not.toContain(RT_ADMIN_KEY);
+
+			// Publish it using only the emailed token, again no ADMIN_KEY anywhere.
+			const reviewIdFromLink = magicUrl.searchParams.get('id');
+			const publishRes = await SELF.fetch("http://example.com/admin/review/publish", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-review-token": magicUrl.searchParams.get('rt'),
+					"x-review-exp": magicUrl.searchParams.get('exp')
+				},
+				body: JSON.stringify({
+					review_id: reviewIdFromLink, week: 1,
+					games: [{ home_team: "Red", away_team: "Blue", home_score: 4, away_score: 2, home_players: [], away_players: [] }]
+				})
+			});
+			expect(publishRes.status).toBe(200);
+			expect((await publishRes.json()).ok).toBe(true);
 		});
 	});
 

@@ -1,5 +1,6 @@
 import PostalMime from 'postal-mime';
-import { checkAdminAuth, adminAuthResponse, adminPageHeaders } from './admin_auth.js';
+import { hmac, same } from './crypto_utils.js';
+import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -63,26 +64,12 @@ const TEAMS = getTeamNames(DEFAULT_SEASON_CONFIG);
 const STATS_DISABLED_MSG = 'Cette ligue ne suit pas de statistiques pour cette saison (tracksStats: false). / This league does not track stats for this season.';
 
 /* ---------- tokens ---------- */
-
-const enc = new TextEncoder();
-
-async function hmac(secret, message) {
-  const key = await crypto.subtle.importKey(
-    'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
-  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
-}
+// hmac/same live in ./crypto_utils.js (shared with admin_auth.js's scoped
+// review tokens, so both sign/verify the exact same way).
 
 const playerMsg = (eventId, playerId, salt) => `p:${eventId}:${playerId}:${salt}`;
 const teamMsg   = (season, team, salt)     => `t:${season}:${team}:${salt}`;
 const pollMsg   = (pollId, playerId, salt) => `poll:${pollId}:${playerId}:${salt}`;
-
-function same(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
 
 // checkAdminAuth/adminAuthResponse/adminPageHeaders live in ./admin_auth.js so
 // review.js's /admin/review/* routes authenticate through the exact same
@@ -15009,7 +14996,45 @@ async function handleFetch(req, env, ctx) {
         // there is no "render the page shell with a login gate" fallback here:
         // this surface handles scoresheet photos and player names, so an
         // unauthenticated request gets a flat 403/401, never a response body.
-        const auth = checkAdminAuth(req, env);
+        //
+        // A request may ALSO authenticate with a scoped, single-review token
+        // (see admin_auth.js's checkReviewAuth) — that's what the
+        // scoresheet-verification email links use instead of the full
+        // ADMIN_KEY. Figure out which review_id (if any) this specific
+        // request targets, so that token can only ever unlock that one
+        // review: /admin/review/upload and /admin/review/manual-start start
+        // something NEW, so they never accept a scoped token (reviewId stays
+        // null, which makes checkReviewAuth behave exactly like
+        // checkAdminAuth for them).
+        let reviewId = null;
+        let formDataForAuth = null;
+        if (url.pathname === '/admin/review') {
+          reviewId = url.searchParams.get('id');
+        } else if (url.pathname === '/admin/review/image') {
+          const imgKey = url.searchParams.get('key') || '';
+          const parts = imgKey.split(':');
+          if (parts[0] === 'img' && parts[1]) reviewId = parts[1];
+        } else if (req.method === 'POST' && (
+          url.pathname === '/admin/review/publish' ||
+          url.pathname === '/admin/review/discard' ||
+          url.pathname === '/admin/review/reprocess'
+        )) {
+          try {
+            const body = await req.clone().json();
+            reviewId = body?.review_id || null;
+          } catch (_) {}
+        } else if (req.method === 'POST' && url.pathname === '/admin/review/add-sheet') {
+          // Parsed once here (not via req.clone()) and threaded through to
+          // handleReviewAddSheet below, rather than parsing the multipart body
+          // twice.
+          try {
+            formDataForAuth = await req.formData();
+            reviewId = formDataForAuth.get('review_id') || null;
+          } catch (_) {}
+        }
+
+        const scopedToken = extractScopedReviewToken(req, url, formDataForAuth);
+        const auth = await checkReviewAuth(req, env, reviewId, scopedToken);
         if (auth !== 'ok') return adminAuthResponse(auth);
         if (url.pathname === '/admin/review' && req.method === 'GET')
           return await handleReviewGet(req, env, url);
@@ -15024,7 +15049,7 @@ async function handleFetch(req, env, ctx) {
         if (url.pathname === '/admin/review/discard' && req.method === 'POST')
           return await handleReviewDiscard(req, env);
         if (url.pathname === '/admin/review/add-sheet' && req.method === 'POST')
-          return await handleReviewAddSheet(req, env);
+          return await handleReviewAddSheet(req, env, formDataForAuth);
         if (url.pathname === '/admin/review/reprocess' && req.method === 'POST')
           return await handleReviewReprocess(req, env);
         return new Response('not found', { status: 404 });
