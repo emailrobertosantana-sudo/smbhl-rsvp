@@ -17,7 +17,8 @@
 // which routes have been migrated so far and which remain.
 
 import { checkUserSession } from './auth.js';
-import { SMBHL_LEAGUE_ID, dataJsonKeyFor } from './league_ids.js';
+import { sanitizeAndValidateEmail } from './validation.js';
+import { SMBHL_LEAGUE_ID, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { getSeasonConfig } from './season_config.js';
 
 /* ---------- league-scoped authorization ----------
@@ -184,6 +185,120 @@ export async function handleLeagueContacts(req, env, url) {
   ).bind(leagueId).all()).results || [];
 
   return Response.json({ ok: true, league_id: leagueId, contacts });
+}
+
+/* ---------- POST /league/contacts (Part J) ----------
+ * League-scoped contact creation. Session+checkLeagueAccess-gated only —
+ * same "no ADMIN_KEY door" discipline as season/publish. Matches the
+ * existing ADMIN_KEY contact-creation data shape (contacts columns: name,
+ * email, phone, role, is_goalie, position, token_salt) rather than
+ * inventing a parallel model — see peopleAction's 'new' action and
+ * handleTeamsAdd in index.js for the shape this mirrors.
+ *
+ * role: 'roster' | 'sub_skater' | 'sub_goalie' — the same three values the
+ * contacts table itself already uses everywhere else in this app (a
+ * generic "roster/sub" the task suggested would be a 4th, inconsistent
+ * vocabulary layered on top of the real one).
+ *
+ * Validation decisions:
+ *   - name: required, at least first+last (2 words), <=60 chars — same
+ *     rule peopleAction's 'new' action already enforces.
+ *   - email: optional. If given, validated with the same
+ *     sanitizeAndValidateEmail() every other email path in this app uses.
+ *     Duplicate check is EMAIL-based (case-insensitive exact match),
+ *     scoped to league_id — the task asked for this specifically; note
+ *     it's a different key than the legacy ADMIN_KEY path's NAME-based
+ *     dedup (peopleAction checks lower(name)=lower(?) with no league
+ *     scope at all, since only one league's contacts existed when that
+ *     was written). Two contacts with no email on file are never treated
+ *     as duplicates of each other.
+ *   - phone: optional, same non-digit-stripping as the existing path.
+ *   - id numbering: ONE counter per league starting at 'P0001'
+ *     (league_ids.js's contactIdLikePattern/extractTrailingNumber,
+ *     scoped to this leagueId), not the historical SMBHL-specific split
+ *     between a P0500+ roster range and a P9001+ sub range — that split
+ *     is a legacy artifact of SMBHL's own numbering history, not a rule
+ *     worth replicating for a league that has no such history.
+ */
+export async function handleLeagueContactCreate(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  // Defense in depth (see putLeagueDataJson's own comment): this route
+  // must never be able to write a row tagged as SMBHL's, even in principle.
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot create contacts for SMBHL.' }, { status: 403 });
+  }
+
+  const name = String(body.name || '').trim().split(/\s+/).filter(Boolean).join(' ');
+  if (!name || name.split(' ').length < 2) {
+    return Response.json({ ok: false, error: 'Full name (first and last) is required.' }, { status: 400 });
+  }
+  if (name.length > 60) {
+    return Response.json({ ok: false, error: 'Name is too long.' }, { status: 400 });
+  }
+
+  const role = String(body.role || 'roster').trim();
+  if (!['roster', 'sub_skater', 'sub_goalie'].includes(role)) {
+    return Response.json({ ok: false, error: 'role must be roster, sub_skater, or sub_goalie.' }, { status: 400 });
+  }
+
+  let email = String(body.email || '').trim();
+  if (email) {
+    const check = sanitizeAndValidateEmail(email);
+    if (!check.valid) {
+      return Response.json({ ok: false, error: check.error }, { status: 400 });
+    }
+    email = check.email;
+
+    const dupe = await env.DB.prepare(
+      'SELECT player_id FROM contacts WHERE league_id = ? AND lower(email) = lower(?)'
+    ).bind(leagueId, email).first();
+    if (dupe) {
+      return Response.json({ ok: false, error: 'A contact with this email already exists in your league.' }, { status: 409 });
+    }
+  } else {
+    email = null;
+  }
+
+  let phone = String(body.phone || '').trim();
+  phone = phone ? (phone.replace(/[^\d+().\s-]/g, '').trim() || null) : null;
+
+  const position = String(body.position || '').toUpperCase().trim() || null;
+  const isGoalie = (role === 'sub_goalie' || position === 'G') ? 1 : 0;
+
+  const maxP = await env.DB.prepare(
+    'SELECT player_id FROM contacts WHERE player_id LIKE ? ORDER BY player_id DESC LIMIT 1'
+  ).bind(contactIdLikePattern(leagueId, 'P')).first();
+  let nextNum = 1;
+  if (maxP && maxP.player_id) {
+    const n = extractTrailingNumber(maxP.player_id);
+    if (n !== null) nextNum = n + 1;
+  }
+  const playerId = makeContactId(leagueId, 'P' + String(nextNum).padStart(4, '0'));
+  const salt = crypto.randomUUID().replace(/-/g, '');
+
+  await env.DB.prepare(
+    `INSERT INTO contacts (player_id, name, email, phone, role, is_goalie, position, token_salt, league_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(playerId, name, email, phone, role, isGoalie, position, salt, leagueId).run();
+
+  return Response.json({
+    ok: true,
+    league_id: leagueId,
+    contact: { player_id: playerId, name, email, phone, role, is_goalie: isGoalie, position }
+  });
 }
 
 /* ---------- POST /league/season/publish ----------

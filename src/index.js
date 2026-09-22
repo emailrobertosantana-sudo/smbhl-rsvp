@@ -1,9 +1,10 @@
 import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
+import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueContactCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -725,19 +726,10 @@ const FROM = 'SMBHL - Hockey <joueur@smbhl.com>';
 const REPLY_TO = 'info@smbhl.com';
 const ADMIN_EMAIL = 'emailrobertosantana@gmail.com';
 
-export function sanitizeAndValidateEmail(raw) {
-  if (!raw || typeof raw !== 'string') return { valid: false, email: '', error: 'Courriel requis / Email required' };
-  let email = raw.trim().toLowerCase();
-  // Auto-convert accidental commas to dots (e.g. "frederick,crevier@hec,ca" -> "frederick.crevier@hec.ca")
-  email = email.replace(/,/g, '.');
-  // Strip any whitespace
-  email = email.replace(/\s+/g, '');
-  const emailRegex = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
-  if (!emailRegex.test(email)) {
-    return { valid: false, email, error: 'Format de courriel invalide / Invalid email format' };
-  }
-  return { valid: true, email };
-}
+// sanitizeAndValidateEmail now lives in validation.js (imported at the top
+// of this file) — re-exported here so nothing that already imports it from
+// index.js (this codebase's own tests included) needs to change.
+export { sanitizeAndValidateEmail };
 
 function extractEmailAddress(fromValue) {
   const m = String(fromValue || '').match(/<([^>]+)>/);
@@ -15250,9 +15242,11 @@ async function handleFetch(req, env, ctx) {
       // this pattern.
       if (url.pathname === '/league/contacts' && req.method === 'GET')
         return await handleLeagueContacts(req, env, url);
-      // First write-side league route (Part I — see the task report):
+      // Write-side league routes (Parts I/J — see the task reports):
       // session+checkLeagueAccess-gated ONLY, no ADMIN_KEY path at all —
-      // this must never become a new door into SMBHL's data.
+      // these must never become a new door into SMBHL's data.
+      if (url.pathname === '/league/contacts' && req.method === 'POST')
+        return await handleLeagueContactCreate(req, env);
       if (url.pathname === '/league/season/publish' && req.method === 'POST')
         return await handleLeagueSeasonPublish(req, env);
       // Signup/login/dashboard pages — pure UI on top of the routes above.
