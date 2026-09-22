@@ -20,6 +20,83 @@
 
 import { checkUserSession } from './auth.js';
 
+/* ---------- league-scoped authorization ----------
+ * Bridges auth.js's session concept to "which league(s) can this user act
+ * on" via league_admins. Mirrors admin_auth.js's checkAdminAuth in shape on
+ * purpose: a string status the caller inspects ('ok' | 'unauthenticated' |
+ * 'forbidden') rather than a thrown error, plus a matching *Response()
+ * helper — the same pattern already used for every /admin/* route, so
+ * whoever wires up the real ~500+ contacts/events/rsvp call sites later is
+ * extending a pattern they've already seen, not learning a new one.
+ *
+ * NOT wired into any existing route in this task — see the task report for
+ * the rollout plan. The only thing that calls this today is the
+ * proof-of-concept handleLeagueContacts below.
+ */
+
+// Confirms the session on `req` belongs to a user linked to `leagueId` via
+// league_admins. Never throws.
+export async function checkLeagueAccess(req, env, leagueId) {
+  if (!leagueId) return 'forbidden';
+  const session = await checkUserSession(req, env);
+  if (!session) return 'unauthenticated';
+
+  const link = await env.DB.prepare(
+    'SELECT 1 FROM league_admins WHERE user_id = ? AND league_id = ?'
+  ).bind(session.userId, leagueId).first();
+
+  return link ? 'ok' : 'forbidden';
+}
+
+export function leagueAccessResponse(status) {
+  if (status === 'unauthenticated') {
+    return Response.json({ ok: false, error: 'Authentication required.' }, { status: 401 });
+  }
+  return Response.json({ ok: false, error: 'You do not have access to this league.' }, { status: 403 });
+}
+
+/* ---------- proof of concept: GET /league/contacts ----------
+ * The one new route this task wires up, to prove the whole chain works
+ * end-to-end (session -> league lookup -> league_id-filtered query ->
+ * isolated result) without touching any of the existing ADMIN_KEY-gated
+ * contacts/events/rsvp routes in index.js.
+ *
+ * League context convention: `?league_id=` is accepted explicitly (and
+ * checkLeagueAccess always verifies the session user actually administers
+ * it — passing a different league's id here is exactly what the isolation
+ * test below proves gets rejected, not trusted). When omitted, this falls
+ * back to the same "most recently created league this user administers"
+ * lookup handleDashboardPage (index.js) already uses today — there is no
+ * league_id anywhere in this app's URLs yet, so a request with no explicit
+ * league_id acts on "your league", matching the current one-league-per-user
+ * dashboard flow instead of inventing a new convention on top of it.
+ */
+export async function handleLeagueContacts(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+
+  let leagueId = url.searchParams.get('league_id');
+  if (!leagueId) {
+    const row = await env.DB.prepare(
+      `SELECT la.league_id FROM league_admins la JOIN leagues l ON l.id = la.league_id
+        WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
+    ).bind(session.userId).first();
+    leagueId = row ? row.league_id : null;
+  }
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const contacts = (await env.DB.prepare(
+    'SELECT player_id, name, email, phone, role FROM contacts WHERE league_id = ? ORDER BY name'
+  ).bind(leagueId).all()).results || [];
+
+  return Response.json({ ok: true, league_id: leagueId, contacts });
+}
+
 export async function handleLeagueCreate(req, env) {
   try {
     const session = await checkUserSession(req, env);

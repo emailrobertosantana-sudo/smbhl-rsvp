@@ -3,7 +3,7 @@ import { hmac, same } from './crypto_utils.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified } from './auth.js';
-import { handleLeagueCreate } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -15243,6 +15243,13 @@ async function handleFetch(req, env, ctx) {
       // comment for the architecture decision behind that.
       if (url.pathname === '/leagues/create' && req.method === 'POST')
         return await handleLeagueCreate(req, env);
+      // Proof-of-concept league-scoped route (leagues.js's checkLeagueAccess)
+      // — NOT part of the legacy ADMIN_KEY-gated surface below. See the
+      // task report for what this proves and what's still needed before any
+      // of index.js's existing contacts/events/rsvp routes are migrated to
+      // this pattern.
+      if (url.pathname === '/league/contacts' && req.method === 'GET')
+        return await handleLeagueContacts(req, env, url);
       // Signup/login/dashboard pages — pure UI on top of the routes above.
       if ((url.pathname === '/signup' || url.pathname === '/signup/') && req.method === 'GET')
         return new Response(renderSignupPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
