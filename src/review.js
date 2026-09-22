@@ -1,27 +1,29 @@
 import PostalMime from 'postal-mime';
 import { computeWeeklyRecap } from './highlights.js';
 import { sortStandings, getRegularGoalsByTeam, updatePlayoffSchedule } from './awards.js';
+import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getTeamNames, normalizeTeamWithConfig } from './season_config.js';
 
-const TEAMS = ['Red', 'Blue', 'White', 'Black'];
-const TEAM_NICKNAMES = {
-  'Red Wings': 'Red',
-  'Blues': 'Blue',
-  'Capitals': 'White',
-  'Bruins': 'Black'
-};
-
-export function normalizeTeam(str) {
+/**
+ * Normalizes a raw team string to its canonical name using the season's config
+ * (team names, name_fr, and aliases). Falls back to SMBHL defaults when no
+ * config is given, and to a loose substring match (e.g. "blue team") when
+ * neither an exact name/name_fr nor an alias matches.
+ */
+export function normalizeTeam(str, config) {
   if (!str) return null;
+  const cfg = config && config.teams ? config : DEFAULT_SEASON_CONFIG;
   const s = String(str).trim();
-  if (TEAMS.includes(s)) return s;
-  for (const [nick, standard] of Object.entries(TEAM_NICKNAMES)) {
-    if (s.toLowerCase().includes(nick.toLowerCase())) return standard;
-  }
+
+  if (getTeamNames(cfg).includes(s)) return s;
+
+  const viaConfig = normalizeTeamWithConfig(s, cfg);
+  if (viaConfig) return viaConfig;
+
   const lower = s.toLowerCase();
-  if (lower.includes('red') || lower.includes('rouge')) return 'Red';
-  if (lower.includes('blue') || lower.includes('bleu')) return 'Blue';
-  if (lower.includes('white') || lower.includes('blanc') || lower.includes('cap')) return 'White';
-  if (lower.includes('black') || lower.includes('noir') || lower.includes('bruin')) return 'Black';
+  for (const t of cfg.teams) {
+    if (lower.includes(t.name.toLowerCase())) return t.name;
+    if (t.name_fr && lower.includes(t.name_fr.toLowerCase())) return t.name;
+  }
   return s;
 }
 
@@ -434,13 +436,15 @@ export function consolidateSheetsIntoGames(parsedSheets, fixtures = [], candidat
     });
   }
 
+  const teamCfg = options.config;
+
   for (const sheet of parsedSheets) {
-    const team = normalizeTeam(sheet.team);
+    const team = normalizeTeam(sheet.team, teamCfg);
     if (!team) continue;
 
     const processSheetGame = (gameData, isG1) => {
       if (!gameData) return;
-      let opp = normalizeTeam(gameData.opponent);
+      let opp = normalizeTeam(gameData.opponent, teamCfg);
       let gameKey = opp ? (gamesMap.has(`${team}-${opp}`) ? `${team}-${opp}` : `${opp}-${team}`) : null;
       let game = gameKey ? gamesMap.get(gameKey) : null;
 
@@ -512,6 +516,7 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
   if (!s0) throw new Error('No current season found in data.json');
 
   const seasonName = s0.name || d.current_season || 'Fall 2026';
+  const cfg = getSeasonConfig(d, seasonName);
 
   const maxWeek = Math.max(...(s0.fixtures || []).map(f => Number(f.week) || 0));
   const regularFixtures = (s0.fixtures || []).filter(f => Number(f.week) < maxWeek);
@@ -574,7 +579,7 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
 
   // 2. Recalculate Standings from all played regular season fixtures
   const standingsMap = {};
-  for (const t of TEAMS) {
+  for (const t of getTeamNames(cfg)) {
     standingsMap[t] = { team: t, gp: 0, w: 0, l: 0, t: 0, pts: 0, gf: 0, ga: 0 };
   }
 
@@ -821,7 +826,7 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
 
   const regGoals = getRegularGoalsByTeam(d, seasonName);
   s0.standings = sortStandings(Object.values(standingsMap), regGoals);
-  updatePlayoffSchedule(s0);
+  updatePlayoffSchedule(s0, d);
 
   d.updated = new Date().toISOString().slice(0, 10);
   return d;
@@ -832,8 +837,10 @@ export function renderReviewPage(review, adminKey, candidatePlayers = [], option
   const images = JSON.parse(review.images_json || '[]');
   const games = JSON.parse(review.validated_json || '[]');
   const parsedSheets = JSON.parse(review.extracted_json || '[]');
-  const receivedTeams = [...new Set(parsedSheets.map(s => normalizeTeam(s.team)).filter(Boolean))];
-  const missingTeams = TEAMS.filter(t => !receivedTeams.includes(t));
+  const teamCfg = options.config && options.config.teams ? options.config : DEFAULT_SEASON_CONFIG;
+  const teamNames = getTeamNames(teamCfg);
+  const receivedTeams = [...new Set(parsedSheets.map(s => normalizeTeam(s.team, teamCfg)).filter(Boolean))];
+  const missingTeams = teamNames.filter(t => !receivedTeams.includes(t));
   const isPublished = review.status === 'published';
   const isDiscarded = review.status === 'discarded';
 
@@ -1093,11 +1100,11 @@ export function renderReviewPage(review, adminKey, candidatePlayers = [], option
   </div>
   ` : ''}
 
-  <!-- 4-Team Sheet Status Tracker -->
+  <!-- Team Sheet Status Tracker -->
   <div style="background:#fff; border:1px solid var(--rule); border-radius:8px; padding:14px 18px; margin-bottom:20px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-      <span id="trackerTitle" style="font-weight:700; font-size:14px;">Feuilles reçues (${receivedTeams.length}/4) :</span>
-      ${['Red', 'Blue', 'White', 'Black'].map(t => {
+      <span id="trackerTitle" style="font-weight:700; font-size:14px;">Feuilles reçues (${receivedTeams.length}/${teamNames.length}) :</span>
+      ${teamNames.map(t => {
         const ok = receivedTeams.includes(t);
         return `<span style="display:inline-flex; align-items:center; gap:4px; padding:4px 10px; border-radius:4px; font-size:12.5px; font-weight:700; background:${ok ? 'var(--green-bg)' : '#fee2e2'}; color:${ok ? 'var(--green)' : 'var(--danger)'};">
           ${ok ? '✓' : '✗'} ${t}
@@ -1377,7 +1384,7 @@ const I18N_REVIEW_PAGE = {
     galleryTitle: n => "📸 Feuilles de match photographiées (" + n + ")",
     gallerySub: "Cliquez pour agrandir",
     sheetNumber: n => "Feuille #" + n + " ↗",
-    trackerTitle: n => "Feuilles reçues (" + n + "/4) :",
+    trackerTitle: n => "Feuilles reçues (" + n + "/${teamNames.length}) :",
     addMissingSheets: teams => "+ Ajouter feuille(s) manquante(s) (" + teams + ") 📸",
     gamesSectionTitle: n => "📋 Matchs de la semaine (" + n + ")",
     homeLabel: "Domicile",
@@ -1449,7 +1456,7 @@ const I18N_REVIEW_PAGE = {
     galleryTitle: n => "📸 Photographed Scoresheets (" + n + ")",
     gallerySub: "Click to enlarge",
     sheetNumber: n => "Sheet #" + n + " ↗",
-    trackerTitle: n => "Sheets received (" + n + "/4):",
+    trackerTitle: n => "Sheets received (" + n + "/${teamNames.length}):",
     addMissingSheets: teams => "+ Add missing sheet(s) (" + teams + ") 📸",
     gamesSectionTitle: n => "📋 Weekly Games (" + n + ")",
     homeLabel: "Home",
@@ -2483,6 +2490,8 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
 
     const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
     const leagueData = JSON.parse(leagueDataRaw);
+    const cfg = getSeasonConfig(leagueData, season);
+    const teamNames = getTeamNames(cfg);
     const s0 = (leagueData.seasons || []).find(s => s.name === season) || leagueData.seasons?.[0];
     const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(week));
 
@@ -2492,11 +2501,11 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
       ...(leagueData.players || []).map(p => ({ player_id: p.id, name: p.name }))
     ];
 
-    const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers);
+    const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers, { config: cfg });
     const now = new Date().toISOString();
 
-    const receivedTeams = [...new Set(allParsedSheets.map(s => normalizeTeam(s.team)).filter(Boolean))];
-    const missingTeams = TEAMS.filter(t => !receivedTeams.includes(t));
+    const receivedTeams = [...new Set(allParsedSheets.map(s => normalizeTeam(s.team, cfg)).filter(Boolean))];
+    const missingTeams = teamNames.filter(t => !receivedTeams.includes(t));
 
     if (existingReview) {
       await env.DB.prepare(
@@ -2527,11 +2536,11 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
     const magicLink = `${publicUrl}/admin/review?id=${encodeURIComponent(reviewId)}`;
     const hasWarnings = games.some(g => !g.balanced) || missingTeams.length > 0;
 
-    const subject = `[SMBHL] ${hasWarnings ? '⚠️ Validation requise' : '✅ Prêt à publier'} : Feuilles Semaine ${week} (${receivedTeams.length}/4 reçues)`;
+    const subject = `[SMBHL] ${hasWarnings ? '⚠️ Validation requise' : '✅ Prêt à publier'} : Feuilles Semaine ${week} (${receivedTeams.length}/${teamNames.length} reçues)`;
     const text = `Bonjour Roberto,\n\n` +
       `${imageAttachments.length} nouvelle(s) feuille(s) de match ont été reçues pour la semaine ${week}.\n` +
-      `État : ${receivedTeams.length}/4 feuilles reçues (${receivedTeams.join(', ') || 'aucune'}).${missingTeams.length > 0 ? ` (Manque : ${missingTeams.join(', ')})` : ''}\n\n` +
-      `${hasWarnings ? '⚠️ Des écarts de pointage ou des feuilles manquantes nécessitent votre validation.' : '✅ Toutes les statistiques et les 4 feuilles concordent parfaitement!'}\n\n` +
+      `État : ${receivedTeams.length}/${teamNames.length} feuilles reçues (${receivedTeams.join(', ') || 'aucune'}).${missingTeams.length > 0 ? ` (Manque : ${missingTeams.join(', ')})` : ''}\n\n` +
+      `${hasWarnings ? '⚠️ Des écarts de pointage ou des feuilles manquantes nécessitent votre validation.' : `✅ Toutes les statistiques et les ${teamNames.length} feuilles concordent parfaitement!`}\n\n` +
       `Cliquez sur le lien suivant pour vérifier et publier en direct sur le site :\n` +
       `${magicLink}\n\n` +
       `Note : Dès que vous confirmerez la publication, toutes les photos temporaires seront définitivement supprimées du serveur.\n\n` +
@@ -2559,10 +2568,10 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
           <b>${escH(imageAttachments.length)}</b> nouvelle(s) feuille(s) de match ont été reçues pour la <b>semaine ${escH(week)}</b>.
         </p>
         <div style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px 14px; margin:0 0 18px; font-size:14px;">
-          <b>État :</b> ${escH(receivedTeams.length)}/4 feuilles reçues (${escH(receivedTeams.join(', ') || 'aucune')}).
+          <b>État :</b> ${escH(receivedTeams.length)}/${escH(teamNames.length)} feuilles reçues (${escH(receivedTeams.join(', ') || 'aucune')}).
           ${missingTeams.length > 0 ? `<br><span style="color:#b91c1c; font-weight:600;">Manque : ${escH(missingTeams.join(', '))}</span>` : ''}
           <div style="margin-top:8px; font-weight:600; color:${hasWarnings ? '#b45309' : '#15803d'};">
-            ${hasWarnings ? '⚠️ Des écarts de pointage ou des feuilles manquantes nécessitent votre validation.' : '✅ Toutes les statistiques et les 4 feuilles concordent parfaitement!'}
+            ${hasWarnings ? '⚠️ Des écarts de pointage ou des feuilles manquantes nécessitent votre validation.' : `✅ Toutes les statistiques et les ${teamNames.length} feuilles concordent parfaitement!`}
           </div>
         </div>
         <div style="margin:20px 0;">
@@ -2634,6 +2643,7 @@ export async function handleReviewUpload(req, env) {
 
     const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
     const leagueData = JSON.parse(leagueDataRaw);
+    const cfg = getSeasonConfig(leagueData, season);
     const s0 = (leagueData.seasons || []).find(s => s.name === season) || leagueData.seasons?.[0];
     const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(week));
 
@@ -2643,7 +2653,7 @@ export async function handleReviewUpload(req, env) {
       ...(leagueData.players || []).map(p => ({ player_id: p.id, name: p.name }))
     ];
 
-    const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers);
+    const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers, { config: cfg });
     const now = new Date().toISOString();
 
     if (existingReview) {
@@ -2711,6 +2721,7 @@ export async function handleReviewAddSheet(req, env) {
 
     const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
     const leagueData = JSON.parse(leagueDataRaw);
+    const cfg = getSeasonConfig(leagueData, review.season);
     const s0 = (leagueData.seasons || []).find(s => s.name === review.season) || leagueData.seasons?.[0];
     const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(review.week));
 
@@ -2720,7 +2731,7 @@ export async function handleReviewAddSheet(req, env) {
       ...(leagueData.players || []).map(p => ({ player_id: p.id, name: p.name }))
     ];
 
-    const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers);
+    const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers, { config: cfg });
 
     await env.DB.prepare(
       `UPDATE sheet_reviews SET images_json = ?, extracted_json = ?, validated_json = ? WHERE id = ?`
@@ -2739,10 +2750,16 @@ export async function handleReviewAddSheet(req, env) {
 
 export async function reprocessReview(review, env) {
   const reviewId = review.id;
+  const season = review.season || 'Fall 2026';
   const imageKeys = JSON.parse(review.images_json || '[]');
   if (!imageKeys || imageKeys.length === 0) {
     return { ok: false, error: 'No scoresheet images found to reprocess' };
   }
+
+  const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+  const leagueData = JSON.parse(leagueDataRaw);
+  const seasonCfg = getSeasonConfig(leagueData, season);
+  const s0 = (leagueData.seasons || []).find(s => s.name === season) || leagueData.seasons?.[0];
 
   const allParsedSheets = [];
   const errors = [];
@@ -2779,8 +2796,8 @@ export async function reprocessReview(review, env) {
   try {
     const existingParsed = JSON.parse(review.extracted_json || '[]');
     for (const existing of existingParsed) {
-      const exTeam = normalizeTeam(existing?.team);
-      if (exTeam && !allParsedSheets.some(s => normalizeTeam(s?.team) === exTeam)) {
+      const exTeam = normalizeTeam(existing?.team, seasonCfg);
+      if (exTeam && !allParsedSheets.some(s => normalizeTeam(s?.team, seasonCfg) === exTeam)) {
         console.log(`Preserving previously extracted sheet for team ${existing.team}`);
         allParsedSheets.push(existing);
       }
@@ -2794,11 +2811,6 @@ export async function reprocessReview(review, env) {
   }
 
   const week = allParsedSheets.find(s => s.week)?.week || review.week || 1;
-  const season = review.season || 'Fall 2026';
-
-  const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
-  const leagueData = JSON.parse(leagueDataRaw);
-  const s0 = (leagueData.seasons || []).find(s => s.name === season) || leagueData.seasons?.[0];
   const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(week));
 
   const contacts = (await env.DB.prepare('SELECT player_id, name, is_sub, role, is_goalie FROM contacts').all()).results || [];
@@ -2811,14 +2823,14 @@ export async function reprocessReview(review, env) {
   try {
     const cfgRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'season_draft_config'").first();
     if (cfgRow?.value) {
-      const cfg = JSON.parse(cfgRow.value);
-      if (cfg.maxAssistsPerGoal != null) maxAssistsPerGoal = Number(cfg.maxAssistsPerGoal) || 1;
+      const draftCfg = JSON.parse(cfgRow.value);
+      if (draftCfg.maxAssistsPerGoal != null) maxAssistsPerGoal = Number(draftCfg.maxAssistsPerGoal) || 1;
     }
     const assistRuleRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'max_assists_per_goal'").first();
     if (assistRuleRow?.value) maxAssistsPerGoal = Number(assistRuleRow.value) || 1;
   } catch (_) {}
 
-  const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers, { maxAssistsPerGoal });
+  const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers, { maxAssistsPerGoal, config: seasonCfg });
 
   await env.DB.prepare(
     `UPDATE sheet_reviews SET extracted_json = ?, validated_json = ?, week = ? WHERE id = ?`
@@ -2833,7 +2845,7 @@ export async function reprocessReview(review, env) {
     ok: true,
     count: allParsedSheets.length,
     total: imageKeys.length,
-    receivedTeams: [...new Set(allParsedSheets.map(s => normalizeTeam(s.team)).filter(Boolean))],
+    receivedTeams: [...new Set(allParsedSheets.map(s => normalizeTeam(s.team, seasonCfg)).filter(Boolean))],
     errors: errors.length > 0 ? errors : undefined
   };
 }
@@ -2877,9 +2889,11 @@ export async function handleReviewGet(req, env, url) {
     }
 
     let candidatePlayers = [];
+    let seasonCfg = DEFAULT_SEASON_CONFIG;
     try {
       const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
       const leagueData = JSON.parse(leagueDataRaw);
+      seasonCfg = getSeasonConfig(leagueData, review.season);
       const contacts = (await env.DB.prepare('SELECT player_id, name, is_sub, role, is_goalie FROM contacts').all()).results || [];
 
       const candidateMap = new Map();
@@ -2902,14 +2916,14 @@ export async function handleReviewGet(req, env, url) {
     try {
       const cfgRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'season_draft_config'").first();
       if (cfgRow?.value) {
-        const cfg = JSON.parse(cfgRow.value);
-        if (cfg.maxAssistsPerGoal != null) maxAssistsPerGoal = Number(cfg.maxAssistsPerGoal) || 1;
+        const draftCfg = JSON.parse(cfgRow.value);
+        if (draftCfg.maxAssistsPerGoal != null) maxAssistsPerGoal = Number(draftCfg.maxAssistsPerGoal) || 1;
       }
       const assistRuleRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'max_assists_per_goal'").first();
       if (assistRuleRow?.value) maxAssistsPerGoal = Number(assistRuleRow.value) || 1;
     } catch (_) {}
 
-    return new Response(renderReviewPage(review, env.ADMIN_KEY, candidatePlayers, { maxAssistsPerGoal }), {
+    return new Response(renderReviewPage(review, env.ADMIN_KEY, candidatePlayers, { maxAssistsPerGoal, config: seasonCfg }), {
       headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
     });
   }

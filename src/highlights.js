@@ -1,5 +1,7 @@
 // Highlights, weekly honors, milestone tracking, and career firsts for SMBHL invite emails
 
+import { getTeamNameFr } from './season_config.js';
+
 export function getMilestonesForStat(statType, maxCareerVal = 0) {
   let base;
   if (statType === 'pts') {
@@ -760,7 +762,7 @@ export async function getWeeklyHighlights(env, targetWeek, season = null) {
 }
 
 export const TEAM_FR = { Red: 'Rouge', Blue: 'Bleu', White: 'Blanc', Black: 'Noir' };
-export const tFR = t => TEAM_FR[t] || t;
+export const tFR = (t, cfg) => cfg ? getTeamNameFr(cfg, t) : (TEAM_FR[t] || t);
 
 /**
  * Formats milestone stat concisely without duplicate FR/EN sentences

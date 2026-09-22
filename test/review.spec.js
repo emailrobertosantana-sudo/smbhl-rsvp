@@ -17,6 +17,7 @@ import {
   computeSeasonAwards,
   updatePlayoffSchedule
 } from '../src/awards.js';
+import { getSeasonConfig, getTeamNames } from '../src/season_config.js';
 
 describe('Review & Scoring Engine', () => {
   it('extracts JSON cleanly even with surrounding markdown, text, or trailing commas', () => {
@@ -703,6 +704,161 @@ describe('Season Awards Computation', () => {
     expect(awards.calderCandidates.topGoalie).not.toBeNull();
     expect(awards.calderCandidates.topGoalie.name).toBe('Rookie Wall');
     expect(awards.calderCandidates.topGoalie.gaa).toBe(2);
+  });
+});
+
+describe('Multi-team season config (6-team season, Parts 3 & 4)', () => {
+  const sixTeamConfig = {
+    teams: [
+      { name: 'Hawks', name_fr: 'Faucons', colour: '#1c1f24', aliases: ['Hawkeyes'] },
+      { name: 'Wolves', name_fr: 'Loups', colour: '#374151', aliases: ['Timberwolves'] },
+      { name: 'Bears', name_fr: 'Ours', colour: '#78350f', aliases: ['Grizzlies'] },
+      { name: 'Lions', name_fr: 'Lions', colour: '#b45309', aliases: ['Nittany Lions'] },
+      { name: 'Eagles', name_fr: 'Aigles', colour: '#166534', aliases: ['Philly'] },
+      { name: 'Sharks', name_fr: 'Requins', colour: '#0369a1', aliases: ['Jaws'] }
+    ],
+    goaliesPerTeam: 1,
+    skatersPerTeam: 7,
+    minSkaters: 4,
+    playoffFormat: 'top4_two_weeks'
+  };
+
+  it('matches OCR team names, name_fr, and aliases for a non-default season config', () => {
+    expect(normalizeTeam('Hawks', sixTeamConfig)).toBe('Hawks');
+    expect(normalizeTeam('Hawkeyes', sixTeamConfig)).toBe('Hawks');       // alias
+    expect(normalizeTeam('Loups', sixTeamConfig)).toBe('Wolves');         // name_fr
+    expect(normalizeTeam('Grizzlies', sixTeamConfig)).toBe('Bears');      // alias
+    expect(normalizeTeam('Requins', sixTeamConfig)).toBe('Sharks');       // name_fr
+    expect(normalizeTeam('eagles squad', sixTeamConfig)).toBe('Eagles'); // loose substring fallback
+    // The default (SMBHL) config still resolves independently of any season config
+    expect(normalizeTeam('Rouge')).toBe('Red');
+  });
+
+  it("detects missing sheets against the season's own team list", () => {
+    const parsedSheets = [
+      { team: 'Hawkeyes' }, // alias for Hawks
+      { team: 'Loups' },    // name_fr for Wolves
+      { team: 'Bears' }
+    ];
+    // Mirrors the missing-sheet detection in renderReviewPage / handleScoresheetEmail
+    const receivedTeams = [...new Set(parsedSheets.map(s => normalizeTeam(s.team, sixTeamConfig)).filter(Boolean))];
+    const missingTeams = getTeamNames(sixTeamConfig).filter(t => !receivedTeams.includes(t));
+
+    expect(receivedTeams.sort()).toEqual(['Bears', 'Hawks', 'Wolves']);
+    expect(missingTeams.sort()).toEqual(['Eagles', 'Lions', 'Sharks']);
+  });
+
+  it('seeds a top4_two_weeks playoff bracket: semifinal week, then final/consolation week', () => {
+    const s0 = {
+      name: 'Winter 2027 (6-team)',
+      config: sixTeamConfig,
+      standings: [
+        { team: 'Wolves', pts: 20 },
+        { team: 'Sharks', pts: 16 },
+        { team: 'Hawks', pts: 14 },
+        { team: 'Bears', pts: 10 },
+        { team: 'Lions', pts: 8 },
+        { team: 'Eagles', pts: 4 }
+      ],
+      champion: null,
+      fixtures: [
+        // Regular season, week 10 (fully played)
+        { week: 10, time: '10:00 AM', gym: 'Court A', home: 'Wolves', away: 'Eagles', hg: 6, ag: 2 },
+        { week: 10, time: '10:00 AM', gym: 'Court B', home: 'Sharks', away: 'Lions', hg: 5, ag: 3 },
+        { week: 10, time: '11:00 AM', gym: 'Court A', home: 'Hawks', away: 'Bears', hg: 4, ag: 4 },
+
+        // Semifinal week 11 (unplayed)
+        { week: 11, time: '10:00 AM', gym: 'Court A', home: 'TBD', away: 'TBD', hg: null, ag: null },
+        { week: 11, time: '10:00 AM', gym: 'Court B', home: 'TBD', away: 'TBD', hg: null, ag: null },
+
+        // Final week 12 (unplayed)
+        { week: 12, time: '10:00 AM', gym: 'Court A', home: 'TBD', away: 'TBD', hg: null, ag: null },
+        { week: 12, time: '10:00 AM', gym: 'Court B', home: 'TBD', away: 'TBD', hg: null, ag: null }
+      ]
+    };
+
+    // 1. Regular season finished -> semifinals seeded in week 11, final week untouched
+    updatePlayoffSchedule(s0);
+    const semis = s0.fixtures.filter(f => f.week === 11);
+    const finals = s0.fixtures.filter(f => f.week === 12);
+    const f1v4 = semis.find(f => f.gym === 'Court A');
+    const f2v3 = semis.find(f => f.gym === 'Court B');
+
+    expect(f1v4.home).toBe('Wolves'); // 1st
+    expect(f1v4.away).toBe('Bears');  // 4th
+    expect(f2v3.home).toBe('Sharks'); // 2nd
+    expect(f2v3.away).toBe('Hawks');  // 3rd
+    expect(finals.every(f => f.home === 'TBD')).toBe(true);
+
+    // 2. Play the semis: Wolves beat Bears, Hawks upset Sharks
+    f1v4.hg = 5; f1v4.ag = 2;
+    f2v3.hg = 3; f2v3.ag = 4;
+    updatePlayoffSchedule(s0);
+
+    const fFinal = finals.find(f => f.gym === 'Court A');
+    const fConsol = finals.find(f => f.gym === 'Court B');
+    expect(fFinal.home).toBe('Wolves');
+    expect(fFinal.away).toBe('Hawks');
+    expect(fConsol.home).toBe('Bears');
+    expect(fConsol.away).toBe('Sharks');
+    expect(s0.champion).toBeNull();
+
+    // 3. Play the final: Wolves win it all
+    fFinal.hg = 6; fFinal.ag = 3;
+    fFinal.date = 'Sunday March 1, 2027';
+    updatePlayoffSchedule(s0);
+
+    expect(s0.champion).toBe('Wolves');
+    expect(s0.last_game).toBe('Sunday March 1, 2027');
+  });
+
+  it('does nothing when the season\'s playoffFormat is "none"', () => {
+    const s0 = {
+      name: 'No Playoffs Season',
+      config: { ...sixTeamConfig, playoffFormat: 'none' },
+      fixtures: [
+        { week: 10, time: '10:00 AM', gym: 'Court A', home: 'Wolves', away: 'Bears', hg: 5, ag: 2 },
+        { week: 11, time: '10:00 AM', gym: 'Court A', home: 'TBD', away: 'TBD', hg: null, ag: null },
+        { week: 11, time: '10:00 AM', gym: 'Court B', home: 'TBD', away: 'TBD', hg: null, ag: null }
+      ]
+    };
+    updatePlayoffSchedule(s0);
+    expect(s0.fixtures[1].home).toBe('TBD');
+    expect(s0.fixtures[2].home).toBe('TBD');
+    expect(s0.champion).toBeUndefined();
+  });
+
+  it('falls back to SMBHL defaults when a season has no config at all', () => {
+    expect(getSeasonConfig(undefined)).toEqual({
+      teams: expect.any(Array),
+      goaliesPerTeam: 1,
+      skatersPerTeam: 8,
+      minSkaters: 5,
+      playoffFormat: 'top4_single_day'
+    });
+    expect(getTeamNames(getSeasonConfig({ name: 'Configless Season', standings: [], fixtures: [] })))
+      .toEqual(['Red', 'Blue', 'White', 'Black']);
+
+    // A season object with no .config and no dataJson falls back to the same
+    // SMBHL-default single-day (Gym-based) behaviour as the original 4-team season.
+    const s0 = {
+      name: 'Configless Season',
+      standings: [
+        { team: 'Blue', pts: 10 }, { team: 'Black', pts: 8 },
+        { team: 'Red', pts: 6 }, { team: 'White', pts: 4 }
+      ],
+      fixtures: [
+        { week: 1, time: '10:00 AM', gym: 'Gym #1', home: 'Blue', away: 'Red', hg: 3, ag: 1 },
+        { week: 2, time: '10:00 AM', gym: 'Gym #1', home: 'TBD', away: 'TBD', hg: null, ag: null },
+        { week: 2, time: '10:00 AM', gym: 'Gym #2', home: 'TBD', away: 'TBD', hg: null, ag: null },
+        { week: 2, time: '11:00 AM', gym: 'Gym #1', home: 'TBD', away: 'TBD', hg: null, ag: null },
+        { week: 2, time: '11:00 AM', gym: 'Gym #2', home: 'TBD', away: 'TBD', hg: null, ag: null }
+      ]
+    };
+    updatePlayoffSchedule(s0);
+    const semis = s0.fixtures.filter(f => f.week === 2 && f.time === '10:00 AM');
+    expect(semis.find(f => f.gym === 'Gym #1').home).toBe('Blue');
+    expect(semis.find(f => f.gym === 'Gym #2').home).toBe('Black');
   });
 });
 

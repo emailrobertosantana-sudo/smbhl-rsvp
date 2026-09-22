@@ -1,6 +1,6 @@
 // Seasonal awards computation, standings tie-breaking, and end-of-season recap helpers
 
-export const TEAMS = ['Black', 'Blue', 'Red', 'White'];
+import { normalizeSeasonConfig, getSeasonConfig, getTeamNames } from './season_config.js';
 
 /**
  * Sorts league standings according to SMBHL tie-break rules:
@@ -48,7 +48,9 @@ export function sortStandings(standings, regularGoalsMap = {}) {
  * @returns {Object} { 'Red': 32, 'Blue': 45, ... }
  */
 export function getRegularGoalsByTeam(dataJson, seasonName) {
-  const map = { Black: 0, Blue: 0, Red: 0, White: 0 };
+  const cfg = getSeasonConfig(dataJson, seasonName);
+  const map = {};
+  for (const t of getTeamNames(cfg)) map[t] = 0;
   const players = dataJson?.players || [];
 
   for (const p of players) {
@@ -324,17 +326,140 @@ export function computeSeasonAwards(dataJson, seasonName) {
 }
 
 /**
- * Automatically updates playoff fixtures for the final week:
- * - After regular season finishes: sets Game 1 (1 vs 4, 2 vs 3)
- * - After Game 1 finishes: sets Game 2 Final (Winner 1v4 vs Winner 2v3) & Consolidation (Loser 1v4 vs Loser 2v3)
- * - After Final finishes: crowns season champion!
- *
- * @param {Object} s0 - Season object from data.json
+ * Picks the ordered pair of fixtures for a playoff slot (e.g. the two semifinal
+ * games, or Final + Consolation). Order is determined by each fixture's gym name
+ * when the slot has at least as many distinct gyms as games (dynamic replacement
+ * for the old hardcoded 'Gym #1' / 'Gym #2' lookup); otherwise falls back to the
+ * fixtures' original order.
  */
-export function updatePlayoffSchedule(s0) {
+function pickSlotFixtures(fixtures) {
+  const gyms = new Set(fixtures.map(f => f.gym).filter(Boolean));
+  if (gyms.size >= fixtures.length) {
+    return fixtures.slice().sort((a, b) => String(a.gym || '').localeCompare(String(b.gym || '')));
+  }
+  return fixtures.slice();
+}
+
+/**
+ * Seeds and, once played, resolves the winners for a 1v4 / 2v3 slot, returning
+ * the winner/loser pair used to seed the next round.
+ */
+function seedAndResolveSemis(semiFixtures, rank1, rank2, rank3, rank4) {
+  const [f1v4, f2v3] = pickSlotFixtures(semiFixtures);
+
+  if (f1v4.hg === null || f1v4.hg === undefined) {
+    f1v4.home = rank1;
+    f1v4.away = rank4;
+  }
+  if (f2v3.hg === null || f2v3.hg === undefined) {
+    f2v3.home = rank2;
+    f2v3.away = rank3;
+  }
+
+  const played = f1v4.hg !== null && f1v4.hg !== undefined && f2v3.hg !== null && f2v3.hg !== undefined;
+  if (!played) return null;
+
+  const hg1 = Number(f1v4.hg), ag1 = Number(f1v4.ag);
+  const hg2 = Number(f2v3.hg), ag2 = Number(f2v3.ag);
+
+  return {
+    winner1: hg1 > ag1 ? f1v4.home : f1v4.away,
+    loser1:  hg1 > ag1 ? f1v4.away : f1v4.home,
+    winner2: hg2 > ag2 ? f2v3.home : f2v3.away,
+    loser2:  hg2 > ag2 ? f2v3.away : f2v3.home
+  };
+}
+
+/**
+ * Seeds Final/Consolation from the semifinal results and, once the Final is
+ * played, crowns the champion (unless already set/overridden).
+ */
+function seedAndResolveFinal(s0, finalFixtures, results) {
+  const { winner1, loser1, winner2, loser2 } = results;
+  const [fFinal, fConsol] = pickSlotFixtures(finalFixtures);
+
+  if (fFinal.hg === null || fFinal.hg === undefined) {
+    fFinal.home = winner1;
+    fFinal.away = winner2;
+  }
+  if (fConsol.hg === null || fConsol.hg === undefined) {
+    fConsol.home = loser1;
+    fConsol.away = loser2;
+  }
+
+  if (fFinal.hg !== null && fFinal.hg !== undefined) {
+    const finalHg = Number(fFinal.hg);
+    const finalAg = Number(fFinal.ag);
+    if (!s0.champion) {
+      s0.champion = finalHg > finalAg ? fFinal.home : fFinal.away;
+    }
+    if (!s0.last_game && fFinal.date) {
+      s0.last_game = fFinal.date;
+    }
+  }
+}
+
+/**
+ * Resolves the season config for the season actually being processed (not
+ * always "the current season"): the season's own `.config` if present,
+ * otherwise the standard getSeasonConfig(dataJson, seasonName) chain
+ * (season lookup -> current_season -> SMBHL defaults).
+ */
+function resolvePlayoffConfig(s0, dataJson) {
+  if (s0 && s0.config && typeof s0.config === 'object') {
+    return normalizeSeasonConfig(s0.config);
+  }
+  return getSeasonConfig(dataJson, s0 && s0.name);
+}
+
+/**
+ * Automatically updates playoff fixtures according to the season's playoffFormat:
+ * - 'none': no automated playoff scheduling.
+ * - 'top4_single_day' (default): both rounds played in the last fixture week --
+ *   Game 1 (1v4, 2v3) in the earlier time slot, Game 2 (Final/Consolation) in the
+ *   later slot. Works for any standings size >= 4 (top 4 make the playoffs).
+ * - 'top4_two_weeks': semifinals (1v4, 2v3) seeded in the second-to-last fixture
+ *   week, Final/Consolation in the last fixture week.
+ * Once the Final is played, crowns the season champion.
+ *
+ * @param {Object} s0 - Season object from data.json (the season being processed)
+ * @param {Object} [dataJson] - Full data.json payload, used to resolve config
+ *   fallback (current season, then SMBHL defaults) when s0 has no own config.
+ */
+export function updatePlayoffSchedule(s0, dataJson) {
   if (!s0 || !s0.fixtures || !s0.fixtures.length) return;
+
+  const cfg = resolvePlayoffConfig(s0, dataJson);
+  if (cfg.playoffFormat === 'none') return;
   if (!s0.standings || s0.standings.length < 4) return;
 
+  const rank1 = s0.standings[0].team;
+  const rank2 = s0.standings[1].team;
+  const rank3 = s0.standings[2].team;
+  const rank4 = s0.standings[3].team;
+
+  if (cfg.playoffFormat === 'top4_two_weeks') {
+    const weeks = [...new Set(s0.fixtures.map(f => Number(f.week) || 0))].sort((a, b) => a - b);
+    if (weeks.length < 2) return;
+    const finalWeek = weeks[weeks.length - 1];
+    const semiWeek = weeks[weeks.length - 2];
+
+    const semiFixtures = s0.fixtures.filter(f => Number(f.week) === semiWeek);
+    const finalFixtures = s0.fixtures.filter(f => Number(f.week) === finalWeek);
+    if (semiFixtures.length < 2 || finalFixtures.length < 2) return;
+
+    const regularFixtures = s0.fixtures.filter(f => Number(f.week) < semiWeek);
+    const allRegularPlayed = regularFixtures.length > 0 && regularFixtures.every(f =>
+      f.hg !== null && f.ag !== null && f.hg !== undefined && f.ag !== undefined
+    );
+    if (!allRegularPlayed) return;
+
+    const results = seedAndResolveSemis(semiFixtures, rank1, rank2, rank3, rank4);
+    if (results) seedAndResolveFinal(s0, finalFixtures, results);
+    return;
+  }
+
+  // 'top4_single_day' (and any unrecognized format falls back to this default)
   const maxWeek = Math.max(...s0.fixtures.map(f => Number(f.week) || 0));
   const playoffFixtures = s0.fixtures.filter(f => Number(f.week) === maxWeek);
   if (playoffFixtures.length < 4) return;
@@ -343,74 +468,16 @@ export function updatePlayoffSchedule(s0) {
   const allRegularPlayed = regularFixtures.length > 0 && regularFixtures.every(f =>
     f.hg !== null && f.ag !== null && f.hg !== undefined && f.ag !== undefined
   );
+  if (!allRegularPlayed) return;
 
-  if (allRegularPlayed) {
-    const rank1 = s0.standings[0].team;
-    const rank2 = s0.standings[1].team;
-    const rank3 = s0.standings[2].team;
-    const rank4 = s0.standings[3].team;
+  // Distinguish early game (Game 1 - Semi-finals) vs later game (Game 2 - Finals)
+  const times = [...new Set(playoffFixtures.map(f => f.time))].sort();
+  const game1Time = times[0];
+  const game1Fixtures = playoffFixtures.filter(f => f.time === game1Time);
+  const game2Fixtures = playoffFixtures.filter(f => f.time !== game1Time);
+  if (game1Fixtures.length < 2 || game2Fixtures.length < 2) return;
 
-    // Distinguish early game (Game 1 - Semi-finals) vs later game (Game 2 - Finals)
-    const times = [...new Set(playoffFixtures.map(f => f.time))].sort();
-    const game1Time = times[0];
-    const game1Fixtures = playoffFixtures.filter(f => f.time === game1Time);
-    const game2Fixtures = playoffFixtures.filter(f => f.time !== game1Time);
-
-    if (game1Fixtures.length >= 2) {
-      const f1v4 = game1Fixtures.find(f => f.gym === 'Gym #1') || game1Fixtures[0];
-      const f2v3 = game1Fixtures.find(f => f.gym === 'Gym #2') || game1Fixtures[1];
-
-      // Populate 1 vs 4 and 2 vs 3 if unplayed
-      if (f1v4.hg === null || f1v4.hg === undefined) {
-        f1v4.home = rank1;
-        f1v4.away = rank4;
-      }
-      if (f2v3.hg === null || f2v3.hg === undefined) {
-        f2v3.home = rank2;
-        f2v3.away = rank3;
-      }
-
-      // Check if Game 1 has been played
-      const game1Played = (
-        f1v4.hg !== null && f1v4.hg !== undefined &&
-        f2v3.hg !== null && f2v3.hg !== undefined
-      );
-
-      if (game1Played && game2Fixtures.length >= 2) {
-        const hg1 = Number(f1v4.hg), ag1 = Number(f1v4.ag);
-        const hg2 = Number(f2v3.hg), ag2 = Number(f2v3.ag);
-
-        const winner1 = hg1 > ag1 ? f1v4.home : f1v4.away;
-        const loser1  = hg1 > ag1 ? f1v4.away : f1v4.home;
-
-        const winner2 = hg2 > ag2 ? f2v3.home : f2v3.away;
-        const loser2  = hg2 > ag2 ? f2v3.away : f2v3.home;
-
-        const fFinal  = game2Fixtures.find(f => f.gym === 'Gym #1') || game2Fixtures[0];
-        const fConsol = game2Fixtures.find(f => f.gym === 'Gym #2') || game2Fixtures[1];
-
-        if (fFinal.hg === null || fFinal.hg === undefined) {
-          fFinal.home = winner1;
-          fFinal.away = winner2;
-        }
-        if (fConsol.hg === null || fConsol.hg === undefined) {
-          fConsol.home = loser1;
-          fConsol.away = loser2;
-        }
-
-        // If Final is played, declare champion (if not explicitly chosen/overridden already)
-        if (fFinal.hg !== null && fFinal.hg !== undefined) {
-          const finalHg = Number(fFinal.hg);
-          const finalAg = Number(fFinal.ag);
-          if (!s0.champion) {
-            s0.champion = finalHg > finalAg ? fFinal.home : fFinal.away;
-          }
-          if (!s0.last_game && fFinal.date) {
-            s0.last_game = fFinal.date;
-          }
-        }
-      }
-    }
-  }
+  const results = seedAndResolveSemis(game1Fixtures, rank1, rank2, rank3, rank4);
+  if (results) seedAndResolveFinal(s0, game2Fixtures, results);
 }
 
