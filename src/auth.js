@@ -2,9 +2,9 @@
 // ADMIN_KEY (admin_auth.js) and the legacy RSVP/review magic links (built on
 // crypto_utils.js's hmac()/same()). This module is purely additive: nothing
 // existing calls into it yet, and nothing here touches ADMIN_KEY, RSVP_SECRET,
-// or any Fall 2026 data path. It signs its own tokens (sessions) with a
-// dedicated env.AUTH_SECRET, kept separate from the legacy secrets so a leak
-// in one domain doesn't cascade into another.
+// or any Fall 2026 data path. It signs its own tokens (sessions, email
+// verification) with a dedicated env.AUTH_SECRET, kept separate from the
+// legacy secrets so a leak in one domain doesn't cascade into another.
 //
 // Deployment note: env.AUTH_SECRET must be provisioned as a Workers secret
 // (`wrangler secret put AUTH_SECRET`) before any of this is deployed — that
@@ -166,6 +166,77 @@ export async function invalidateAllSessions(env, userId) {
   await env.DB.prepare('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?').bind(userId).run();
 }
 
+/* ---------- email verification ----------
+ * Same signed-token shape as sessions, but single-purpose and shorter-lived:
+ * 24 hours, long enough that a verification email isn't a fire drill to act
+ * on, short enough to limit how long a leaked/forwarded link stays useful.
+ * Verifying is idempotent by design — a second click on the same valid
+ * (unexpired) token just re-sets email_verified_at and reports success again,
+ * rather than erroring on "already verified". That needed no extra
+ * single-use-token tracking table, and re-verifying an already-verified
+ * address is harmless.
+ *
+ * Not wired up: no email is actually sent anywhere in this task. handleSignup
+ * generates the token/link and logs + returns it in the signup response, so
+ * the mechanism is real and end-to-end testable; a future task would swap
+ * that console.log + response field for a real send (see the final report).
+ */
+
+const VERIFY_TOKEN_TTL_MS = 24 * 3600 * 1000;
+
+const verifyMsg = (userId, exp) => `verify:${userId}:${exp}`;
+
+export async function generateVerificationToken(env, userId, ttlMs = VERIFY_TOKEN_TTL_MS) {
+  const exp = Date.now() + ttlMs;
+  const sig = await hmac(env.AUTH_SECRET, verifyMsg(userId, exp));
+  const token = `${userId}.${exp}.${sig}`;
+  return { token, exp };
+}
+
+// Returns { ok: true, userId } or { ok: false, error }. Never throws.
+export async function verifyEmailToken(env, token) {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3) return { ok: false, error: 'malformed' };
+  const [userId, expStr, sig] = parts;
+  const exp = Number(expStr);
+  if (!userId || !Number.isFinite(exp)) return { ok: false, error: 'malformed' };
+  if (Date.now() > exp) return { ok: false, error: 'expired' };
+
+  let want;
+  try {
+    want = await hmac(env.AUTH_SECRET, verifyMsg(userId, exp));
+  } catch (_) {
+    return { ok: false, error: 'malformed' };
+  }
+  if (!same(want, sig)) return { ok: false, error: 'invalid' };
+
+  await env.DB.prepare('UPDATE users SET email_verified_at = ? WHERE id = ?').bind(new Date().toISOString(), userId).run();
+  return { ok: true, userId };
+}
+
+// Checkable helpers for anything that later wants to gate player-facing email
+// sending. Not wired into any existing send path in this task — see the
+// final report for why, and what wiring them in would look like.
+export async function isUserEmailVerified(env, userId) {
+  const row = await env.DB.prepare('SELECT email_verified_at FROM users WHERE id = ?').bind(userId).first();
+  return !!(row && row.email_verified_at);
+}
+
+// True if ANY admin linked to this league (via league_admins) has a verified
+// email. Deliberately derived via a join rather than a stored boolean column
+// on leagues: a cached column would need to be kept in sync by hand every
+// time an admin verifies (or a new admin is added), which is exactly the
+// kind of denormalization bug that quietly rots. users.email_verified_at
+// stays the single source of truth.
+export async function isLeagueEmailVerified(env, leagueId) {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) as c FROM league_admins la
+       JOIN users u ON u.id = la.user_id
+      WHERE la.league_id = ? AND u.email_verified_at IS NOT NULL`
+  ).bind(leagueId).first();
+  return !!(row && row.c > 0);
+}
+
 /* ---------- signup rate limiting ----------
  * Considered: a Durable Object (per-IP counter) — not used anywhere in this
  * project, would need a new binding + migration, and is more machinery than
@@ -256,8 +327,23 @@ export async function handleSignup(req, env) {
        VALUES (?, ?, ?, ?, NULL, ?, 0)`
     ).bind(userId, email, passwordHash, now, now).run();
 
+    // Verification email is NOT actually sent anywhere in this task — see the
+    // final report. The token/link are generated (so the mechanism is real
+    // and testable end-to-end) and logged + returned in the response so a
+    // future task can wire them into real sending without touching this
+    // generation logic.
+    const { token, exp } = await generateVerificationToken(env, userId);
+    const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+    const verificationLink = `${publicUrl}/auth/verify?token=${encodeURIComponent(token)}`;
+    console.log(`[auth] Email verification link for ${email} (not sent — no email infra wired up yet): ${verificationLink}`);
+
     const cookie = await createSessionCookie(env, userId, 0);
-    return new Response(JSON.stringify({ ok: true, userId, email }), {
+    return new Response(JSON.stringify({
+      ok: true,
+      userId,
+      email,
+      verification: { token, exp, link: verificationLink }
+    }), {
       status: 200,
       headers: { 'content-type': 'application/json', 'set-cookie': cookie }
     });
@@ -302,4 +388,16 @@ export async function handleLogout(req, env) {
     status: 200,
     headers: { 'content-type': 'application/json', 'set-cookie': clearSessionCookie() }
   });
+}
+
+export async function handleVerifyEmail(req, env, url) {
+  const token = url.searchParams.get('token');
+  if (!token) return Response.json({ ok: false, error: 'Missing token' }, { status: 400 });
+
+  const result = await verifyEmailToken(env, token);
+  if (!result.ok) {
+    const status = result.error === 'expired' ? 410 : 400;
+    return Response.json({ ok: false, error: result.error }, { status });
+  }
+  return Response.json({ ok: true, userId: result.userId });
 }

@@ -3,7 +3,9 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import {
   hashPassword,
   verifyPassword,
-  checkUserSession
+  checkUserSession,
+  isUserEmailVerified,
+  isLeagueEmailVerified
 } from '../src/auth.js';
 import { hmac } from '../src/crypto_utils.js';
 
@@ -22,7 +24,7 @@ async function signup(email, password, ip = '203.0.113.10') {
   });
 }
 
-describe('Part A/B: user accounts, sessions, and league provisioning', () => {
+describe('Part A/B/C: user accounts, sessions, leagues, and email verification', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
@@ -271,6 +273,62 @@ describe('Part A/B: user accounts, sessions, and league provisioning', () => {
         body: JSON.stringify({ name: 'Tampered Cookie League', teamNames: ['A', 'B'], tracksStats: true })
       });
       expect(res.status).toBe(401);
+    });
+  });
+
+  describe('Email verification', () => {
+    it('the token from signup verifies the account, and isUserEmailVerified reflects it correctly before and after', async () => {
+      const res = await signup('verify.me@example.com', 'a-strong-password-1', '203.0.113.30');
+      const { userId, verification } = await res.json();
+      expect(verification.token).toBeTruthy();
+      expect(verification.link).toContain('/auth/verify?token=');
+
+      expect(await isUserEmailVerified(env, userId)).toBe(false);
+
+      const verifyRes = await SELF.fetch(`http://example.com/auth/verify?token=${encodeURIComponent(verification.token)}`);
+      expect(verifyRes.status).toBe(200);
+      expect((await verifyRes.json()).ok).toBe(true);
+
+      expect(await isUserEmailVerified(env, userId)).toBe(true);
+    });
+
+    it('using the same valid token a second time is idempotent (still succeeds, does not error)', async () => {
+      const res = await signup('verify.twice@example.com', 'a-strong-password-1', '203.0.113.31');
+      const { verification } = await res.json();
+
+      const firstRes = await SELF.fetch(`http://example.com/auth/verify?token=${encodeURIComponent(verification.token)}`);
+      const secondRes = await SELF.fetch(`http://example.com/auth/verify?token=${encodeURIComponent(verification.token)}`);
+      expect(firstRes.status).toBe(200);
+      expect(secondRes.status).toBe(200);
+      expect((await firstRes.json()).ok).toBe(true);
+      expect((await secondRes.json()).ok).toBe(true);
+    });
+
+    it('rejects a malformed or garbage token', async () => {
+      const res = await SELF.fetch('http://example.com/auth/verify?token=not-a-real-token');
+      expect(res.status).toBe(400);
+      expect((await res.json()).ok).toBe(false);
+    });
+
+    it('isLeagueEmailVerified is false until an admin of that league verifies, then true afterward', async () => {
+      const signupRes = await signup('league.email.verify@example.com', 'a-strong-password-1', '203.0.113.32');
+      const { userId, verification } = await signupRes.json();
+      const cookieHeader = extractCookie(signupRes);
+
+      const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: cookieHeader },
+        body: JSON.stringify({ name: 'Email Gate League', teamNames: ['A', 'B'], tracksStats: true })
+      });
+      const { league } = await leagueRes.json();
+
+      expect(await isLeagueEmailVerified(env, league.id)).toBe(false);
+
+      await SELF.fetch(`http://example.com/auth/verify?token=${encodeURIComponent(verification.token)}`);
+
+      expect(await isLeagueEmailVerified(env, league.id)).toBe(true);
+      // And the user-level check agrees.
+      expect(await isUserEmailVerified(env, userId)).toBe(true);
     });
   });
 });

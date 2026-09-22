@@ -1,7 +1,7 @@
 import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
-import { handleSignup, handleLogin, handleLogout } from './auth.js';
+import { handleSignup, handleLogin, handleLogout, handleVerifyEmail } from './auth.js';
 import { handleLeagueCreate } from './leagues.js';
 import {
   cleanupOldReviews,
@@ -14947,6 +14947,8 @@ async function handleFetch(req, env, ctx) {
         return await handleLogin(req, env);
       if (url.pathname === '/auth/logout' && req.method === 'POST')
         return await handleLogout(req, env);
+      if (url.pathname === '/auth/verify' && req.method === 'GET')
+        return await handleVerifyEmail(req, env, url);
       // League provisioning (leagues.js) — requires a valid user session.
       // Rows in the shared DB, scoped by league_id; see leagues.js's header
       // comment for the architecture decision behind that.
