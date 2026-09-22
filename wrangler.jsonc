@@ -29,7 +29,8 @@
     "demo": {
       "name": "notreligue-rsvp",
       "vars": {
-        "PUBLIC_URL": "https://rsvp.notreligue.ca"
+        "PUBLIC_URL": "https://rsvp.notreligue.ca",
+        "DEMO_ENV": "true"
       },
       "d1_databases": [
         {

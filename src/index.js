@@ -14819,8 +14819,20 @@ export default {
   },
 
   async fetch(req, env, ctx) {
+    const resp = await handleFetch(req, env, ctx);
+    if (env.DEMO_ENV !== 'true') return resp;
+    const headers = new Headers(resp.headers);
+    headers.set('X-Robots-Tag', 'noindex, nofollow');
+    return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
+  }
+};
+
+async function handleFetch(req, env, ctx) {
     const url = new URL(req.url);
     try {
+      if (env.DEMO_ENV === 'true' && url.pathname === '/robots.txt' && req.method === 'GET') {
+        return new Response('User-agent: *\nDisallow: /\n', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+      }
       if (url.pathname.startsWith('/admin') && url.hostname.endsWith('workers.dev')) {
         const canonicalBase = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
         return Response.redirect(`${canonicalBase}${url.pathname}${url.search}`, 302);
@@ -15143,8 +15155,7 @@ export default {
     } catch (e) {
       return new Response('error: ' + e.message, { status: 500 });
     }
-  }
-};
+}
 
 export {
   body,
