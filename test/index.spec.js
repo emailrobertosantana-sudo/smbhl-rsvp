@@ -3222,6 +3222,56 @@ describe("SMBHL Worker", () => {
 		});
 	});
 
+
+	describe("Text wordmark logo generator (/api/logo.svg)", () => {
+		it("Fall 2026 (SMBHL, no league override) still renders the exact original hand-drawn lockup, not the generated wordmark", async () => {
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				current_season: "Fall 2026",
+				seasons: [{ name: "Fall 2026", standings: [] }],
+				players: []
+			}));
+			const res = await worker.fetch(new Request("http://example.com/api/logo.svg"), env);
+			expect(res.status).toBe(200);
+			const svg = await res.text();
+			expect(svg).toContain('aria-label="SMBHL"');
+			expect(svg).toContain('<title>SMBHL horizontal lockup</title>');
+			// Signature path data unique to the hand-drawn letterforms (the "S" glyph).
+			expect(svg).toContain('M32 0C48 0 58.5 8.5 60 23H41');
+		});
+
+		it("a season with its own league.name (TestLeague2026) renders a generated wordmark containing that name, not SMBHL", async () => {
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				current_season: "TestLeague2026",
+				seasons: [
+					{ name: "Fall 2026", standings: [] },
+					{
+						name: "TestLeague2026",
+						standings: [],
+						config: {
+							teams: [
+								{ name: 'Hawks', name_fr: 'Faucons', colour: '#1c1f24', aliases: [] },
+								{ name: 'Wolves', name_fr: 'Loups', colour: '#374151', aliases: [] }
+							],
+							league: { name: 'TestLeague2026' }
+						}
+					}
+				],
+				players: []
+			}));
+			const res = await worker.fetch(new Request("http://example.com/api/logo.svg"), env);
+			expect(res.status).toBe(200);
+			const svg = await res.text();
+			expect(svg).toContain('aria-label="TESTLEAGUE2026"');
+			expect(svg).not.toContain('SMBHL');
+			expect(svg).not.toContain('<title>SMBHL horizontal lockup</title>');
+			// The generated wordmark spells the name out as individual coloured <tspan> glyphs.
+			const letters = 'TESTLEAGUE2026'.split('');
+			for (const ch of letters) {
+				expect(svg).toContain('>' + ch + '</tspan>');
+			}
+		});
+	});
+
 	describe("Season-aware admin team resolution (custom 6-team season config)", () => {
 		const sixTeamConfig = {
 			teams: [

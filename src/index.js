@@ -45,7 +45,8 @@ import {
   isTeamValid,
   normalizeTeamWithConfig,
   getLeagueConfig,
-  tracksStats
+  tracksStats,
+  getTeamColour
 } from './season_config.js';
 
 /* SMBHL attendance
@@ -14824,24 +14825,72 @@ const TEAM_COLORS = {
   'White': '#ffffff'
 };
 
-export async function handleLogoSvg(req, env) {
-  let rects = `
-    <rect y="0" width="30" height="22" fill="#2a5fa8"></rect>
-    <rect y="26" width="30" height="22" fill="#1c1f24"></rect>
-    <rect y="52" width="30" height="22" fill="#ffffff"></rect>
-    <rect y="78" width="30" height="22" fill="#c9152f"></rect>
-    <rect x="0.8" y="26.8" width="28.4" height="20.4" fill="none" stroke="#eef0f3" stroke-width="1.6"></rect>
-  `;
+/**
+ * Generates a bold, colourful text wordmark SVG for a league, sized to the
+ * same header logo slot (height 104) as the hand-drawn SMBHL lockup. Colours
+ * cycle through the league's own team colours (skipping near-white ones,
+ * which vanish against the dark navbar) so each league's wordmark is drawn
+ * from its own palette. Character widths are a fixed approximation — there's
+ * no real font-metrics engine server-side — which is fine for a bold
+ * condensed wordmark but means it isn't precisely kerned.
+ */
+function generateWordmarkSvg(leagueName, teamColours = []) {
+  const name = (String(leagueName || '').trim() || 'League').toUpperCase();
+  const fallbackPalette = ['#2a5fa8', '#c9152f', '#1c7a4a', '#f2731f', '#7c3aed', '#0891b2'];
+  const usable = (teamColours || []).filter(c => {
+    const v = String(c || '').toLowerCase();
+    return v && v !== '#ffffff' && v !== '#fff' && v !== 'white';
+  });
+  const palette = usable.length > 0 ? usable : fallbackPalette;
 
+  const CHAR_W = 62;
+  const SPACE_W = 34;
+  const BASELINE_Y = 82;
+  let x = 8;
+  let spans = '';
+  let colourIdx = 0;
+  for (const ch of name) {
+    if (ch === ' ') { x += SPACE_W; continue; }
+    const fill = palette[colourIdx % palette.length];
+    colourIdx++;
+    spans += `<tspan x="${x}" y="${BASELINE_Y}" fill="${esc(fill)}">${esc(ch)}</tspan>`;
+    x += CHAR_W;
+  }
+  const accentCx = x + 14;
+  const width = Math.max(120, accentCx + 16);
+  const accentFill = palette[colourIdx % palette.length];
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 104" width="${width}" height="104" role="img" aria-label="${esc(name)}"><title>${esc(name)} wordmark</title><text font-family="'Arial Black','Helvetica Neue',Arial,sans-serif" font-weight="900" font-size="92" letter-spacing="-2">${spans}</text><circle cx="${accentCx}" cy="64" r="8" fill="${esc(accentFill)}"></circle></svg>`;
+}
+
+export async function handleLogoSvg(req, env) {
+  let data = null;
   try {
     let kv = env?.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null;
     if (!kv) {
       const res = await fetch(`${env?.SITE_URL || 'https://smbhl.com'}/data.json`);
       if (res.ok) kv = await res.text();
     }
-    if (kv) {
-      const data = JSON.parse(kv);
-      const s = data.seasons?.find(x => x.name === data.current_season) || data.seasons?.[0];
+    if (kv) data = JSON.parse(kv);
+  } catch (e) {}
+
+  const cfg = getSeasonConfig(data);
+  const league = getLeagueConfig(cfg);
+
+  // SMBHL keeps its exact original hand-drawn lockup, byte-for-byte — this branch
+  // is untouched from before the wordmark generator existed. Any other league
+  // name gets the new dynamically-generated text wordmark instead.
+  if (league.name === DEFAULT_SEASON_CONFIG.league.name) {
+    let rects = `
+      <rect y="0" width="30" height="22" fill="#2a5fa8"></rect>
+      <rect y="26" width="30" height="22" fill="#1c1f24"></rect>
+      <rect y="52" width="30" height="22" fill="#ffffff"></rect>
+      <rect y="78" width="30" height="22" fill="#c9152f"></rect>
+      <rect x="0.8" y="26.8" width="28.4" height="20.4" fill="none" stroke="#eef0f3" stroke-width="1.6"></rect>
+    `;
+
+    try {
+      const s = data?.seasons?.find(x => x.name === data.current_season) || data?.seasons?.[0];
       if (s && s.standings && s.standings.some(t => t.gp > 0)) {
         const regGoals = getRegularGoalsByTeam(data, s.name);
         const sorted = sortStandings(s.standings, regGoals);
@@ -14856,10 +14905,21 @@ export async function handleLogoSvg(req, env) {
         dynamicRects += `<rect x="0.8" y="${(blackY + 0.8).toFixed(1)}" width="28.4" height="20.4" fill="none" stroke="#eef0f3" stroke-width="1.6"></rect>`;
         rects = dynamicRects;
       }
-    }
-  } catch (e) {}
+    } catch (e) {}
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 342 104" width="342" height="104" role="img" aria-label="SMBHL"><title>SMBHL horizontal lockup</title><g transform="scale(1,1.04)">${rects}</g><g transform="translate(52,0) scale(0.74)"><path fill="#eef0f3" d="M32 0C48 0 58.5 8.5 60 23H41C40 17 36.5 14.5 31.5 14.5C25.5 14.5 21.5 18.5 21.5 25.5C21.5 31.5 24.5 34.5 34 38.5L44 43C55 48 61 56.5 61 71C61 88 49 100.5 31 100.5C13 100.5 1.5 89.5 0 73.5H19C20 80.5 24 85 30.5 85C37 85 41 81 41 74.5C41 68.5 38 65.5 28 61.5L18 57C7 52 1 43.5 1 29C1 12 15 0 32 0Z" transform="translate(0,0)"></path><path fill="#eef0f3" d="M0 0H23L39 41L55 0H78V100H58V36L45 68H33L20 36V100H0Z" transform="translate(71,0)"></path><path fill="#eef0f3" fill-rule="evenodd" d="M0 0H40C52.5 0 61 8.5 61 22.5C61 33 56 40.5 48 44.5C57.5 48 63 56.5 63 68.5C63 84.5 52 100 37.5 100H0ZM20 15.5V38H37C43.5 38 46.5 33 46.5 27C46.5 20.5 43.5 15.5 37 15.5ZM20 55V84.5H36C43 84.5 46.5 79 46.5 70C46.5 61 43 55 36 55Z" transform="translate(159,0)"></path><path fill="#eef0f3" d="M0 0H20V40H42V0H62V100H42V60H20V100H0Z" transform="translate(232,0)"></path><path fill="#eef0f3" d="M0 0H20V80H55V100H0Z" transform="translate(304,0)"></path></g><circle cx="330" cy="66" r="8" fill="#f2731f"></circle><g transform="translate(52,84) scale(0.2)"><path fill="#eef0f3" d="M32 0C48 0 58.5 8.5 60 23H41C40 17 36.5 14.5 31.5 14.5C25.5 14.5 21.5 18.5 21.5 25.5C21.5 31.5 24.5 34.5 34 38.5L44 43C55 48 61 56.5 61 71C61 88 49 100.5 31 100.5C13 100.5 1.5 89.5 0 73.5H19C20 80.5 24 85 30.5 85C37 85 41 81 41 74.5C41 68.5 38 65.5 28 61.5L18 57C7 52 1 43.5 1 29C1 12 15 0 32 0Z" transform="translate(0,0)"></path><path fill="#eef0f3" d="M0 0H20V100H0Z" transform="translate(79,0)"></path><path fill="#eef0f3" d="M0 0H22L42 56V0H62V100H40L20 44V100H0Z" transform="translate(117,0)"></path><path fill="#eef0f3" d="M32 0C50 0 60.5 12 61.5 28.5H41.5C40.5 20.5 37.5 16 31.5 16C24.5 16 21 22 21 34V66C21 78 24.5 84 31.5 84C37.5 84 40.5 79.5 41.5 71.5H61.5C60.5 88 50 100 32 100C13 100 1 88 1 68V32C1 12 13 0 32 0Z" transform="translate(197,0)"></path><path fill="#eef0f3" d="M0 0H54V16H20V42H48V58H20V84H54V100H0Z" transform="translate(276,0)"></path><path fill="#eef0f3" d="M2 32C2 12 14 0 31 0C48 0 58 11 58 28C58 41 52 50 40 61L23 76H58V100H1V79L31 51C36 46 38 42 38 34C38 24 35 17 30 17C24 17 21 24 21 36H2Z" transform="translate(374,0)"></path><path fill="#eef0f3" fill-rule="evenodd" d="M28 0C46 0 56 12 56 32V68C56 88 46 100 28 100C10 100 0 88 0 68V32C0 12 10 0 28 0ZM20 32V68C20 80 22.5 84.5 28 84.5C33.5 84.5 36 80 36 68V32C36 20 33.5 15.5 28 15.5C22.5 15.5 20 20 20 32Z" transform="translate(450,0)"></path><path fill="#eef0f3" fill-rule="evenodd" d="M28 0C46 0 56 12 56 32V68C56 88 46 100 28 100C10 100 0 88 0 68V32C0 12 10 0 28 0ZM20 32V68C20 80 22.5 84.5 28 84.5C33.5 84.5 36 80 36 68V32C36 20 33.5 15.5 28 15.5C22.5 15.5 20 20 20 32Z" transform="translate(524,0)"></path><path fill="#eef0f3" d="M8 0H54V18H27V37H34C50 37 60 48 60 67C60 86 47 100 30 100C13 100 1 89 0 73H20C21 80 25 84 30 84C36 84 40 78 40 67C40 57 36 52 29 52H8Z" transform="translate(598,0)"></path></g></svg>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 342 104" width="342" height="104" role="img" aria-label="SMBHL"><title>SMBHL horizontal lockup</title><g transform="scale(1,1.04)">${rects}</g><g transform="translate(52,0) scale(0.74)"><path fill="#eef0f3" d="M32 0C48 0 58.5 8.5 60 23H41C40 17 36.5 14.5 31.5 14.5C25.5 14.5 21.5 18.5 21.5 25.5C21.5 31.5 24.5 34.5 34 38.5L44 43C55 48 61 56.5 61 71C61 88 49 100.5 31 100.5C13 100.5 1.5 89.5 0 73.5H19C20 80.5 24 85 30.5 85C37 85 41 81 41 74.5C41 68.5 38 65.5 28 61.5L18 57C7 52 1 43.5 1 29C1 12 15 0 32 0Z" transform="translate(0,0)"></path><path fill="#eef0f3" d="M0 0H23L39 41L55 0H78V100H58V36L45 68H33L20 36V100H0Z" transform="translate(71,0)"></path><path fill="#eef0f3" fill-rule="evenodd" d="M0 0H40C52.5 0 61 8.5 61 22.5C61 33 56 40.5 48 44.5C57.5 48 63 56.5 63 68.5C63 84.5 52 100 37.5 100H0ZM20 15.5V38H37C43.5 38 46.5 33 46.5 27C46.5 20.5 43.5 15.5 37 15.5ZM20 55V84.5H36C43 84.5 46.5 79 46.5 70C46.5 61 43 55 36 55Z" transform="translate(159,0)"></path><path fill="#eef0f3" d="M0 0H20V40H42V0H62V100H42V60H20V100H0Z" transform="translate(232,0)"></path><path fill="#eef0f3" d="M0 0H20V80H55V100H0Z" transform="translate(304,0)"></path></g><circle cx="330" cy="66" r="8" fill="#f2731f"></circle><g transform="translate(52,84) scale(0.2)"><path fill="#eef0f3" d="M32 0C48 0 58.5 8.5 60 23H41C40 17 36.5 14.5 31.5 14.5C25.5 14.5 21.5 18.5 21.5 25.5C21.5 31.5 24.5 34.5 34 38.5L44 43C55 48 61 56.5 61 71C61 88 49 100.5 31 100.5C13 100.5 1.5 89.5 0 73.5H19C20 80.5 24 85 30.5 85C37 85 41 81 41 74.5C41 68.5 38 65.5 28 61.5L18 57C7 52 1 43.5 1 29C1 12 15 0 32 0Z" transform="translate(0,0)"></path><path fill="#eef0f3" d="M0 0H20V100H0Z" transform="translate(79,0)"></path><path fill="#eef0f3" d="M0 0H22L42 56V0H62V100H40L20 44V100H0Z" transform="translate(117,0)"></path><path fill="#eef0f3" d="M32 0C50 0 60.5 12 61.5 28.5H41.5C40.5 20.5 37.5 16 31.5 16C24.5 16 21 22 21 34V66C21 78 24.5 84 31.5 84C37.5 84 40.5 79.5 41.5 71.5H61.5C60.5 88 50 100 32 100C13 100 1 88 1 68V32C1 12 13 0 32 0Z" transform="translate(197,0)"></path><path fill="#eef0f3" d="M0 0H54V16H20V42H48V58H20V84H54V100H0Z" transform="translate(276,0)"></path><path fill="#eef0f3" d="M2 32C2 12 14 0 31 0C48 0 58 11 58 28C58 41 52 50 40 61L23 76H58V100H1V79L31 51C36 46 38 42 38 34C38 24 35 17 30 17C24 17 21 24 21 36H2Z" transform="translate(374,0)"></path><path fill="#eef0f3" fill-rule="evenodd" d="M28 0C46 0 56 12 56 32V68C56 88 46 100 28 100C10 100 0 88 0 68V32C0 12 10 0 28 0ZM20 32V68C20 80 22.5 84.5 28 84.5C33.5 84.5 36 80 36 68V32C36 20 33.5 15.5 28 15.5C22.5 15.5 20 20 20 32Z" transform="translate(450,0)"></path><path fill="#eef0f3" fill-rule="evenodd" d="M28 0C46 0 56 12 56 32V68C56 88 46 100 28 100C10 100 0 88 0 68V32C0 12 10 0 28 0ZM20 32V68C20 80 22.5 84.5 28 84.5C33.5 84.5 36 80 36 68V32C36 20 33.5 15.5 28 15.5C22.5 15.5 20 20 20 32Z" transform="translate(524,0)"></path><path fill="#eef0f3" d="M8 0H54V18H27V37H34C50 37 60 48 60 67C60 86 47 100 30 100C13 100 1 89 0 73H20C21 80 25 84 30 84C36 84 40 78 40 67C40 57 36 52 29 52H8Z" transform="translate(598,0)"></path></g></svg>`;
+
+    return new Response(svg, {
+      headers: {
+        'content-type': 'image/svg+xml; charset=utf-8',
+        'access-control-allow-origin': '*',
+        'cache-control': 'public, max-age=300'
+      }
+    });
+  }
+
+  const teamColours = getTeamNames(cfg).map(t => getTeamColour(cfg, t));
+  const svg = generateWordmarkSvg(league.name, teamColours);
 
   return new Response(svg, {
     headers: {
