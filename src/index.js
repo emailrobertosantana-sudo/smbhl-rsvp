@@ -1,6 +1,7 @@
 import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
+import { handleSignup, handleLogin, handleLogout } from './auth.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -14937,6 +14938,15 @@ async function handleFetch(req, env, ctx) {
         const target = `${url.origin}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${teamName}&t=${t}`;
         return Response.redirect(target, 302);
       }
+      // New user-account system (auth.js) — additive, unrelated to the
+      // legacy ADMIN_KEY system below and not used by anything yet.
+      if (url.pathname === '/auth/signup' && req.method === 'POST')
+        return await handleSignup(req, env);
+      if (url.pathname === '/auth/login' && req.method === 'POST')
+        return await handleLogin(req, env);
+      if (url.pathname === '/auth/logout' && req.method === 'POST')
+        return await handleLogout(req, env);
+
       if (url.pathname === '/admin' || url.pathname === '/admin/')
         return Response.redirect(url.origin + '/admin/board', 302);
       if ((url.pathname === '/admin/board' || url.pathname === '/admin/board/') && req.method === 'GET') {
