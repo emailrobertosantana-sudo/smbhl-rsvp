@@ -813,8 +813,8 @@ function renderInviteEmail({
     </div>`;
   }
 
-  const highlightsHtml = highlights ? renderHighlightsHtml(highlights) : '';
-  const highlightsText = highlights ? renderHighlightsText(highlights) : '';
+  const highlightsHtml = highlights ? renderHighlightsHtml(highlights, league) : '';
+  const highlightsText = highlights ? renderHighlightsText(highlights, league) : '';
 
   // HTML content
   const contentHtml = `

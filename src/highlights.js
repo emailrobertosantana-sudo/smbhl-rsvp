@@ -1,6 +1,6 @@
 // Highlights, weekly honors, milestone tracking, and career firsts for SMBHL invite emails
 
-import { getTeamNameFr } from './season_config.js';
+import { getTeamNameFr, DEFAULT_SEASON_CONFIG } from './season_config.js';
 
 export function getMilestonesForStat(statType, maxCareerVal = 0) {
   let base;
@@ -827,8 +827,10 @@ export function formatClosingInLine(c, isHtml = false) {
 /**
  * Formats weekly highlights as responsive HTML for email
  */
-export function renderHighlightsHtml(highlights) {
+export function renderHighlightsHtml(highlights, leagueCfg = null) {
   if (!highlights) return '';
+  const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
+  const siteHost = String(league.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
 
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 
@@ -965,7 +967,7 @@ export function renderHighlightsHtml(highlights) {
       </div>
       ${groups.join('')}
       <div style="margin-top:14px; font-size:12px;">
-        <a href="https://smbhl.com" style="color:#17457f; text-decoration:underline;">Tout voir sur smbhl.com / See all on smbhl.com</a>
+        <a href="${league.siteUrl}" style="color:#17457f; text-decoration:underline;">Tout voir sur ${siteHost} / See all on ${siteHost}</a>
       </div>
     </div>
   `;
@@ -974,8 +976,10 @@ export function renderHighlightsHtml(highlights) {
 /**
  * Formats weekly highlights as plain text for email fallback
  */
-export function renderHighlightsText(highlights) {
+export function renderHighlightsText(highlights, leagueCfg = null) {
   if (!highlights) return '';
+  const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
+  const siteHost = String(league.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
 
   const starsWeek = highlights.starsWeek || (highlights.sourceWeeks ? highlights.sourceWeeks[highlights.sourceWeeks.length - 1] : 1);
   const milestoneWeeks = highlights.milestoneWeeks || highlights.sourceWeeks || [starsWeek];
@@ -1050,6 +1054,6 @@ export function renderHighlightsText(highlights) {
     '',
     sections.join('\n\n'),
     '',
-    'Tout voir sur smbhl.com / See all on smbhl.com : https://smbhl.com'
+    `Tout voir sur ${siteHost} / See all on ${siteHost} : ${league.siteUrl}`
   ].join('\n');
 }

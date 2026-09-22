@@ -1,7 +1,7 @@
 import PostalMime from 'postal-mime';
 import { computeWeeklyRecap } from './highlights.js';
 import { sortStandings, getRegularGoalsByTeam, updatePlayoffSchedule } from './awards.js';
-import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getTeamNames, normalizeTeamWithConfig, tracksStats } from './season_config.js';
+import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getTeamNames, normalizeTeamWithConfig, tracksStats, getLeagueConfig } from './season_config.js';
 
 const STATS_DISABLED_MSG = 'Cette ligue ne suit pas de statistiques pour cette saison (tracksStats: false). / This league does not track stats for this season.';
 
@@ -2542,8 +2542,9 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
     const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
     const magicLink = `${publicUrl}/admin/review?id=${encodeURIComponent(reviewId)}`;
     const hasWarnings = games.some(g => !g.balanced) || missingTeams.length > 0;
+    const notifyLeagueCfg = getLeagueConfig(cfg);
 
-    const subject = `[SMBHL] ${hasWarnings ? '⚠️ Validation requise' : '✅ Prêt à publier'} : Feuilles Semaine ${week} (${receivedTeams.length}/${teamNames.length} reçues)`;
+    const subject = `[${notifyLeagueCfg.name}] ${hasWarnings ? '⚠️ Validation requise' : '✅ Prêt à publier'} : Feuilles Semaine ${week} (${receivedTeams.length}/${teamNames.length} reçues)`;
     const text = `Bonjour Roberto,\n\n` +
       `${imageAttachments.length} nouvelle(s) feuille(s) de match ont été reçues pour la semaine ${week}.\n` +
       `État : ${receivedTeams.length}/${teamNames.length} feuilles reçues (${receivedTeams.join(', ') || 'aucune'}).${missingTeams.length > 0 ? ` (Manque : ${missingTeams.join(', ')})` : ''}\n\n` +
@@ -2551,7 +2552,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
       `Cliquez sur le lien suivant pour vérifier et publier en direct sur le site :\n` +
       `${magicLink}\n\n` +
       `Note : Dès que vous confirmerez la publication, toutes les photos temporaires seront définitivement supprimées du serveur.\n\n` +
-      `—\nSMBHL Automation`;
+      `—\n${notifyLeagueCfg.name} Automation`;
 
     const escH = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
     const html = `<!DOCTYPE html>
@@ -2565,7 +2566,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
   <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:540px; margin:0 auto; background-color:#ffffff; border:1px solid #dde1e7; border-radius:8px; overflow:hidden;">
     <tr>
       <td style="background-color:#16181d; padding:14px 20px; color:#ffffff;">
-        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 SMBHL — Feuilles de match</span>
+        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 ${notifyLeagueCfg.name} — Feuilles de match</span>
       </td>
     </tr>
     <tr>
@@ -2591,7 +2592,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
     </tr>
     <tr>
       <td style="background-color:#f8fafc; padding:14px 20px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b; text-align:center;">
-        SMBHL · Sunday Morning Ball Hockey League · <a href="https://smbhl.com" style="color:#2563eb; text-decoration:none;">smbhl.com</a>
+        ${notifyLeagueCfg.name} · ${notifyLeagueCfg.tagline} · <a href="${notifyLeagueCfg.siteUrl}" style="color:#2563eb; text-decoration:none;">${String(notifyLeagueCfg.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '')}</a>
       </td>
     </tr>
   </table>
@@ -2599,7 +2600,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
 </html>`;
 
     if (typeof sendMailFunc === 'function') {
-      await sendMailFunc(env, replyToEmail, subject, text, html);
+      await sendMailFunc(env, replyToEmail, subject, text, html, null, notifyLeagueCfg);
     }
     console.log(`Scoresheet review ${reviewId} processed and notification sent to ${replyToEmail}`);
   } catch (err) {
@@ -3010,9 +3011,11 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
   const rawData = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
   const originalData = JSON.parse(rawData);
 
-  if (!tracksStats(getSeasonConfig(originalData, review.season))) {
+  const publishSeasonCfg = getSeasonConfig(originalData, review.season);
+  if (!tracksStats(publishSeasonCfg)) {
     return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
   }
+  const publishLeagueCfg = getLeagueConfig(publishSeasonCfg);
 
   let subPlayerIds = new Set();
   try {
@@ -3072,7 +3075,9 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
     try {
       const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
       const downloadUrl = `${publicUrl}/api/backups/download?key=${encodeURIComponent(backupKey)}`;
-      const subj = `[SMBHL] ✅ Semaine ${weekNum} publiée — Sauvegarde automatique data.json`;
+      const league = publishLeagueCfg;
+      const siteHost = String(league.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const subj = `[${league.name}] ✅ Semaine ${weekNum} publiée — Sauvegarde automatique data.json`;
 
       const gameLines = (games || []).map(g => {
         const hScore = g.home_score != null ? g.home_score : '-';
@@ -3089,13 +3094,13 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
       }).join('');
 
       const text = `Bonjour Roberto,\n\n` +
-        `Les résultats de la semaine ${weekNum} ont été confirmés et publiés avec succès sur smbhl.com!\n\n` +
+        `Les résultats de la semaine ${weekNum} ont été confirmés et publiés avec succès sur ${siteHost}!\n\n` +
         `Matchs enregistrés :\n${gameLines}\n\n` +
         `Une copie de sauvegarde de sécurité a été archivée dans le Cloud (clé: ${backupKey}).\n` +
         `Le fichier data.json à jour est joint à ce courriel.\n\n` +
         `Lien direct de téléchargement de cette sauvegarde :\n${downloadUrl}\n\n` +
-        `Site en direct : https://smbhl.com\n\n` +
-        `—\nSMBHL Automation`;
+        `Site en direct : ${league.siteUrl}\n\n` +
+        `—\n${league.name} Automation`;
 
       let attachments = [];
       try {
@@ -3124,14 +3129,14 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
   <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:540px; margin:0 auto; background-color:#ffffff; border:1px solid #dde1e7; border-radius:8px; overflow:hidden;">
     <tr>
       <td style="background-color:#16181d; padding:14px 20px; color:#ffffff;">
-        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 SMBHL — Sauvegarde Automatique</span>
+        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 ${league.name} — Sauvegarde Automatique</span>
       </td>
     </tr>
     <tr>
       <td style="padding:22px 20px;">
         <p style="font-size:16px; margin:0 0 12px;">Bonjour <b>Roberto</b>,</p>
         <p style="font-size:15px; margin:0 0 16px;">
-          Les résultats de la <b>semaine ${weekNum}</b> ont été publiés avec succès sur <a href="https://smbhl.com" style="color:#2563eb; text-decoration:none; font-weight:600;">smbhl.com</a>!
+          Les résultats de la <b>semaine ${weekNum}</b> ont été publiés avec succès sur <a href="${league.siteUrl}" style="color:#2563eb; text-decoration:none; font-weight:600;">${siteHost}</a>!
         </p>
         <div style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:14px; margin:0 0 18px;">
           <div style="font-size:12px; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:8px;">Matchs enregistrés</div>
@@ -3144,20 +3149,20 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
         </div>
         <div style="margin:20px 0;">
           <a href="${downloadUrl}" style="display:inline-block; padding:12px 20px; background-color:#17457f; color:#ffffff; text-decoration:none; font-weight:700; font-size:14px; border-radius:6px; margin-right:8px;">📥 Télécharger cette copie JSON</a>
-          <a href="https://smbhl.com" style="display:inline-block; padding:12px 20px; background-color:#f1f5f9; color:#1e293b; text-decoration:none; font-weight:600; font-size:14px; border-radius:6px; border:1px solid #cbd5e1;">🌐 Voir smbhl.com</a>
+          <a href="${league.siteUrl}" style="display:inline-block; padding:12px 20px; background-color:#f1f5f9; color:#1e293b; text-decoration:none; font-weight:600; font-size:14px; border-radius:6px; border:1px solid #cbd5e1;">🌐 Voir ${siteHost}</a>
         </div>
       </td>
     </tr>
     <tr>
       <td style="background-color:#f8fafc; padding:14px 20px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b; text-align:center;">
-        SMBHL · Sunday Morning Ball Hockey League · <a href="https://smbhl.com" style="color:#2563eb; text-decoration:none;">smbhl.com</a>
+        ${league.name} · ${league.tagline} · <a href="${league.siteUrl}" style="color:#2563eb; text-decoration:none;">${siteHost}</a>
       </td>
     </tr>
   </table>
 </body>
 </html>`;
 
-      await sendMailFunc(env, replyToEmail, subj, text, html, attachments);
+      await sendMailFunc(env, replyToEmail, subj, text, html, attachments, publishLeagueCfg);
       console.log(`Backup email sent to ${replyToEmail}`);
     } catch (mailErr) {
       console.error('Error sending backup email:', mailErr);

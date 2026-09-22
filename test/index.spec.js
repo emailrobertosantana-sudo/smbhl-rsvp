@@ -3756,6 +3756,119 @@ describe("SMBHL Worker", () => {
 			expect(nextEventTriggered).toBe(true);
 		});
 
+
+		it("handleReviewPublish's backup email uses SMBHL's exact identity for Fall 2026 — byte-for-byte unchanged", async () => {
+			const evId = "2026-11-01-backup-smbhl";
+			await env.DB.prepare("INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time, end_time) VALUES (?, 'Fall 2026', 5, 'Sunday November 1, 2026', 'Letendre', 'locked', '10:30', '12:30')").bind(evId).run();
+
+			const revId = "rev_backup_smbhl";
+			await env.DB.prepare("INSERT OR REPLACE INTO sheet_reviews (id, event_id, season, week, created_at, status) VALUES (?, ?, 'Fall 2026', 5, '2026-11-01T12:00:00Z', 'draft')").bind(revId, evId).run();
+
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				current_season: "Fall 2026",
+				seasons: [{ name: "Fall 2026", games: 4, standings: [] }],
+				players: []
+			}));
+
+			const sentEmails = [];
+			const mockSendMail = async (env2, to, subject, text, html, attachments, leagueCfg) => {
+				sentEmails.push({ to, subject, text, html, leagueCfg });
+			};
+			const mockEnsureNext = async () => {};
+
+			const req = new Request("http://example.com/admin/review/publish", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					review_id: revId,
+					week: 5,
+					games: [
+						{ home_team: "Red", away_team: "Blue", home_score: 5, away_score: 3, home_players: [], away_players: [] }
+					]
+				})
+			});
+
+			const res = await handleReviewPublish(req, env, mockSendMail, "admin@example.com", mockEnsureNext);
+			expect((await res.json()).ok).toBe(true);
+
+			const backupEmail = sentEmails.find(e => e.subject.includes('Sauvegarde automatique'));
+			expect(backupEmail).toBeTruthy();
+			expect(backupEmail.subject).toContain('[SMBHL]');
+			expect(backupEmail.text).toContain('smbhl.com');
+			expect(backupEmail.text).toContain('SMBHL Automation');
+			expect(backupEmail.html).toContain('SMBHL — Sauvegarde Automatique');
+			expect(backupEmail.html).toContain('smbhl.com');
+		});
+
+		it("handleReviewPublish's backup email uses a non-SMBHL season's own league identity, not SMBHL's", async () => {
+			const evId = "2026-11-01-backup-testleague";
+			await env.DB.prepare("INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time, end_time) VALUES (?, 'TestLeague2026', 1, 'Sunday November 1, 2026', 'Gym', 'locked', '10:30', '12:30')").bind(evId).run();
+
+			const revId = "rev_backup_testleague";
+			await env.DB.prepare("INSERT OR REPLACE INTO sheet_reviews (id, event_id, season, week, created_at, status) VALUES (?, ?, 'TestLeague2026', 1, '2026-11-01T12:00:00Z', 'draft')").bind(revId, evId).run();
+
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				current_season: "TestLeague2026",
+				seasons: [
+					{ name: "Fall 2026", games: 4, standings: [] },
+					{
+						name: "TestLeague2026",
+						games: 0,
+						standings: [],
+						config: {
+							teams: [
+								{ name: 'Hawks', name_fr: 'Faucons', colour: '#1c1f24', aliases: [] },
+								{ name: 'Wolves', name_fr: 'Loups', colour: '#374151', aliases: [] }
+							],
+							league: {
+								name: 'TestLeague2026',
+								tagline: 'Test League of the Testing Suite',
+								fromEmail: 'test@testleague.example',
+								replyToEmail: 'reply@testleague.example',
+								siteUrl: 'https://testleague.example',
+								faviconUrl: 'https://testleague.example/favicon.svg'
+							}
+						}
+					}
+				],
+				players: []
+			}));
+
+			const sentEmails = [];
+			const mockSendMail = async (env2, to, subject, text, html, attachments, leagueCfg) => {
+				sentEmails.push({ to, subject, text, html, leagueCfg });
+			};
+			const mockEnsureNext = async () => {};
+
+			const req = new Request("http://example.com/admin/review/publish", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					review_id: revId,
+					week: 1,
+					games: [
+						{ home_team: "Hawks", away_team: "Wolves", home_score: 4, away_score: 2, home_players: [], away_players: [] }
+					]
+				})
+			});
+
+			const res = await handleReviewPublish(req, env, mockSendMail, "admin@example.com", mockEnsureNext);
+			expect((await res.json()).ok).toBe(true);
+
+			const backupEmail = sentEmails.find(e => e.subject.includes('Sauvegarde automatique'));
+			expect(backupEmail).toBeTruthy();
+			expect(backupEmail.subject).toContain('[TestLeague2026]');
+			expect(backupEmail.text).toContain('testleague.example');
+			expect(backupEmail.text).toContain('TestLeague2026 Automation');
+			expect(backupEmail.html).toContain('TestLeague2026 — Sauvegarde Automatique');
+			expect(backupEmail.html).toContain('testleague.example');
+			expect(backupEmail.subject).not.toContain('SMBHL');
+			// The download link still uses env.PUBLIC_URL's fallback (rsvp.smbhl.com) — a
+			// separate, already-correct mechanism from league.siteUrl, same as Part A.
+			expect(backupEmail.text).not.toContain('Site en direct : https://smbhl.com');
+			expect(backupEmail.html).not.toContain('SMBHL');
+		});
+
 		describe("Dynamic Backup Goalie Support", () => {
 			const evId = "2026-10-04";
 			beforeAll(async () => {

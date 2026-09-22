@@ -312,6 +312,32 @@ describe('Weekly Highlights & Honors Engine', () => {
     expect(text).toContain('Tout voir sur smbhl.com / See all on smbhl.com : https://smbhl.com');
   });
 
+  it('renders the "see all" footer link under a custom league config instead of smbhl.com', () => {
+    const highlights = {
+      starsWeek: 1,
+      milestoneWeeks: [1],
+      sourceWeeks: [1],
+      playerOfTheWeek: { name: 'Test Player', team: 'Hawks', pts: 5, g: 2, a: 3 }
+    };
+    const leagueCfg = {
+      name: 'TestLeague2026',
+      tagline: 'Test League of the Testing Suite',
+      fromEmail: 'test@testleague.example',
+      replyToEmail: 'reply@testleague.example',
+      siteUrl: 'https://testleague.example',
+      faviconUrl: 'https://testleague.example/favicon.svg'
+    };
+
+    const html = renderHighlightsHtml(highlights, leagueCfg);
+    expect(html).toContain('Tout voir sur testleague.example / See all on testleague.example');
+    expect(html).toContain('href="https://testleague.example"');
+    expect(html).not.toContain('smbhl.com');
+
+    const text = renderHighlightsText(highlights, leagueCfg);
+    expect(text).toContain('Tout voir sur testleague.example / See all on testleague.example : https://testleague.example');
+    expect(text).not.toContain('smbhl.com');
+  });
+
   it('tracks 75 milestones, infinite 1000+ ladder, and goalie first win / shutout', () => {
     const mockData = {
       current_season: 'Fall 2026',
