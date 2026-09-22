@@ -35,6 +35,15 @@ import {
   handleSeasonLaunch,
   renderSeasonPage
 } from './season_hub.js';
+import {
+  DEFAULT_SEASON_CONFIG,
+  getSeasonConfig,
+  getSeasonConfigFromEnv,
+  getSeasonConfigForEvent,
+  getTeamNames,
+  getTeamNameFr,
+  isTeamValid
+} from './season_config.js';
 
 /* SMBHL attendance
    Signed links, RSVP endpoint, bilingual page, own-team view.
@@ -42,7 +51,8 @@ import {
    Binding:  DB  (D1, see wrangler.jsonc)
 */
 
-const TEAMS = ['Red', 'Blue', 'White', 'Black'];
+/** Module-level fallback team list (SMBHL defaults). Per-request code should use getTeamNames(config). */
+const TEAMS = getTeamNames(DEFAULT_SEASON_CONFIG);
 
 /* ---------- tokens ---------- */
 
@@ -587,7 +597,8 @@ async function cancelPending(env, dedup_key) {
 
 const TEAM_FR = { Red:'Rouge', Blue:'Bleu', White:'Blanc', Black:'Noir' };
 const SHIRT_FR = { Red:'rouge', Blue:'bleu', White:'blanc', Black:'noir' };
-const tFR = t => TEAM_FR[t] || t;
+/** Translate a team name to French. Pass cfg to use season-specific translations. */
+const tFR = (t, cfg) => cfg ? getTeamNameFr(cfg, t) : (TEAM_FR[t] || t);
 const MONTH_FR2 = { January:'janvier', February:'février', March:'mars', April:'avril',
   May:'mai', June:'juin', July:'juillet', August:'août', September:'septembre',
   October:'octobre', November:'novembre', December:'décembre' };
@@ -1475,8 +1486,9 @@ async function runHoldCall(env, m) {
   const ev = await getEvent(env.DB, m.event_id);
   const payload = JSON.parse(m.payload || '{}');
   if (!ev || ev.state !== 'open') return;
-  if (await openSpots(env.DB, ev.id, m.team, payload.need) < 1) return;
-  if (await fillFromWaitlist(env, ev, m.team, payload.need)) return;
+  const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+  if (await openSpots(env.DB, ev.id, m.team, payload.need, cfg) < 1) return;
+  if (await fillFromWaitlist(env, ev, m.team, payload.need, cfg)) return;
   await callSubs(env, ev, m.team, payload.need);
 }
 
@@ -1742,7 +1754,9 @@ function eventStart(ev) {
 
 /* ---------- shortage ---------- */
 
-export async function teamState(db, eventId, team) {
+export async function teamState(db, eventId, team, cfg) {
+  const targetGoalies = cfg ? cfg.goaliesPerTeam : TARGET_GOALIES;
+  const minSkaters   = cfg ? cfg.minSkaters       : 5;
   const rows = (await db.prepare(
     `SELECT r.player_id, r.guest_name, r.status, r.role,
             COALESCE(c.is_goalie,0) AS is_goalie,
@@ -1762,7 +1776,7 @@ export async function teamState(db, eventId, team) {
   const primaryKeepers = ins.filter(r => r.is_goalie === 1).length;
   let goalies = 0;
   if (primaryKeepers > 0) {
-    goalies = Math.min(primaryKeepers, TARGET_GOALIES);
+    goalies = Math.min(primaryKeepers, targetGoalies);
   } else {
     // If starting goalie is not in (or out), check if a backup goalie is confirmed in
     const primaryRow = uniqueRows.find(r => r.is_goalie === 1);
@@ -1770,16 +1784,16 @@ export async function teamState(db, eventId, team) {
     if (primaryIsOut) {
       const backupKeepers = ins.filter(r => r.is_backup_goalie === 1).length;
       if (backupKeepers > 0) {
-        goalies = Math.min(backupKeepers, TARGET_GOALIES);
+        goalies = Math.min(backupKeepers, targetGoalies);
       }
     }
   }
   const skaters = ins.length - goalies;
   return {
     rows: uniqueRows, skaters, goalies,
-    shortGoalie: goalies < TARGET_GOALIES,
-    shortSkaters: skaters < 5,
-    short: goalies < TARGET_GOALIES || skaters < 5
+    shortGoalie: goalies < targetGoalies,
+    shortSkaters: skaters < minSkaters,
+    short: goalies < targetGoalies || skaters < minSkaters
   };
 }
 
@@ -1827,9 +1841,10 @@ async function callSubs(env, ev, team, need, startDelay = 0) {
   return pool.length;
 }
 
-async function stopWaves(env, eventId, need) {
-  for (const team of TEAMS) {
-    if (await openSpots(env.DB, eventId, team, need) > 0) return;
+async function stopWaves(env, eventId, need, cfg) {
+  const teamsToCheck = cfg ? getTeamNames(cfg) : TEAMS;
+  for (const team of teamsToCheck) {
+    if (await openSpots(env.DB, eventId, team, need, cfg) > 0) return;
   }
   await env.DB.prepare(
     `UPDATE outbox SET cancelled = 1
@@ -1841,7 +1856,8 @@ async function stopWaves(env, eventId, need) {
 const TARGET_SKATERS = 8;
 const TARGET_GOALIES = 1;
 
-export async function expected(db, eventId, team) {
+export async function expected(db, eventId, team, cfg) {
+  const targetGoalies = cfg ? cfg.goaliesPerTeam  : TARGET_GOALIES;
   const rows = (await db.prepare(
     `SELECT r.player_id, r.role, r.status,
             COALESCE(c.is_goalie,0) AS is_goalie,
@@ -1853,23 +1869,25 @@ export async function expected(db, eventId, team) {
   const primaryKeepers = rows.filter(r => r.is_goalie === 1);
   let goalies = 0;
   if (primaryKeepers.length > 0) {
-    goalies = Math.min(primaryKeepers.length, TARGET_GOALIES);
+    goalies = Math.min(primaryKeepers.length, targetGoalies);
   } else {
     // If starting goalie is out, backup goalie can satisfy the goalie spot
     const backupKeepers = rows.filter(r => r.is_backup_goalie === 1);
     if (backupKeepers.length > 0) {
-      goalies = Math.min(backupKeepers.length, TARGET_GOALIES);
+      goalies = Math.min(backupKeepers.length, targetGoalies);
     }
   }
   const skaters = rows.length - goalies;
   return { goalies, skaters, rows };
 }
 
-async function openSpots(db, eventId, team, need) {
-  const e = await expected(db, eventId, team);
+async function openSpots(db, eventId, team, need, cfg) {
+  const targetGoalies = cfg ? cfg.goaliesPerTeam  : TARGET_GOALIES;
+  const targetSkaters = cfg ? cfg.skatersPerTeam  : TARGET_SKATERS;
+  const e = await expected(db, eventId, team, cfg);
   return need === 'goalie'
-    ? Math.max(0, TARGET_GOALIES - e.goalies)
-    : Math.max(0, TARGET_SKATERS - e.skaters);
+    ? Math.max(0, targetGoalies - e.goalies)
+    : Math.max(0, targetSkaters - e.skaters);
 }
 
 export async function acceptAvailability(env, ev, playerId, need) {
@@ -1887,12 +1905,16 @@ export async function acceptAvailability(env, ev, playerId, need) {
   const c = await getContact(env.DB, playerId);
   const pref = c && c.preferred_team;
 
+  // Resolve config for this event's season to get the right team list and thresholds
+  const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+  const cfgTeams = getTeamNames(cfg);
+
   // Find all teams with open spots and score them by shortage severity
   const candidateTeams = [];
-  for (const team of TEAMS) {
-    const spots = await openSpots(env.DB, ev.id, team, need);
+  for (const team of cfgTeams) {
+    const spots = await openSpots(env.DB, ev.id, team, need, cfg);
     if (spots < 1) continue;
-    const st = await teamState(env.DB, ev.id, team);
+    const st = await teamState(env.DB, ev.id, team, cfg);
     const confirmed = need === 'goalie' ? st.goalies : st.skaters;
     candidateTeams.push({ team, spots, confirmed, isPref: pref === team });
   }
@@ -1901,12 +1923,12 @@ export async function acceptAvailability(env, ev, playerId, need) {
   // 1. Preferred team (if open)
   // 2. Greatest shortage (most open spots)
   // 3. Fewest confirmed players (teams with fewer bodies get priority)
-  // 4. Stable tie-breaker (TEAMS order)
+  // 4. Stable tie-breaker (config teams order)
   candidateTeams.sort((a, b) => {
     if (a.isPref !== b.isPref) return a.isPref ? -1 : 1;
     if (a.spots !== b.spots) return b.spots - a.spots;
     if (a.confirmed !== b.confirmed) return a.confirmed - b.confirmed;
-    return TEAMS.indexOf(a.team) - TEAMS.indexOf(b.team);
+    return cfgTeams.indexOf(a.team) - cfgTeams.indexOf(b.team);
   });
 
   for (const candidate of candidateTeams) {
@@ -1921,8 +1943,8 @@ export async function acceptAvailability(env, ev, playerId, need) {
       await enqueue(env, { kind: 'gameday', event_id: ev.id, player_id: playerId, team,
         dedup_key: `gameday24:${ev.id}:${playerId}` });
     }
-    if (await openSpots(env.DB, ev.id, team, need) < 1) {
-      await stopWaves(env, ev.id, need);
+    if (await openSpots(env.DB, ev.id, team, need, cfg) < 1) {
+      await stopWaves(env, ev.id, need, cfg);
       await cancelPending(env, `hold:${ev.id}:${team}:${need}`);
     }
     return { placed: team };
@@ -1930,7 +1952,7 @@ export async function acceptAvailability(env, ev, playerId, need) {
   return { placed: null };
 }
 
-async function fillFromWaitlist(env, ev, team, need) {
+async function fillFromWaitlist(env, ev, team, need, cfg) {
   const next = await env.DB.prepare(
     `SELECT a.player_id FROM availability a
        JOIN contacts c ON c.player_id = a.player_id
@@ -1953,15 +1975,17 @@ async function fillFromWaitlist(env, ev, team, need) {
     await enqueue(env, { kind: 'gameday', event_id: ev.id, player_id: next.player_id, team,
       dedup_key: `gameday24:${ev.id}:${next.player_id}` });
   }
-  await stopWaves(env, ev.id, need);
+  await stopWaves(env, ev.id, need, cfg);
   return true;
 }
 
 async function remindSubs(env, ev) {
+  const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+  const cfgTeams = getTeamNames(cfg);
   const anyOpen = await (async () => {
-    for (const team of TEAMS)
+    for (const team of cfgTeams)
       for (const need of ['goalie', 'skater'])
-        if (await openSpots(env.DB, ev.id, team, need) > 0) return true;
+        if (await openSpots(env.DB, ev.id, team, need, cfg) > 0) return true;
     return false;
   })();
   if (!anyOpen) return 0;
@@ -1979,7 +2003,7 @@ async function remindSubs(env, ev) {
   let n = 0;
   for (const r of rows) {
     const need = (JSON.parse(r.payload || '{}').need) || 'skater';
-    if (await openSpots(env.DB, ev.id, r.team, need) < 1) continue;
+    if (await openSpots(env.DB, ev.id, r.team, need, cfg) < 1) continue;
     await enqueue(env, { kind: 'sub_call', event_id: ev.id, player_id: r.player_id,
       team: r.team, dedup_key: `remind:${ev.id}:${need}:${r.player_id}`,
       payload: { need, reminder: true } });
@@ -2004,11 +2028,13 @@ async function notifyEventCreated(env, made) {
   try {
     const ev = await getEvent(env.DB, made.id);
     if (!ev) return;
+    const cfg = await getSeasonConfigFromEnv(env, ev.season);
+    const cfgTeams = getTeamNames(cfg);
     const links = [];
-    for (const team of TEAMS) {
+    for (const team of cfgTeams) {
       const salt = await teamSalt(env.DB, ev.season, team);
       const tk = await hmac(env.RSVP_SECRET, teamMsg(ev.season, team, salt));
-      links.push(`${team} (${tFR(team)}):\n${env.PUBLIC_URL}` +
+      links.push(`${team} (${tFR(team, cfg)}):\n${env.PUBLIC_URL}` +
         `/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${team}&t=${tk}`);
     }
     await enqueue(env, { kind: 'created', event_id: made.id,
@@ -2271,8 +2297,10 @@ async function runSchedule(env) {
         { payload: { stage: '49' } }));
 
     await fire('short48', hrs <= short48Hours && hrs > 0, async () => {
-      for (const team of TEAMS) {
-        const st = await teamState(env.DB, ev.id, team);
+      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+      const cfgTeams = getTeamNames(cfg);
+      for (const team of cfgTeams) {
+        const st = await teamState(env.DB, ev.id, team, cfg);
         if (!st.short) continue;
         const confirmed = st.rows.filter(r => r.status === 'in' && r.player_id);
         for (const r of confirmed)
@@ -2286,15 +2314,19 @@ async function runSchedule(env) {
 
     await fire('pool36', hrs <= poolHours && hrs > 0, async () => {
       await remindSubs(env, ev);
-      for (const team of TEAMS) {
-        const st = await teamState(env.DB, ev.id, team);
+      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+      const cfgTeams = getTeamNames(cfg);
+      for (const team of cfgTeams) {
+        const st = await teamState(env.DB, ev.id, team, cfg);
         if (st.shortGoalie) await callSubs(env, ev, team, 'goalie');
         if (st.shortSkaters) await callSubs(env, ev, team, 'skater');
       }
     });
 
     await fire('friday_board', p.weekday === 'Fri' && reached(p, 14) && hrs > 24, async () => {
-      for (const team of TEAMS) {
+      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+      const cfgTeams = getTeamNames(cfg);
+      for (const team of cfgTeams) {
         const msgs = await getTeamMessages(env.DB, ev.id, team, 5);
         if (!msgs || !msgs.length) continue;
         const recipients = (await env.DB.prepare(
@@ -2339,7 +2371,9 @@ async function runSchedule(env) {
     await fire('gameday_morning', hrs <= gamedayMorningHours && hrs > 0, async () => {
       const start = eventStart(ev);
       const cutoff24 = start ? new Date(start.getTime() - 24 * 3600000).toISOString() : new Date(Date.now() - 24 * 3600000).toISOString();
-      for (const team of TEAMS) {
+      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+      const cfgTeams = getTeamNames(cfg);
+      for (const team of cfgTeams) {
         const newMsgs = await getTeamMessages(env.DB, ev.id, team, 10, cutoff24);
         if (!newMsgs || !newMsgs.length) continue;
         const recipients = (await env.DB.prepare(
@@ -2360,9 +2394,11 @@ async function runSchedule(env) {
     });
 
     await fire('summary', hrs <= 24 && hrs > 0 && reached(p, 20), async () => {
+      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+      const cfgTeams = getTeamNames(cfg);
       const lines = [];
-      for (const team of TEAMS) {
-        const st = await teamState(env.DB, ev.id, team);
+      for (const team of cfgTeams) {
+        const st = await teamState(env.DB, ev.id, team, cfg);
         lines.push(`${team}: ${st.skaters} joueurs, ${st.goalies} gardien(s)` +
           (st.short ? '   <-- SHORT' : ''));
       }
@@ -2739,7 +2775,10 @@ async function teamGet(req, env, url) {
   const team = url.searchParams.get('team');
   const token = url.searchParams.get('t');
   if (!season || !team || !token) return notice('Lien incomplet', 'Incomplete link');
-  if (!TEAMS.includes(team)) return notice('Équipe inconnue', 'Unknown team');
+
+  // Validate team against season config (falls back to SMBHL defaults for seasons without config)
+  const cfg = await getSeasonConfigFromEnv(env, season);
+  if (!isTeamValid(cfg, team)) return notice('Équipe inconnue', 'Unknown team');
 
   const salt = await teamSalt(env.DB, season, team);
   const want = await hmac(env.RSVP_SECRET, teamMsg(season, team, salt));
@@ -2755,7 +2794,7 @@ async function teamGet(req, env, url) {
   const goalieIds = await rosterGoalies(env.DB, ev.id, team);
   const shortGoalie = !rows.some(r => r.status === 'in' && goalieIds.includes(r.player_id));
   const skaters = rows.filter(r => r.status === 'in' && !goalieIds.includes(r.player_id)).length;
-  const shortSkaters = skaters < 5;
+  const shortSkaters = skaters < cfg.minSkaters;
 
   const list = rows.map(r => {
     const name = r.name || r.guest_name || '?';
@@ -3070,7 +3109,8 @@ async function teamPost(req, env, url) {
   const season = url.searchParams.get('s');
   const team = url.searchParams.get('team');
   const token = url.searchParams.get('t');
-  if (!TEAMS.includes(team)) return new Response('bad team', { status: 400 });
+  const cfgP = await getSeasonConfigFromEnv(env, season);
+  if (!isTeamValid(cfgP, team)) return new Response('bad team', { status: 400 });
 
   const salt = await teamSalt(env.DB, season, team);
   const want = await hmac(env.RSVP_SECRET, teamMsg(season, team, salt));
@@ -3171,13 +3211,14 @@ async function teamPost(req, env, url) {
       need = primaryRow ? 'skater' : 'goalie';
     }
     const key = `hold:${ev.id}:${team}:${need}`;
+    const cfgT = await getSeasonConfigForEvent(env, ev.id, ev.season);
 
     if (status === 'out') {
       if (need === 'goalie' && previousStatus !== 'out') {
         await notifyAdminGoalieCancel(env, ev, c, team, 'teammate', previousStatus);
       }
-      if (await openSpots(env.DB, ev.id, team, need) > 0) {
-        if (!(await fillFromWaitlist(env, ev, team, need))) {
+      if (await openSpots(env.DB, ev.id, team, need, cfgT) > 0) {
+        if (!(await fillFromWaitlist(env, ev, team, need, cfgT))) {
           const wait = hoursOut(ev) < RUSH_HOURS ? 0 : 60;
           await enqueue(env, { kind: 'holdcall', event_id: ev.id, team,
             dedup_key: key, payload: { need }, delayMin: wait });
@@ -3185,7 +3226,7 @@ async function teamPost(req, env, url) {
       }
     } else {
       await cancelPending(env, key);
-      if (await openSpots(env.DB, ev.id, team, need) < 1) await stopWaves(env, ev.id, need);
+      if (await openSpots(env.DB, ev.id, team, need, cfgT) < 1) await stopWaves(env, ev.id, need, cfgT);
     }
     return new Response('ok');
   }
@@ -3246,9 +3287,10 @@ async function subChange(env, ev, team, player_id, action) {
   if (isGoalie) {
     await notifyAdminGoalieCancel(env, ev, c, team, 'removed_sub', 'in');
   }
-  const after = await teamState(env.DB, ev.id, team);
-  if (after.shortGoalie) await fillFromWaitlist(env, ev, team, 'goalie');
-  if (after.shortSkaters) await fillFromWaitlist(env, ev, team, 'skater');
+  const cfgS = await getSeasonConfigForEvent(env, ev.id, ev.season);
+  const after = await teamState(env.DB, ev.id, team, cfgS);
+  if (after.shortGoalie) await fillFromWaitlist(env, ev, team, 'goalie', cfgS);
+  if (after.shortSkaters) await fillFromWaitlist(env, ev, team, 'skater', cfgS);
   return new Response('ok');
 }
 
@@ -6633,17 +6675,18 @@ async function rsvpGet(req, env, url) {
       need = primaryRow ? 'skater' : 'goalie';
     }
     if (team) {
+      const cfg6 = await getSeasonConfigForEvent(env, ev.id, ev.season);
       await cancelPending(env, `hold:${eventId}:${team}:${need}`);
       if (autoVal === 'out') {
         if (need === 'goalie' && previousStatus !== 'out') {
           await notifyAdminGoalieCancel(env, ev, contact, team, 'self', previousStatus);
         }
-        if (await openSpots(env.DB, eventId, team, need) > 0) {
-          if (!(await fillFromWaitlist(env, ev, team, need)))
+        if (await openSpots(env.DB, eventId, team, need, cfg6) > 0) {
+          if (!(await fillFromWaitlist(env, ev, team, need, cfg6)))
             await callSubs(env, ev, team, need);
         }
-      } else if (await openSpots(env.DB, eventId, team, need) < 1) {
-        await stopWaves(env, eventId, need);
+      } else if (await openSpots(env.DB, eventId, team, need, cfg6) < 1) {
+        await stopWaves(env, eventId, need, cfg6);
       }
     }
     status = autoVal;
@@ -7166,17 +7209,18 @@ async function rsvpPost(req, env, url) {
     'SELECT team FROM rsvp WHERE event_id=? AND player_id=?').bind(eventId, playerId).first();
   if (mine && mine.team) {
     const ev2 = await getEvent(env.DB, eventId);
+    const cfg7 = await getSeasonConfigForEvent(env, ev2.id, ev2.season);
     await cancelPending(env, `hold:${eventId}:${mine.team}:${need}`);
     if (status === 'out') {
       if (need === 'goalie' && previousStatus !== 'out') {
         await notifyAdminGoalieCancel(env, ev2, contact, mine.team, 'self', previousStatus);
       }
-      if (await openSpots(env.DB, eventId, mine.team, need) > 0) {
-        if (!(await fillFromWaitlist(env, ev2, mine.team, need)))
+      if (await openSpots(env.DB, eventId, mine.team, need, cfg7) > 0) {
+        if (!(await fillFromWaitlist(env, ev2, mine.team, need, cfg7)))
           await callSubs(env, ev2, mine.team, need);
       }
-    } else if (await openSpots(env.DB, eventId, mine.team, need) < 1) {
-      await stopWaves(env, eventId, need);
+    } else if (await openSpots(env.DB, eventId, mine.team, need, cfg7) < 1) {
+      await stopWaves(env, eventId, need, cfg7);
     }
   }
   return new Response('ok');

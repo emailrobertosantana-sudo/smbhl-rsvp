@@ -140,6 +140,53 @@ export function isTeamValid(config, teamName) {
 }
 
 /**
+ * Loads the data.json payload (season configs, fixtures, standings) using the
+ * same KV-first-then-origin-fetch pattern already used elsewhere in the Worker.
+ */
+async function loadSeasonData(env) {
+  let d = null;
+  try {
+    const raw = env?.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null;
+    if (raw) d = JSON.parse(raw);
+  } catch (_) {}
+  if (!d) {
+    try {
+      const res = await fetch(`${env?.SITE_URL || 'https://smbhl.com'}/data.json`, {
+        signal: AbortSignal.timeout(2000)
+      });
+      if (res.ok) d = await res.json();
+    } catch (_) {}
+  }
+  return d;
+}
+
+/**
+ * Resolves the season config for a given season name, loading data.json via
+ * the Worker env (KV binding, falling back to an origin fetch). Falls back to
+ * SMBHL defaults when data.json or the named season isn't found.
+ */
+export async function getSeasonConfigFromEnv(env, seasonName) {
+  const d = await loadSeasonData(env);
+  return getSeasonConfig(d, seasonName);
+}
+
+/**
+ * Resolves the season config for a given event. Prefers the season name if
+ * already known by the caller (most call sites already have `ev.season`);
+ * otherwise looks it up from the events table via env.DB.
+ */
+export async function getSeasonConfigForEvent(env, eventId, season) {
+  let seasonName = season;
+  if (!seasonName && eventId && env?.DB) {
+    try {
+      const row = await env.DB.prepare('SELECT season FROM events WHERE id = ?').bind(eventId).first();
+      seasonName = row && row.season;
+    } catch (_) {}
+  }
+  return getSeasonConfigFromEnv(env, seasonName);
+}
+
+/**
  * Normalizes a raw team name against canonical names, French names, and aliases.
  */
 export function normalizeTeamWithConfig(rawName, config) {
@@ -171,3 +218,4 @@ export function normalizeTeamWithConfig(rawName, config) {
 
   return null;
 }
+
