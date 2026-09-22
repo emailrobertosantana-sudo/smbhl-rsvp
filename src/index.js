@@ -1,5 +1,6 @@
 import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
+import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified } from './auth.js';
 import { handleLeagueCreate } from './leagues.js';
@@ -1976,17 +1977,23 @@ async function drain(env, limit = 40) {
   return { due: due.length, sent, failed };
 }
 
-function eventStart(ev) {
+export function eventStart(ev) {
   if (!ev.start_time) return null;
+  // ev.id is the literal date for every one of SMBHL's existing events
+  // ('2026-09-20'). Since migrate-020.sql / league_ids.js, a NEW event's id
+  // may instead be league-prefixed ('smbhl:2026-10-04') — eventDateFromId()
+  // recovers the trailing date either way, so this keeps working unchanged
+  // for old ids and correctly for new ones.
+  const dateStr = eventDateFromId(ev.id);
   const [hh, mm] = ev.start_time.split(':').map(Number);
   for (const off of [4, 5]) {
-    const guess = new Date(`${ev.id}T${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00Z`);
+    const guess = new Date(`${dateStr}T${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00Z`);
     if (isNaN(guess.getTime())) return null;
     const utc = new Date(guess.getTime() + off * 3600000);
     const p = localParts(utc);
-    if (p.date === ev.id && p.hour === hh && p.minute === mm) return utc;
+    if (p.date === dateStr && p.hour === hh && p.minute === mm) return utc;
   }
-  const fallback = new Date(`${ev.id}T${ev.start_time}:00-05:00`);
+  const fallback = new Date(`${dateStr}T${ev.start_time}:00-05:00`);
   return isNaN(fallback.getTime()) ? null : fallback;
 }
 
@@ -2327,7 +2334,8 @@ async function ensureNextEvent(env, force = false) {
   for (const [week, info] of [...byWeek.entries()].sort((a, b) => a[0] - b[0])) {
     const dt = new Date(String(info.date).replace(/^[A-Za-z]+\s+/, ''));
     if (isNaN(dt)) continue;
-    const id = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+    const isoDate = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+    const id = makeEventId(SMBHL_LEAGUE_ID, isoDate);
     if (!info.times.length) continue;
     const fmt = m => String(Math.floor(m/60)).padStart(2,'0') + ':' + String(m%60).padStart(2,'0');
     const startT = fmt(Math.min(...info.times));
@@ -2351,7 +2359,7 @@ async function ensureNextEvent(env, force = false) {
     try {
       plannedAbsences = new Set(
         ((await env.DB.prepare('SELECT player_id FROM planned_absences WHERE date = ? OR date = ?')
-          .bind(id, info.date).all()).results || []).map(r => r.player_id)
+          .bind(isoDate, info.date).all()).results || []).map(r => r.player_id)
       );
     } catch (_) {}
 
@@ -6737,10 +6745,10 @@ async function peopleAction(req, env) {
       .bind(name).first();
     if (dupe) return new Response('already on file as ' + dupe.player_id, { status: 409 });
     const last = await env.DB.prepare(
-      "SELECT player_id FROM contacts WHERE player_id LIKE 'P9%' ORDER BY player_id DESC LIMIT 1"
-    ).first();
-    const n = last ? parseInt(last.player_id.slice(1), 10) + 1 : 9001;
-    const id = 'P' + n;
+      'SELECT player_id FROM contacts WHERE player_id LIKE ? ORDER BY player_id DESC LIMIT 1'
+    ).bind(contactIdLikePattern(SMBHL_LEAGUE_ID, 'P9')).first();
+    const n = last ? extractTrailingNumber(last.player_id) + 1 : 9001;
+    const id = makeContactId(SMBHL_LEAGUE_ID, 'P' + n);
     const salt = crypto.randomUUID().replace(/-/g, '');
     await env.DB.prepare(
       `INSERT INTO contacts (player_id,name,email,phone,is_sub,role,token_salt,is_goalie)
@@ -11653,9 +11661,10 @@ async function handleScheduleImportFixture(req, env) {
   const endT = times.length ? fmt(Math.max(...times) + 60) : '';
 
   const dt = new Date(String(firstF.date).replace(/^[A-Za-z]+\s+/, ''));
-  const id = !isNaN(dt)
+  const rawId = !isNaN(dt)
     ? `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
     : `week-${weekNum}`;
+  const id = makeEventId(SMBHL_LEAGUE_ID, rawId);
 
   const existing = await env.DB.prepare('SELECT id FROM events WHERE id = ?').bind(id).first();
   if (existing) {
@@ -11672,7 +11681,7 @@ async function handleScheduleImportFixture(req, env) {
   try {
     plannedAbsences = new Set(
       ((await env.DB.prepare('SELECT player_id FROM planned_absences WHERE date = ? OR date = ?')
-        .bind(id, firstF.date).all()).results || []).map(r => r.player_id)
+        .bind(rawId, firstF.date).all()).results || []).map(r => r.player_id)
     );
   } catch (_) {}
 
@@ -14158,13 +14167,14 @@ async function handleTeamsAdd(req, env) {
     if (!name || name.split(' ').length < 2) {
       return new Response(JSON.stringify({ error: 'Nom complet requis (Prénom et Nom)' }), { status: 400 });
     }
-    const maxP = await env.DB.prepare("SELECT player_id FROM contacts WHERE player_id LIKE 'P%' ORDER BY player_id DESC LIMIT 1").first();
+    const maxP = await env.DB.prepare('SELECT player_id FROM contacts WHERE player_id LIKE ? ORDER BY player_id DESC LIMIT 1')
+      .bind(contactIdLikePattern(SMBHL_LEAGUE_ID, 'P')).first();
     let nextNum = 500;
     if (maxP && maxP.player_id) {
-      const match = maxP.player_id.match(/P(\d+)/);
-      if (match) nextNum = parseInt(match[1], 10) + 1;
+      const n = extractTrailingNumber(maxP.player_id);
+      if (n !== null) nextNum = n + 1;
     }
-    pid = 'P' + String(nextNum).padStart(4, '0');
+    pid = makeContactId(SMBHL_LEAGUE_ID, 'P' + String(nextNum).padStart(4, '0'));
 
     const salt = crypto.randomUUID().replace(/-/g, '');
     await env.DB.prepare(

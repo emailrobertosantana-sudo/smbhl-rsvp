@@ -18,6 +18,7 @@ import {
   getTeamNameFr,
   getTeamColour
 } from './season_config.js';
+import { SMBHL_LEAGUE_ID, makeEventId } from './league_ids.js';
 
 export const TEAM_COLORS = getTeamNames(DEFAULT_SEASON_CONFIG);
 export const TEAM_LABELS = {
@@ -576,7 +577,7 @@ export function generateScheduleMatrix({
     const endTime = distinctTimes[distinctTimes.length - 1] ? '12:30' : '12:30';
 
     events.push({
-      id: entry.date,
+      id: makeEventId(SMBHL_LEAGUE_ID, entry.date),
       season: seasonName,
       week: weekNum,
       date: humanDate,
