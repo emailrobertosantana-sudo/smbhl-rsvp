@@ -3,6 +3,7 @@ import {
   cleanupOldReviews,
   handleScoresheetEmail,
   handleReviewUpload,
+  handleReviewManualStart,
   handleReviewGet,
   handleReviewImage,
   handleReviewPublish,
@@ -15066,6 +15067,8 @@ async function handleFetch(req, env, ctx) {
         return await handleReviewGet(req, env, url);
       if (url.pathname === '/admin/review/upload' && req.method === 'POST')
         return await handleReviewUpload(req, env);
+      if (url.pathname === '/admin/review/manual-start' && req.method === 'POST')
+        return await handleReviewManualStart(req, env);
       if (url.pathname === '/admin/review/image' && req.method === 'GET')
         return await handleReviewImage(req, env, url);
       if (url.pathname === '/admin/review/publish' && req.method === 'POST')

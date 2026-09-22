@@ -6,7 +6,7 @@ import {
 } from "cloudflare:test";
 import { describe, it, expect, beforeAll } from "vitest";
 import worker, { body, drain, notifyAdminGoalieCancel, getTeamMessages, addTeamMessage, getStandingsTooltip, sanitizeAndValidateEmail, acceptAvailability, sortTeamBoardRows, computeTeamBalance, resolveTeamGoalies, boardData, ensureNextEvent, teamState, expected, handleLeagueMessageGet, handleLeagueMessageSave, runSchedule, handleSendSampleInvites } from "../src";
-import { handleReviewPublish } from "../src/review.js";
+import { handleReviewPublish, handleReviewManualStart } from "../src/review.js";
 
 describe("SMBHL Worker", () => {
 	beforeAll(async () => {
@@ -3209,6 +3209,22 @@ describe("SMBHL Worker", () => {
 			expect(data.error).toContain('tracksStats');
 		});
 
+		it("/admin/review/manual-start also returns a clear 'not enabled' response instead of creating a blank review", async () => {
+			const req = new Request("http://example.com/admin/review/manual-start", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ season: ATTENDANCE_SEASON, week: 0 })
+			});
+			const res = await handleReviewManualStart(req, env);
+			expect(res.status).toBe(404);
+			const data = await res.json();
+			expect(data.ok).toBe(false);
+			expect(data.error).toContain('tracksStats');
+
+			const row = await env.DB.prepare("SELECT id FROM sheet_reviews WHERE season = ?").bind(ATTENDANCE_SEASON).first();
+			expect(row).toBeNull();
+		});
+
 		it("admin nav hides the Scoresheets and Season Recap tabs (but not others) when the current season doesn't track stats, and the page itself still renders fine", async () => {
 			const teamsPageRes = await worker.fetch(new Request("http://example.com/admin/teams"), env);
 			expect(teamsPageRes.status).toBe(200);
@@ -3924,6 +3940,191 @@ describe("SMBHL Worker", () => {
 			// separate, already-correct mechanism from league.siteUrl, same as Part A.
 			expect(backupEmail.text).not.toContain('Site en direct : https://smbhl.com');
 			expect(backupEmail.html).not.toContain('SMBHL');
+		});
+
+		describe("Manual (no-photo) game-stat entry", () => {
+			const MANUAL_SEASON = "SixTeamManual2027";
+			const sixTeamConfig = {
+				teams: [
+					{ name: 'Hawks', name_fr: 'Faucons', colour: '#1c1f24', aliases: [] },
+					{ name: 'Wolves', name_fr: 'Loups', colour: '#374151', aliases: [] },
+					{ name: 'Bears', name_fr: 'Ours', colour: '#78350f', aliases: [] },
+					{ name: 'Lions', name_fr: 'Lions', colour: '#b45309', aliases: [] },
+					{ name: 'Eagles', name_fr: 'Aigles', colour: '#166534', aliases: [] },
+					{ name: 'Sharks', name_fr: 'Requins', colour: '#0369a1', aliases: [] }
+				],
+				goaliesPerTeam: 1,
+				skatersPerTeam: 7,
+				minSkaters: 4,
+				playoffFormat: 'top4_two_weeks'
+			};
+
+			beforeAll(async () => {
+				await env.DB.prepare(
+					`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time, end_time)
+					 VALUES ('sixteam-manual-evt-1', ?, 1, 'Sunday', 'Court A', 'open', '10:00', '11:00')`
+				).bind(MANUAL_SEASON).run();
+
+				await env.SHEETS_KV.put("data_json", JSON.stringify({
+					current_season: MANUAL_SEASON,
+					seasons: [{
+						name: MANUAL_SEASON,
+						standings: [],
+						fixtures: [
+							{ week: 1, date: "Sunday", venue: "Court A", time: "10:00 AM", gym: "Court A", home: "Hawks", away: "Wolves", hg: null, ag: null }
+						],
+						config: sixTeamConfig
+					}],
+					players: []
+				}));
+			});
+
+			it("handleReviewManualStart creates a blank per-fixture draft review — same shape as an OCR review, but with no images/OCR output — for a non-SMBHL 6-team config", async () => {
+				const req = new Request("http://example.com/admin/review/manual-start", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ season: MANUAL_SEASON, week: 1 })
+				});
+				const res = await handleReviewManualStart(req, env);
+				const json = await res.json();
+				expect(json.ok).toBe(true);
+				expect(json.id).toBeTruthy();
+
+				const row = await env.DB.prepare("SELECT * FROM sheet_reviews WHERE id = ?").bind(json.id).first();
+				expect(row.season).toBe(MANUAL_SEASON);
+				expect(row.week).toBe(1);
+				expect(row.status).toBe("draft");
+				expect(row.images_json).toBe("[]");
+				expect(row.extracted_json).toBe("[]"); // no OCR data at all — blank instead of populated
+
+				const games = JSON.parse(row.validated_json);
+				expect(games.length).toBe(1);
+				expect(games[0].home_team).toBe("Hawks");
+				expect(games[0].away_team).toBe("Wolves");
+				expect(games[0].home_players).toEqual([]);
+				expect(games[0].away_players).toEqual([]);
+				expect(games[0].has_home_sheet).toBe(false);
+				expect(games[0].has_away_sheet).toBe(false);
+			});
+
+			it("re-requesting manual-start for the same season+week reuses the existing draft instead of creating a duplicate", async () => {
+				const req1 = new Request("http://example.com/admin/review/manual-start", {
+					method: "POST", headers: { "content-type": "application/json" },
+					body: JSON.stringify({ season: MANUAL_SEASON, week: 1 })
+				});
+				const { id: id1 } = await (await handleReviewManualStart(req1, env)).json();
+
+				const req2 = new Request("http://example.com/admin/review/manual-start", {
+					method: "POST", headers: { "content-type": "application/json" },
+					body: JSON.stringify({ season: MANUAL_SEASON, week: 1 })
+				});
+				const { id: id2 } = await (await handleReviewManualStart(req2, env)).json();
+
+				expect(id2).toBe(id1);
+				const count = await env.DB.prepare("SELECT COUNT(*) as c FROM sheet_reviews WHERE season = ? AND week = ?").bind(MANUAL_SEASON, 1).first();
+				expect(count.c).toBe(1);
+			});
+
+			it("a manually-created review, filled in entirely by hand with no photo, publishes correctly for a non-SMBHL config and updates standings + player stats identically to an OCR review", async () => {
+				const existing = await env.DB.prepare(
+					"SELECT id FROM sheet_reviews WHERE season = ? AND week = ? AND status = 'draft'"
+				).bind(MANUAL_SEASON, 1).first();
+				const reviewId = existing.id;
+
+				// This mirrors exactly what addPlayerRow() + the counter/goalie inputs produce
+				// client-side: new players (id: null) with full names, goals/assists, and a
+				// goalie per side — typed in by hand, with no photo or OCR involved.
+				const filledGames = [{
+					home_team: "Hawks", away_team: "Wolves",
+					home_score: 4, away_score: 2,
+					home_goalie: { name: "Hawks Goalie", id: null, ga: 2, is_sub: false },
+					away_goalie: { name: "Wolves Goalie", id: null, ga: 4, is_sub: false },
+					home_players: [
+						{ name: "Alex Tremblay", id: null, is_sub: false, absent: false, goals: 3, assists: 1 },
+						{ name: "Sam Bouchard", id: null, is_sub: false, absent: false, goals: 1, assists: 2 }
+					],
+					away_players: [
+						{ name: "Chris Nadeau", id: null, is_sub: false, absent: false, goals: 2, assists: 0 }
+					]
+				}];
+
+				const req = new Request("http://example.com/admin/review/publish", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ review_id: reviewId, week: 1, games: filledGames })
+				});
+				const res = await handleReviewPublish(req, env, null, null, async () => {});
+				const json = await res.json();
+				expect(json.ok).toBe(true);
+
+				const updated = JSON.parse(await env.SHEETS_KV.get("data_json"));
+				const season = updated.seasons.find(s => s.name === MANUAL_SEASON);
+
+				const hawks = season.standings.find(s => s.team === "Hawks");
+				const wolves = season.standings.find(s => s.team === "Wolves");
+				expect(hawks.w).toBe(1);
+				expect(hawks.pts).toBe(2);
+				expect(hawks.gf).toBe(4);
+				expect(hawks.ga).toBe(2);
+				expect(wolves.l).toBe(1);
+				expect(wolves.pts).toBe(0);
+
+				const alex = updated.players.find(p => p.name === "Alex Tremblay");
+				expect(alex).toBeTruthy();
+				expect(alex.seasons[MANUAL_SEASON].g).toBe(3);
+				expect(alex.seasons[MANUAL_SEASON].a).toBe(1);
+				expect(alex.seasons[MANUAL_SEASON].team).toBe("Hawks");
+
+				const chris = updated.players.find(p => p.name === "Chris Nadeau");
+				expect(chris.seasons[MANUAL_SEASON].g).toBe(2);
+				expect(chris.seasons[MANUAL_SEASON].team).toBe("Wolves");
+
+				const hawksGoalie = updated.players.find(p => p.name === "Hawks Goalie");
+				expect(hawksGoalie).toBeTruthy();
+				expect(hawksGoalie.gseasons[MANUAL_SEASON].w).toBe(1);
+				expect(hawksGoalie.gseasons[MANUAL_SEASON].ga).toBe(2);
+
+				const reviewRow = await env.DB.prepare("SELECT status FROM sheet_reviews WHERE id = ?").bind(reviewId).first();
+				expect(reviewRow.status).toBe("published");
+			});
+
+			it("Fall 2026's existing OCR-originated publish flow still works exactly as before (unaffected by the manual-entry additions)", async () => {
+				const evId = "2026-09-27-ocr-unchanged";
+				await env.DB.prepare(
+					"INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time, end_time) VALUES (?, 'Fall 2026', 3, 'Sunday September 27, 2026', 'Letendre', 'locked', '10:30', '12:30')"
+				).bind(evId).run();
+
+				const revId = "rev_ocr_unchanged";
+				await env.DB.prepare(
+					"INSERT OR REPLACE INTO sheet_reviews (id, event_id, season, week, created_at, status, images_json, extracted_json) VALUES (?, ?, 'Fall 2026', 3, '2026-09-27T12:00:00Z', 'draft', ?, ?)"
+				).bind(
+					revId, evId,
+					JSON.stringify(['img:rev_ocr_unchanged:0']),
+					JSON.stringify([{ team: 'Red', game1: { opponent: 'Blue', team_score: 5, opponent_score: 3 } }])
+				).run();
+
+				await env.SHEETS_KV.put("data_json", JSON.stringify({
+					current_season: "Fall 2026",
+					seasons: [{ name: "Fall 2026", games: 4, standings: [] }],
+					players: []
+				}));
+
+				const req = new Request("http://example.com/admin/review/publish", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						review_id: revId, week: 3,
+						games: [{ home_team: "Red", away_team: "Blue", home_score: 5, away_score: 3, home_players: [], away_players: [] }]
+					})
+				});
+				const res = await handleReviewPublish(req, env, null, null, async () => {});
+				const json = await res.json();
+				expect(json.ok).toBe(true);
+
+				const updated = JSON.parse(await env.SHEETS_KV.get("data_json"));
+				const fall2026 = updated.seasons.find(s => s.name === "Fall 2026");
+				expect(fall2026.games).toBe(0); // no fixtures defined in this minimal data_json, matches pre-existing behavior
+			});
 		});
 
 		describe("Dynamic Backup Goalie Support", () => {

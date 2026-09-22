@@ -2700,6 +2700,73 @@ export async function handleReviewUpload(req, env) {
   }
 }
 
+// Creates a draft review with no photo/OCR step at all: one blank game card per
+// scheduled fixture for the given season+week, ready for an admin to fill in by
+// hand. Produces the exact same sheet_reviews row shape as handleReviewUpload
+// (empty images_json/extracted_json instead of OCR output), so validation,
+// publishing, standings and awards all work unchanged downstream.
+export async function handleReviewManualStart(req, env) {
+  try {
+    const body = await req.json().catch(() => ({}));
+
+    const curEvent = await env.DB.prepare("SELECT * FROM events WHERE state='open' ORDER BY week LIMIT 1").first()
+      || await env.DB.prepare("SELECT * FROM events ORDER BY id DESC LIMIT 1").first();
+    const season = String(body.season || curEvent?.season || 'Fall 2026').trim();
+    const week = Number(body.week) || curEvent?.week || 1;
+
+    const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+    const leagueData = JSON.parse(leagueDataRaw);
+    const cfg = getSeasonConfig(leagueData, season);
+    if (!tracksStats(cfg)) {
+      return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
+    }
+
+    // Reuse an existing draft for this season+week instead of creating a duplicate
+    // (e.g. a double-click, or switching back to this week after navigating away).
+    const existingReview = await env.DB.prepare(
+      `SELECT id FROM sheet_reviews WHERE season = ? AND week = ? AND status = 'draft' ORDER BY created_at DESC LIMIT 1`
+    ).bind(season, week).first();
+    if (existingReview) {
+      return Response.json({ ok: true, id: existingReview.id });
+    }
+
+    const s0 = (leagueData.seasons || []).find(s => s.name === season) || leagueData.seasons?.[0];
+    const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(week));
+    if (fixtures.length === 0) {
+      return Response.json({ ok: false, error: `Aucun match programmé pour la semaine ${week} (${season}).` }, { status: 400 });
+    }
+
+    const contacts = (await env.DB.prepare('SELECT player_id, name, is_sub, role, is_goalie FROM contacts').all()).results || [];
+    const candidatePlayers = [
+      ...contacts,
+      ...(leagueData.players || []).map(p => ({ player_id: p.id, name: p.name }))
+    ];
+
+    const games = consolidateSheetsIntoGames([], fixtures, candidatePlayers, { config: cfg });
+
+    const reviewId = 'rev_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+    const now = new Date().toISOString();
+
+    await env.DB.prepare(
+      `INSERT INTO sheet_reviews (id, event_id, season, week, created_at, status, images_json, extracted_json, validated_json)
+       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?)`
+    ).bind(
+      reviewId,
+      curEvent?.id || `${season}-${week}`,
+      season,
+      week,
+      now,
+      JSON.stringify([]),
+      JSON.stringify([]),
+      JSON.stringify(games)
+    ).run();
+
+    return Response.json({ ok: true, id: reviewId });
+  } catch (err) {
+    return Response.json({ ok: false, error: 'Manual start failed: ' + err.message }, { status: 500 });
+  }
+}
+
 export async function handleReviewAddSheet(req, env) {
   try {
     const formData = await req.formData();
