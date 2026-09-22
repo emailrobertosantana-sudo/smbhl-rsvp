@@ -44,7 +44,8 @@ import {
   getTeamNameFr,
   isTeamValid,
   normalizeTeamWithConfig,
-  getLeagueConfig
+  getLeagueConfig,
+  tracksStats
 } from './season_config.js';
 
 /* SMBHL attendance
@@ -55,6 +56,8 @@ import {
 
 /** Module-level fallback team list (SMBHL defaults). Per-request code should use getTeamNames(config). */
 const TEAMS = getTeamNames(DEFAULT_SEASON_CONFIG);
+
+const STATS_DISABLED_MSG = 'Cette ligue ne suit pas de statistiques pour cette saison (tracksStats: false). / This league does not track stats for this season.';
 
 /* ---------- tokens ---------- */
 
@@ -1554,7 +1557,13 @@ async function drain(env, limit = 40) {
       } else if (!ev) {
         throw new Error('event gone');
       }
-      const leagueCfg = getLeagueConfig(getSeasonConfig(await getDataJson(), ev.season));
+      const seasonCfg = getSeasonConfig(await getDataJson(), ev.season);
+      const leagueCfg = getLeagueConfig(seasonCfg);
+      if ((m.kind === 'season_recap' || m.kind === 'season_recap_prompt') && !tracksStats(seasonCfg)) {
+        await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
+          .bind('season does not track stats (tracksStats: false)', m.id).run();
+        continue;
+      }
       if (m.kind === 'holdcall') {
         await runHoldCall(env, m);
         await env.DB.prepare('UPDATE outbox SET sent_at=? WHERE id=?')
@@ -3398,7 +3407,19 @@ async function availRoute(req, env, url) {
     game we place you automatically and email you.</span></p></div>`, logoTooltip);
 }
 
-function renderAdminTabs(here, isAuthed = false) {
+// Resolves whether the CURRENT season tracks stats, for hiding stats-only admin
+// tabs (Scoresheets, Season Recap) when it doesn't. Defaults to true (shown) on
+// any lookup failure, so a transient KV/DB issue never hides working features.
+async function currentSeasonTracksStats(env) {
+  if (!env) return true;
+  try {
+    return tracksStats(await getSeasonConfigFromEnv(env, null));
+  } catch (_) {
+    return true;
+  }
+}
+
+function renderAdminTabs(here, isAuthed = false, showStatsTabs = true) {
   return `<div class="picker" id="admin-nav-tabs" style="margin-bottom:14px;${isAuthed ? 'display:flex' : 'display:none'}">
   <a class="tabbtn${here === 'board' ? ' on' : ''}" href="/admin/board" data-tab="board" data-fr="Tableau" data-en="Board">Tableau</a>
   <a class="tabbtn${here === 'subs' ? ' on' : ''}" href="/admin/subs" data-tab="subs" data-fr="Substituts" data-en="Substitutes">Substituts</a>
@@ -3408,9 +3429,9 @@ function renderAdminTabs(here, isAuthed = false) {
   <a class="tabbtn${here === 'schedule' ? ' on' : ''}" href="/admin/schedule" data-tab="schedule" data-fr="Calendrier 📅" data-en="Schedule 📅">Calendrier 📅</a>
   <a class="tabbtn${here === 'emails' || here === 'comms' ? ' on' : ''}" href="/admin/comms" data-tab="comms" data-fr="Comms 💬" data-en="Comms 💬">Comms 💬</a>
   <a class="tabbtn${here === 'finances' ? ' on' : ''}" href="/admin/finances" data-tab="finances" data-fr="Finances 💵" data-en="Finances 💵">Finances 💵</a>
-  <a class="tabbtn${here === 'review' ? ' on' : ''}" href="/admin/review" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>
+  ${showStatsTabs ? `<a class="tabbtn${here === 'review' ? ' on' : ''}" href="/admin/review" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>` : ''}
   <a class="tabbtn${here === 'polls' ? ' on' : ''}" href="/admin/polls" data-tab="polls" data-fr="Sondages 🗳️" data-en="Polls 🗳️">Sondages 🗳️</a>
-  <a class="tabbtn${here === 'recap' ? ' on' : ''}" href="/admin/season-recap" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>
+  ${showStatsTabs ? `<a class="tabbtn${here === 'recap' ? ' on' : ''}" href="/admin/season-recap" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>` : ''}
 </div>
 <script>
 window.__updateAdminTabsLang = function(l) {
@@ -3422,7 +3443,7 @@ window.__updateAdminTabsLang = function(l) {
 if (window.__currentLang) window.__updateAdminTabsLang(window.__currentLang);
 </script>`;
 }
-const adminTabs = (here, isAuthed = false) => renderAdminTabs(here, isAuthed);
+const adminTabs = (here, isAuthed = false, showStatsTabs = true) => renderAdminTabs(here, isAuthed, showStatsTabs);
 
 function renderKeyGate(isAuthed = false) {
   return `<div class="card" id="gate"${isAuthed ? ' style="display:none"' : ''}>
@@ -3437,8 +3458,9 @@ const keyGate = renderKeyGate(false);
 
 async function boardPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  const showStatsTabs = await currentSeasonTracksStats(env);
   return page('Tableau', `
-  ${adminTabs('board', isAuthed)}
+  ${adminTabs('board', isAuthed, showStatsTabs)}
   <h1 data-i18n="pageTitle">Tableau</h1>
   ${renderKeyGate(isAuthed)}
   <div id="main"${isAuthed ? '' : ' style="display:none"'}></div>
@@ -4335,8 +4357,9 @@ async function boardData(env, url = null) {
 
 async function subsPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  const showStatsTabs = await currentSeasonTracksStats(env);
   return page('Substituts', `
-  ${adminTabs('subs', isAuthed)}
+  ${adminTabs('subs', isAuthed, showStatsTabs)}
   <h1 data-i18n="pageTitle">Substituts sollicités</h1>
   ${renderKeyGate(isAuthed)}
   <div id="main"${isAuthed ? '' : ' style="display:none"'}>
@@ -5065,6 +5088,7 @@ async function subsData(env, url) {
 
 async function peoplePage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  const showStatsTabs = await currentSeasonTracksStats(env);
   return page('Contacts', `
   <style>
     .wrap { max-width: 1150px !important; }
@@ -5204,7 +5228,7 @@ async function peoplePage(env = null, isAuthed = false) {
     }
   </style>
 
-  ${adminTabs('contacts', isAuthed)}
+  ${adminTabs('contacts', isAuthed, showStatsTabs)}
   <h1 data-i18n="title">Contacts & Coordonnées</h1>
   ${renderKeyGate(isAuthed)}
   <div id="main"${isAuthed ? '' : ' style="display:none"'}>
@@ -7432,8 +7456,9 @@ async function sheetData(env, url) {
 
 async function seasonRecapPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  const showStatsTabs = await currentSeasonTracksStats(env);
   return page('Bilan de fin de saison', `
-  ${adminTabs('recap', isAuthed)}
+  ${adminTabs('recap', isAuthed, showStatsTabs)}
   <h1 data-i18n="title">Bilan de fin de saison</h1>
   ${renderKeyGate(isAuthed)}
   <div id="main"${isAuthed ? '' : ' style="display:none"'}>
@@ -7997,6 +8022,10 @@ async function handleSeasonRecapData(req, env, url) {
   const s0 = d.seasons?.find(s => s && s.name === seasonParam) || d.seasons?.find(Boolean);
   const season = s0?.name || seasonParam || 'Fall 2026';
 
+  if (!tracksStats(getSeasonConfig(d, season))) {
+    return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
+  }
+
   const autoAwards = computeSeasonAwards(d, season);
   const draftRaw = await env.SHEETS_KV.get(`season_recap_draft:${season}`);
   const draft = draftRaw ? JSON.parse(draftRaw) : null;
@@ -8051,6 +8080,9 @@ async function handleSeasonRecapSave(req, env) {
   if (auth !== 'ok') return adminAuthResponse(auth);
   const body = await req.json().catch(() => ({}));
   const season = body.season || 'Fall 2026';
+  if (!tracksStats(await getSeasonConfigFromEnv(env, season))) {
+    return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
+  }
   await env.SHEETS_KV.put(`season_recap_draft:${season}`, JSON.stringify(body));
   return Response.json({ ok: true, saved_at: new Date().toISOString() });
 }
@@ -8060,6 +8092,9 @@ async function handleSeasonRecapUploadPhoto(req, env) {
   if (auth !== 'ok') return adminAuthResponse(auth);
   const formData = await req.formData();
   const season = formData.get('season') || 'Fall 2026';
+  if (!tracksStats(await getSeasonConfigFromEnv(env, season))) {
+    return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
+  }
   const file = formData.get('photo');
   if (!file || typeof file.arrayBuffer !== 'function') {
     return Response.json({ ok: false, error: 'No photo provided' }, { status: 400 });
@@ -8076,6 +8111,9 @@ async function handleSeasonRecapSend(req, env) {
   if (auth !== 'ok') return adminAuthResponse(auth);
   const body = await req.json().catch(() => ({}));
   const season = body.season || 'Fall 2026';
+  if (!tracksStats(await getSeasonConfigFromEnv(env, season))) {
+    return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
+  }
   const now = new Date().toISOString();
   await env.SHEETS_KV.put(`season_recap:${season}`, JSON.stringify({ ...body, sent_at: now }));
 
@@ -8537,6 +8575,7 @@ async function handleFinancesCostDelete(req, env) {
 
 async function financesPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  const showStatsTabs = await currentSeasonTracksStats(env);
   return page('Cotisations et Finances', `
   <style>
     .wrap { max-width: 1100px !important; }
@@ -8560,7 +8599,7 @@ async function financesPage(env = null, isAuthed = false) {
     .filter-btn { font:inherit; font-family:'Barlow Condensed',sans-serif; font-weight:600; font-size:14px; padding:5px 12px; border:1px solid var(--rule2); background:#fff; color:var(--soft); border-radius:3px; cursor:pointer; }
     .filter-btn.on { background:var(--ink); color:#fff; border-color:var(--ink); }
   </style>
-  ${adminTabs('finances', isAuthed)}
+  ${adminTabs('finances', isAuthed, showStatsTabs)}
   <h1 data-i18n="pageTitle">Cotisations et Finances</h1>
   ${renderKeyGate(isAuthed)}
   <div id="main"${isAuthed ? '' : ' style="display:none"'}>
@@ -9736,8 +9775,9 @@ SMBHL · smbhl.com`;
 
 async function pollsPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  const showStatsTabs = await currentSeasonTracksStats(env);
   return page('Sondages', `
-  ${adminTabs('polls', isAuthed)}
+  ${adminTabs('polls', isAuthed, showStatsTabs)}
   <h1 data-i18n="title">Sondages & Trophées</h1>
   ${renderKeyGate(isAuthed)}
   <div id="main"${isAuthed ? '' : ' style="display:none"'}>
@@ -10301,7 +10341,8 @@ if (K) {
 
 async function seasonPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
-  const tabsHtml = adminTabs('season', isAuthed);
+  const showStatsTabs = await currentSeasonTracksStats(env);
+  const tabsHtml = adminTabs('season', isAuthed, showStatsTabs);
   const gateHtml = renderKeyGate(isAuthed);
   const bodyHtml = await renderSeasonPage(env, isAuthed, tabsHtml, gateHtml);
   return page('Saison', bodyHtml, logoTooltip);
@@ -10309,6 +10350,7 @@ async function seasonPage(env = null, isAuthed = false) {
 
 async function schedulePage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  const showStatsTabs = await currentSeasonTracksStats(env);
   return page('Calendrier', `
   <style>
     .wrap { max-width: 1100px !important; }
@@ -10373,7 +10415,7 @@ async function schedulePage(env = null, isAuthed = false) {
       .form-row { grid-template-columns:1fr; }
     }
   </style>
-  ${adminTabs('schedule', isAuthed)}
+  ${adminTabs('schedule', isAuthed, showStatsTabs)}
   <h1 data-i18n="title">Gestion du calendrier</h1>
   ${renderKeyGate(isAuthed)}
   <div id="main"${isAuthed ? '' : ' style="display:none"'}>
@@ -11899,6 +11941,7 @@ async function handleEmailsBroadcast(req, env) {
 
 async function emailsPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  const showStatsTabs = await currentSeasonTracksStats(env);
   return page('Comms', `
   <style>
     .wrap { max-width: 1150px !important; }
@@ -11975,7 +12018,7 @@ async function emailsPage(env = null, isAuthed = false) {
       .act-btn { padding:6px 11px; font-size:12.5px; }
     }
   </style>
-  ${adminTabs('comms', isAuthed)}
+  ${adminTabs('comms', isAuthed, showStatsTabs)}
   <h1 data-i18n="title">Gestion des communications</h1>
   ${renderKeyGate(isAuthed)}
   <div id="main"${isAuthed ? '' : ' style="display:none"'}>
@@ -13974,6 +14017,7 @@ async function teamsPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const resolvedCfg = env ? await getSeasonConfigFromEnv(env, null) : null;
   const leagueCfg = resolvedCfg ? getLeagueConfig(resolvedCfg) : null;
+  const showStatsTabs = resolvedCfg ? tracksStats(resolvedCfg) : true;
   return page('Équipes', `
   <style>
     .wrap { max-width: 1200px !important; }
@@ -14019,7 +14063,7 @@ async function teamsPage(env = null, isAuthed = false) {
       .teams-grid { grid-template-columns: 1fr; }
     }
   </style>
-  ${adminTabs('teams', isAuthed)}
+  ${adminTabs('teams', isAuthed, showStatsTabs)}
   <h1 data-i18n="title">Alignements & Équipes</h1>
   ${renderKeyGate(isAuthed)}
   <div id="main"${isAuthed ? '' : ' style="display:none"'}>

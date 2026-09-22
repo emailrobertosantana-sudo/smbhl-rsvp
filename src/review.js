@@ -1,7 +1,9 @@
 import PostalMime from 'postal-mime';
 import { computeWeeklyRecap } from './highlights.js';
 import { sortStandings, getRegularGoalsByTeam, updatePlayoffSchedule } from './awards.js';
-import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getTeamNames, normalizeTeamWithConfig } from './season_config.js';
+import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getTeamNames, normalizeTeamWithConfig, tracksStats } from './season_config.js';
+
+const STATS_DISABLED_MSG = 'Cette ligue ne suit pas de statistiques pour cette saison (tracksStats: false). / This league does not track stats for this season.';
 
 /**
  * Normalizes a raw team string to its canonical name using the season's config
@@ -2461,6 +2463,14 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
     const season = curEvent?.season || 'Fall 2026';
     let defaultWeek = curEvent?.week || 1;
 
+    const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+    const leagueData = JSON.parse(leagueDataRaw);
+    const cfg = getSeasonConfig(leagueData, season);
+    if (!tracksStats(cfg)) {
+      console.log(`Scoresheet email received for season "${season}" which has tracksStats:false — skipping OCR ingestion.`);
+      return;
+    }
+
     // Check if an existing open draft exists for this season/week
     const existingReview = await env.DB.prepare(
       `SELECT * FROM sheet_reviews WHERE season = ? AND status = 'draft' ORDER BY created_at DESC LIMIT 1`
@@ -2488,9 +2498,6 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
 
     const week = allParsedSheets.find(s => s.week)?.week || existingReview?.week || defaultWeek;
 
-    const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
-    const leagueData = JSON.parse(leagueDataRaw);
-    const cfg = getSeasonConfig(leagueData, season);
     const teamNames = getTeamNames(cfg);
     const s0 = (leagueData.seasons || []).find(s => s.name === season) || leagueData.seasons?.[0];
     const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(week));
@@ -2613,6 +2620,13 @@ export async function handleReviewUpload(req, env) {
     const season = curEvent?.season || 'Fall 2026';
     let defaultWeek = curEvent?.week || 1;
 
+    const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+    const leagueData = JSON.parse(leagueDataRaw);
+    const cfg = getSeasonConfig(leagueData, season);
+    if (!tracksStats(cfg)) {
+      return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
+    }
+
     // Check existing draft
     const existingReview = await env.DB.prepare(
       `SELECT * FROM sheet_reviews WHERE season = ? AND status = 'draft' ORDER BY created_at DESC LIMIT 1`
@@ -2641,9 +2655,6 @@ export async function handleReviewUpload(req, env) {
 
     const week = allParsedSheets.find(s => s.week)?.week || existingReview?.week || defaultWeek;
 
-    const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
-    const leagueData = JSON.parse(leagueDataRaw);
-    const cfg = getSeasonConfig(leagueData, season);
     const s0 = (leagueData.seasons || []).find(s => s.name === season) || leagueData.seasons?.[0];
     const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(week));
 
@@ -2699,6 +2710,13 @@ export async function handleReviewAddSheet(req, env) {
     const review = await env.DB.prepare('SELECT * FROM sheet_reviews WHERE id = ?').bind(reviewId).first();
     if (!review) return new Response('Review not found', { status: 404 });
 
+    const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
+    const leagueData = JSON.parse(leagueDataRaw);
+    const cfg = getSeasonConfig(leagueData, review.season);
+    if (!tracksStats(cfg)) {
+      return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
+    }
+
     const allImageKeys = JSON.parse(review.images_json || '[]');
     const allParsedSheets = JSON.parse(review.extracted_json || '[]');
 
@@ -2719,9 +2737,6 @@ export async function handleReviewAddSheet(req, env) {
       }
     }
 
-    const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
-    const leagueData = JSON.parse(leagueDataRaw);
-    const cfg = getSeasonConfig(leagueData, review.season);
     const s0 = (leagueData.seasons || []).find(s => s.name === review.season) || leagueData.seasons?.[0];
     const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(review.week));
 
@@ -2759,6 +2774,9 @@ export async function reprocessReview(review, env) {
   const leagueDataRaw = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
   const leagueData = JSON.parse(leagueDataRaw);
   const seasonCfg = getSeasonConfig(leagueData, season);
+  if (!tracksStats(seasonCfg)) {
+    return { ok: false, error: STATS_DISABLED_MSG };
+  }
   const s0 = (leagueData.seasons || []).find(s => s.name === season) || leagueData.seasons?.[0];
 
   const allParsedSheets = [];
@@ -2991,6 +3009,10 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
 
   const rawData = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
   const originalData = JSON.parse(rawData);
+
+  if (!tracksStats(getSeasonConfig(originalData, review.season))) {
+    return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
+  }
 
   let subPlayerIds = new Set();
   try {

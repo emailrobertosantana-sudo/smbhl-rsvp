@@ -2,8 +2,8 @@
  * season_config.js — Unified Season Configuration Engine
  *
  * Provides dynamic season configurations (teams, colours, aliases, roster targets,
- * playoff formats, and league branding/email identity) with strict fallback to
- * historical SMBHL defaults.
+ * playoff formats, league branding/email identity, and stats tracking) with strict
+ * fallback to historical SMBHL defaults.
  */
 
 export const DEFAULT_SEASON_CONFIG = {
@@ -30,7 +30,10 @@ export const DEFAULT_SEASON_CONFIG = {
     replyToEmail: 'info@smbhl.com',
     siteUrl: 'https://smbhl.com',
     faviconUrl: 'https://smbhl.com/img/favicon-32.svg'
-  }
+  },
+  // When false, standings/playoffs/awards/OCR/season-recap are disabled for this
+  // season; only the attendance/RSVP/shortage/sub-invite operational core runs.
+  tracksStats: true
 };
 
 /**
@@ -73,7 +76,8 @@ export function normalizeSeasonConfig(rawConfig) {
     skatersPerTeam: Number(rawConfig.skatersPerTeam) || DEFAULT_SEASON_CONFIG.skatersPerTeam,
     minSkaters: Number(rawConfig.minSkaters) || DEFAULT_SEASON_CONFIG.minSkaters,
     playoffFormat: rawConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat,
-    league
+    league,
+    tracksStats: rawConfig.tracksStats === false ? false : DEFAULT_SEASON_CONFIG.tracksStats
   };
 }
 
@@ -152,6 +156,14 @@ export function getLeagueConfig(config) {
     siteUrl: raw.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl,
     faviconUrl: raw.faviconUrl || DEFAULT_SEASON_CONFIG.league.faviconUrl
   };
+}
+
+/**
+ * Returns whether a season tracks stats (standings/playoffs/awards/OCR/recap).
+ * Defaults to true (SMBHL's historical behavior) unless explicitly set to false.
+ */
+export function tracksStats(config) {
+  return config && config.tracksStats === false ? false : true;
 }
 
 /**

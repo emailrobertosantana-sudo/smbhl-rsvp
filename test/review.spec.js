@@ -842,7 +842,8 @@ describe('Multi-team season config (6-team season, Parts 3 & 4)', () => {
         replyToEmail: 'info@smbhl.com',
         siteUrl: 'https://smbhl.com',
         faviconUrl: 'https://smbhl.com/img/favicon-32.svg'
-      }
+      },
+      tracksStats: true
     });
     expect(getTeamNames(getSeasonConfig({ name: 'Configless Season', standings: [], fixtures: [] })))
       .toEqual(['Red', 'Blue', 'White', 'Black']);

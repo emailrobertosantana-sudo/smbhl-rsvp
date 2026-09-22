@@ -3139,6 +3139,89 @@ describe("SMBHL Worker", () => {
 		});
 	});
 
+
+	describe("Attendance-only mode (league.tracksStats: false)", () => {
+		const ATTENDANCE_SEASON = 'AttendanceOnly2026';
+
+		beforeAll(async () => {
+			env.ADMIN_KEY = "test-adminkey-attendance";
+			// current_season is set to the attendance-only season itself so pages that resolve
+			// "the current season" (like the admin nav's tab visibility) actually exercise the
+			// tracksStats:false path, not Fall 2026's.
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				current_season: ATTENDANCE_SEASON,
+				seasons: [
+					{ name: "Fall 2026", standings: [] },
+					{
+						name: ATTENDANCE_SEASON,
+						standings: [],
+						config: {
+							teams: [
+								{ name: 'Alpha', name_fr: 'Alpha', colour: '#334155', aliases: [] },
+								{ name: 'Beta', name_fr: 'Beta', colour: '#64748b', aliases: [] }
+							],
+							tracksStats: false
+						}
+					}
+				],
+				players: []
+			}));
+			// week 0 so this event sorts first among any other 'open' events left by earlier
+			// tests in this shared D1 instance (handleReviewUpload picks the open event with
+			// the lowest week when none is specified).
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time, end_time)
+				 VALUES ('attendance-evt-1', ?, 0, 'Sunday', 'Gym', 'open', '10:30', '12:30')`
+			).bind(ATTENDANCE_SEASON).run();
+		});
+
+		it("attendance/RSVP core still works normally: /admin/teams/data resolves the season's own teams", async () => {
+			const res = await worker.fetch(new Request(`http://example.com/admin/teams/data?season=${encodeURIComponent(ATTENDANCE_SEASON)}`, {
+				headers: { "x-admin": "test-adminkey-attendance" }
+			}), env);
+			expect(res.status).toBe(200);
+			const data = await res.json();
+			expect(data.ok).toBe(true);
+			expect(Object.keys(data.teams).sort()).toEqual(['Alpha', 'Beta']);
+		});
+
+		it("/admin/season-recap/data returns a clear 'not enabled' response instead of computing awards", async () => {
+			const res = await worker.fetch(new Request(`http://example.com/admin/season-recap/data?s=${encodeURIComponent(ATTENDANCE_SEASON)}`, {
+				headers: { "x-admin": "test-adminkey-attendance" }
+			}), env);
+			expect(res.status).toBe(404);
+			const data = await res.json();
+			expect(data.ok).toBe(false);
+			expect(data.error).toContain('tracksStats');
+		});
+
+		it("/admin/review/upload (OCR ingestion) returns a clear 'not enabled' response instead of calling Gemini or crashing", async () => {
+			const formData = new FormData();
+			formData.append('sheets', new Blob(['fake-image-bytes'], { type: 'image/jpeg' }), 'sheet1.jpg');
+
+			const res = await worker.fetch(new Request("http://example.com/admin/review/upload", {
+				method: "POST",
+				body: formData
+			}), env);
+			expect(res.status).toBe(404);
+			const data = await res.json();
+			expect(data.ok).toBe(false);
+			expect(data.error).toContain('tracksStats');
+		});
+
+		it("admin nav hides the Scoresheets and Season Recap tabs (but not others) when the current season doesn't track stats, and the page itself still renders fine", async () => {
+			const teamsPageRes = await worker.fetch(new Request("http://example.com/admin/teams"), env);
+			expect(teamsPageRes.status).toBe(200);
+			const html = await teamsPageRes.text();
+			expect(html).toContain('Alignements');
+			expect(html).not.toContain('data-tab="review"');
+			expect(html).not.toContain('data-tab="recap"');
+			expect(html).toContain('data-tab="subs"');
+			expect(html).toContain('data-tab="finances"');
+			expect(html).toContain('data-tab="polls"');
+		});
+	});
+
 	describe("Season-aware admin team resolution (custom 6-team season config)", () => {
 		const sixTeamConfig = {
 			teams: [
