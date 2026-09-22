@@ -15265,20 +15265,82 @@ async function handleFetch(req, env, ctx) {
         return new Response(await boardPage(env, isAuthed),
           { headers: adminPageHeaders(isAuthed, env) });
       }
+      // Read-only route migration (Part G — see the task report): dual auth
+      // for GET /admin/board/data. ADMIN_KEY path below is byte-for-byte
+      // identical to before this change — same call to boardData, same
+      // response. The session path is new/additive: a narrower, pure-D1,
+      // league_id-filtered event view plus that league's own data_json
+      // equivalent's current_season (leagues.js's getLeagueDataJson) —
+      // not a reproduction of boardData's full roster/stats/hmac-link
+      // bundle, same honest scoping-down already used for teams/data.
       if (url.pathname === '/admin/board/data') {
         const auth = checkAdminAuth(req, env);
-        if (auth !== 'ok') return adminAuthResponse(auth);
-        return await boardData(env, url);
+        if (auth === 'ok') return await boardData(env, url);
+        const leagueId = await resolveSessionLeagueId(req, env, url);
+        if (leagueId) {
+          const sessionAuth = await checkLeagueAccess(req, env, leagueId);
+          if (sessionAuth === 'ok') {
+            const reqEventId = url.searchParams.get('e');
+            let ev = null;
+            if (reqEventId) {
+              ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(reqEventId, leagueId).first();
+            }
+            if (!ev) {
+              ev = await env.DB.prepare("SELECT * FROM events WHERE league_id = ? AND state='open' ORDER BY week LIMIT 1").bind(leagueId).first();
+            }
+            if (!ev) {
+              ev = await env.DB.prepare('SELECT * FROM events WHERE league_id = ? ORDER BY id DESC LIMIT 1').bind(leagueId).first();
+            }
+            const events = (await env.DB.prepare(
+              `SELECT id, week, date, state FROM events WHERE league_id = ? ORDER BY id DESC LIMIT 10`
+            ).bind(leagueId).all()).results || [];
+            const leagueData = await getLeagueDataJson(env, leagueId);
+            return Response.json({ ok: true, league_id: leagueId, current_season: leagueData.current_season, event: ev || null, events });
+          }
+        }
+        return adminAuthResponse(auth);
       }
       if ((url.pathname === '/admin/subs' || url.pathname === '/admin/subs/') && req.method === 'GET') {
         const isAuthed = checkAdminAuth(req, env) === 'ok';
         return new Response(await subsPage(env, isAuthed),
           { headers: adminPageHeaders(isAuthed, env) });
       }
+      // Read-only route migration (Part G — see the task report): dual auth
+      // for GET /admin/subs/data. Same shape as /admin/board/data above:
+      // ADMIN_KEY path unchanged, session path new/additive and narrower
+      // (scoped event + events list + that league's own contacts, plus
+      // current_season from getLeagueDataJson — not subsData's full
+      // shortage/outbox/availability bundle).
       if (url.pathname === '/admin/subs/data') {
         const auth = checkAdminAuth(req, env);
-        if (auth !== 'ok') return adminAuthResponse(auth);
-        return await subsData(env, url);
+        if (auth === 'ok') return await subsData(env, url);
+        const leagueId = await resolveSessionLeagueId(req, env, url);
+        if (leagueId) {
+          const sessionAuth = await checkLeagueAccess(req, env, leagueId);
+          if (sessionAuth === 'ok') {
+            const reqEventId = url.searchParams.get('e');
+            let ev = null;
+            if (reqEventId) {
+              ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(reqEventId, leagueId).first();
+            }
+            if (!ev) {
+              ev = await env.DB.prepare("SELECT * FROM events WHERE league_id = ? AND state='open' ORDER BY week LIMIT 1").bind(leagueId).first();
+            }
+            if (!ev) {
+              ev = await env.DB.prepare('SELECT * FROM events WHERE league_id = ? ORDER BY id DESC LIMIT 1').bind(leagueId).first();
+            }
+            const events = (await env.DB.prepare(
+              `SELECT id, week, date, state FROM events WHERE league_id = ? ORDER BY id DESC LIMIT 10`
+            ).bind(leagueId).all()).results || [];
+            const contacts = (await env.DB.prepare(
+              `SELECT player_id, name, email, role, is_goalie, preferred_team
+                 FROM contacts WHERE league_id = ? ORDER BY name`
+            ).bind(leagueId).all()).results || [];
+            const leagueData = await getLeagueDataJson(env, leagueId);
+            return Response.json({ ok: true, league_id: leagueId, current_season: leagueData.current_season, event: ev || null, events, contacts });
+          }
+        }
+        return adminAuthResponse(auth);
       }
       if (url.pathname === '/admin/subs/reassign' && req.method === 'POST') {
         const auth = checkAdminAuth(req, env);
@@ -15618,13 +15680,31 @@ async function handleFetch(req, env, ctx) {
         if (auth !== 'ok') return adminAuthResponse(auth);
         return Response.json({ ran: await runSchedule(env) });
       }
+      // Read-only route migration (Part G — see the task report): dual auth
+      // for GET /admin/outbox. ADMIN_KEY path below is byte-for-byte
+      // identical to before this change. Session path is new/additive and
+      // simply adds `WHERE league_id = ?` to the same query — outbox has
+      // no KV entanglement at all, so unlike board/subs/teams data above,
+      // this one needs no separate narrower shape.
       if (url.pathname === '/admin/outbox') {
         const auth = checkAdminAuth(req, env);
-        if (auth !== 'ok') return adminAuthResponse(auth);
-        const rows = (await env.DB.prepare(
-          `SELECT id,kind,event_id,player_id,team,send_after,sent_at,cancelled,error
-             FROM outbox ORDER BY id DESC LIMIT 60`).all()).results || [];
-        return Response.json({ now: new Date().toISOString(), local: localParts(), rows });
+        if (auth === 'ok') {
+          const rows = (await env.DB.prepare(
+            `SELECT id,kind,event_id,player_id,team,send_after,sent_at,cancelled,error
+               FROM outbox ORDER BY id DESC LIMIT 60`).all()).results || [];
+          return Response.json({ now: new Date().toISOString(), local: localParts(), rows });
+        }
+        const leagueId = await resolveSessionLeagueId(req, env, url);
+        if (leagueId) {
+          const sessionAuth = await checkLeagueAccess(req, env, leagueId);
+          if (sessionAuth === 'ok') {
+            const rows = (await env.DB.prepare(
+              `SELECT id,kind,event_id,player_id,team,send_after,sent_at,cancelled,error
+                 FROM outbox WHERE league_id = ? ORDER BY id DESC LIMIT 60`).bind(leagueId).all()).results || [];
+            return Response.json({ ok: true, league_id: leagueId, now: new Date().toISOString(), local: localParts(), rows });
+          }
+        }
+        return adminAuthResponse(auth);
       }
       if (url.pathname === '/admin/drain') {
         const auth = checkAdminAuth(req, env);
