@@ -81,21 +81,41 @@ export function normalizeSeasonConfig(rawConfig) {
   };
 }
 
+// Last-resort fallback when nothing in seasonOrData resolves a real config
+// at all (used at both points below). `leagueTeamNames` — a league's own
+// signup-provided team names (leagues.team_names in D1), NOT part of
+// data.json/season shape at all — lets a league with no season config yet
+// fall back to ITS OWN team names instead of DEFAULT_SEASON_CONFIG's
+// SMBHL-specific Red/Blue/White/Black. Omitted (as every existing call
+// site still does — this is purely additive), it's the exact same
+// DEFAULT_SEASON_CONFIG fallback as before: SMBHL already has real season
+// configs, so this path doesn't trigger for it either way, and every other
+// existing caller's behavior is completely unchanged.
+function fallbackSeasonConfig(leagueTeamNames) {
+  if (Array.isArray(leagueTeamNames) && leagueTeamNames.length > 0) {
+    return normalizeSeasonConfig({ teams: leagueTeamNames });
+  }
+  return { ...DEFAULT_SEASON_CONFIG };
+}
+
 /**
  * Resolves the configuration for a given season or data.json payload.
  * Resolution priority:
  * 1. An explicit config on the provided season object (`season.config`)
  * 2. Look up targetSeasonName in `dataJson.seasons`
  * 3. Look up `dataJson.current_season` in `dataJson.seasons`
- * 4. Fall back to DEFAULT_SEASON_CONFIG
- * 
+ * 4. `leagueTeamNames`, if given and non-empty (a league's own signup team names)
+ * 5. Fall back to DEFAULT_SEASON_CONFIG
+ *
  * @param {Object} [seasonOrData] - A season object or data.json payload
  * @param {string} [targetSeasonName] - Optional season name to resolve
+ * @param {string[]} [leagueTeamNames] - A league's own team names, used only
+ *   when no real season config is found anywhere else (step 4 above)
  * @returns {Object} Normalized season config
  */
-export function getSeasonConfig(seasonOrData, targetSeasonName = null) {
+export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTeamNames = null) {
   if (!seasonOrData || typeof seasonOrData !== 'object') {
-    return { ...DEFAULT_SEASON_CONFIG };
+    return fallbackSeasonConfig(leagueTeamNames);
   }
 
   // Case 1: Direct season object carrying .config
@@ -103,7 +123,9 @@ export function getSeasonConfig(seasonOrData, targetSeasonName = null) {
     return normalizeSeasonConfig(seasonOrData.config);
   }
 
-  // Case 2: Direct season object that has no config (e.g. historical season with standings or fixtures)
+  // Case 2: Direct season object that has no config (e.g. historical season with standings or fixtures).
+  // This branch means real season data already exists (just without an explicit
+  // .config), so it's not the "no season yet" case leagueTeamNames is for.
   if (seasonOrData.standings || seasonOrData.fixtures) {
     return { ...DEFAULT_SEASON_CONFIG };
   }
@@ -130,7 +152,7 @@ export function getSeasonConfig(seasonOrData, targetSeasonName = null) {
     }
   }
 
-  return { ...DEFAULT_SEASON_CONFIG };
+  return fallbackSeasonConfig(leagueTeamNames);
 }
 
 /**

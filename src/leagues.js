@@ -18,6 +18,7 @@
 
 import { checkUserSession } from './auth.js';
 import { dataJsonKeyFor } from './league_ids.js';
+import { getSeasonConfig } from './season_config.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -107,6 +108,36 @@ export async function getLeagueDataJson(env, leagueId) {
   } catch (_) {
     return { ...EMPTY_LEAGUE_DATA_JSON };
   }
+}
+
+// Resolves the effective season config for leagueId: its own data_json-
+// equivalent (getLeagueDataJson) run through season_config.js's
+// getSeasonConfig, with one addition — if that league has no season
+// config anywhere (the common case for a brand new league that hasn't
+// published a season yet), the fallback is THAT league's own signup-
+// provided team names (leagues.team_names in D1), not
+// DEFAULT_SEASON_CONFIG's SMBHL-specific Red/Blue/White/Black. SMBHL
+// itself never reaches that fallback (it already has real season
+// configs), so this is a no-op for SMBHL either way.
+//
+// Edge case, documented per the task: if leagueId's own `leagues` row is
+// missing or its team_names can't be parsed, leagueTeamNames stays null
+// and this legitimately falls all the way through to DEFAULT_SEASON_CONFIG
+// — the same last-resort default as before this fix, for a case this
+// function genuinely has nothing better to offer for.
+export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
+  const leagueData = await getLeagueDataJson(env, leagueId);
+
+  let leagueTeamNames = null;
+  const leagueRow = await env.DB.prepare('SELECT team_names FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (leagueRow && leagueRow.team_names) {
+    try {
+      const parsed = JSON.parse(leagueRow.team_names);
+      if (Array.isArray(parsed) && parsed.length > 0) leagueTeamNames = parsed;
+    } catch (_) {}
+  }
+
+  return getSeasonConfig(leagueData, seasonName, leagueTeamNames);
 }
 
 /* ---------- proof of concept: GET /league/contacts ----------
