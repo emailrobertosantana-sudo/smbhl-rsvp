@@ -1251,6 +1251,7 @@ export function renderReviewPage(review, adminKey, candidatePlayers = [], option
                 `).join('')}
               </tbody>
             </table>
+            <button type="button" class="btn-step btn-add-player" style="width:auto; margin-top:8px; padding:6px 14px; font-size:12.5px; font-weight:600;" onclick="addPlayerRow(${gIdx}, 'home')">+ Ajouter un joueur</button>
           </div>
 
           <!-- Away Team Column -->
@@ -1336,6 +1337,7 @@ export function renderReviewPage(review, adminKey, candidatePlayers = [], option
                 `).join('')}
               </tbody>
             </table>
+            <button type="button" class="btn-step btn-add-player" style="width:auto; margin-top:8px; padding:6px 14px; font-size:12.5px; font-weight:600;" onclick="addPlayerRow(${gIdx}, 'away')">+ Ajouter un joueur</button>
           </div>
         </div>
       </div>
@@ -1409,6 +1411,7 @@ const I18N_REVIEW_PAGE = {
     thAssists: "Passes",
     editGoalieTitle: "Modifier le gardien",
     editPlayerTitle: "Modifier le joueur",
+    btnAddPlayer: "+ Ajouter un joueur",
     btnDiscard: "Supprimer / Rejeter",
     btnPublish: "Confirmer et Publier 🚀",
     btnPublishing: "Publication en cours…",
@@ -1481,6 +1484,7 @@ const I18N_REVIEW_PAGE = {
     thAssists: "Assists",
     editGoalieTitle: "Edit goalie",
     editPlayerTitle: "Edit player",
+    btnAddPlayer: "+ Add player",
     btnDiscard: "Delete / Discard",
     btnPublish: "Confirm and Publish 🚀",
     btnPublishing: "Publishing…",
@@ -1588,6 +1592,8 @@ function applyLanguage(lang) {
   if (btnAddMissing && btnAddMissing.dataset && btnAddMissing.dataset.missing) {
     btnAddMissing.textContent = dict.addMissingSheets(btnAddMissing.dataset.missing);
   }
+
+  document.querySelectorAll('.btn-add-player').forEach(function(el) { el.textContent = dict.btnAddPlayer; });
 
   const gSecTitle = document.getElementById('gamesSectionTitle');
   if (gSecTitle) gSecTitle.textContent = dict.gamesSectionTitle(gamesCount);
@@ -1744,6 +1750,59 @@ function onPlayerNameInput(inp, gIdx, side, pIdx) {
   const nameLabel = document.getElementById('plabel_' + gIdx + '_' + side + '_' + pIdx);
   const dict = I18N_REVIEW_PAGE[currentLang] || I18N_REVIEW_PAGE.fr;
   if (nameLabel) nameLabel.innerText = player.name || dict.newPlayerDefault;
+  recalc();
+}
+
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+// Appends a blank, manually-editable player row to a game's roster table. Used
+// both for manual (no-photo) reviews and to add a skater OCR missed entirely,
+// since the OCR-extracted rows don't otherwise offer a way to add one.
+function addPlayerRow(gIdx, side) {
+  const g = gamesData[gIdx];
+  const arr = g[side + '_players'] || (g[side + '_players'] = []);
+  const pIdx = arr.length;
+  arr.push({ name: '', id: null, is_sub: false, absent: false, goals: 0, assists: 0 });
+
+  const optionsHtml = candidatePlayers.map(function(c) {
+    return '<option value="' + escHtml(c.id) + '">' + escHtml(c.name) + ' (' + escHtml(c.id) + ')</option>';
+  }).join('');
+
+  const dict = I18N_REVIEW_PAGE[currentLang] || I18N_REVIEW_PAGE.fr;
+  const row = document.createElement('tr');
+  row.innerHTML =
+    '<td>' +
+      '<div class="player-name-cell">' +
+        '<span id="plabel_' + gIdx + '_' + side + '_' + pIdx + '" class="player-name-label" style="font-weight:600;">' + dict.newPlayerDefault + '</span>' +
+        '<span id="pbadge_' + gIdx + '_' + side + '_' + pIdx + '" class="badge-new">' + dict.newBadge + '</span>' +
+        '<button type="button" class="btn-edit" onclick="toggleEditPlayer(' + gIdx + ', \'' + side + '\', ' + pIdx + ')">✏️</button>' +
+      '</div>' +
+      '<div id="pedit_' + gIdx + '_' + side + '_' + pIdx + '" class="player-edit-row" style="display:flex;">' +
+        '<select onchange="onPlayerSelectChange(this, ' + gIdx + ', \'' + side + '\', ' + pIdx + ')">' +
+          '<option value="__NEW__" class="opt-new-player" selected>' + dict.newPlayerOption + '</option>' +
+          '<optgroup label="' + dict.optgrpPlayers + '" class="optgrp-players">' + optionsHtml + '</optgroup>' +
+        '</select>' +
+        '<input type="text" id="pname_' + gIdx + '_' + side + '_' + pIdx + '" value="" placeholder="' + dict.namePlaceholder + '" style="display:inline-block;" oninput="onPlayerNameInput(this, ' + gIdx + ', \'' + side + '\', ' + pIdx + ')">' +
+      '</div>' +
+      '<div id="pwarn_' + gIdx + '_' + side + '_' + pIdx + '" class="player-warn-msg"></div>' +
+    '</td>' +
+    '<td style="text-align:center;"><input type="checkbox" checked onchange="toggleAbsent(this, ' + gIdx + ', \'' + side + '\', ' + pIdx + ')"></td>' +
+    '<td style="text-align:center;"><div class="counter">' +
+      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \'' + side + '\', ' + pIdx + ', \'goals\', -1)">–</button>' +
+      '<input type="number" class="counter-input" value="0" min="0" oninput="recalc()">' +
+      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \'' + side + '\', ' + pIdx + ', \'goals\', 1)">+</button>' +
+    '</div></td>' +
+    '<td style="text-align:center;"><div class="counter">' +
+      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \'' + side + '\', ' + pIdx + ', \'assists\', -1)">–</button>' +
+      '<input type="number" class="counter-input" value="0" min="0" oninput="recalc()">' +
+      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \'' + side + '\', ' + pIdx + ', \'assists\', 1)">+</button>' +
+    '</div></td>';
+
+  document.getElementById('tbody_' + gIdx + '_' + side).appendChild(row);
   recalc();
 }
 
@@ -2186,6 +2245,18 @@ export function renderReviewIndex(reviews = [], adminKey = '', backups = [], sho
   </div>
 
   <div class="card">
+    <h2 id="manualTitle" data-i18n="manualTitle">✍️ Saisie manuelle (sans photo)</h2>
+    <p id="manualDesc" data-i18n="manualDesc" style="color:var(--ink-soft); margin-bottom:16px;">
+      Aucune photo de feuille ? Créez une révision vierge pour une semaine et entrez les résultats à la main.
+    </p>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <label for="manualWeekInput" id="manualWeekLabel" data-i18n="manualWeekLabel">Semaine :</label>
+      <input type="number" id="manualWeekInput" min="1" style="width:80px; font:inherit; padding:8px; border:1px solid var(--rule-dark); border-radius:4px;">
+      <button type="button" class="btn-submit" id="btnManualStart" data-i18n="btnManualStart" onclick="startManualReview()" style="width:auto; padding:10px 18px;">Démarrer une saisie manuelle ✍️</button>
+    </div>
+  </div>
+
+  <div class="card">
     <h2 id="historyTitle" data-i18n="historyTitle">Historique des révisions</h2>
     ${reviews.length === 0 ? '<p id="noReviewsMsg" data-i18n="noReviews" style="color:var(--ink-soft);">Aucune révision enregistrée pour le moment.</p>' : `
       <table>
@@ -2267,6 +2338,14 @@ const I18N_REVIEW_INDEX = {
     fileFormatNote: "JPEG, PNG, WebP acceptés",
     fileCountSelected: count => count + " photo(s) sélectionnée(s)",
     btnUpload: "Analyser les feuilles avec l'IA ⚡",
+    manualTitle: "✍️ Saisie manuelle (sans photo)",
+    manualDesc: "Aucune photo de feuille ? Créez une révision vierge pour une semaine et entrez les résultats à la main.",
+    manualWeekLabel: "Semaine :",
+    btnManualStart: "Démarrer une saisie manuelle ✍️",
+    btnManualStarting: "Création en cours…",
+    manualStartError: err => "Erreur : " + err,
+    manualStartNetError: err => "Erreur réseau : " + err,
+    manualWeekRequired: "Veuillez entrer un numéro de semaine.",
     historyTitle: "Historique des révisions",
     noReviews: "Aucune révision enregistrée pour le moment.",
     thDate: "Date",
@@ -2297,6 +2376,14 @@ const I18N_REVIEW_INDEX = {
     fileFormatNote: "JPEG, PNG, WebP accepted",
     fileCountSelected: count => count + " photo(s) selected",
     btnUpload: "Analyze Sheets with AI ⚡",
+    manualTitle: "✍️ Manual Entry (no photo)",
+    manualDesc: "No scoresheet photo? Create a blank review for a week and type in the results by hand.",
+    manualWeekLabel: "Week:",
+    btnManualStart: "Start Manual Entry ✍️",
+    btnManualStarting: "Creating…",
+    manualStartError: err => "Error: " + err,
+    manualStartNetError: err => "Network error: " + err,
+    manualWeekRequired: "Please enter a week number.",
     historyTitle: "Review History",
     noReviews: "No reviews recorded yet.",
     thDate: "Date",
@@ -2404,6 +2491,40 @@ function updateFileLabel(input) {
   if (input.files && input.files.length > 0) {
     document.getElementById('fileLabel').innerText = dict.fileCountSelected(input.files.length);
     document.getElementById('btnUpload').style.display = 'inline-block';
+  }
+}
+
+async function startManualReview() {
+  const dict = I18N_REVIEW_INDEX[currentLang] || I18N_REVIEW_INDEX.fr;
+  const weekInput = document.getElementById('manualWeekInput');
+  const week = weekInput ? Number(weekInput.value) : NaN;
+  if (!week || week < 1) {
+    alert(dict.manualWeekRequired);
+    return;
+  }
+  const btn = document.getElementById('btnManualStart');
+  btn.disabled = true;
+  btn.textContent = dict.btnManualStarting;
+  try {
+    const adminKey = ${JSON.stringify(adminKey || '')};
+    const res = await fetch('/admin/review/manual-start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-admin': adminKey },
+      body: JSON.stringify({ week })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const keyParam = adminKey ? '&key=' + encodeURIComponent(adminKey) : '';
+      window.location.href = '/admin/review?id=' + encodeURIComponent(data.id) + keyParam;
+    } else {
+      alert(dict.manualStartError(data.error || 'Unknown error'));
+      btn.disabled = false;
+      btn.textContent = dict.btnManualStart;
+    }
+  } catch (e) {
+    alert(dict.manualStartNetError(e.message));
+    btn.disabled = false;
+    btn.textContent = dict.btnManualStart;
   }
 }
 

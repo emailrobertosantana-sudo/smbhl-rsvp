@@ -928,4 +928,49 @@ describe('Admin nav tabs hide stats-only links when tracksStats is false', () =>
   });
 });
 
+describe('Manual (no-photo) entry: add-player affordance on the review-editing screen', () => {
+  const blankGameReview = {
+    id: 'rev_manual_1',
+    week: 1,
+    season: 'AttendanceOnly2026',
+    status: 'draft',
+    images_json: '[]',
+    validated_json: '[]',
+    extracted_json: '[]'
+  };
+
+  it('renders an "add player" button per team per game, even for a blank (manually-started, no-photo) game with zero players', () => {
+    const games = [{
+      id: 'game_1_Hawks_Wolves', week: 1, home_team: 'Hawks', away_team: 'Wolves',
+      home_score: null, away_score: null, home_sheet_score: null, away_sheet_score: null,
+      has_home_sheet: false, has_away_sheet: false,
+      home_goalie: { name: '', id: null, ga: null, is_sub: false },
+      away_goalie: { name: '', id: null, ga: null, is_sub: false },
+      home_players: [], away_players: []
+    }];
+    const review = { ...blankGameReview, validated_json: JSON.stringify(games) };
+    const html = renderReviewPage(review, 'test-key', [], { config: getSeasonConfig(undefined) });
+    // The button must appear regardless of how many players a game currently has (zero here,
+    // as for a manually-started review with no photo at all).
+    expect(html).toContain("addPlayerRow(0, 'home')");
+    expect(html).toContain("addPlayerRow(0, 'away')");
+    expect(html).toContain('function addPlayerRow(gIdx, side)');
+  });
+
+  it('addPlayerRow pushes into the same array recalc()/stepVal() index by DOM position (appendChild keeps array length and DOM child count in sync)', () => {
+    const html = renderReviewPage(blankGameReview, 'test-key', [], { config: getSeasonConfig(undefined) });
+    // Extract the addPlayerRow function body and confirm it (a) pushes a blank player object
+    // into the same gamesData array that recalc()/stepVal() read by index, and (b) appends the
+    // new row as the tbody's last child — so its DOM position always matches the array index,
+    // which is the invariant recalc()/stepVal() rely on (they index via tbody.children[pIdx]).
+    const fnMatch = html.match(/function addPlayerRow\(gIdx, side\) \{[\s\S]*?\n\}/);
+    expect(fnMatch).toBeTruthy();
+    const fnSrc = fnMatch[0];
+    expect(fnSrc).toContain("g[side + '_players'] || (g[side + '_players'] = [])");
+    expect(fnSrc).toContain('arr.push({ name: \'\', id: null, is_sub: false, absent: false, goals: 0, assists: 0 })');
+    expect(fnSrc).toContain(".getElementById('tbody_' + gIdx + '_' + side).appendChild(row)");
+    expect(fnSrc).toContain('recalc();');
+  });
+});
+
 
