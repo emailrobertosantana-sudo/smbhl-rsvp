@@ -77,3 +77,21 @@ export function extractTrailingNumber(id) {
   const m = String(id || '').match(/(\d+)$/);
   return m ? parseInt(m[1], 10) : null;
 }
+
+// The KV key for one league's data_json-equivalent blob (seasons,
+// standings, rosters, fixtures — everything the site's public /data.json
+// mirrors). SMBHL's own key is the literal, unprefixed 'data_json' — the
+// exact string every one of this codebase's ~47 existing
+// SHEETS_KV.get/put('data_json') call sites already hardcodes, so none of
+// them need to change or know this function exists. Any OTHER league's key
+// is namespaced under the same 'data_json' prefix (easy to recognize/audit
+// in the KV namespace) but can never collide with SMBHL's bare key, since
+// no league_id ever equals the empty string that would be needed to
+// reduce `data_json:${leagueId}` back down to plain 'data_json'.
+//
+// This exists ONLY for new, explicitly league-aware code (checkLeagueAccess-
+// gated routes) to resolve which key belongs to a given league — see
+// leagues.js's getLeagueDataJson.
+export function dataJsonKeyFor(leagueId) {
+  return leagueId === SMBHL_LEAGUE_ID ? 'data_json' : `data_json:${leagueId}`;
+}

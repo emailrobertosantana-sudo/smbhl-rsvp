@@ -3,7 +3,7 @@ import { hmac, same } from './crypto_utils.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -15450,12 +15450,48 @@ async function handleFetch(req, env, ctx) {
         return new Response(await teamsPage(env, isAuthed),
           { headers: adminPageHeaders(isAuthed, env) });
       }
+      // League-scoped data_json proof of concept (see the task report): dual
+      // auth for GET /admin/teams/data. ADMIN_KEY path below is byte-for-
+      // byte identical to before this change — same call to
+      // handleTeamsData, which reads SMBHL's data via the literal
+      // 'data_json' KV key exactly as it always has. The session path is
+      // new and additive: it reads the requesting league's OWN
+      // data_json-equivalent (leagues.js's getLeagueDataJson, under a
+      // namespaced KV key — empty/minimal until that league publishes a
+      // season of its own, never SMBHL's) plus that league's own contacts,
+      // and is only reached when ADMIN_KEY doesn't apply.
+      if ((url.pathname === '/admin/teams/data' || url.pathname === '/admin/teams/data/') && req.method === 'GET') {
+        const auth = checkAdminAuth(req, env);
+        if (auth === 'ok') return await handleTeamsData(req, env, url);
+        const leagueId = await resolveSessionLeagueId(req, env, url);
+        if (leagueId) {
+          const sessionAuth = await checkLeagueAccess(req, env, leagueId);
+          if (sessionAuth === 'ok') {
+            const leagueData = await getLeagueDataJson(env, leagueId);
+            const contacts = (await env.DB.prepare(
+              `SELECT player_id, name, email, phone, role, is_goalie, preferred_team, position
+                 FROM contacts WHERE league_id = ? ORDER BY name`
+            ).bind(leagueId).all()).results || [];
+            const currentSeason = leagueData.current_season
+              || (leagueData.seasons && leagueData.seasons.find(Boolean)?.name) || null;
+            return Response.json({
+              ok: true,
+              league_id: leagueId,
+              current_season: currentSeason,
+              seasons: (leagueData.seasons || []).filter(Boolean).map(s => s.name),
+              contacts
+            });
+          }
+        }
+        return adminAuthResponse(auth);
+      }
       if (url.pathname.startsWith('/admin/teams')) {
         const auth = checkAdminAuth(req, env);
         if (auth !== 'ok') return adminAuthResponse(auth);
+        // GET /admin/teams/data is handled above (dual auth); every other
+        // /admin/teams/* sub-route below remains ADMIN_KEY-only — this task
+        // migrates one read-only route as a proof of concept only.
         const sub = url.pathname.replace(/^\/admin\/teams/, '');
-        if ((sub === '/data' || sub === '/data/') && req.method === 'GET')
-          return await handleTeamsData(req, env, url);
         if (sub === '/move' && req.method === 'POST')
           return await handleTeamsMove(req, env);
         if (sub === '/trade' && req.method === 'POST')

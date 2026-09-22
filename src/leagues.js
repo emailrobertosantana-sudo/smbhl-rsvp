@@ -1,6 +1,6 @@
-// League provisioning for real user accounts (auth.js). Purely additive:
-// nothing existing reads from the leagues/league_admins tables, and this
-// does not touch data_json, events, or any other Fall-2026 data path.
+// League provisioning for real user accounts (auth.js), plus (see below)
+// league-scoped authorization and KV access for the routes being migrated
+// off the legacy single-tenant ADMIN_KEY.
 //
 // ARCHITECTURE DECISION — read this before extending anything here:
 // Actually creating a new physical D1 database or KV namespace per league
@@ -10,15 +10,14 @@
 // there is no "create me a new database" call available at runtime. So
 // leagues in this file are ROWS in the one shared D1 database this Worker
 // already has (env.DB), scoped by league_id, not separate physical
-// databases. This is a deliberate fork away from tonight's one-database-
-// per-league demo setup (one manually wrangler-provisioned DB per league) —
-// see the final report for the honest scope of what still needs to change
-// before a second league's actual attendance/stats data is isolated by this
-// league_id (short version: everything that currently reads a single shared
-// data_json / unscoped events table would need to become league_id-aware;
-// that is explicitly NOT done in this task).
+// databases; a second league's data_json-equivalent (getLeagueDataJson
+// below) is likewise a differently-keyed entry in the one shared KV
+// namespace (env.SHEETS_KV), not a separate namespace. Route-by-route
+// migration to this pattern is ongoing — see the task reports for exactly
+// which routes have been migrated so far and which remain.
 
 import { checkUserSession } from './auth.js';
+import { dataJsonKeyFor } from './league_ids.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -80,6 +79,34 @@ export async function resolveSessionLeagueId(req, env, url) {
       WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
   ).bind(session.userId).first();
   return row ? row.league_id : null;
+}
+
+// Shape returned for a league that has never published a season yet (its
+// KV key genuinely doesn't exist — see getLeagueDataJson). Deliberately
+// minimal rather than borrowing anything from SMBHL's real data: a brand
+// new league starts with nothing, not a copy or a merge.
+const EMPTY_LEAGUE_DATA_JSON = Object.freeze({ current_season: null, seasons: [], players: [] });
+
+// Reads leagueId's own data_json-equivalent blob (seasons, standings,
+// rosters, fixtures) from the shared KV namespace, under the key
+// league_ids.js's dataJsonKeyFor resolves for it. For SMBHL that key is
+// the plain, unprefixed 'data_json' — the exact same key/value every
+// existing SHEETS_KV.get('data_json') call site already reads, so SMBHL's
+// result here is identical to theirs. For any other league, the key is
+// namespaced ('data_json:<leagueId>') and, until that league publishes its
+// first season, simply doesn't exist yet: this returns
+// EMPTY_LEAGUE_DATA_JSON in that case — a genuinely separate, empty
+// starting point, never a fallback to SMBHL's data. Never throws.
+export async function getLeagueDataJson(env, leagueId) {
+  if (!env.SHEETS_KV) return { ...EMPTY_LEAGUE_DATA_JSON };
+  try {
+    const raw = await env.SHEETS_KV.get(dataJsonKeyFor(leagueId));
+    if (!raw) return { ...EMPTY_LEAGUE_DATA_JSON };
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : { ...EMPTY_LEAGUE_DATA_JSON };
+  } catch (_) {
+    return { ...EMPTY_LEAGUE_DATA_JSON };
+  }
 }
 
 /* ---------- proof of concept: GET /league/contacts ----------
