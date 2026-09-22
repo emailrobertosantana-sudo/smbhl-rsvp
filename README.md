@@ -1,26 +1,59 @@
 # SMBHL Attendance, Outbox & League Operations — smbhl-rsvp
 
-Cloudflare Worker handling attendance, automated sub invite waves, scoresheet OCR verification, financial cost tracking, team locker room message boards, league polling, player archives, dues reminders, and weekly honors & milestone highlights.
+Cloudflare Worker handling attendance, automated sub invite waves, scoresheet OCR verification, financial cost tracking, team locker room message boards, league polling, player archives, dues reminders, weekly honors & milestone highlights, and a season-config-driven Season Hub for launching new seasons (team counts, roster targets, and playoff formats are organizer-entered, not hardcoded).
 
-Last updated: 21 September 2026
+Last updated: 22 September 2026
 
 ---
 
 ## 1. System Overview
 
-- **Public URL**: `https://rsvp.smbhl.com`
-- **Cloudflare Worker**: `smbhl-rsvp` (`smbhl-rsvp.emailrobertosantana.workers.dev`)
-- **Primary Mission**: Ensure every team has a full roster (1 goalie and 8 skaters) before game time through automated shortage detection and staged sub invitations, with full administrative controls for league management, game reviews, and stats broadcasting.
+- **Production URL**: `https://rsvp.smbhl.com`
+- **Production Cloudflare Worker**: `smbhl-rsvp` (`smbhl-rsvp.emailrobertosantana.workers.dev`)
+- **Demo URL**: `https://rsvp.notreligue.ca` (Worker `notreligue-rsvp`) — a second, isolated deployment of the exact same code, used to preview a different league's data without touching production. See **Section 2** for how it relates to production.
+- **Primary Mission**: Ensure every team has a full roster before game time through automated shortage detection and staged sub invitations, with full administrative controls for league management, game reviews, and stats broadcasting.
+- **Season Configuration Engine** (`src/season_config.js`): team names/colours/aliases, goalies-per-team, skaters-per-team, minimum skaters, and playoff format are all read from each season's own `config` object in `data.json`, not hardcoded. See **Section 7**.
 - **Key Infrastructure**:
-  - Cloudflare D1 SQL database (`smbhl-rsvp`, `6f1838cf-30b0-4b4b-b9fe-716b61b961e4`)
-  - Cloudflare KV (`SHEETS_KV`, `e5af34ebf39b4c5d8851d7b071368a0e`)
-  - Scheduled Cron (`*/5 * * * *`)
-  - Resend Email API for transactional emails (`joueur@smbhl.com` / `info@smbhl.com`)
-  - Google Gemini 2.5 Flash Vision AI for paper scoresheet OCR
+  - Cloudflare D1 SQL database (one per environment — see **Section 5**)
+  - Cloudflare KV (`SHEETS_KV`, one namespace per environment)
+  - Scheduled Cron (`*/5 * * * *`, production only)
+  - Resend Email API for transactional emails (`joueur@smbhl.com` / `info@smbhl.com` — currently hardcoded; see **Section 9**)
+  - Google Gemini Vision AI for paper scoresheet OCR
 
 ---
 
-## 2. File & Directory Table
+## 2. Environments: Production vs. Demo
+
+`wrangler.jsonc` defines a top-level (production) config plus one named environment, `demo`, under the `env` key. Both share the same `src/index.js` entry point and the same code — only the bindings differ.
+
+| | Production (default) | Demo (`--env demo`) |
+|---|---|---|
+| Worker name | `smbhl-rsvp` | `notreligue-rsvp` |
+| Public URL | `https://rsvp.smbhl.com` | `https://rsvp.notreligue.ca` (custom domain) |
+| D1 database | `smbhl-rsvp` (`6f1838cf-30b0-4b4b-b9fe-716b61b961e4`) | `notreligue-demo` (`87411a46-fc5f-414f-bd46-6ff26feb155f`) |
+| KV namespace (`SHEETS_KV`) | `e5af34ebf39b4c5d8851d7b071368a0e` | `28a2834f15814fcb84bb98f62f4919f1` |
+| `DEMO_ENV` var | not set | `"true"` |
+| Cron trigger | `*/5 * * * *` | none (`triggers.crons: []`) |
+| Custom domain route | — | `rsvp.notreligue.ca` |
+
+**Why it exists**: the demo environment is a fully separate Worker, D1 database, and KV namespace — it shares zero data with production. It exists to demo/validate the season-config engine against a differently-shaped league (different team names/count) without any risk to real SMBHL data.
+
+**`DEMO_ENV=true` behavior** (`src/index.js`, top-level `fetch` handler): every response gets an `X-Robots-Tag: noindex, nofollow` header, and `GET /robots.txt` returns `Disallow: /`. This keeps the demo site out of search engines. This is currently the *only* thing gated on `DEMO_ENV` — branding, sender email, and default fallback URLs are not (see **Section 9**).
+
+**Deploying**:
+```powershell
+npx wrangler deploy              # production (smbhl-rsvp)
+npx wrangler deploy --env demo   # demo (notreligue-rsvp) — never omit --env demo here
+```
+
+Secrets are set per environment and do not carry over automatically:
+```powershell
+npx wrangler secret put ADMIN_KEY --env demo
+```
+
+---
+
+## 3. File & Directory Table
 
 | File / Folder | Type | Description |
 |---|---|---|
@@ -33,29 +66,13 @@ Last updated: 21 September 2026
 | `README.md` | Documentation | Authoritative system documentation (this file). |
 | `check.js` | Utility (Node) | Pre-deploy syntax and module verifier matching Cloudflare Worker packaging rules. |
 | `contacts.csv` | Data (CSV) | Raw player directory (names, emails, phones). |
-| `contacts.sql` | SQL Script | Generated D1 batch script to populate and sync `contacts` table. |
-| `data.json` | Data (JSON) | Local synchronized copy of historical league statistics and season fixtures. |
+| `data.json` | Data (JSON) | Local synchronized copy of historical league statistics, season fixtures, and per-season `config` objects. |
 | `event-week2.sql` | SQL Script | Manual fixture and roster setup script for Fall 2026 Week 2. |
 | `fix-duplicate-subs-week2.sql` | SQL Script | Data repair script for Week 2 sub allocation de-duplication. |
 | `get_reviews.mjs` | Script (Node) | Administrative inspection script to fetch review records from live D1. |
 | `make-contacts-sql.js` | Script (Node) | Local generator converting `contacts.csv` into D1 SQL statements with random token salts. |
 | `make-event-sql.js` | Script (Node) | Utility generating D1 SQL statements for creating upcoming game events manually. |
-| `migrate-002.sql` | SQL Migration | Adds event time windows, contact roles (`roster`, `sub_skater`, `sub_goalie`), goalie sub pool, and `is_goalie`. |
-| `migrate-003.sql` | SQL Migration | Adds `outbox` queue table (for holds, retries, and de-duplication) and `jobs` execution tracker table. |
-| `migrate-004.sql` | SQL Migration | Adds `availability` table for sub response tracking and queue-based waitlisting. |
-| `migrate-005.sql` | SQL Migration | Adds sub wave ranking, rotation, and dormancy tracking columns (`asked_streak`, `last_asked`, `last_played`, `answered_ever`, `dormant`) to `contacts`. |
-| `migrate-006.sql` | SQL Migration | Adds `preferred_team` column to `contacts` for soft team affinity sub matching. |
-| `migrate-007.sql` | SQL Migration | Adds `sheet_reviews` table and `idx_reviews_status` index for scoresheet ingestion and AI verification. |
-| `migrate-008.sql` | SQL Migration | Adds `team_messages` table and event/team index for team locker room chat boards. |
-| `migrate-009.sql` | SQL Migration | Empty placeholder migration. |
-| `migrate-010.sql` | SQL Migration | Adds `season_costs` table and index for league financial and expense tracking. |
-| `migrate-011.sql` | SQL Migration | Adds `etransfer_phone` column to `season_pricing` table. |
-| `migrate-012.sql` | SQL Migration | Adds `planned_absences` table and indexes for player season-long vacation and absence tracking. |
-| `migrate-013.sql` | SQL Migration | Adds `contacts.position`, `polls` table, and `poll_votes` table for league voting and awards polling. |
-| `migrate-014.sql` | SQL Migration | Adds email dispatch tracking columns `last_sent_at` and `sent_count` to `polls` table. |
-| `migrate-015.sql` | SQL Migration | Adds `show_on_rsvp` column to `polls` table to embed active voting polls into personalized RSVP pages. |
-| `migrate-016.sql` | SQL Migration | Adds `show_results` column to `polls` table to control public vs admin-only visibility of poll voting results. |
-| `migrate-017.sql` | SQL Migration | Adds `previous_role` and `archive_reason` columns to `contacts` table for player archive and reactivation management. |
+| `migrate-002.sql` … `migrate-017.sql` | SQL Migrations | See **Section 4**. |
 | `node_modules/` | Directory | Installed npm dependencies. |
 | `package-lock.json` | Config | Exact npm dependency lockfile. |
 | `package.json` | Config | Node package configuration, scripts, and dependencies (`vitest`, `wrangler`). |
@@ -64,22 +81,23 @@ Last updated: 21 September 2026
 | `scratch/check_all_invites.js`| Script (Node) | Local test script to verify sub invite eligibility. |
 | `scratch/check_invites.js` | Script (Node) | Local test script for invite validation. |
 | `src/` | Directory | Worker source modules. |
-| `src/awards.js` | Source (JS) | Seasonal awards calculation, standings tie-breakers, Masterton candidate detection. |
+| `src/awards.js` | Source (JS) | Seasonal awards calculation, standings tie-breakers, Masterton candidate detection, playoff bracket resolution — season-config-aware (reads team names and `playoffFormat` from the season's own config). |
 | `src/highlights.js` | Source (JS) | Weekly honors, milestone tracking, all-time Top 25 points & Top 10 goalie wins rank movements, and email HTML/text rendering. |
-| `src/index.js` | Source (JS) | Main Cloudflare Worker entry point: routing, auth, cron scheduler, outbox drain, email templates, and admin UI. |
+| `src/index.js` | Source (JS) | Main Cloudflare Worker entry point: routing, auth, cron scheduler, outbox drain, email templates, and admin UI (including `/admin/teams`, `/admin/emails`, `/admin/schedule`). |
 | `src/review.js` | Source (JS) | Scoresheet OCR ingestion, Gemini AI multimodal vision parsing, boxscore verification, stats updates, and backup management. |
-| `src/season_hub.js` | Source (JS) | Season Hub portal: live standings, schedule, team sheets integration, financial tracker, and dues reminders. |
-| `test/` | Directory | Vitest automated test suite (143 passing tests). |
+| `src/season_config.js` | Source (JS) | **Season Configuration Engine.** Resolves, normalizes, and reads each season's own `config` (teams, roster targets, playoff format) with fallback to SMBHL historical defaults. See **Section 7**. |
+| `src/season_hub.js` | Source (JS) | Season Hub portal: season launch wizard (structure/teams, census, draft board, schedule generator), live standings, financial tracker, and dues reminders. |
+| `test/` | Directory | Vitest automated test suite (155 passing tests). |
 | `test/highlights.spec.js` | Test (JS) | Unit and integration tests for weekly honors, milestones, all-time rank movements, and email formatting. |
-| `test/index.spec.js` | Test (JS) | Integration tests for worker routes, RSVP flows, sub waves, outbox queue, board rosters, trades, and email automations. |
+| `test/index.spec.js` | Test (JS) | Integration tests for worker routes, RSVP flows, sub waves, outbox queue, board rosters, trades, admin team pages, and email automations — including season-config-aware team resolution for non-default team counts/names. |
 | `test/review.spec.js` | Test (JS) | Tests for OCR parsing, scoresheet validation, and data.json updates. |
 | `test/season_hub.spec.js` | Test (JS) | Tests for Season Hub portal, expense tracking, and season launch workflows. |
 | `vitest.config.mjs` | Config | Vitest runner configuration. |
-| `wrangler.jsonc` | Config | Cloudflare deployment configuration (D1, KV, variables, cron schedules). |
+| `wrangler.jsonc` | Config | Cloudflare deployment configuration for **both** the production and `demo` environments (D1, KV, variables, routes, cron schedules). |
 
 ---
 
-## 3. Database Migrations
+## 4. Database Migrations
 
 | Migration File | Summary of Changes |
 |---|---|
@@ -101,167 +119,182 @@ Last updated: 21 September 2026
 | `migrate-016.sql` | Adds `show_results` to `polls` table to toggle public vs admin-only poll voting results. |
 | `migrate-017.sql` | Adds `previous_role` and `archive_reason` to `contacts` table for player archiving and reactivation. |
 
+No new migrations since `migrate-017.sql`; the season-config engine lives entirely in `data.json` (KV), not D1, so no schema changes were needed to support it.
+
 ---
 
-## 4. Cloudflare Bindings (`wrangler.jsonc`)
+## 5. Cloudflare Bindings (`wrangler.jsonc`)
 
-| Binding Name | Type | ID / Value | Purpose & KV Key Patterns |
+### Production (top-level)
+
+| Binding Name | Type | ID / Value | Purpose |
 |---|---|---|---|
-| `DB` | D1 Database | `6f1838cf-30b0-4b4b-b9fe-716b61b961e4` (`smbhl-rsvp`) | Relational database storage for all contacts, events, RSVPs, outbox emails, cron jobs, locker room messages, reviews, polls, votes, season costs, and planned absences. |
-| `SHEETS_KV` | KV Namespace | `e5af34ebf39b4c5d8851d7b071368a0e` | High-speed key-value store for live stats JSON, automated backups, scoresheet photos, and weekly recaps. |
-| `PUBLIC_URL` | Variable (`vars`) | `https://rsvp.smbhl.com` | Base canonical domain for generating personalized player links, team links, action webhooks, and CORS headers. |
-| `crons` | Trigger | `["*/5 * * * *"]` | Cron trigger firing every 5 minutes to process the outbox queue, automated reminders, sub wave sweeps, lockups, and next event creation. |
+| `DB` | D1 Database | `6f1838cf-30b0-4b4b-b9fe-716b61b961e4` (`smbhl-rsvp`) | Relational storage for contacts, events, RSVPs, outbox, jobs, locker room messages, reviews, polls, votes, season costs, planned absences. |
+| `SHEETS_KV` | KV Namespace | `e5af34ebf39b4c5d8851d7b071368a0e` | Live stats JSON, automated backups, scoresheet photos, weekly recaps. |
+| `PUBLIC_URL` | Variable | `https://rsvp.smbhl.com` | Base canonical domain for personalized player/team links and CORS headers. |
+| `crons` | Trigger | `["*/5 * * * *"]` | Fires every 5 minutes: outbox drain, reminders, sub wave sweeps, next-event creation. |
 
-### KV Namespace Key Patterns (`SHEETS_KV`)
+### Demo (`env.demo`)
+
+| Binding Name | Type | ID / Value | Purpose |
+|---|---|---|---|
+| `DB` | D1 Database | `87411a46-fc5f-414f-bd46-6ff26feb155f` (`notreligue-demo`) | Isolated demo database — same schema as production, zero shared rows. |
+| `SHEETS_KV` | KV Namespace | `28a2834f15814fcb84bb98f62f4919f1` | Isolated demo `data.json` and related keys — see **Section 2**. |
+| `PUBLIC_URL` | Variable | `https://rsvp.notreligue.ca` | Canonical domain for the demo deployment. |
+| `DEMO_ENV` | Variable | `"true"` | Enables `noindex`/`robots.txt` protection (**Section 2**). |
+| `crons` | Trigger | `[]` | Cron disabled in demo — no automated outbox/reminder sweeps. |
+| Route | Custom domain | `rsvp.notreligue.ca` | Attaches the demo Worker to its own domain. |
+
+### KV Namespace Key Patterns (`SHEETS_KV`, both environments — same key names, separate data)
 
 | Key Pattern | Written By | Read By | Purpose / Content |
 |---|---|---|---|
-| `data_json` | `smbhl-rsvp` (`src/review.js`, `src/season_hub.js`, `src/index.js`) | `smbhl-rsvp`, `SMBHLw` (`worker.js`) | Live serialized `data.json` database. When written by `smbhl-rsvp`, `smbhl.com` immediately serves fresh stats at the edge. |
-| `backup:data_json:<ISO_TIMESTAMP>` | `smbhl-rsvp` (`src/review.js`) | `smbhl-rsvp` | Cloud snapshot backup of `data.json` taken before publishing verified game scoresheets. |
-| `backup:data_json:<season>:week_<weekNum>` | `smbhl-rsvp` (`src/review.js`) | `smbhl-rsvp` | Cloud snapshot backup of `data.json` keyed by season and week number. |
-| `backup:history` | `smbhl-rsvp` (`src/review.js`) | `smbhl-rsvp` | JSON array of recent backup metadata (timestamps, keys, week, season, games count; capped at 30). |
-| `backup:season_launch:<seasonName>` | `smbhl-rsvp` (`src/season_hub.js`) | `smbhl-rsvp` | Snapshot of `data.json` preserved at the exact moment a new season is launched in Season Hub. |
-| `recap:<season>:week_<w>` & `recap:week_<w>` | `smbhl-rsvp` (`src/review.js`) | `smbhl-rsvp` (`src/highlights.js`) | Cached weekly recap object containing stars of the week, firsts, milestones, and rank movements. |
-| `season_recap_draft:<season>` | `smbhl-rsvp` (`src/index.js`) | `smbhl-rsvp` | Draft configuration and text for the end-of-season celebratory wrap-up email. |
-| `season_recap:<season>` | `smbhl-rsvp` (`src/index.js`) | `smbhl-rsvp` | Published record of the end-of-season wrap-up broadcast, including `sent_at`. |
-| `champion_photo:<season>` | `smbhl-rsvp` (`src/index.js`) | `smbhl-rsvp` | Binary ArrayBuffer of the uploaded high-resolution championship team photo. |
-| `champion_photo_mime:<season>` | `smbhl-rsvp` (`src/index.js`) | `smbhl-rsvp` | MIME type string of the championship team photo (e.g. `image/jpeg`). |
-| `review_img:<review_id>:<index>` | `smbhl-rsvp` (`src/review.js`) | `smbhl-rsvp` | Temporary scoresheet photo buffer (48-hour expiration TTL) used for AI vision OCR and UI review. Deleted upon review discard or publish cleanup. |
+| `data_json` | `src/review.js`, `src/season_hub.js`, `src/index.js` | all modules | Live serialized `data.json` — league stats, season fixtures, and each season's `config` object (see **Section 7**). |
+| `backup:data_json:<ISO_TIMESTAMP>` | `src/review.js` | — | Snapshot backup of `data.json` before publishing verified game scoresheets. |
+| `backup:data_json:<season>:week_<weekNum>` | `src/review.js` | — | Snapshot backup keyed by season and week number. |
+| `backup:history` | `src/review.js` | — | JSON array of recent backup metadata (capped at 30). |
+| `backup:season_launch:<seasonName>` | `src/season_hub.js` | — | Snapshot of `data.json` taken at the moment a new season is launched. |
+| `recap:<season>:week_<w>` & `recap:week_<w>` | `src/review.js` | `src/highlights.js` | Cached weekly recap object (stars of the week, firsts, milestones, rank movements). |
+| `season_recap_draft:<season>` | `src/index.js` | — | Draft configuration/text for the end-of-season wrap-up email. |
+| `season_recap:<season>` | `src/index.js` | — | Published record of the end-of-season broadcast, including `sent_at`. |
+| `champion_photo:<season>` / `champion_photo_mime:<season>` | `src/index.js` | — | Championship team photo binary + MIME type. |
+| `review_img:<review_id>:<index>` | `src/review.js` | — | Temporary scoresheet photo buffer (48h TTL) for AI vision OCR/UI review. |
 
 ---
 
-## 5. Environment Secrets
+## 6. Environment Secrets
 
-Set via `npx wrangler secret put <NAME>`:
+Set independently per environment via `npx wrangler secret put <NAME>` (production) or `npx wrangler secret put <NAME> --env demo` (demo):
 
 | Secret Name | Purpose & Security Impact |
 |---|---|
-| `ADMIN_KEY` | Authenticates `/admin` dashboard, `/admin/emails`, `/admin/review`, and all admin API endpoints via `x-admin` header or cookie. Harmless to rotate. |
-| `RSVP_SECRET` | Cryptographic secret used to generate HMAC token salts for personalized player links, team links, and voting tokens. **Rotating this invalidates all links previously emailed.** |
-| `RESEND_API_KEY` | API key for Resend email dispatch service (`https://api.resend.com/emails`). Harmless to rotate. |
-| `GEMINI_API_KEY` | Google Gemini API key used by `src/review.js` (`parseSheetWithGemini`) to perform multimodal vision OCR on uploaded paper score sheets. |
-| `ADMIN_EMAIL` | Destination email address for administrative notifications, weekly game night summaries, deadman alerts, and goalie OUT warnings (falls back to `santarob@gmail.com`). |
-| `SITE_URL` | Optional base URL for public stats site data fetches (defaults to `https://smbhl.com`). |
-| `ETRANSFER_PHONE` | Optional phone number displayed on player RSVP pages for Interac e-Transfers. |
+| `ADMIN_KEY` | Authenticates `/admin/*` dashboard and API endpoints via `x-admin` header or cookie. Harmless to rotate. |
+| `RSVP_SECRET` | HMAC secret for personalized player links, team links, and voting tokens. **Rotating invalidates all previously emailed links.** |
+| `RESEND_API_KEY` | API key for Resend email dispatch (`https://api.resend.com/emails`). Harmless to rotate. |
+| `GEMINI_API_KEY` | Google Gemini API key for `src/review.js` (`parseSheetWithGemini`) multimodal vision OCR on uploaded scoresheets. |
+| `ADMIN_EMAIL` | Destination for administrative notifications, weekly summaries, deadman alerts, goalie OUT warnings (falls back to a hardcoded address in `src/index.js`). |
+| `SITE_URL` | Base URL for public stats-site `data.json` fetches when KV is empty (falls back to `https://smbhl.com` — see **Section 9**). |
+| `ETRANSFER_PHONE` | Optional phone number shown on RSVP pages for Interac e-Transfers. |
+
+Both production and the demo environment have their own copies of every secret above (confirmed via `wrangler secret list --env demo`); they are never shared or inherited from production.
 
 ---
 
-## 6. Features Added Since Last Update
+## 7. Season Configuration Engine (`src/season_config.js`)
 
-### Player Archive (`previous_role`, `archive_reason`)
-- Dedicated archive system (`POST /admin/players/archive`, `POST /admin/players/unarchive`, `GET /admin/players/archived`).
-- Preserves player history while removing inactive or injured players from active team rosters and sub pools.
-- Stores the player's previous role (`roster`, `sub_skater`, `sub_goalie`) in `contacts.previous_role`, sets `role = 'archived'`, and stores an archive reason (`contacts.archive_reason`).
-- Reactivating restores the player back to their exact previous role seamlessly.
+Each season stored in `data.json`'s `seasons` array can carry its own `config` object. This is what makes team count, team names, roster targets, and playoff format organizer-configurable per season instead of hardcoded.
 
-### Weekly Honors & Milestone Highlights Engine (`src/highlights.js`)
-- Integrated into weekly invite emails and recap announcements.
-- **Weekly Stars**: Joueur de la semaine / Player of the week (highest skater points), Gardien / Goalie of the week (lowest GAA, min 1 GP), Substitut / Sub of the week (top substitute skater points; skips duplicate with POTW).
-- **Career Milestones**: 10, 25, 50, 75, 100, 200... 1000+ for points, goals, assists, games played, and goalie wins.
-- **All-Time Leaderboard Movements (Option C Compact Format)**:
-  - **Skaters**: Highlighted when moving into or within the **Top 25 all-time career points**. Ties broken by higher career goals. Format: `<b>Nicola Tiberio</b> : 9e rang historique · 866 pts (dépasse Carlo Mirarchi)`.
-  - **Goalies**: Highlighted when moving into or within the **Top 10 all-time goalie wins**. Ties broken by fewer games played. Format: `<b>Fabio Russo</b> : 10e rang historique · 29 victoires (dépasse Michael Pacheco)`.
-  - **Strict Passing**: "Only passing counts" — achievements only trigger when a player strictly overtakes someone who was previously ahead. If multiple players are passed in one week, all are listed: `(dépasse Player A, Player B)`.
-  - Priority: Displayed at the very top of *Plateaux / Milestones* ahead of numerical milestone counters.
-- **Career Firsts**: Highlights players scoring their first career goal, first career assist, first goalie win, or first goalie shutout.
-- **Closing In**: Radar highlighting active players closest to reaching upcoming career milestones.
-- **Bilingual Rendering**: Output cleanly formatted for both responsive HTML (bilingual headings, bold names, grey item labels) and plain text fallback.
+### Schema
 
-### Email Automations & Outbox Management (`/admin/emails`)
-- Complete management portal to inspect all scheduled, queued, sent, and cancelled emails.
-- Filter by event, status, and message kind (`invite`, `r72`, `r49`, `short48`, `pool36`, `r24`, `summary`, `weekly_recap`, etc.).
-- Preview email templates and send live test previews directly to any custom email address.
-- Cancel pending outbox items and manually trigger outbox drain runs.
+```js
+{
+  teams: [
+    { name: 'Hawks', name_fr: 'Faucons', colour: '#1c1f24', aliases: [] },
+    // ...one entry per team, any count
+  ],
+  goaliesPerTeam: 1,
+  skatersPerTeam: 7,
+  minSkaters: 4,
+  playoffFormat: 'top4_two_weeks'   // or 'top4_single_day'
+}
+```
 
-### Player Dues & Sub Fee Tracking
-- Automated sub fee notice ($15/game) included in confirmation emails for placed substitute skaters.
-- Automated seasonal dues reminder included for unpaid regular roster players.
+- **`teams`**: array of `{ name, name_fr, colour, aliases }`. `name` is canonical (used as the DB/API identifier — `contacts.preferred_team`, `rsvp.team`, etc.); `name_fr` is display-only; `aliases` lets scoresheet OCR and free-text team matching recognize alternate spellings (e.g. `"Red Wings"` → `Red`).
+- **`goaliesPerTeam` / `skatersPerTeam` / `minSkaters`**: used by shortage detection and sub-wave triggering.
+- **`playoffFormat`**: read by `src/awards.js` to pick the correct bracket/seeding logic.
 
-### Live In-League Polling (`/admin/polls` & `/rsvp`)
-- Create and manage season awards polls (e.g. Masterton Trophy, All-Star voting) with position filters (`F`, `D`, `G`).
-- Toggle `show_on_rsvp` to embed the active voting card directly into players' personalized `/rsvp` pages.
-- Toggle `show_results` for public vs private voting tallies.
+### Resolution (`getSeasonConfig(seasonOrData, targetSeasonName)`)
 
-### Primary Goalie Alert
-- Whenever a team's primary starting goalie responds OUT on their RSVP, an immediate high-priority alert email is dispatched to the admin.
+1. If the season object has its own `.config`, use it (normalized).
+2. Else, look up `targetSeasonName` in `dataJson.seasons`.
+3. Else, look up `dataJson.current_season` in `dataJson.seasons`.
+4. Else, fall back to `DEFAULT_SEASON_CONFIG` (SMBHL's historical Red/Blue/White/Black, 1 goalie + 8 skaters, 5 min skaters, `top4_single_day`) — this is the same fallback every historical season without an explicit `config` implicitly uses, so it is intentional, not a bug.
 
-### Printable Score Sheets API (`/api/sheet-data`)
-- Feeds live attendance and sub assignments into `https://smbhl.com/team-sheets.html`.
-- Players with an official NO are crossed out; confirmed substitute skaters and goalies are pre-printed.
+Helper functions built on this: `getTeamNames(config)`, `getTeamNameFr`, `getTeamColour`, `isTeamValid`, `normalizeTeamWithConfig` (matches a raw string against canonical name / `name_fr` / aliases, including word-boundary alias matching), and the async `getSeasonConfigFromEnv(env, seasonName)` / `getSeasonConfigForEvent(env, eventId, season)` wrappers used by request handlers that only have an event ID.
 
-### Board Roster Management & Trades
-- Admin drag-and-drop roster management (`POST /admin/teams/move`) and player trade endpoint (`POST /admin/teams/trade`).
-- Automatically updates D1 open RSVPs, team assignments, and `is_sub` flags while preserving audit trails.
+### Where it's wired in (as of tonight)
+
+- `/admin/teams`, `/admin/teams/data`, roster move/trade/add, board shortage detection, sub-wave targeting, `/admin/team-links`, playoffs, and awards all resolve the season's own config rather than assuming the legacy 4-team default.
+- The Season Hub launch wizard (`src/season_hub.js`) lets an organizer add/remove teams via a "+ Add a team" control before drafting, and `publishSeasonToProduction()` writes whatever team list/roster targets the organizer actually entered (falling back to SMBHL defaults only for fields left blank).
+- **Not yet wired in**: a short list of client-side dropdowns and one OCR code path still assume the legacy 4-team default regardless of season config. These are tracked separately (see the Part B hardcoding-audit findings from this session) and are not fixed by this update beyond the `/admin/teams` Move/Add-Player dropdowns, which now read from the same season-config-driven list as the roster cards.
 
 ---
 
-## 7. Hardcoded Values
+## 8. Features Added Since Last Update (17 → 22 September 2026)
 
-| File | Line | Value | Context / Purpose |
+### Season Configuration Engine
+- New `src/season_config.js` module (see **Section 7**) — the season-config schema, resolution order, and helper functions.
+- `/admin/teams`, board/shortage detection, sub-wave targeting, `/admin/team-links`, playoffs (`src/awards.js`), and OCR team normalization (`src/review.js`) made season-config-aware.
+- Season Hub launch flow (`publishSeasonToProduction`) now writes the organizer's actual entered team list/roster config to the new season's `data.json` entry, rather than always writing the legacy 4-team default.
+
+### Demo Environment
+- New `env.demo` block in `wrangler.jsonc`: separate Worker (`notreligue-rsvp`), D1 database (`notreligue-demo`), KV namespace, and custom domain (`rsvp.notreligue.ca`) — see **Section 2**.
+- `noindex`/`robots.txt` protection so the demo site doesn't get indexed by search engines.
+
+### Data Integrity Hardening
+- Season-array lookups (`data_json.seasons`) hardened against `null` holes left by earlier `delete arr[i]` calls (a real production data shape), so `/admin/teams/data` and related endpoints no longer throw on a sparse `seasons` array.
+
+### Responsive `/admin/teams` Roster Cards & Dropdowns
+- The roster-card grid, and the Move/Add-Player team dropdowns, now render dynamically from the season's own team list (`/admin/teams/data`'s `teams` keys) instead of four static Red/Blue/White/Black slots — so a season with a different team count/names renders correctly instead of silently dropping unrecognized teams.
+- Grid CSS uses `repeat(auto-fit, minmax(270px, 1fr))` with an explicit single-column breakpoint at 768px, consistent with the rest of the site.
+
+### (Carried over, unchanged this update)
+Player Archive, Weekly Honors & Milestone Highlights, Email Automations & Outbox Management, Player Dues & Sub Fee Tracking, Live In-League Polling, Primary Goalie Alert, Printable Score Sheets API, and Board Roster Management & Trades — see prior git history for details; no functional changes to these in this update.
+
+---
+
+## 9. Hardcoded Values
+
+Values still hardcoded to SMBHL specifics rather than driven by season config or environment (updated tonight; a more exhaustive audit — including doubleheader/2-games-per-night assumptions and the OCR roster list — was done as part of this session's Part B review and is tracked outside this README).
+
+| File | Line(s) | Value | Context / Purpose |
 |---|---|---|---|
-| `src/index.js` | 143, 201, 425, 1656, 2044, 3922, 5991, 6177, 6219, 6249, 6289, 6358, 6456, 7911, 7999, 8030, 8087, 11071, 11190, 11295, 13515, 13637, 13736, 13810, 14719 | `https://smbhl.com/data.json` | Fallback URL to fetch league data if not present in KV. |
-| `src/index.js` | 241 | `https://smbhl.com/img/favicon-32.svg` | Favicon asset URL on RSVP pages. |
-| `src/index.js` | 326, 343 | `https://smbhl.com/` | Navigation and footer link back to the stats site. |
-| `src/index.js` | 506 | `SMBHL - Hockey <joueur@smbhl.com>` | Default `FROM` address for all league transactional emails. |
-| `src/index.js` | 507 | `info@smbhl.com` | Default `REPLY_TO` address for player communications. |
-| `src/index.js` | 508 | `emailrobertosantana@gmail.com` | Default fallback for `ADMIN_EMAIL`. |
-| `src/index.js` | 513 | `frederick.crevier@hec.ca` | Typo autocorrection regex example/comment. |
-| `src/index.js` | 536 | `mailto:joueur@smbhl.com?subject=unsubscribe` | `List-Unsubscribe` email header. |
-| `src/index.js` | 693, 855, 864, 1417, 1422, 1468, 2700, 9546, 9615 | `smbhl.com` | Email footers, button links, and plain text sign-offs. |
-| `src/index.js` | 995 | `https://smbhl.com` | Link to team roster and stats page. |
-| `src/index.js` | 1337, 1538, 6507, 8056, 9525, 11492, 14787, 14893 | `https://rsvp.smbhl.com` | Default fallback for `env.PUBLIC_URL`. |
-| `src/index.js` | 1554 | `https://smbhl-rsvp.emailrobertosantana.workers.dev` | Fallback worker subdomain URL. |
-| `src/index.js` | 3577, 10710 | `https://smbhl.com/team-sheets.html` | Link to printable score sheets. |
-| `src/index.js` | 3621 | `https://rsvp.smbhl.com/t/` | Base route for team links. |
-| `src/index.js` | 5591 | `user@domain.com` | Input placeholder for email field. |
-| `src/index.js` | 5988, 5989 | `rsantana@live.ca`, `rantana@live.ca` | Auto-correction hook for player P0217 email. |
-| `src/index.js` | 8591 | `smbhl.com` | Placeholder text for financial expense description. |
-| `src/index.js` | 11412, 11790 | `scores@smbhl.com`, `https://smbhl.com` | Receipt footer for score sheet uploads. |
-| `src/index.js` | 11461 | `emailrobertosantana@gmail.com`, `rsantana@live.ca` | Default recipient addresses for scoresheet notifications. |
-| `src/index.js` | 15103 | `https://smbhl.com` | Fallback 302 redirect on unknown root path. |
-| `src/highlights.js` | 639 | `https://smbhl.com/data.json` | Fallback fetch URL for league data. |
-| `src/highlights.js` | 734, 833 | `https://smbhl.com` | Footer link ("Tout voir sur smbhl.com / See all on smbhl.com") in HTML and text highlights. |
-| `src/review.js` | 846, 2069 | `https://smbhl.com/img/favicon-32.svg` | Favicon asset URL on review UI pages. |
-| `src/review.js` | 1039, 2137 | `https://smbhl.com/` | Logo header link to stats site. |
-| `src/review.js` | 1432, 1504 | `smbhl.com` | Success notification message upon publishing game scores. |
-| `src/review.js` | 2165, 2255, 2285 | `scores@smbhl.com` | Upload instructions email address. |
-| `src/review.js` | 2484, 2635, 2712, 2799, 2881, 2978, 3284 | `https://smbhl.com/data.json` | Fallback fetch URL for league data. |
-| `src/review.js` | 2526, 3037 | `https://rsvp.smbhl.com` | Fallback for `PUBLIC_URL`. |
-| `src/review.js` | 2578, 3056, 3061, 3098, 3111, 3117 | `smbhl.com` | Links and announcement text for published game results. |
-| `src/review.js` | 3225 | `emailrobertosantana@gmail.com` | Default fallback notification address. |
-| `src/season_hub.js` | 2835, 2836 | `smbhl.com`, `rsvp.smbhl.com` | Season launch banner text. |
-| `wrangler.jsonc` | 3 | `smbhl-rsvp` | Cloudflare Worker name. |
-| `wrangler.jsonc` | 10 | `https://rsvp.smbhl.com` | Canonical `PUBLIC_URL` variable. |
-| `wrangler.jsonc` | 18 | `smbhl-rsvp` | D1 database name. |
-| `wrangler.jsonc` | 19 | `6f1838cf-30b0-4b4b-b9fe-716b61b961e4` | Cloudflare D1 database ID (`DB`). |
-| `wrangler.jsonc` | 25 | `e5af34ebf39b4c5d8851d7b071368a0e` | Cloudflare KV namespace ID (`SHEETS_KV`). |
-| `migrate-002.sql` | 12 | `trapslash@hotmail.com` | Seed email for Michael Pacheco. |
-| `migrate-002.sql` | 13 | `alexvochau@gmail.com` | Seed email for Alex Chau. |
-| `migrate-002.sql` | 14 | `philrc.assurances@gmail.com` | Seed email for Philippe Charbonneau. |
-| `migrate-008.sql` | 2 | `smbhl-rsvp` | D1 database execute command comment. |
-| `migrate-010.sql` | 2 | `smbhl-rsvp` | D1 database execute command comment. |
-| `schema.sql` | 2 | `smbhl-rsvp` | D1 database execute command comment. |
+| `src/index.js` | 154, 214, 438, 2073, 3970, 6041, 6229, 6272, 6302, 6342, 6411, 6509, 7973, 8063, 8094, 8151, 11135, 11254, 11359, 13579, 13699, 13798, 13868, 14772 | `https://smbhl.com/data.json` | Fallback URL to fetch league data when KV has no `data_json` key. |
+| `src/index.js` | 248 | `https://smbhl.com/img/favicon-32.svg` | Favicon asset URL on every page (including demo). |
+| `src/index.js` | 333, 350 | `https://smbhl.com/` | Logo header link and footer link. |
+| `src/index.js` | 350 | `SMBHL · Laval, Québec` | Hardcoded footer text (not env-driven). |
+| `src/index.js` | 513 | `SMBHL - Hockey <joueur@smbhl.com>` | Hardcoded `FROM` address for **all** transactional emails, in every environment — no `env.FROM` override exists. |
+| `src/index.js` | 514 | `info@smbhl.com` | Hardcoded `REPLY_TO` address — same gap as above. |
+| `src/index.js` | 515 | `emailrobertosantana@gmail.com` | Fallback for `ADMIN_EMAIL` (only used when the secret isn't set — each environment has its own `ADMIN_EMAIL` secret, so this fallback is rarely hit in practice). |
+| `src/index.js` | 543 | `mailto:joueur@smbhl.com?subject=unsubscribe` | `List-Unsubscribe` email header. |
+| `src/index.js` | 1547, 6554, 8114, 9583, 11550, 14846, 14952 | `https://rsvp.smbhl.com` | Fallback for `env.PUBLIC_URL` when unset. |
+| `src/index.js` | 3619, 10768 | `https://smbhl.com/team-sheets.html` | Link to printable score sheets — production-only page, not environment-aware. |
+| `src/index.js` | 3663 | `https://rsvp.smbhl.com/t/` | Base route for team redirect links. |
+| `src/index.js` | 11470, 11848 | `scores@smbhl.com` | Scoresheet upload instructions email address. |
+| `src/index.js` | 15163 | `https://smbhl.com` | Fallback 302 redirect on unknown root path. |
+| `src/review.js` | 853, 2076 | `https://smbhl.com/img/favicon-32.svg` | Favicon asset URL on review UI pages. |
+| `src/review.js` | 1046, 2144 | `https://smbhl.com/` | Logo header link. |
+| `src/review.js` | 2172, 2262, 2292 | `scores@smbhl.com` | Upload instructions email address. |
+| `src/review.js` | 2491, 2644, 2722, 2759, 2894, 2992, 3298 | `https://smbhl.com/data.json` | Fallback fetch URL for league data. |
+| `src/review.js` | 2535, 3051 | `https://rsvp.smbhl.com` | Fallback for `env.PUBLIC_URL`. |
+| `src/review.js` | 1439, 1511, 2587, 3070, 3075, 3112, 3125, 3131 | `smbhl.com` | Links and announcement text for published game results. |
+| `src/review.js` | 132–192 | Real 2026 player roster names, `Red\|Blue\|White\|Black` enum, "max 1 assist per goal" rule | The Gemini OCR prompt (`parseSheetWithGemini`) and its `deduceTeamFromPlayers`/`ROSTERS` fallback are hardcoded to SMBHL's current roster and scoring rule, with no season-config integration. |
+| `src/highlights.js` | 641 | `https://smbhl.com/data.json` | Fallback fetch URL for league data. |
+| `src/highlights.js` | 968, 1053 | `https://smbhl.com` | Footer link in HTML and text highlights. |
+| `src/season_hub.js` | 3012, 3013 | `smbhl.com`, `rsvp.smbhl.com` | Season launch success banner text. |
+| `wrangler.jsonc` | 3, 18, 19, 25 | `smbhl-rsvp` (Worker name, D1 name/ID, KV ID) | Production identifiers. |
+| `migrate-002.sql` | 12–14 | Real seed player emails | Historical data seed, not a functional issue. |
 
 ---
 
-## 8. Deploying & Verifying
+## 10. Deploying & Verifying
 
 Before deploying, run the syntax check:
 
 ```powershell
-cd C:\Users\santarob\Downloads\smbhl-rsvp
+cd C:\Projects\smbhl-rsvp
 node check.js
 ```
 
 Deploy the worker to Cloudflare:
 
 ```powershell
-npx wrangler deploy
+npx wrangler deploy              # production — smbhl-rsvp / rsvp.smbhl.com
+npx wrangler deploy --env demo   # demo — notreligue-rsvp / rsvp.notreligue.ca
 ```
 
-Run the automated test suite (143 tests):
+Run the automated test suite (155 tests):
 
 ```powershell
 npm test -- --run
 ```
-
