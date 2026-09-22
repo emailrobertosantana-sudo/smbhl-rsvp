@@ -3270,6 +3270,63 @@ describe("SMBHL Worker", () => {
 				expect(svg).toContain('>' + ch + '</tspan>');
 			}
 		});
+
+		it("a non-SMBHL league's generated wordmark does NOT reorder colours based on standings (unlike SMBHL's own hand-drawn logo)", async () => {
+			const baseData = {
+				current_season: "TestLeague2026",
+				seasons: [
+					{ name: "Fall 2026", standings: [] },
+					{
+						name: "TestLeague2026",
+						standings: [],
+						config: {
+							teams: [
+								{ name: 'Hawks', name_fr: 'Faucons', colour: '#1c1f24', aliases: [] },
+								{ name: 'Wolves', name_fr: 'Loups', colour: '#374151', aliases: [] },
+								{ name: 'Bears', name_fr: 'Ours', colour: '#78350f', aliases: [] }
+							],
+							league: { name: 'TestLeague2026' }
+						}
+					}
+				],
+				players: []
+			};
+
+			// Render once with Hawks in first place...
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				...baseData,
+				seasons: [baseData.seasons[0], {
+					...baseData.seasons[1],
+					standings: [
+						{ team: 'Hawks', gp: 4, w: 4, l: 0, t: 0, pts: 8, gf: 20, ga: 5 },
+						{ team: 'Wolves', gp: 4, w: 2, l: 2, t: 0, pts: 4, gf: 10, ga: 10 },
+						{ team: 'Bears', gp: 4, w: 0, l: 4, t: 0, pts: 0, gf: 5, ga: 20 }
+					]
+				}]
+			}));
+			const res1 = await worker.fetch(new Request("http://example.com/api/logo.svg"), env);
+			const svg1 = await res1.text();
+
+			// ...then again with the standings completely reversed (Bears now in first place).
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				...baseData,
+				seasons: [baseData.seasons[0], {
+					...baseData.seasons[1],
+					standings: [
+						{ team: 'Bears', gp: 4, w: 4, l: 0, t: 0, pts: 8, gf: 20, ga: 5 },
+						{ team: 'Wolves', gp: 4, w: 2, l: 2, t: 0, pts: 4, gf: 10, ga: 10 },
+						{ team: 'Hawks', gp: 4, w: 0, l: 4, t: 0, pts: 0, gf: 5, ga: 20 }
+					]
+				}]
+			}));
+			const res2 = await worker.fetch(new Request("http://example.com/api/logo.svg"), env);
+			const svg2 = await res2.text();
+
+			// The generated wordmark must be byte-for-byte identical regardless of standings —
+			// its colour order is fixed by the season config's own team order, not live results.
+			expect(svg1).toBe(svg2);
+			expect(svg1).toContain('aria-label="TESTLEAGUE2026"');
+		});
 	});
 
 	describe("Season-aware admin team resolution (custom 6-team season config)", () => {

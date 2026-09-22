@@ -14830,9 +14830,16 @@ const TEAM_COLORS = {
  * same header logo slot (height 104) as the hand-drawn SMBHL lockup. Colours
  * cycle through the league's own team colours (skipping near-white ones,
  * which vanish against the dark navbar) so each league's wordmark is drawn
- * from its own palette. Character widths are a fixed approximation — there's
- * no real font-metrics engine server-side — which is fine for a bold
- * condensed wordmark but means it isn't precisely kerned.
+ * from its own palette, in a fixed order (the order teams appear in
+ * `teamColours`, i.e. the season config's own team order) — deterministic
+ * per render, not sorted by standings. Character widths are a fixed
+ * approximation — there's no real font-metrics engine server-side — which
+ * is fine for a bold condensed wordmark but means it isn't precisely kerned.
+ *
+ * Deliberately does NOT replicate SMBHL's standings-based colour reordering
+ * (see handleLogoSvg below): that behavior is a personal, SMBHL-specific
+ * design choice for its own hand-drawn logo, not a general product feature —
+ * it must never be extended to this generator for other leagues.
  */
 function generateWordmarkSvg(leagueName, teamColours = []) {
   const name = (String(leagueName || '').trim() || 'League').toUpperCase();
@@ -14877,9 +14884,12 @@ export async function handleLogoSvg(req, env) {
   const cfg = getSeasonConfig(data);
   const league = getLeagueConfig(cfg);
 
-  // SMBHL keeps its exact original hand-drawn lockup, byte-for-byte — this branch
-  // is untouched from before the wordmark generator existed. Any other league
-  // name gets the new dynamically-generated text wordmark instead.
+  // SMBHL keeps its exact original hand-drawn lockup, byte-for-byte — this branch,
+  // including its standings-based colour reordering below, is untouched from
+  // before the wordmark generator existed. That reordering is a personal, one-off
+  // design choice for SMBHL's own logo, not a general product feature — it must
+  // stay confined to this branch and never be applied to generateWordmarkSvg()
+  // (used for any other league.name), which uses a fixed, config-ordered palette.
   if (league.name === DEFAULT_SEASON_CONFIG.league.name) {
     let rects = `
       <rect y="0" width="30" height="22" fill="#2a5fa8"></rect>
