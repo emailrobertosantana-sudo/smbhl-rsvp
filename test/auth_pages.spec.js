@@ -141,6 +141,8 @@ describe('Frontend pages: /signup, /login, /dashboard', () => {
       });
       const html = await dashboardRes.text();
       expect(html).toContain('not yet verified');
+      expect(html).toContain('id="resendBtn"');
+      expect(html).toContain('/auth/resend-verification');
     });
 
     it('a verified user does NOT see the unverified-email notice', async () => {
@@ -160,6 +162,7 @@ describe('Frontend pages: /signup, /login, /dashboard', () => {
       });
       const html = await dashboardRes.text();
       expect(html).not.toContain('not yet verified');
+      expect(html).not.toContain('id="resendBtn"');
     });
   });
 

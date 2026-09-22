@@ -1,7 +1,7 @@
 import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
-import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, checkUserSession, isUserEmailVerified } from './auth.js';
+import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified } from './auth.js';
 import { handleLeagueCreate } from './leagues.js';
 import {
   cleanupOldReviews,
@@ -535,6 +535,10 @@ async function handleDashboardPage(req, env, url) {
     ${!verified ? `
       <div class="card" style="border-left:4px solid var(--orange);">
         <p class="state" style="margin:0;">⚠️ Votre courriel n'est pas encore vérifié.<span class="en" style="display:block;">Your email is not yet verified.</span></p>
+        <p id="resendMsg" class="state" style="margin:8px 0 0;display:none;"></p>
+        <div class="btns" style="margin-top:10px;">
+          <button class="btn" id="resendBtn" onclick="resendVerification()">RENVOYER LE COURRIEL<span class="en" style="display:block;font-size:13px;font-weight:600;">RESEND EMAIL</span></button>
+        </div>
       </div>
     ` : ''}
     <div class="card">
@@ -559,6 +563,24 @@ async function handleDashboardPage(req, env, url) {
 async function doLogout() {
   await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
   window.location.href = '/login';
+}
+async function resendVerification() {
+  const btn = document.getElementById('resendBtn');
+  const msg = document.getElementById('resendMsg');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/auth/resend-verification', { method: 'POST', credentials: 'same-origin' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      msg.textContent = "Courriel de vérification envoyé (si ce n'est pas déjà fait). Vérifiez vos pourriels si vous ne le voyez pas. / Verification email sent (if not already). Check spam if you don't see it.";
+    } else {
+      msg.textContent = "Échec de l'envoi. Réessayez plus tard. / Failed to send. Please try again later.";
+    }
+  } catch (e) {
+    msg.textContent = "Erreur réseau. / Network error.";
+  }
+  msg.style.display = 'block';
+  btn.disabled = false;
 }
 </script>`), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
@@ -15193,14 +15215,19 @@ async function handleFetch(req, env, ctx) {
       }
       // New user-account system (auth.js) — additive, unrelated to the
       // legacy ADMIN_KEY system below and not used by anything yet.
+      // sendMail is injected (not imported into auth.js) for the same reason
+      // review.js's handlers take it as a parameter: auth.js is imported BY
+      // this file, so a direct import back would be circular.
       if (url.pathname === '/auth/signup' && req.method === 'POST')
-        return await handleSignup(req, env);
+        return await handleSignup(req, env, sendMail);
       if (url.pathname === '/auth/login' && req.method === 'POST')
         return await handleLogin(req, env);
       if (url.pathname === '/auth/logout' && req.method === 'POST')
         return await handleLogout(req, env);
       if (url.pathname === '/auth/verify' && req.method === 'GET')
         return await handleVerifyEmail(req, env, url);
+      if (url.pathname === '/auth/resend-verification' && req.method === 'POST')
+        return await handleResendVerification(req, env, sendMail);
       // League provisioning (leagues.js) — requires a valid user session.
       // Rows in the shared DB, scoped by league_id; see leagues.js's header
       // comment for the architecture decision behind that.

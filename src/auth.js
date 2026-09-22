@@ -176,10 +176,13 @@ export async function invalidateAllSessions(env, userId) {
  * single-use-token tracking table, and re-verifying an already-verified
  * address is harmless.
  *
- * Not wired up: no email is actually sent anywhere in this task. handleSignup
- * generates the token/link and logs + returns it in the signup response, so
- * the mechanism is real and end-to-end testable; a future task would swap
- * that console.log + response field for a real send (see the final report).
+ * Sending: handleSignup and handleResendVerification both accept an injected
+ * sendMailFunc (same dependency-injection shape review.js already uses for
+ * handleScoresheetEmail/handleReviewPublish) rather than importing index.js's
+ * sendMail() directly — index.js imports this module, so a direct import
+ * back would be circular. The real sendMail is passed in at the route
+ * dispatch in index.js; tests pass their own mock/stub instead, so no test
+ * needs a real RESEND_API_KEY to exercise this path.
  */
 
 const VERIFY_TOKEN_TTL_MS = 24 * 3600 * 1000;
@@ -212,6 +215,61 @@ export async function verifyEmailToken(env, token) {
 
   await env.DB.prepare('UPDATE users SET email_verified_at = ? WHERE id = ?').bind(new Date().toISOString(), userId).run();
   return { ok: true, userId };
+}
+
+// Bilingual (FR/EN) content, matching every other user-facing email and page
+// in this app. Kept as a small pure function so tests can assert on subject/
+// link content without going through an HTTP round trip.
+function buildVerificationEmail(verificationLink) {
+  const subject = 'Confirmez votre courriel — SMBHL Ligue / Confirm your email';
+  const text =
+`Bienvenue! Veuillez confirmer votre adresse courriel en cliquant sur ce lien :
+${verificationLink}
+
+Ce lien expire dans 24 heures. Si vous n'avez pas créé de compte, ignorez ce courriel.
+
+---
+
+Welcome! Please confirm your email address by clicking this link:
+${verificationLink}
+
+This link expires in 24 hours. If you didn't create an account, you can ignore this email.`;
+  const html =
+`<p>Bienvenue&nbsp;! Veuillez confirmer votre adresse courriel en cliquant sur le lien ci-dessous&nbsp;:</p>
+<p><a href="${verificationLink}">${verificationLink}</a></p>
+<p>Ce lien expire dans 24 heures. Si vous n'avez pas créé de compte, ignorez ce courriel.</p>
+<hr>
+<p>Welcome! Please confirm your email address by clicking the link below:</p>
+<p><a href="${verificationLink}">${verificationLink}</a></p>
+<p>This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>`;
+  return { subject, text, html };
+}
+
+// Generates a fresh token/link for userId and sends it via the injected
+// sendMailFunc. Never throws — a send failure (including a missing
+// RESEND_API_KEY, e.g. on an environment where that secret hasn't been
+// provisioned yet) is logged clearly and swallowed, exactly like every other
+// best-effort notification email in this codebase (see handleScoresheetEmail
+// / handleReviewPublish in review.js). It must never take down the request
+// that triggered it (signup, or an explicit resend).
+async function sendVerificationEmail(env, sendMailFunc, email, userId) {
+  const { token, exp } = await generateVerificationToken(env, userId);
+  const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+  const verificationLink = `${publicUrl}/auth/verify?token=${encodeURIComponent(token)}`;
+
+  if (typeof sendMailFunc === 'function') {
+    try {
+      const { subject, text, html } = buildVerificationEmail(verificationLink);
+      await sendMailFunc(env, email, subject, text, html);
+      console.log(`[auth] Verification email sent to ${email}`);
+    } catch (err) {
+      console.error(`[auth] Failed to send verification email to ${email}: ${err.message}`);
+    }
+  } else {
+    console.log(`[auth] No sendMailFunc provided — verification link for ${email} not sent: ${verificationLink}`);
+  }
+
+  return { token, exp, verificationLink };
 }
 
 // Checkable helpers for anything that later wants to gate player-facing email
@@ -294,7 +352,7 @@ function isValidPassword(password) {
 
 /* ---------- HTTP handlers ---------- */
 
-export async function handleSignup(req, env) {
+export async function handleSignup(req, env, sendMailFunc = null) {
   try {
     const body = await req.json().catch(() => ({}));
     const email = String(body.email || '').trim().toLowerCase();
@@ -327,15 +385,7 @@ export async function handleSignup(req, env) {
        VALUES (?, ?, ?, ?, NULL, ?, 0)`
     ).bind(userId, email, passwordHash, now, now).run();
 
-    // Verification email is NOT actually sent anywhere in this task — see the
-    // final report. The token/link are generated (so the mechanism is real
-    // and testable end-to-end) and logged + returned in the response so a
-    // future task can wire them into real sending without touching this
-    // generation logic.
-    const { token, exp } = await generateVerificationToken(env, userId);
-    const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
-    const verificationLink = `${publicUrl}/auth/verify?token=${encodeURIComponent(token)}`;
-    console.log(`[auth] Email verification link for ${email} (not sent — no email infra wired up yet): ${verificationLink}`);
+    const { token, exp, verificationLink } = await sendVerificationEmail(env, sendMailFunc, email, userId);
 
     const cookie = await createSessionCookie(env, userId, 0);
     return new Response(JSON.stringify({
@@ -400,4 +450,28 @@ export async function handleVerifyEmail(req, env, url) {
     return Response.json({ ok: false, error: result.error }, { status });
   }
   return Response.json({ ok: true, userId: result.userId });
+}
+
+// Requires an existing logged-in session (the same one handleSignup already
+// sets on the signup response) — this is a "my original verification email
+// didn't arrive/got lost" recovery path for the account you're already in,
+// not a way to trigger email to an address you don't otherwise control.
+// Idempotent-ish: calling it again after already verifying just reports
+// alreadyVerified rather than sending another email.
+export async function handleResendVerification(req, env, sendMailFunc = null) {
+  const session = await checkUserSession(req, env);
+  if (!session) {
+    return Response.json({ ok: false, error: 'Authentication required.' }, { status: 401 });
+  }
+
+  const user = await env.DB.prepare('SELECT email, email_verified_at FROM users WHERE id = ?').bind(session.userId).first();
+  if (!user) {
+    return Response.json({ ok: false, error: 'Account not found.' }, { status: 404 });
+  }
+  if (user.email_verified_at) {
+    return Response.json({ ok: true, alreadyVerified: true });
+  }
+
+  await sendVerificationEmail(env, sendMailFunc, user.email, session.userId);
+  return Response.json({ ok: true, alreadyVerified: false });
 }
