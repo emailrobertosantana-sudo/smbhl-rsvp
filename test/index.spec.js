@@ -2773,6 +2773,33 @@ describe("SMBHL Worker", () => {
 			expect(html).toContain("Pool de substituts");
 		});
 
+		it("/admin/teams/data does not crash when data.json's seasons array has a null hole (sparse array from delete arr[i])", async () => {
+			// Reproduces the demo environment's actual data shape: `seasons` is a real JS array,
+			// and an earlier `delete d.seasons[key]` left a hole that JSON.stringify serialized
+			// as `null` instead of removing the element. Any `.map(s => s.name)` over the raw
+			// array then throws "Cannot read properties of null (reading 'name')".
+			const seasonsWithHole = [];
+			for (let i = 0; i < 42; i++) {
+				seasonsWithHole.push({ name: `Legacy Season ${i}`, standings: [] });
+			}
+			seasonsWithHole[0] = { name: "Fall 2026", standings: [] };
+			seasonsWithHole.push(null); // the sparse-array hole, index 42
+
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				current_season: "Fall 2026",
+				seasons: seasonsWithHole,
+				players: []
+			}));
+
+			const res = await worker.fetch(new Request("http://example.com/admin/teams/data", {
+				headers: { "x-admin": "test-adminkey-123" }
+			}), env);
+			expect(res.status).toBe(200);
+			const data = await res.json();
+			expect(data.season).toBe("Fall 2026");
+			expect(data.seasons).toContain("Fall 2026");
+		});
+
 		it("rejects unauthorized access to /admin/teams endpoints", async () => {
 			const dResp = await worker.fetch(new Request("http://example.com/admin/teams/data"), env);
 			expect(dResp.status).toBe(403);

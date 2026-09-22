@@ -156,7 +156,9 @@ async function getSeasonFixtures(env, seasonName) {
     } catch (_) {}
   }
   if (!d || !d.seasons) return [];
-  const s = seasonName ? d.seasons.find(x => x.name === seasonName) : (d.seasons.find(x => x.name === d.current_season) || d.seasons[0]);
+  const s = seasonName
+    ? d.seasons.find(x => x && x.name === seasonName)
+    : (d.seasons.find(x => x && x.name === d.current_season) || d.seasons.find(Boolean));
   if (!s || !s.fixtures) return [];
 
   const byWeek = new Map();
@@ -218,7 +220,7 @@ async function getStandingsTooltip(env) {
     }
     if (!kv) return '';
     const data = JSON.parse(kv);
-    const s = data.seasons?.find(x => x.name === data.current_season) || data.seasons?.[0];
+    const s = data.seasons?.find(x => x && x.name === data.current_season) || data.seasons?.find(Boolean);
     if (!s || !s.standings || !s.standings.length) return '';
     const played = s.standings.some(t => t.gp > 0);
     if (!played) return '';
@@ -436,7 +438,7 @@ async function getTeamFixtures(env, ev, team) {
     const r = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
     if (!r.ok) return null;
     const d = await r.json();
-    const season = d.seasons.find(s => s.name === ev.season);
+    const season = d.seasons.find(s => s && s.name === ev.season);
     if (!season || !season.fixtures) return null;
 
     const matches = season.fixtures.filter(f =>
@@ -2072,7 +2074,7 @@ async function ensureNextEvent(env, force = false) {
     if (!r.ok) throw new Error('data.json ' + r.status);
     d = await r.json();
   }
-  const season = d.seasons.find(x => x.name === d.current_season);
+  const season = d.seasons.find(x => x && x.name === d.current_season);
   if (!season) return null;
 
   const byWeek = new Map();
@@ -2425,7 +2427,7 @@ async function runSchedule(env) {
         const rawData = await env.SHEETS_KV.get('data_json');
         if (rawData) {
           const d = JSON.parse(rawData);
-          const s0 = d.seasons?.find(s => s.name === ev.season) || d.seasons?.[0];
+          const s0 = d.seasons?.find(s => s && s.name === ev.season) || d.seasons?.find(Boolean);
           if (s0 && s0.fixtures) {
             const maxWeek = Math.max(...s0.fixtures.map(f => Number(f.week) || 0));
             if (Number(ev.week) === maxWeek) {
@@ -7970,8 +7972,8 @@ async function handleSeasonRecapData(req, env, url) {
   const seasonParam = url.searchParams.get('s') || url.searchParams.get('season');
   const rawData = await env.SHEETS_KV.get('data_json') || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
   const d = JSON.parse(rawData);
-  const allSeasons = (d.seasons || []).map(s => s.name);
-  const s0 = d.seasons?.find(s => s.name === seasonParam) || d.seasons?.[0];
+  const allSeasons = (d.seasons || []).filter(Boolean).map(s => s.name);
+  const s0 = d.seasons?.find(s => s && s.name === seasonParam) || d.seasons?.find(Boolean);
   const season = s0?.name || seasonParam || 'Fall 2026';
 
   const autoAwards = computeSeasonAwards(d, season);
@@ -13580,11 +13582,13 @@ async function handleTeamsData(req, env, url) {
     d = { seasons: [], players: [] };
   }
 
-  const currentSeason = d.current_season || (d.seasons && d.seasons[0]?.name) || 'Fall 2026';
+  const currentSeason = d.current_season || (d.seasons && d.seasons.find(Boolean)?.name) || 'Fall 2026';
   const season = url.searchParams.get('season') || currentSeason;
 
-  // Only show active current season and the most recent past season (view-only archive)
-  const allSeasonNames = (d.seasons || []).map(s => s.name);
+  // Only show active current season and the most recent past season (view-only archive).
+  // A season array can contain a null hole (e.g. JSON.stringify of a sparse array left by
+  // `delete arr[i]`), so filter those out before reading .name off each entry.
+  const allSeasonNames = (d.seasons || []).filter(Boolean).map(s => s.name);
   const curIdx = allSeasonNames.indexOf(currentSeason);
   let pastSeason = null;
   if (curIdx >= 0 && curIdx + 1 < allSeasonNames.length) {

@@ -70,7 +70,7 @@ export function getRegularGoalsByTeam(dataJson, seasonName) {
  * @returns {Object} Pre-populated awards with text descriptions
  */
 export function computeSeasonAwards(dataJson, seasonName) {
-  const s0 = dataJson?.seasons?.find(s => s.name === seasonName) || dataJson?.seasons?.[0];
+  const s0 = dataJson?.seasons?.find(s => s && s.name === seasonName) || dataJson?.seasons?.find(Boolean);
   const season = s0?.name || seasonName || 'Fall 2026';
   const players = dataJson?.players || [];
   const standings = s0?.standings || [];
