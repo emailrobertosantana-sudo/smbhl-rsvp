@@ -2760,17 +2760,81 @@ describe("SMBHL Worker", () => {
 			env.ADMIN_KEY = "test-adminkey-123";
 		});
 
-		it("renders /admin/teams page with team cards and navigation tabs", async () => {
+		it("renders /admin/teams page shell with navigation tabs and empty, JS-populated team containers (no hardcoded Red/Blue/White/Black left in server-rendered markup)", async () => {
+			// The team-card grid and the Move/Add-Player team dropdowns are all populated
+			// client-side from /admin/teams/data's season-config-driven team list (see the
+			// "Move and Add Player team dropdowns" test below), so the server-rendered shell
+			// should contain the empty containers/selects, not literal legacy team names.
 			const res = await worker.fetch(new Request("http://example.com/admin/teams"), env);
 			expect(res.status).toBe(200);
 			const html = await res.text();
 			expect(html).toContain("Alignements & Équipes");
 			expect(html).toContain('href="/admin/teams"');
-			expect(html).toContain("🔴 Red");
-			expect(html).toContain("🔵 Blue");
-			expect(html).toContain("⚪ White");
-			expect(html).toContain("⚫ Black");
+			expect(html).toContain('<div class="teams-grid" id="teams-grid"></div>');
+			expect(html).toMatch(/<select id="move-target-team" class="form-control" required><\/select>/);
+			expect(html).toMatch(/<select id="add-target-team" class="form-control" required><\/select>/);
 			expect(html).toContain("Pool de substituts");
+			expect(html).not.toContain('option value="Red"');
+			expect(html).not.toContain('option value="Black"');
+		});
+
+		it("Move and Add Player team dropdowns are populated from the season's own team list (populateTeamDropdowns), not hardcoded Red/Blue/White/Black", async () => {
+			const res = await worker.fetch(new Request("http://example.com/admin/teams"), env);
+			const html = await res.text();
+
+			// Extract the real shipped function source (balanced-brace) so this test exercises
+			// the actual client-side logic rather than a reimplementation of it.
+			function extractFn(src, name) {
+				const start = src.indexOf('function ' + name);
+				expect(start).toBeGreaterThan(-1);
+				let i = src.indexOf('{', start);
+				let depth = 0;
+				for (; i < src.length; i++) {
+					if (src[i] === '{') depth++;
+					else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+				}
+				return src.slice(start, i);
+			}
+
+			const fallbackConstMatch = html.match(/const FALLBACK_TEAM_EMOJI = \[[^\]]*\];/);
+			expect(fallbackConstMatch).not.toBeNull();
+			const teamEmojiSrc = extractFn(html, 'teamEmojiFor');
+			const populateSrc = extractFn(html, 'populateTeamDropdowns');
+
+			const fakeSelects = { 'add-target-team': { innerHTML: '' }, 'move-target-team': { innerHTML: '' } };
+			const $ = id => fakeSelects[id] || null;
+			const esc = s => String(s);
+			const t = key => ({ optSubPool: 'Sub Pool', optDropout: 'Drop-out' })[key] || key;
+
+			const populateTeamDropdowns = new Function('$', 'esc', 't', `
+				${fallbackConstMatch[0]}
+				${teamEmojiSrc}
+				${populateSrc}
+				return populateTeamDropdowns;
+			`)($, esc, t);
+
+			// 4-team season (Fall 2026 default config)
+			populateTeamDropdowns(['Red', 'Blue', 'White', 'Black']);
+			['Red', 'Blue', 'White', 'Black'].forEach(name => {
+				expect(fakeSelects['add-target-team'].innerHTML).toContain('value="' + name + '"');
+				expect(fakeSelects['move-target-team'].innerHTML).toContain('value="' + name + '"');
+			});
+			expect((fakeSelects['add-target-team'].innerHTML.match(/<option/g) || []).length).toBe(4);
+			expect(fakeSelects['move-target-team'].innerHTML).toContain('value="sub"');
+			expect(fakeSelects['move-target-team'].innerHTML).toContain('value="none"');
+			expect((fakeSelects['move-target-team'].innerHTML.match(/<option/g) || []).length).toBe(6);
+
+			// 6-team TestLeague2026-shaped config
+			const sixTeams = ['Hawks', 'Wolves', 'Bears', 'Lions', 'Eagles', 'Sharks'];
+			populateTeamDropdowns(sixTeams);
+			sixTeams.forEach(name => {
+				expect(fakeSelects['add-target-team'].innerHTML).toContain('value="' + name + '"');
+				expect(fakeSelects['move-target-team'].innerHTML).toContain('value="' + name + '"');
+			});
+			expect((fakeSelects['add-target-team'].innerHTML.match(/<option/g) || []).length).toBe(6);
+			expect((fakeSelects['move-target-team'].innerHTML.match(/<option/g) || []).length).toBe(8);
+			expect(fakeSelects['add-target-team'].innerHTML).not.toContain('value="Red"');
+			expect(fakeSelects['move-target-team'].innerHTML).not.toContain('value="Red"');
 		});
 
 		it("/admin/teams/data does not crash when data.json's seasons array has a null hole (sparse array from delete arr[i])", async () => {

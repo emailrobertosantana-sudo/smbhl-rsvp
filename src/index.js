@@ -14072,14 +14072,8 @@ async function teamsPage(env = null, isAuthed = false) {
       </div>
       <div class="form-group">
         <label for="move-target-team" data-i18n="newDestLabel">Nouvelle destination</label>
-        <select id="move-target-team" class="form-control" required>
-          <option value="Red" data-i18n="optTeamRed">🔴 Équipe Red</option>
-          <option value="Blue" data-i18n="optTeamBlue">🔵 Équipe Blue</option>
-          <option value="White" data-i18n="optTeamWhite">⚪ Équipe White</option>
-          <option value="Black" data-i18n="optTeamBlack">⚫ Équipe Black</option>
-          <option value="sub" data-i18n="optSubPool">🧤 Pool de substituts</option>
-          <option value="none" data-i18n="optDropout">🚫 Inactif / Abandon (Drop-out)</option>
-        </select>
+        <!-- Options populated dynamically in populateTeamDropdowns() from the active season's team list -->
+        <select id="move-target-team" class="form-control" required></select>
       </div>
       <div class="form-group" id="group-move-pos">
         <label for="move-pos" data-i18n="posLabel">Position</label>
@@ -14132,12 +14126,8 @@ async function teamsPage(env = null, isAuthed = false) {
         <div class="form-row">
           <div class="form-group">
             <label for="add-target-team" data-i18n="teamLabel">Équipe</label>
-            <select id="add-target-team" class="form-control" required>
-              <option value="Red">🔴 Red</option>
-              <option value="Blue">🔵 Blue</option>
-              <option value="White">⚪ White</option>
-              <option value="Black">⚫ Black</option>
-            </select>
+            <!-- Options populated dynamically in populateTeamDropdowns() from the active season's team list -->
+            <select id="add-target-team" class="form-control" required></select>
           </div>
           <div class="form-group">
             <label for="add-position" data-i18n="posLabel">Position</label>
@@ -14200,10 +14190,6 @@ async function teamsPage(env = null, isAuthed = false) {
       movePlayerLabel: "Joueur",
       currently: "actuellement :",
       newDestLabel: "Nouvelle destination",
-      optTeamRed: "🔴 Équipe Red",
-      optTeamBlue: "🔵 Équipe Blue",
-      optTeamWhite: "⚪ Équipe White",
-      optTeamBlack: "⚫ Équipe Black",
       optSubPool: "🧤 Pool de substituts",
       optDropout: "🚫 Inactif / Abandon (Drop-out)",
       posLabel: "Position",
@@ -14265,10 +14251,6 @@ async function teamsPage(env = null, isAuthed = false) {
       movePlayerLabel: "Player",
       currently: "currently:",
       newDestLabel: "New destination",
-      optTeamRed: "🔴 Team Red",
-      optTeamBlue: "🔵 Team Blue",
-      optTeamWhite: "⚪ Team White",
-      optTeamBlack: "⚫ Team Black",
       optSubPool: "🧤 Sub Pool",
       optDropout: "🚫 Inactive / Season Drop-out",
       posLabel: "Position",
@@ -14325,6 +14307,35 @@ async function teamsPage(env = null, isAuthed = false) {
   const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   let teamsData = null;
 
+  const FALLBACK_TEAM_EMOJI = ['🟣', '🟢', '🟠', '⬛', '🟤', '🟡'];
+  function teamEmojiFor(name, idx) {
+    const key = String(name).toLowerCase();
+    if (key === 'red') return '🔴';
+    if (key === 'blue') return '🔵';
+    if (key === 'white') return '⚪';
+    if (key === 'black') return '⚫';
+    return FALLBACK_TEAM_EMOJI[idx % FALLBACK_TEAM_EMOJI.length];
+  }
+
+  // Populates the Move and Add-Player team dropdowns from the same season-config-driven
+  // team list /admin/teams/data already uses, so any team count/name works, not just the
+  // legacy Red/Blue/White/Black four.
+  function populateTeamDropdowns(teamNames) {
+    const optionsHtml = teamNames.map((name, i) =>
+      '<option value="' + esc(name) + '">' + teamEmojiFor(name, i) + ' ' + esc(name) + '</option>'
+    ).join('');
+
+    const addSel = $('add-target-team');
+    if (addSel) addSel.innerHTML = optionsHtml;
+
+    const moveSel = $('move-target-team');
+    if (moveSel) {
+      moveSel.innerHTML = optionsHtml +
+        '<option value="sub" data-i18n="optSubPool">' + esc(t('optSubPool')) + '</option>' +
+        '<option value="none" data-i18n="optDropout">' + esc(t('optDropout')) + '</option>';
+    }
+  }
+
   async function api(path, opts) {
     const headers = { 'content-type': 'application/json' };
     if (K) headers['x-admin'] = K;
@@ -14371,15 +14382,16 @@ async function teamsPage(env = null, isAuthed = false) {
     seasonSel.onchange = () => load();
 
     const TEAMS = Object.keys(teamsData.teams || {});
+    populateTeamDropdowns(TEAMS);
+
     const LEGACY_HEADER_CLASS = { red: 'red', blue: 'blue', white: 'white', black: 'black' };
     const FALLBACK_PALETTE = ['#7c3aed', '#0f766e', '#b45309', '#334155', '#be185d', '#4d7c0f'];
-    const FALLBACK_EMOJI = ['🟣', '🟢', '🟠', '⬛', '🟤', '🟡'];
     const grid = $('teams-grid');
     grid.innerHTML = TEAMS.map((tName, i) => {
       const key = tName.toLowerCase();
       const headerClass = LEGACY_HEADER_CLASS[key] || '';
       const headerStyle = headerClass ? '' : ' style="background:' + FALLBACK_PALETTE[i % FALLBACK_PALETTE.length] + ';color:#fff;"';
-      const emoji = key === 'red' ? '🔴' : key === 'blue' ? '🔵' : key === 'white' ? '⚪' : key === 'black' ? '⚫' : FALLBACK_EMOJI[i % FALLBACK_EMOJI.length];
+      const emoji = teamEmojiFor(tName, i);
       const slug = 'team-' + i;
       return '<div class="team-card">' +
         '<div class="team-card-header ' + headerClass + '"' + headerStyle + '>' +
