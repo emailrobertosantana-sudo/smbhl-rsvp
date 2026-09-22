@@ -1,4 +1,5 @@
 import PostalMime from 'postal-mime';
+import { checkAdminAuth, adminAuthResponse, adminPageHeaders } from './admin_auth.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -83,71 +84,10 @@ function same(a, b) {
   return diff === 0;
 }
 
-const FAILED_ADMIN_ATTEMPTS = new Map();
-
-function checkAdminAuth(req, env) {
-  if (!env?.ADMIN_KEY) return 'no_key';
-  const expected = String(env.ADMIN_KEY).trim();
-  let candidate = (req.headers.get('x-admin') || '').trim();
-  if (!candidate) {
-    try {
-      const url = new URL(req.url);
-      candidate = (url.searchParams.get('key') || url.searchParams.get('k') || url.searchParams.get('t') || '').trim();
-    } catch (_) {}
-  }
-  if (!candidate) {
-    try {
-      const cookie = req.headers.get('cookie') || '';
-      const m = cookie.match(/(?:^|;\s*)admin_key=([^;]+)/);
-      if (m) candidate = decodeURIComponent(m[1]).trim();
-    } catch (_) {}
-  }
-
-  const ip = req.headers.get('cf-connecting-ip') || '127.0.0.1';
-  const now = Date.now();
-  const rec = FAILED_ADMIN_ATTEMPTS.get(ip);
-
-  // If candidate matches expected key, immediately clear any lockout and allow access
-  if (candidate && candidate === expected) {
-    if (rec) FAILED_ADMIN_ATTEMPTS.delete(ip);
-    return 'ok';
-  }
-
-  // If key is wrong and IP is locked out
-  if (rec && rec.count >= 10 && (now - rec.lastAttempt) < 15 * 60 * 1000) {
-    return 'locked';
-  }
-
-  // Only record failed attempt if an actual candidate was sent and was incorrect!
-  if (candidate) {
-    if (!rec || (now - rec.lastAttempt) > 15 * 60 * 1000) {
-      FAILED_ADMIN_ATTEMPTS.set(ip, { count: 1, lastAttempt: now });
-    } else {
-      rec.count++;
-      rec.lastAttempt = now;
-    }
-  }
-
-  return 'unauthorized';
-}
-
-function adminAuthResponse(status) {
-  if (status === 'locked') {
-    return new Response('Trop de tentatives infructueuses. Réessaie dans 15 minutes / Too many failed attempts. Locked out for 15 minutes.', { status: 429 });
-  }
-  return new Response('nope', { status: 403 });
-}
-
-function adminPageHeaders(authOk, env) {
-  const headers = {
-    'content-type': 'text/html; charset=utf-8',
-    'cache-control': 'no-store'
-  };
-  if (authOk && env?.ADMIN_KEY) {
-    headers['set-cookie'] = `admin_key=${encodeURIComponent(env.ADMIN_KEY)}; Path=/; Max-Age=2592000; SameSite=Lax; Secure`;
-  }
-  return headers;
-}
+// checkAdminAuth/adminAuthResponse/adminPageHeaders live in ./admin_auth.js so
+// review.js's /admin/review/* routes authenticate through the exact same
+// function (and share the same failed-attempt lockout) instead of each
+// module keeping its own copy.
 
 async function getSeasonFixtures(env, seasonName) {
   let d = null;
@@ -15063,22 +15003,32 @@ async function handleFetch(req, env, ctx) {
         }
         return await sheetData(env, url);
       }
-      if (url.pathname === '/admin/review' && req.method === 'GET')
-        return await handleReviewGet(req, env, url);
-      if (url.pathname === '/admin/review/upload' && req.method === 'POST')
-        return await handleReviewUpload(req, env);
-      if (url.pathname === '/admin/review/manual-start' && req.method === 'POST')
-        return await handleReviewManualStart(req, env);
-      if (url.pathname === '/admin/review/image' && req.method === 'GET')
-        return await handleReviewImage(req, env, url);
-      if (url.pathname === '/admin/review/publish' && req.method === 'POST')
-        return await handleReviewPublish(req, env, sendMail, env.ADMIN_EMAIL || ADMIN_EMAIL, ensureNextEvent);
-      if (url.pathname === '/admin/review/discard' && req.method === 'POST')
-        return await handleReviewDiscard(req, env);
-      if (url.pathname === '/admin/review/add-sheet' && req.method === 'POST')
-        return await handleReviewAddSheet(req, env);
-      if (url.pathname === '/admin/review/reprocess' && req.method === 'POST')
-        return await handleReviewReprocess(req, env);
+      if (url.pathname === '/admin/review' || url.pathname.startsWith('/admin/review/')) {
+        // Every /admin/review/* route — including GET — requires a valid admin
+        // key before doing anything else. Unlike /admin/board or /admin/teams,
+        // there is no "render the page shell with a login gate" fallback here:
+        // this surface handles scoresheet photos and player names, so an
+        // unauthenticated request gets a flat 403/401, never a response body.
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        if (url.pathname === '/admin/review' && req.method === 'GET')
+          return await handleReviewGet(req, env, url);
+        if (url.pathname === '/admin/review/upload' && req.method === 'POST')
+          return await handleReviewUpload(req, env);
+        if (url.pathname === '/admin/review/manual-start' && req.method === 'POST')
+          return await handleReviewManualStart(req, env);
+        if (url.pathname === '/admin/review/image' && req.method === 'GET')
+          return await handleReviewImage(req, env, url);
+        if (url.pathname === '/admin/review/publish' && req.method === 'POST')
+          return await handleReviewPublish(req, env, sendMail, env.ADMIN_EMAIL || ADMIN_EMAIL, ensureNextEvent);
+        if (url.pathname === '/admin/review/discard' && req.method === 'POST')
+          return await handleReviewDiscard(req, env);
+        if (url.pathname === '/admin/review/add-sheet' && req.method === 'POST')
+          return await handleReviewAddSheet(req, env);
+        if (url.pathname === '/admin/review/reprocess' && req.method === 'POST')
+          return await handleReviewReprocess(req, env);
+        return new Response('not found', { status: 404 });
+      }
       if (url.pathname === '/api/data-json' && req.method === 'GET')
         return await handleDataJson(env);
       if (url.pathname === '/api/backups' && req.method === 'GET')

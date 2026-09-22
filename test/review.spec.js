@@ -898,7 +898,7 @@ describe('Admin nav tabs hide stats-only links when tracksStats is false', () =>
   };
 
   it('renderReviewPage: hides Scoresheets and Season Recap tabs when the review\'s season config has tracksStats: false', () => {
-    const html = renderReviewPage(baseReview, 'test-key', [], { config: attendanceConfig });
+    const html = renderReviewPage(baseReview, [], { config: attendanceConfig });
     expect(html).not.toContain('data-tab="review"');
     expect(html).not.toContain('data-tab="recap"');
     expect(html).toContain('data-tab="subs"');
@@ -907,13 +907,13 @@ describe('Admin nav tabs hide stats-only links when tracksStats is false', () =>
   });
 
   it('renderReviewPage: still shows Scoresheets and Season Recap tabs for a stats-tracking season (Fall 2026 default unaffected)', () => {
-    const html = renderReviewPage({ ...baseReview, season: 'Fall 2026' }, 'test-key', [], { config: statsConfig });
+    const html = renderReviewPage({ ...baseReview, season: 'Fall 2026' }, [], { config: statsConfig });
     expect(html).toContain('data-tab="review"');
     expect(html).toContain('data-tab="recap"');
   });
 
   it('renderReviewIndex: hides Scoresheets and Season Recap tabs when showStatsTabs is false', () => {
-    const html = renderReviewIndex([], 'test-key', [], false);
+    const html = renderReviewIndex([], [], false);
     expect(html).not.toContain('data-tab="review"');
     expect(html).not.toContain('data-tab="recap"');
     expect(html).toContain('data-tab="subs"');
@@ -922,7 +922,7 @@ describe('Admin nav tabs hide stats-only links when tracksStats is false', () =>
   });
 
   it('renderReviewIndex: shows Scoresheets and Season Recap tabs by default (Fall 2026 default unaffected)', () => {
-    const html = renderReviewIndex([], 'test-key', []);
+    const html = renderReviewIndex([], []);
     expect(html).toContain('data-tab="review"');
     expect(html).toContain('data-tab="recap"');
   });
@@ -949,7 +949,7 @@ describe('Manual (no-photo) entry: add-player affordance on the review-editing s
       home_players: [], away_players: []
     }];
     const review = { ...blankGameReview, validated_json: JSON.stringify(games) };
-    const html = renderReviewPage(review, 'test-key', [], { config: getSeasonConfig(undefined) });
+    const html = renderReviewPage(review, [], { config: getSeasonConfig(undefined) });
     // The button must appear regardless of how many players a game currently has (zero here,
     // as for a manually-started review with no photo at all).
     expect(html).toContain("addPlayerRow(0, 'home')");
@@ -958,7 +958,7 @@ describe('Manual (no-photo) entry: add-player affordance on the review-editing s
   });
 
   it('addPlayerRow pushes into the same array recalc()/stepVal() index by DOM position (appendChild keeps array length and DOM child count in sync)', () => {
-    const html = renderReviewPage(blankGameReview, 'test-key', [], { config: getSeasonConfig(undefined) });
+    const html = renderReviewPage(blankGameReview, [], { config: getSeasonConfig(undefined) });
     // Extract the addPlayerRow function body and confirm it (a) pushes a blank player object
     // into the same gamesData array that recalc()/stepVal() read by index, and (b) appends the
     // new row as the tbody's last child — so its DOM position always matches the array index,

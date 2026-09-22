@@ -88,11 +88,176 @@ describe("SMBHL Worker", () => {
 	});
 
 	it("renders /admin/review index page with upload controls", async () => {
-		const response = await SELF.fetch("http://example.com/admin/review");
+		env.ADMIN_KEY = "test-review-index-admin";
+		const response = await SELF.fetch("http://example.com/admin/review", {
+			headers: { "x-admin": "test-review-index-admin" }
+		});
 		expect(response.status).toBe(200);
 		const html = await response.text();
 		expect(html).toContain("Feuilles de match");
 		expect(html).toContain("Téléverser");
+	});
+
+	it("rejects unauthenticated access to /admin/review with 403, unlike /admin/board's login-gate page", async () => {
+		env.ADMIN_KEY = "test-review-index-admin";
+		const response = await SELF.fetch("http://example.com/admin/review");
+		expect(response.status).toBe(403);
+		expect(await response.text()).toBe("nope");
+	});
+
+	describe("Security: every /admin/review/* route requires admin auth", () => {
+		const SECURITY_ADMIN_KEY = "test-review-security-admin-key";
+		let reviewId;
+
+		beforeAll(async () => {
+			env.ADMIN_KEY = SECURITY_ADMIN_KEY;
+			reviewId = "rev_security_test_1";
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO sheet_reviews (id, event_id, season, week, created_at, status, images_json, extracted_json, validated_json)
+				 VALUES (?, 'sec-evt-1', 'Fall 2026', 1, '2026-09-22T12:00:00Z', 'draft', '[]', '[]', '[]')`
+			).bind(reviewId).run();
+		});
+
+		const routes = () => [
+			{ method: "GET", path: "/admin/review" },
+			{ method: "GET", path: `/admin/review?id=${reviewId}` },
+			{ method: "GET", path: "/admin/review/image?key=img:whatever:0" },
+			{ method: "POST", path: "/admin/review/upload" },
+			{ method: "POST", path: "/admin/review/manual-start" },
+			{ method: "POST", path: "/admin/review/publish" },
+			{ method: "POST", path: "/admin/review/discard" },
+			{ method: "POST", path: "/admin/review/add-sheet" },
+			{ method: "POST", path: "/admin/review/reprocess" }
+		];
+
+		for (const route of routes()) {
+			it(`${route.method} ${route.path} — no credentials at all returns 403`, async () => {
+				env.ADMIN_KEY = SECURITY_ADMIN_KEY;
+				const res = await SELF.fetch(`http://example.com${route.path}`, {
+					method: route.method,
+					headers: route.method === "POST" ? { "content-type": "application/json" } : undefined,
+					body: route.method === "POST" ? "{}" : undefined
+				});
+				expect(res.status).toBe(403);
+				expect(await res.text()).toBe("nope");
+			});
+
+			it(`${route.method} ${route.path} — wrong key returns 403`, async () => {
+				env.ADMIN_KEY = SECURITY_ADMIN_KEY;
+				const res = await SELF.fetch(`http://example.com${route.path}`, {
+					method: route.method,
+					headers: Object.assign(
+						{ "x-admin": "definitely-not-the-real-key" },
+						route.method === "POST" ? { "content-type": "application/json" } : {}
+					),
+					body: route.method === "POST" ? "{}" : undefined
+				});
+				expect(res.status).toBe(403);
+			});
+		}
+
+		it("GET /admin/review (index, authenticated) never contains the literal ADMIN_KEY value anywhere in the response body", async () => {
+			env.ADMIN_KEY = SECURITY_ADMIN_KEY;
+			const res = await SELF.fetch("http://example.com/admin/review", {
+				headers: { "x-admin": SECURITY_ADMIN_KEY }
+			});
+			expect(res.status).toBe(200);
+			const html = await res.text();
+			expect(html).not.toContain(SECURITY_ADMIN_KEY);
+		});
+
+		it("GET /admin/review?id=... (authenticated) never contains the literal ADMIN_KEY value anywhere in the response body", async () => {
+			env.ADMIN_KEY = SECURITY_ADMIN_KEY;
+			const res = await SELF.fetch(`http://example.com/admin/review?id=${reviewId}`, {
+				headers: { "x-admin": SECURITY_ADMIN_KEY }
+			});
+			expect(res.status).toBe(200);
+			const html = await res.text();
+			expect(html).not.toContain(SECURITY_ADMIN_KEY);
+		});
+
+		it("a valid key via ?key= query param (as a magic link would carry it) authenticates GET /admin/review", async () => {
+			env.ADMIN_KEY = SECURITY_ADMIN_KEY;
+			const res = await SELF.fetch(`http://example.com/admin/review?key=${encodeURIComponent(SECURITY_ADMIN_KEY)}`);
+			expect(res.status).toBe(200);
+			const html = await res.text();
+			expect(html).not.toContain(SECURITY_ADMIN_KEY);
+			// Successful auth via any method refreshes the shared admin_key cookie,
+			// same as /admin/board and every other protected admin page.
+			expect(res.headers.get("set-cookie") || "").toContain("admin_key=");
+		});
+	});
+
+	describe("Manual entry end-to-end through the real HTTP/auth path (not just direct handler calls)", () => {
+		const E2E_ADMIN_KEY = "test-review-e2e-admin-key";
+		const E2E_SEASON = "E2EManualSeason2027";
+
+		beforeAll(async () => {
+			env.ADMIN_KEY = E2E_ADMIN_KEY;
+			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time, end_time)
+				 VALUES ('e2e-manual-evt-1', ?, 1, 'Sunday', 'Court A', 'open', '10:00', '11:00')`
+			).bind(E2E_SEASON).run();
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				current_season: E2E_SEASON,
+				seasons: [{
+					name: E2E_SEASON,
+					standings: [],
+					fixtures: [
+						{ week: 1, date: "Sunday", venue: "Court A", time: "10:00 AM", gym: "Court A", home: "Red", away: "Blue", hg: null, ag: null }
+					]
+				}],
+				players: []
+			}));
+		});
+
+		it("an authenticated admin can start a manual review and load its editing page through the real router (auth included)", async () => {
+			const startRes = await SELF.fetch("http://example.com/admin/review/manual-start", {
+				method: "POST",
+				headers: { "x-admin": E2E_ADMIN_KEY, "content-type": "application/json" },
+				body: JSON.stringify({ season: E2E_SEASON, week: 1 })
+			});
+			expect(startRes.status).toBe(200);
+			const { ok, id } = await startRes.json();
+			expect(ok).toBe(true);
+			expect(id).toBeTruthy();
+
+			const pageRes = await SELF.fetch(`http://example.com/admin/review?id=${id}`, {
+				headers: { "x-admin": E2E_ADMIN_KEY }
+			});
+			expect(pageRes.status).toBe(200);
+			const html = await pageRes.text();
+			expect(html).toContain("Red");
+			expect(html).toContain("Blue");
+			expect(html).toContain("addPlayerRow(0, 'home')");
+			expect(html).not.toContain(E2E_ADMIN_KEY);
+		});
+
+		it("the same authenticated admin can then publish that manually-created review through the real router", async () => {
+			const startRes = await SELF.fetch("http://example.com/admin/review/manual-start", {
+				method: "POST",
+				headers: { "x-admin": E2E_ADMIN_KEY, "content-type": "application/json" },
+				body: JSON.stringify({ season: E2E_SEASON, week: 1 })
+			});
+			const { id } = await startRes.json();
+
+			const publishRes = await SELF.fetch("http://example.com/admin/review/publish", {
+				method: "POST",
+				headers: { "x-admin": E2E_ADMIN_KEY, "content-type": "application/json" },
+				body: JSON.stringify({
+					review_id: id, week: 1,
+					games: [{
+						home_team: "Red", away_team: "Blue", home_score: 3, away_score: 1,
+						home_players: [],
+						away_players: []
+					}]
+				})
+			});
+			expect(publishRes.status).toBe(200);
+			const publishJson = await publishRes.json();
+			expect(publishJson.ok).toBe(true);
+		});
 	});
 
 	it("responds on /api/data-json with JSON", async () => {
@@ -3201,6 +3366,7 @@ describe("SMBHL Worker", () => {
 
 			const res = await worker.fetch(new Request("http://example.com/admin/review/upload", {
 				method: "POST",
+				headers: { "x-admin": "test-adminkey-attendance" },
 				body: formData
 			}), env);
 			expect(res.status).toBe(404);

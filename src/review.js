@@ -1,4 +1,5 @@
 import PostalMime from 'postal-mime';
+import { adminPageHeaders } from './admin_auth.js';
 import { computeWeeklyRecap } from './highlights.js';
 import { sortStandings, getRegularGoalsByTeam, updatePlayoffSchedule } from './awards.js';
 import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getSeasonConfigFromEnv, getTeamNames, normalizeTeamWithConfig, tracksStats, getLeagueConfig } from './season_config.js';
@@ -834,7 +835,7 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
   return d;
 }
 
-export function renderReviewPage(review, adminKey, candidatePlayers = [], options = {}) {
+export function renderReviewPage(review, candidatePlayers = [], options = {}) {
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   const images = JSON.parse(review.images_json || '[]');
   const games = JSON.parse(review.validated_json || '[]');
@@ -1055,17 +1056,17 @@ export function renderReviewPage(review, adminKey, candidatePlayers = [], option
 
 <div class="container">
   <div class="picker" id="admin-nav-tabs">
-    <a class="tabbtn" href="/admin/board${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="board" data-fr="Tableau" data-en="Board">Tableau</a>
-    <a class="tabbtn" href="/admin/subs${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="subs" data-fr="Substituts" data-en="Substitutes">Substituts</a>
-    <a class="tabbtn" href="/admin/teams${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="teams" data-fr="Équipes 👥" data-en="Teams 👥">Équipes 👥</a>
-    <a class="tabbtn" href="/admin/season${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="season" data-fr="Saison 🏒" data-en="Season 🏒">Saison 🏒</a>
-    <a class="tabbtn" href="/admin/contacts${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="contacts" data-fr="Contacts 📇" data-en="Contacts 📇">Contacts 📇</a>
-    <a class="tabbtn" href="/admin/schedule${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="schedule" data-fr="Calendrier 📅" data-en="Schedule 📅">Calendrier 📅</a>
-    <a class="tabbtn" href="/admin/comms${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="comms" data-fr="Comms 💬" data-en="Comms 💬">Comms 💬</a>
-    <a class="tabbtn" href="/admin/finances${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="finances" data-fr="Finances 💵" data-en="Finances 💵">Finances 💵</a>
-    ${showStatsTabs ? `<a class="tabbtn on" href="/admin/review${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>` : ''}
-    <a class="tabbtn" href="/admin/polls${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="polls" data-fr="Sondages 🗳️" data-en="Polls 🗳️">Sondages 🗳️</a>
-    ${showStatsTabs ? `<a class="tabbtn" href="/admin/season-recap${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>` : ''}
+    <a class="tabbtn" href="/admin/board" data-tab="board" data-fr="Tableau" data-en="Board">Tableau</a>
+    <a class="tabbtn" href="/admin/subs" data-tab="subs" data-fr="Substituts" data-en="Substitutes">Substituts</a>
+    <a class="tabbtn" href="/admin/teams" data-tab="teams" data-fr="Équipes 👥" data-en="Teams 👥">Équipes 👥</a>
+    <a class="tabbtn" href="/admin/season" data-tab="season" data-fr="Saison 🏒" data-en="Season 🏒">Saison 🏒</a>
+    <a class="tabbtn" href="/admin/contacts" data-tab="contacts" data-fr="Contacts 📇" data-en="Contacts 📇">Contacts 📇</a>
+    <a class="tabbtn" href="/admin/schedule" data-tab="schedule" data-fr="Calendrier 📅" data-en="Schedule 📅">Calendrier 📅</a>
+    <a class="tabbtn" href="/admin/comms" data-tab="comms" data-fr="Comms 💬" data-en="Comms 💬">Comms 💬</a>
+    <a class="tabbtn" href="/admin/finances" data-tab="finances" data-fr="Finances 💵" data-en="Finances 💵">Finances 💵</a>
+    ${showStatsTabs ? `<a class="tabbtn on" href="/admin/review" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>` : ''}
+    <a class="tabbtn" href="/admin/polls" data-tab="polls" data-fr="Sondages 🗳️" data-en="Polls 🗳️">Sondages 🗳️</a>
+    ${showStatsTabs ? `<a class="tabbtn" href="/admin/season-recap" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>` : ''}
   </div>
 
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:10px;">
@@ -1364,6 +1365,11 @@ export function renderReviewPage(review, adminKey, candidatePlayers = [], option
 </div>
 
 <script>
+// The server never embeds the admin key — it's resolved client-side the same
+// way every other admin page does (URL param, then localStorage, then the
+// admin_key cookie the server sets once you're authenticated).
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+if (K) { try { localStorage.setItem('adminkey', K); } catch (_) {} }
 if (window.history && window.history.replaceState) {
   const u = new URL(location);
   if (u.searchParams.has('key') || u.searchParams.has('k') || u.searchParams.has('t')) {
@@ -2047,7 +2053,7 @@ async function publishReview() {
   try {
     const res = await fetch('/admin/review/publish', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-admin': ${JSON.stringify(adminKey || '')} },
+      headers: { 'content-type': 'application/json', 'x-admin': K },
       body: JSON.stringify({ review_id: reviewId, week: reviewWeek, games: gamesData })
     });
     const data = await res.json();
@@ -2072,7 +2078,7 @@ async function discardReview() {
   try {
     const res = await fetch('/admin/review/discard', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-admin': ${JSON.stringify(adminKey || '')} },
+      headers: { 'content-type': 'application/json', 'x-admin': K },
       body: JSON.stringify({ review_id: reviewId })
     });
     const data = await res.json();
@@ -2095,7 +2101,7 @@ async function reprocessWithAI() {
   try {
     const res = await fetch('/admin/review/reprocess', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-admin': ${JSON.stringify(adminKey || '')} },
+      headers: { 'content-type': 'application/json', 'x-admin': K },
       body: JSON.stringify({ review_id: reviewId })
     });
     const data = await res.json();
@@ -2128,7 +2134,7 @@ applyLanguage(currentLang);
 </html>`;
 }
 
-export function renderReviewIndex(reviews = [], adminKey = '', backups = [], showStatsTabs = true) {
+export function renderReviewIndex(reviews = [], backups = [], showStatsTabs = true) {
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -2212,17 +2218,17 @@ export function renderReviewIndex(reviews = [], adminKey = '', backups = [], sho
 
 <div class="container">
   <div class="picker" id="admin-nav-tabs">
-    <a class="tabbtn" href="/admin/board${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="board" data-fr="Tableau" data-en="Board">Tableau</a>
-    <a class="tabbtn" href="/admin/subs${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="subs" data-fr="Substituts" data-en="Substitutes">Substituts</a>
-    <a class="tabbtn" href="/admin/teams${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="teams" data-fr="Équipes 👥" data-en="Teams 👥">Équipes 👥</a>
-    <a class="tabbtn" href="/admin/season${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="season" data-fr="Saison 🏒" data-en="Season 🏒">Saison 🏒</a>
-    <a class="tabbtn" href="/admin/contacts${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="contacts" data-fr="Contacts 📇" data-en="Contacts 📇">Contacts 📇</a>
-    <a class="tabbtn" href="/admin/schedule${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="schedule" data-fr="Calendrier 📅" data-en="Schedule 📅">Calendrier 📅</a>
-    <a class="tabbtn" href="/admin/comms${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="comms" data-fr="Comms 💬" data-en="Comms 💬">Comms 💬</a>
-    <a class="tabbtn" href="/admin/finances${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="finances" data-fr="Finances 💵" data-en="Finances 💵">Finances 💵</a>
-    ${showStatsTabs ? `<a class="tabbtn on" href="/admin/review${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>` : ''}
-    <a class="tabbtn" href="/admin/polls${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="polls" data-fr="Sondages 🗳️" data-en="Polls 🗳️">Sondages 🗳️</a>
-    ${showStatsTabs ? `<a class="tabbtn" href="/admin/season-recap${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>` : ''}
+    <a class="tabbtn" href="/admin/board" data-tab="board" data-fr="Tableau" data-en="Board">Tableau</a>
+    <a class="tabbtn" href="/admin/subs" data-tab="subs" data-fr="Substituts" data-en="Substitutes">Substituts</a>
+    <a class="tabbtn" href="/admin/teams" data-tab="teams" data-fr="Équipes 👥" data-en="Teams 👥">Équipes 👥</a>
+    <a class="tabbtn" href="/admin/season" data-tab="season" data-fr="Saison 🏒" data-en="Season 🏒">Saison 🏒</a>
+    <a class="tabbtn" href="/admin/contacts" data-tab="contacts" data-fr="Contacts 📇" data-en="Contacts 📇">Contacts 📇</a>
+    <a class="tabbtn" href="/admin/schedule" data-tab="schedule" data-fr="Calendrier 📅" data-en="Schedule 📅">Calendrier 📅</a>
+    <a class="tabbtn" href="/admin/comms" data-tab="comms" data-fr="Comms 💬" data-en="Comms 💬">Comms 💬</a>
+    <a class="tabbtn" href="/admin/finances" data-tab="finances" data-fr="Finances 💵" data-en="Finances 💵">Finances 💵</a>
+    ${showStatsTabs ? `<a class="tabbtn on" href="/admin/review" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>` : ''}
+    <a class="tabbtn" href="/admin/polls" data-tab="polls" data-fr="Sondages 🗳️" data-en="Polls 🗳️">Sondages 🗳️</a>
+    ${showStatsTabs ? `<a class="tabbtn" href="/admin/season-recap" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>` : ''}
   </div>
 
   <h1 id="pageHeading" data-i18n="pageHeading" style="font-family:'Barlow Condensed',sans-serif; font-size:28px; font-weight:700; margin:0 0 16px;">
@@ -2320,6 +2326,11 @@ export function renderReviewIndex(reviews = [], adminKey = '', backups = [], sho
 </div>
 
 <script>
+// The server never embeds the admin key — it's resolved client-side the same
+// way every other admin page does (URL param, then localStorage, then the
+// admin_key cookie the server sets once you're authenticated).
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+if (K) { try { localStorage.setItem('adminkey', K); } catch (_) {} }
 if (window.history && window.history.replaceState) {
   const u = new URL(location);
   if (u.searchParams.has('key') || u.searchParams.has('k') || u.searchParams.has('t')) {
@@ -2506,15 +2517,14 @@ async function startManualReview() {
   btn.disabled = true;
   btn.textContent = dict.btnManualStarting;
   try {
-    const adminKey = ${JSON.stringify(adminKey || '')};
     const res = await fetch('/admin/review/manual-start', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-admin': adminKey },
+      headers: { 'content-type': 'application/json', 'x-admin': K },
       body: JSON.stringify({ week })
     });
     const data = await res.json();
     if (data.ok) {
-      const keyParam = adminKey ? '&key=' + encodeURIComponent(adminKey) : '';
+      const keyParam = K ? '&key=' + encodeURIComponent(K) : '';
       window.location.href = '/admin/review?id=' + encodeURIComponent(data.id) + keyParam;
     } else {
       alert(dict.manualStartError(data.error || 'Unknown error'));
@@ -3131,9 +3141,10 @@ export async function handleReviewGet(req, env, url) {
       if (assistRuleRow?.value) maxAssistsPerGoal = Number(assistRuleRow.value) || 1;
     } catch (_) {}
 
-    return new Response(renderReviewPage(review, env.ADMIN_KEY, candidatePlayers, { maxAssistsPerGoal, config: seasonCfg }), {
-      headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
-    });
+    // The router already required a valid admin key to reach this point, so
+    // this always refreshes the admin_key cookie (same as /admin/board etc.) —
+    // it never renders the page for an unauthenticated caller.
+    return new Response(renderReviewPage(review, candidatePlayers, { maxAssistsPerGoal, config: seasonCfg }), { headers: adminPageHeaders(true, env) });
   }
 
   const reviews = (await env.DB.prepare('SELECT id, season, week, created_at, status FROM sheet_reviews ORDER BY created_at DESC LIMIT 25').all()).results || [];
@@ -3146,9 +3157,7 @@ export async function handleReviewGet(req, env, url) {
   try {
     showStatsTabs = tracksStats(await getSeasonConfigFromEnv(env, null));
   } catch (_) {}
-  return new Response(renderReviewIndex(reviews, env.ADMIN_KEY, backups, showStatsTabs), {
-    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
-  });
+  return new Response(renderReviewIndex(reviews, backups, showStatsTabs), { headers: adminPageHeaders(true, env) });
 }
 
 export async function handleReviewImage(req, env, url) {
