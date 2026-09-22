@@ -2925,6 +2925,117 @@ describe("SMBHL Worker", () => {
 		});
 	});
 
+	describe("Season-aware admin team resolution (custom 6-team season config)", () => {
+		const sixTeamConfig = {
+			teams: [
+				{ name: 'Hawks', name_fr: 'Faucons', colour: '#1c1f24', aliases: [] },
+				{ name: 'Wolves', name_fr: 'Loups', colour: '#374151', aliases: [] },
+				{ name: 'Bears', name_fr: 'Ours', colour: '#78350f', aliases: [] },
+				{ name: 'Lions', name_fr: 'Lions', colour: '#b45309', aliases: [] },
+				{ name: 'Eagles', name_fr: 'Aigles', colour: '#166534', aliases: [] },
+				{ name: 'Sharks', name_fr: 'Requins', colour: '#0369a1', aliases: [] }
+			],
+			goaliesPerTeam: 1,
+			skatersPerTeam: 7,
+			minSkaters: 4,
+			playoffFormat: 'top4_two_weeks'
+		};
+		const TEST_SEASON = 'TestLeague2026';
+		const TEST_EVENT_ID = 'testleague-2027-02-07';
+
+		beforeAll(async () => {
+			env.ADMIN_KEY = "test-adminkey-123";
+
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				current_season: "Fall 2026",
+				seasons: [
+					{ name: "Fall 2026", standings: [] },
+					{ name: TEST_SEASON, config: sixTeamConfig, standings: [] }
+				],
+				players: []
+			}));
+
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time, end_time)
+				 VALUES (?, ?, 1, 'Sunday, February 7, 2027', 'Letendre', 'open', '10:30', '12:30')`
+			).bind(TEST_EVENT_ID, TEST_SEASON).run();
+
+			// 1 confirmed goalie + 5 confirmed skaters on Hawks (minSkaters is 4, so this must NOT be short)
+			const hawksPlayers = [
+				{ id: 'hawk-g1', goalie: 1 },
+				{ id: 'hawk-s1', goalie: 0 },
+				{ id: 'hawk-s2', goalie: 0 },
+				{ id: 'hawk-s3', goalie: 0 },
+				{ id: 'hawk-s4', goalie: 0 },
+				{ id: 'hawk-s5', goalie: 0 }
+			];
+			for (const p of hawksPlayers) {
+				await env.DB.prepare(
+					`INSERT OR REPLACE INTO contacts (player_id, name, email, role, is_goalie, token_salt)
+					 VALUES (?, ?, ?, 'roster', ?, ?)`
+				).bind(p.id, p.id, p.id + '@example.com', p.goalie, p.id + '-salt').run();
+				await env.DB.prepare(
+					`INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at)
+					 VALUES (?, ?, 'Hawks', 'in', 'roster', 'self', datetime('now'))`
+				).bind(TEST_EVENT_ID, p.id).run();
+			}
+		});
+
+		it("/admin/team-links generates links for every team in the season's own config, not the legacy Red/Blue/White/Black list", async () => {
+			const res = await SELF.fetch(`http://example.com/admin/team-links?s=${encodeURIComponent(TEST_SEASON)}`, {
+				headers: { "x-admin": "test-adminkey-123" }
+			});
+			expect(res.status).toBe(200);
+			const data = await res.json();
+			const teamNames = data.links.map(l => l.team).sort();
+			expect(teamNames).toEqual(['Bears', 'Eagles', 'Hawks', 'Lions', 'Sharks', 'Wolves']);
+
+			const hawksLink = data.links.find(l => l.team === 'Hawks');
+			expect(hawksLink.link).toContain('team=Hawks');
+			expect(data.links.some(l => l.team === 'Red')).toBe(false);
+		});
+
+		it("/admin/board/data reports shortage per the season's own teams and config (5 confirmed skaters, minSkaters 4, is not short)", async () => {
+			const data = await (await boardData(env, new URL(`http://example.com/admin/board/data?e=${TEST_EVENT_ID}`))).json();
+			expect(data.event.id).toBe(TEST_EVENT_ID);
+
+			const teamNames = data.teams.map(t => t.team).sort();
+			expect(teamNames).toEqual(['Bears', 'Eagles', 'Hawks', 'Lions', 'Sharks', 'Wolves']);
+			expect(teamNames).not.toContain('Red');
+
+			const hawks = data.teams.find(t => t.team === 'Hawks');
+			expect(hawks.skaters).toBe(5);
+			expect(hawks.goalies).toBe(1);
+			expect(hawks.short).toBe(false); // 5 >= minSkaters(4) and 1 >= goaliesPerTeam(1)
+			expect(hawks.link).toContain('team=Hawks');
+		});
+
+		it("/admin/subs/reassign accepts a team from the season's own config and rejects a legacy team not in it", async () => {
+			await env.DB.prepare(
+				`INSERT OR REPLACE INTO contacts (player_id, name, email, role, is_sub, token_salt)
+				 VALUES ('hawk-sub1', 'Hawks Sub', 'hawksub@example.com', 'sub_skater', 1, 'hawk-sub1-salt')`
+			).run();
+
+			const okRes = await SELF.fetch("http://example.com/admin/subs/reassign", {
+				method: "POST",
+				headers: { "x-admin": "test-adminkey-123", "content-type": "application/json" },
+				body: JSON.stringify({ event_id: TEST_EVENT_ID, player_id: 'hawk-sub1', team: 'Hawks' })
+			});
+			expect(okRes.status).toBe(200);
+			const rsvpRow = await env.DB.prepare(
+				"SELECT team FROM rsvp WHERE event_id = ? AND player_id = ?"
+			).bind(TEST_EVENT_ID, 'hawk-sub1').first();
+			expect(rsvpRow.team).toBe('Hawks');
+
+			const badRes = await SELF.fetch("http://example.com/admin/subs/reassign", {
+				method: "POST",
+				headers: { "x-admin": "test-adminkey-123", "content-type": "application/json" },
+				body: JSON.stringify({ event_id: TEST_EVENT_ID, player_id: 'hawk-sub1', team: 'Red' })
+			});
+			expect(badRes.status).toBe(400);
+		});
+	});
+
 	describe("Admin Email Automations & Outbox Management (/admin/emails)", () => {
 		beforeAll(async () => {
 			env.ADMIN_KEY = "test-adminkey-123";

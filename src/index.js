@@ -42,7 +42,8 @@ import {
   getSeasonConfigForEvent,
   getTeamNames,
   getTeamNameFr,
-  isTeamValid
+  isTeamValid,
+  normalizeTeamWithConfig
 } from './season_config.js';
 
 /* SMBHL attendance
@@ -392,18 +393,18 @@ async function teamRows(db, eventId, team) {
   ).bind(eventId, team).all()).results || [];
 }
 
-async function allCounts(db, eventId) {
+async function allCounts(db, eventId, teamNames = TEAMS) {
   const rows = (await db.prepare(
     `SELECT team, status, COUNT(*) n FROM rsvp
       WHERE event_id = ? AND team IS NOT NULL GROUP BY team, status`
   ).bind(eventId).all()).results || [];
   const out = {};
-  for (const t of TEAMS) out[t] = { in: 0, out: 0, pending: 0 };
+  for (const t of teamNames) out[t] = { in: 0, out: 0, pending: 0 };
   for (const r of rows) if (out[r.team]) out[r.team][r.status] = r.n;
   return out;
 }
 
-function renderTeam(rows, counts, team) {
+function renderTeam(rows, counts, team, teamNames = TEAMS) {
   const label = { in: 'PRÉSENT', out: 'ABSENT', pending: '—' };
   const list = rows.map(r => {
     const name = r.name || r.guest_name || '?';
@@ -414,7 +415,7 @@ function renderTeam(rows, counts, team) {
       <td class="s ${r.status === 'pending' ? 'pend' : r.status}">${label[r.status]}</td></tr>`;
   }).join('');
 
-  const others = TEAMS.filter(t => t !== team).map(t =>
+  const others = teamNames.filter(t => t !== team).map(t =>
     `<li><b>${counts[t].in}</b>${esc(t)}</li>`).join('');
 
   return `<div class="card">
@@ -2788,7 +2789,8 @@ async function teamGet(req, env, url) {
   if (!ev) return notice('Aucun match ouvert', 'No open game');
 
   const rows = await teamRows(env.DB, ev.id, team);
-  const counts = await allCounts(env.DB, ev.id);
+  const teamNames = getTeamNames(cfg);
+  const counts = await allCounts(env.DB, ev.id, teamNames);
   const c = counts[team] || { in: 0 };
 
   const goalieIds = await rosterGoalies(env.DB, ev.id, team);
@@ -2823,7 +2825,7 @@ async function teamGet(req, env, url) {
       </td></tr>`;
   }).join('');
 
-  const others = TEAMS.filter(x => x !== team)
+  const others = teamNames.filter(x => x !== team)
     .map(x => `<li><b>${counts[x].in}</b>${esc(x)}</li>`).join('');
 
   const pool = await subPool(env.DB, ev.id);
@@ -3151,9 +3153,9 @@ async function teamPost(req, env, url) {
     await cancelPending(env, `notice:${ev.id}:${player_id}`);
     const c0 = await getContact(env.DB, player_id);
     const need0 = (c0 && c0.is_goalie) ? 'goalie' : 'skater';
-    if (await openSpots(env.DB, ev.id, team, need0) < 1) {
+    if (await openSpots(env.DB, ev.id, team, need0, cfgP) < 1) {
       await cancelPending(env, `hold:${ev.id}:${team}:${need0}`);
-      await stopWaves(env, ev.id, need0);
+      await stopWaves(env, ev.id, need0, cfgP);
     }
     return new Response('ok');
   }
@@ -3593,7 +3595,9 @@ function who(p, team, eventId) {
   if (p.role === 'guest') {
     tag = '<span class="by">' + esc(t('statusGuest')) + '</span>';
   } else if (p.role === 'sub') {
-    const teams = ['Red','Blue','White','Black'];
+    const teams = (currentBoardData && currentBoardData.teams)
+      ? currentBoardData.teams.map(tItem => tItem.team)
+      : [];
     const opts = teams.map(tOption => '<option value="' + tOption + '"' + (tOption === team ? ' selected' : '') + '>' + tOption + '</option>').join('');
     tag = '<span class="by" style="margin-left:4px">' + esc(t('subSelectorPrefix')) + ' <select class="sub-team-sel" data-player="' + esc(p.player_id) + '" data-event="' + esc(eventId) + '" style="font:inherit;font-size:12px;padding:1px 4px;border:1px solid var(--rule2);border-radius:3px;background:#fff">' + opts + '</select></span>';
   }
@@ -4257,9 +4261,10 @@ async function boardData(env, url = null) {
 
   if (!ev) return Response.json({ event: null, events: [], teams: [], waitlist: [] });
 
+  const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
   const statsMap = await getPlayerStats(env);
   const teams = [];
-  for (const team of TEAMS) {
+  for (const team of getTeamNames(cfg)) {
     const rows = (await env.DB.prepare(
       `SELECT r.player_id, r.guest_name, r.status, r.role, r.status_by,
               COALESCE(c.name, r.guest_name) AS name, COALESCE(c.is_goalie,0) AS is_goalie,
@@ -4277,7 +4282,7 @@ async function boardData(env, url = null) {
       }
     }
     const sortedRows = sortTeamBoardRows(rows, team);
-    const st = await teamState(env.DB, ev.id, team);
+    const st = await teamState(env.DB, ev.id, team, cfg);
     const salt = await teamSalt(env.DB, ev.season, team);
     const tk = await hmac(env.RSVP_SECRET, teamMsg(ev.season, team, salt));
     teams.push({ team, rows: sortedRows, skaters: st.skaters, goalies: st.goalies, short: st.short,
@@ -4619,7 +4624,7 @@ function renderSubsUI() {
 
       let statusHtml = '';
       if (s.statusCode === 'placed') {
-        const teams = ['Red','Blue','White','Black'];
+        const teams = (d.shortages || []).map(sh => sh.team);
         const opts = teams.map(tOption => '<option value="' + tOption + '"' + (tOption === s.placed_team ? ' selected' : '') + '>' + tOption + '</option>').join('');
         const teamSel = '<select class="sub-team-sel" data-player="' + esc(s.player_id) + '" data-event="' + esc(currentEventId) + '" style="font:inherit;font-size:12px;padding:2px 4px;border:1px solid var(--rule2);border-radius:3px;background:#fff;margin-left:4px">' + opts + '</select>';
         statusHtml = '<span class="in" style="font-weight:700">' + esc(t('statusPlaced')) + ' </span>' + teamSel +
@@ -4793,13 +4798,14 @@ async function subsData(env, url) {
 
   if (!ev) return Response.json({ event: null, events: [], stats: {}, shortages: [], subs: [], remaining: [] });
 
+  const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
   const statsMap = await getPlayerStats(env);
 
   const shortages = [];
-  for (const team of TEAMS) {
-    const st = await teamState(env.DB, ev.id, team);
-    const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie');
-    const openSkaters = await openSpots(env.DB, ev.id, team, 'skater');
+  for (const team of getTeamNames(cfg)) {
+    const st = await teamState(env.DB, ev.id, team, cfg);
+    const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
+    const openSkaters = await openSpots(env.DB, ev.id, team, 'skater', cfg);
     shortages.push({
       team,
       skaters: st.skaters,
@@ -5641,7 +5647,7 @@ function renderContacts(d) {
   };
 
   const rowSub = (p) => {
-    const teams = ['Red', 'Blue', 'White', 'Black'];
+    const teams = d.teams || [];
     const opts = '<option value="">' + esc(t('noTeamOpt')) + '</option>' + teams.map(tm =>
       '<option value="' + esc(tm) + '"' + (p.preferred_team === tm ? ' selected' : '') + '>' + esc(tm) + '</option>'
     ).join('');
@@ -6036,6 +6042,8 @@ async function peopleData(env) {
     d = { seasons: [], players: [] };
   }
   const currentSeason = d.current_season || (d.seasons && d.seasons[0]?.name) || 'Fall 2026';
+  const cfg = getSeasonConfig(d, currentSeason);
+  const teamNames = getTeamNames(cfg);
 
   const dbContacts = (await env.DB.prepare(
     `SELECT player_id, name, email, phone, role, is_goalie, is_backup_goalie, dormant, asked_streak, last_asked, preferred_team, previous_role, archive_reason
@@ -6053,7 +6061,7 @@ async function peopleData(env) {
     const sInfo = p.seasons?.[currentSeason];
     const gInfo = p.gseasons?.[currentSeason];
     const team = sInfo?.team || gInfo?.team;
-    if (team && ['Red', 'Blue', 'White', 'Black'].includes(team)) {
+    if (team && teamNames.includes(team)) {
       const isGoalie = gInfo?.team != null;
       rosterMap.set(p.id, {
         player_id: p.id,
@@ -6129,12 +6137,11 @@ async function peopleData(env) {
     }
   }
 
-  // Sort roster players by team ('Red', 'Blue', 'White', 'Black'), then goalies first, then name
-  const teamOrder = { Red: 1, Blue: 2, White: 3, Black: 4 };
+  // Sort roster players by the season's team order, then goalies first, then name
   rosterPeople.sort((a, b) => {
-    const tA = teamOrder[a.current_team] || 99;
-    const tB = teamOrder[b.current_team] || 99;
-    if (tA !== tB) return tA - tB;
+    const tA = teamNames.indexOf(a.current_team); const rA = tA === -1 ? 99 : tA;
+    const tB = teamNames.indexOf(b.current_team); const rB = tB === -1 ? 99 : tB;
+    if (rA !== rB) return rA - rB;
     if (a.is_goalie !== b.is_goalie) return b.is_goalie - a.is_goalie;
     return (a.name || '').localeCompare(b.name || '');
   });
@@ -6201,6 +6208,7 @@ async function peopleData(env) {
     people: [...rosterPeople, ...subPeople, ...archivedPeople],
     archived: archivedPeople,
     current_season: currentSeason,
+    teams: teamNames,
     counts: {
       roster: rosterPeople.length,
       sub_skater: subPeople.filter(p => p.role === 'sub_skater').length,
@@ -6235,7 +6243,8 @@ async function peopleAction(req, env) {
   if (!id && !['new', 'import_all', 'new_season_reset'].includes(b.action)) return new Response('no player', { status: 400 });
 
   if (b.action === 'pref_team') {
-    const pref = TEAMS.includes(b.team) ? b.team : null;
+    const cfg = await getSeasonConfigFromEnv(env);
+    const pref = normalizeTeamWithConfig(b.team, cfg);
     await env.DB.prepare('UPDATE contacts SET preferred_team=? WHERE player_id=?')
       .bind(pref, id).run();
     return Response.json({ ok: true });
@@ -7252,8 +7261,9 @@ async function teamLinksRoute(req, env, url) {
   if (auth !== 'ok') return adminAuthResponse(auth);
   const season = url.searchParams.get('s');
   if (!season) return new Response('need ?s=Season Name', { status: 400 });
+  const cfg = await getSeasonConfigFromEnv(env, season);
   const out = [];
-  for (const team of TEAMS) {
+  for (const team of getTeamNames(cfg)) {
     const salt = await teamSalt(env.DB, season, team);
     const t = await hmac(env.RSVP_SECRET, teamMsg(season, team, salt));
     out.push({ team, link: `${url.origin}/team-rsvp?s=${encodeURIComponent(season)}&team=${team}&t=${t}` });
@@ -7263,7 +7273,11 @@ async function teamLinksRoute(req, env, url) {
 
 async function reassignSub(req, env) {
   const { event_id, player_id, team } = await req.json().catch(() => ({}));
-  if (!event_id || !player_id || !TEAMS.includes(team)) {
+  if (!event_id || !player_id) {
+    return new Response('invalid params', { status: 400 });
+  }
+  const cfg = await getSeasonConfigForEvent(env, event_id);
+  if (!isTeamValid(cfg, team)) {
     return new Response('invalid params', { status: 400 });
   }
   const existing = await env.DB.prepare(
@@ -7357,8 +7371,9 @@ async function sheetData(env, url) {
         WHERE r.event_id = ?`
     ).bind(ev.id).all()).results || [];
 
+    const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
     const teams = {};
-    for (const t of TEAMS) {
+    for (const t of getTeamNames(cfg)) {
       teams[t] = {
         out: [],
         subs: []
@@ -7626,10 +7641,10 @@ function renderChampOptions() {
   if (!sel) return;
   const curVal = sel.value;
   const isEn = currentLang === 'en';
-  sel.innerHTML = '<option value="Black">' + (isEn ? 'Team Black 🏆' : 'Équipe Black (Noire) 🏆') + '</option>' +
-    '<option value="Blue">' + (isEn ? 'Team Blue 🏆' : 'Équipe Blue (Bleue) 🏆') + '</option>' +
-    '<option value="Red">' + (isEn ? 'Team Red 🏆' : 'Équipe Red (Rouge) 🏆') + '</option>' +
-    '<option value="White">' + (isEn ? 'Team White 🏆' : 'Équipe White (Blanche) 🏆') + '</option>';
+  const teams = (stateData && stateData.teams) ? stateData.teams : [];
+  sel.innerHTML = teams.map(tm =>
+    '<option value="' + esc(tm) + '">' + (isEn ? 'Team ' + esc(tm) + ' 🏆' : 'Équipe ' + esc(tm) + ' 🏆') + '</option>'
+  ).join('');
   if (curVal) sel.value = curVal;
 }
 
@@ -7670,6 +7685,7 @@ async function load(season = '') {
       '<option value="' + esc(s) + '"' + (s === stateData.season ? ' selected' : '') + '>' + esc(s) + '</option>'
     ).join('');
 
+    renderChampOptions();
     if (stateData.champion) {
       $('champSelect').value = stateData.champion;
     }
@@ -7966,11 +7982,13 @@ async function handleSeasonRecapData(req, env, url) {
 
   const hasPhoto = !!(await env.SHEETS_KV.get(`champion_photo:${season}`));
   const photoUrl = hasPhoto ? `/api/champion-photo?s=${encodeURIComponent(season)}` : null;
+  const teams = getTeamNames(getSeasonConfig(d, season));
 
   return Response.json({
     season,
     allSeasons,
-    champion: draft?.champion || s0?.champion || autoAwards.champion || 'Blue',
+    teams,
+    champion: draft?.champion || s0?.champion || autoAwards.champion || teams[0] || 'Blue',
     photo_url: photoUrl,
     autoAwards,
     awards: draft?.awards ? Object.fromEntries(
@@ -11805,7 +11823,7 @@ async function handleEmailsBroadcast(req, env) {
     recipients = (await env.DB.prepare(
       `SELECT player_id, name, email FROM contacts WHERE role LIKE 'sub_%' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
     ).all()).results || [];
-  } else if (['Red', 'Blue', 'White', 'Black'].includes(target)) {
+  } else if (isTeamValid(await getSeasonConfigFromEnv(env), target)) {
     recipients = (await env.DB.prepare(
       `SELECT player_id, name, email FROM contacts WHERE preferred_team = ? AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
     ).bind(target).all()).results || [];
@@ -13591,12 +13609,8 @@ async function handleTeamsData(req, env, url) {
     contactMap.set(c.player_id, c);
   }
 
-  const teams = {
-    Red: [],
-    Blue: [],
-    White: [],
-    Black: []
-  };
+  const cfg = getSeasonConfig(d, season);
+  const teams = Object.fromEntries(getTeamNames(cfg).map(name => [name, []]));
   const assignedPlayerIds = new Set();
 
   for (const p of (d.players || [])) {
@@ -13700,8 +13714,8 @@ async function handleTeamsMove(req, env) {
   p.seasons = p.seasons || {};
   p.gseasons = p.gseasons || {};
 
-  const validTeams = ['Red', 'Blue', 'White', 'Black'];
-  if (validTeams.includes(targetTeam)) {
+  const cfg = getSeasonConfig(d, season);
+  if (isTeamValid(cfg, targetTeam)) {
     if (pos === 'G') {
       delete p.seasons[season];
       p.gseasons[season] = p.gseasons[season] || { gp: 0, w: 0, l: 0, ga: 0, so: 0 };
@@ -13845,10 +13859,6 @@ async function handleTeamsAdd(req, env) {
   target_team = String(target_team || '').trim();
   position = String(position || 'A').toUpperCase().trim();
 
-  if (!['Red', 'Blue', 'White', 'Black'].includes(target_team)) {
-    return new Response(JSON.stringify({ error: 'Équipe cible invalide' }), { status: 400 });
-  }
-
   let raw = env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null;
   if (!raw) {
     const res = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
@@ -13858,6 +13868,11 @@ async function handleTeamsAdd(req, env) {
   const currentSeason = d.current_season || (d.seasons && d.seasons[0]?.name) || 'Fall 2026';
   if (season !== currentSeason) {
     return new Response(JSON.stringify({ error: 'Seule la saison active (' + currentSeason + ') peut être modifiée. Les saisons archivées sont en lecture seule.' }), { status: 400 });
+  }
+
+  const cfg = getSeasonConfig(d, season);
+  if (!isTeamValid(cfg, target_team)) {
+    return new Response(JSON.stringify({ error: 'Équipe cible invalide' }), { status: 400 });
   }
 
   let pid = String(player_id || '').trim();
@@ -14392,10 +14407,11 @@ async function teamsPage(env = null, isAuthed = false) {
     });
     seasonSel.onchange = () => load();
 
-    const TEAMS = ['Red', 'Blue', 'White', 'Black'];
+    const TEAMS = Object.keys(teamsData.teams || {});
     TEAMS.forEach(tName => {
       const listId = 'list-' + tName.toLowerCase();
       const statsId = 'stats-' + tName.toLowerCase();
+      if (!$(listId) || !$(statsId)) return; // this page's cards only cover the 4 legacy team slots
       const players = (teamsData.teams && teamsData.teams[tName]) || [];
 
       const goalies = players.filter(p => p.is_goalie || p.position === 'G').length;
@@ -14519,7 +14535,7 @@ async function teamsPage(env = null, isAuthed = false) {
 
     const sel = $('trade-player-b-sel');
     sel.innerHTML = '';
-    const TEAMS = ['Red', 'Blue', 'White', 'Black'].filter(tName => tName !== team);
+    const TEAMS = Object.keys(teamsData.teams || {}).filter(tName => tName !== team);
     TEAMS.forEach(tName => {
       const players = (teamsData.teams && teamsData.teams[tName]) || [];
       if (!players.length) return;
@@ -14941,8 +14957,9 @@ async function handleFetch(req, env, ctx) {
           `SELECT * FROM events WHERE state='open' ORDER BY week LIMIT 1`).first();
         if (!ev) return Response.json({ error: 'no open event' });
         const base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+        const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
         const links = {};
-        for (const team of TEAMS) {
+        for (const team of getTeamNames(cfg)) {
           const salt = await teamSalt(env.DB, ev.season, team);
           const t = await hmac(env.RSVP_SECRET, teamMsg(ev.season, team, salt));
           links[team] = `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${team}&t=${t}`;
