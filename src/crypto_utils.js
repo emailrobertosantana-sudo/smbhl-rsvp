@@ -6,6 +6,9 @@
 const enc = new TextEncoder();
 
 export async function hmac(secret, message) {
+  if (!secret) {
+    throw new Error('hmac() called without a secret — refusing to sign with an empty key');
+  }
   const key = await crypto.subtle.importKey(
     'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
