@@ -3,7 +3,7 @@ import { hmac, same } from './crypto_utils.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -15250,6 +15250,11 @@ async function handleFetch(req, env, ctx) {
       // this pattern.
       if (url.pathname === '/league/contacts' && req.method === 'GET')
         return await handleLeagueContacts(req, env, url);
+      // First write-side league route (Part I — see the task report):
+      // session+checkLeagueAccess-gated ONLY, no ADMIN_KEY path at all —
+      // this must never become a new door into SMBHL's data.
+      if (url.pathname === '/league/season/publish' && req.method === 'POST')
+        return await handleLeagueSeasonPublish(req, env);
       // Signup/login/dashboard pages — pure UI on top of the routes above.
       if ((url.pathname === '/signup' || url.pathname === '/signup/') && req.method === 'GET')
         return new Response(renderSignupPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });

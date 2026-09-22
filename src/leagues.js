@@ -17,7 +17,7 @@
 // which routes have been migrated so far and which remain.
 
 import { checkUserSession } from './auth.js';
-import { dataJsonKeyFor } from './league_ids.js';
+import { SMBHL_LEAGUE_ID, dataJsonKeyFor } from './league_ids.js';
 import { getSeasonConfig } from './season_config.js';
 
 /* ---------- league-scoped authorization ----------
@@ -110,6 +110,27 @@ export async function getLeagueDataJson(env, leagueId) {
   }
 }
 
+// Write counterpart to getLeagueDataJson — the FIRST write path this
+// codebase has for a second league's own data_json-equivalent. Defense in
+// depth, on top of every caller already being required to go through
+// checkLeagueAccess for a specific leagueId first: this function itself
+// hard-refuses to ever write to SMBHL_LEAGUE_ID ('smbhl', whose
+// dataJsonKeyFor resolves to the literal, real 'data_json' key). No code
+// path in this app can legitimately reach this leagueId from a real user
+// session today (no league_admins row links any signed-up user to the
+// 'smbhl' league row migrate-020.sql created), but this makes that a hard
+// guarantee at the write boundary itself, not just an emergent property of
+// how sessions happen to resolve today.
+export async function putLeagueDataJson(env, leagueId, dataJson) {
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    throw new Error('putLeagueDataJson refuses to write to SMBHL\'s own data_json key.');
+  }
+  if (!env.SHEETS_KV) {
+    throw new Error('KV binding SHEETS_KV is missing.');
+  }
+  await env.SHEETS_KV.put(dataJsonKeyFor(leagueId), JSON.stringify(dataJson));
+}
+
 // Resolves the effective season config for leagueId: its own data_json-
 // equivalent (getLeagueDataJson) run through season_config.js's
 // getSeasonConfig, with one addition — if that league has no season
@@ -163,6 +184,95 @@ export async function handleLeagueContacts(req, env, url) {
   ).bind(leagueId).all()).results || [];
 
   return Response.json({ ok: true, league_id: leagueId, contacts });
+}
+
+/* ---------- POST /league/season/publish ----------
+ * The first WRITE path for a second league's own data_json-equivalent.
+ * Deliberately minimal — a genuine starting point (current_season set, one
+ * seasons[] entry using the league's own signup team names, empty
+ * standings/players), NOT a Season Hub launch equivalent (rosters,
+ * fixtures, draft engine — that stays a separate, later task).
+ *
+ * Session+checkLeagueAccess-gated ONLY. This never checks checkAdminAuth
+ * at all — there is no ADMIN_KEY path into this route, by design (see the
+ * task report): it must not become a new door into SMBHL's data for
+ * whoever holds ADMIN_KEY without also being a real logged-in league
+ * admin.
+ *
+ * Overwrite semantics: calling this again with the SAME season name
+ * replaces that season's entry (and re-sets current_season to it) rather
+ * than rejecting or versioning. Simplicity was favored per the task's own
+ * guidance, and it matches how a league admin would actually expect
+ * "publish my season" to behave — correcting a mistake shouldn't require
+ * a separate "edit" capability this task isn't building. A DIFFERENT
+ * season name is added as a new entry alongside any existing ones, not a
+ * replacement, so calling this for "Season 2" doesn't erase "Season 1"'s
+ * history.
+ */
+export async function handleLeagueSeasonPublish(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+  const seasonName = String(body.season_name || '').trim();
+  if (!seasonName) {
+    return Response.json({ ok: false, error: 'season_name is required.' }, { status: 400 });
+  }
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  // Defense in depth (see putLeagueDataJson's own comment): this route
+  // must never be able to write SMBHL's real data, even in principle.
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot publish to SMBHL\'s data.' }, { status: 403 });
+  }
+
+  const leagueRow = await env.DB.prepare('SELECT team_names FROM leagues WHERE id = ?').bind(leagueId).first();
+  let teamNames = [];
+  if (leagueRow && leagueRow.team_names) {
+    try {
+      const parsed = JSON.parse(leagueRow.team_names);
+      if (Array.isArray(parsed)) teamNames = parsed.filter(Boolean);
+    } catch (_) {}
+  }
+  if (teamNames.length < 2) {
+    return Response.json({ ok: false, error: 'This league has no team names on file yet.' }, { status: 400 });
+  }
+
+  const existing = await getLeagueDataJson(env, leagueId);
+  const seasons = (Array.isArray(existing.seasons) ? existing.seasons : []).filter(Boolean);
+
+  const newSeasonEntry = {
+    name: seasonName,
+    config: { teams: teamNames },
+    standings: teamNames.map(team => ({ team, gp: 0, w: 0, l: 0, t: 0, pts: 0, gf: 0, ga: 0 })),
+    games: 0
+  };
+
+  const idx = seasons.findIndex(s => s && s.name === seasonName);
+  const overwritten = idx >= 0;
+  if (overwritten) {
+    seasons[idx] = newSeasonEntry;
+  } else {
+    seasons.unshift(newSeasonEntry);
+  }
+
+  const updated = {
+    current_season: seasonName,
+    seasons,
+    players: Array.isArray(existing.players) ? existing.players : []
+  };
+
+  await putLeagueDataJson(env, leagueId, updated);
+
+  return Response.json({ ok: true, league_id: leagueId, current_season: seasonName, teams: teamNames, overwritten });
 }
 
 export async function handleLeagueCreate(req, env) {
