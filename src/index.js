@@ -13992,6 +13992,9 @@ async function teamsPage(env = null, isAuthed = false) {
     .form-group label { display:block; font-size:12px; font-weight:700; color:var(--soft); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.03em; }
     .form-control { width:100%; font:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; box-sizing:border-box; }
     .form-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    @media (max-width: 768px) {
+      .teams-grid { grid-template-columns: 1fr; }
+    }
   </style>
   ${adminTabs('teams', isAuthed)}
   <h1 data-i18n="title">Alignements & Équipes</h1>
@@ -14016,52 +14019,8 @@ async function teamsPage(env = null, isAuthed = false) {
       </div>
     </div>
 
-    <!-- 4 Team Cards Grid -->
-    <div class="teams-grid">
-      <!-- Red -->
-      <div class="team-card">
-        <div class="team-card-header red">
-          <div class="team-title">🔴 Red</div>
-          <div class="team-stats-lbl" id="stats-red">0 joueur</div>
-        </div>
-        <div class="team-card-body" id="list-red">
-          <div style="color:var(--soft); font-size:13px; text-align:center; padding:16px;" data-i18n="loading">Chargement...</div>
-        </div>
-      </div>
-
-      <!-- Blue -->
-      <div class="team-card">
-        <div class="team-card-header blue">
-          <div class="team-title">🔵 Blue</div>
-          <div class="team-stats-lbl" id="stats-blue">0 joueur</div>
-        </div>
-        <div class="team-card-body" id="list-blue">
-          <div style="color:var(--soft); font-size:13px; text-align:center; padding:16px;" data-i18n="loading">Chargement...</div>
-        </div>
-      </div>
-
-      <!-- White -->
-      <div class="team-card">
-        <div class="team-card-header white">
-          <div class="team-title">⚪ White</div>
-          <div class="team-stats-lbl" id="stats-white">0 joueur</div>
-        </div>
-        <div class="team-card-body" id="list-white">
-          <div style="color:var(--soft); font-size:13px; text-align:center; padding:16px;" data-i18n="loading">Chargement...</div>
-        </div>
-      </div>
-
-      <!-- Black -->
-      <div class="team-card">
-        <div class="team-card-header black">
-          <div class="team-title">⚫ Black</div>
-          <div class="team-stats-lbl" id="stats-black">0 joueur</div>
-        </div>
-        <div class="team-card-body" id="list-black">
-          <div style="color:var(--soft); font-size:13px; text-align:center; padding:16px;" data-i18n="loading">Chargement...</div>
-        </div>
-      </div>
-    </div>
+    <!-- Team Cards Grid: cards are generated dynamically in render(), one per team in the active season's config -->
+    <div class="teams-grid" id="teams-grid"></div>
 
     <!-- Sub Pool & Free Agents Section -->
     <div class="sec-box">
@@ -14412,10 +14371,28 @@ async function teamsPage(env = null, isAuthed = false) {
     seasonSel.onchange = () => load();
 
     const TEAMS = Object.keys(teamsData.teams || {});
-    TEAMS.forEach(tName => {
-      const listId = 'list-' + tName.toLowerCase();
-      const statsId = 'stats-' + tName.toLowerCase();
-      if (!$(listId) || !$(statsId)) return; // this page's cards only cover the 4 legacy team slots
+    const LEGACY_HEADER_CLASS = { red: 'red', blue: 'blue', white: 'white', black: 'black' };
+    const FALLBACK_PALETTE = ['#7c3aed', '#0f766e', '#b45309', '#334155', '#be185d', '#4d7c0f'];
+    const FALLBACK_EMOJI = ['🟣', '🟢', '🟠', '⬛', '🟤', '🟡'];
+    const grid = $('teams-grid');
+    grid.innerHTML = TEAMS.map((tName, i) => {
+      const key = tName.toLowerCase();
+      const headerClass = LEGACY_HEADER_CLASS[key] || '';
+      const headerStyle = headerClass ? '' : ' style="background:' + FALLBACK_PALETTE[i % FALLBACK_PALETTE.length] + ';color:#fff;"';
+      const emoji = key === 'red' ? '🔴' : key === 'blue' ? '🔵' : key === 'white' ? '⚪' : key === 'black' ? '⚫' : FALLBACK_EMOJI[i % FALLBACK_EMOJI.length];
+      const slug = 'team-' + i;
+      return '<div class="team-card">' +
+        '<div class="team-card-header ' + headerClass + '"' + headerStyle + '>' +
+          '<div class="team-title">' + emoji + ' ' + esc(tName) + '</div>' +
+          '<div class="team-stats-lbl" id="stats-' + slug + '">0 ' + esc(t('playerSingle')) + '</div>' +
+        '</div>' +
+        '<div class="team-card-body" id="list-' + slug + '"></div>' +
+      '</div>';
+    }).join('');
+
+    TEAMS.forEach((tName, i) => {
+      const listId = 'list-team-' + i;
+      const statsId = 'stats-team-' + i;
       const players = (teamsData.teams && teamsData.teams[tName]) || [];
 
       const goalies = players.filter(p => p.is_goalie || p.position === 'G').length;

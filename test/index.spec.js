@@ -2814,6 +2814,23 @@ describe("SMBHL Worker", () => {
 			expect(aResp.status).toBe(403);
 		});
 
+		it("/admin/teams/data returns the correct team count and names for a 4-team season (Fall 2026, default config), unaffected by the roster-card layout change", async () => {
+			await env.SHEETS_KV.put("data_json", JSON.stringify({
+				current_season: "Fall 2026",
+				seasons: [{ name: "Fall 2026", standings: [] }],
+				players: []
+			}));
+
+			const res = await worker.fetch(new Request("http://example.com/admin/teams/data?season=Fall+2026", {
+				headers: { "x-admin": "test-adminkey-123" }
+			}), env);
+			expect(res.status).toBe(200);
+			const data = await res.json();
+			const teamNames = Object.keys(data.teams).sort();
+			expect(teamNames).toEqual(["Black", "Blue", "Red", "White"]);
+			expect(teamNames.length).toBe(4);
+		});
+
 		it("supports loading team rosters, moving players, and trading players with open RSVP sync", async () => {
 			// Mock data.json in SHEETS_KV
 			const initialData = {
@@ -3060,6 +3077,17 @@ describe("SMBHL Worker", () => {
 				body: JSON.stringify({ event_id: TEST_EVENT_ID, player_id: 'hawk-sub1', team: 'Red' })
 			});
 			expect(badRes.status).toBe(400);
+		});
+
+		it("/admin/teams/data returns the correct team count and names for a 6-team season (TestLeague2026 config), unaffected by the roster-card layout change", async () => {
+			const res = await SELF.fetch(`http://example.com/admin/teams/data?season=${encodeURIComponent(TEST_SEASON)}`, {
+				headers: { "x-admin": "test-adminkey-123" }
+			});
+			expect(res.status).toBe(200);
+			const data = await res.json();
+			const teamNames = Object.keys(data.teams).sort();
+			expect(teamNames).toEqual(["Bears", "Eagles", "Hawks", "Lions", "Sharks", "Wolves"]);
+			expect(teamNames.length).toBe(6);
 		});
 	});
 
