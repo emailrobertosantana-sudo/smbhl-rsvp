@@ -3033,6 +3033,112 @@ describe("SMBHL Worker", () => {
 		});
 	});
 
+	describe("Season-config-driven league branding & email identity", () => {
+		beforeAll(async () => {
+			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
+			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, guest_name TEXT, team TEXT, status TEXT, role TEXT, status_by TEXT, updated_at TEXT, PRIMARY KEY (event_id, player_id))`).run();
+			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT)`).run();
+		});
+
+		it("Fall 2026 (no league override) still sends under SMBHL's exact original identity — byte-for-byte unchanged", async () => {
+			const originalFetch = globalThis.fetch;
+			const sent = [];
+			globalThis.fetch = async (url, opts) => {
+				if (String(url).includes('api.resend.com')) {
+					sent.push(JSON.parse(opts.body));
+					return new Response(JSON.stringify({ id: 'mock_resend_id' }), { status: 200 });
+				}
+				return originalFetch(url, opts);
+			};
+
+			try {
+				env.RESEND_API_KEY = 're_test_key_branding';
+				env.RSVP_SECRET = 'test-secret-branding';
+				await env.SHEETS_KV.put("data_json", JSON.stringify({
+					current_season: "Fall 2026",
+					seasons: [{ name: "Fall 2026", standings: [] }],
+					players: []
+				}));
+				const past = new Date(Date.now() - 60000).toISOString();
+				await env.DB.prepare(`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time) VALUES ('brand-test-fall2026', 'Fall 2026', 3, 'Sunday', 'Gym', 'open', '10:30')`).run();
+				await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, email, role, token_salt) VALUES ('BRAND_P1', 'Brand Test Player', 'brandtest1@example.com', 'roster', 'salt-brand-1')`).run();
+				await env.DB.prepare(`INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at) VALUES ('brand-test-fall2026', 'BRAND_P1', 'Red', 'pending', 'roster', 'auto', ?)`).bind(past).run();
+				await env.DB.prepare(`INSERT INTO outbox (kind, event_id, player_id, team, dedup_key, payload, send_after, created_at) VALUES ('gameday', 'brand-test-fall2026', 'BRAND_P1', 'Red', 'brandtest:fall2026:1', '{}', ?, ?)`).bind(past, past).run();
+
+				const result = await drain(env);
+				expect(result.sent).toBe(1);
+				expect(sent.length).toBe(1);
+				expect(sent[0].from).toBe('SMBHL - Hockey <joueur@smbhl.com>');
+				expect(sent[0].reply_to).toBe('info@smbhl.com');
+				expect(sent[0].headers['List-Unsubscribe']).toBe('<mailto:joueur@smbhl.com?subject=unsubscribe>');
+				expect(sent[0].html).toContain('SMBHL');
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+
+		it("a season with its own league config (TestLeague2026) sends under that league's identity, not SMBHL's", async () => {
+			const originalFetch = globalThis.fetch;
+			const sent = [];
+			globalThis.fetch = async (url, opts) => {
+				if (String(url).includes('api.resend.com')) {
+					sent.push(JSON.parse(opts.body));
+					return new Response(JSON.stringify({ id: 'mock_resend_id' }), { status: 200 });
+				}
+				return originalFetch(url, opts);
+			};
+
+			try {
+				env.RESEND_API_KEY = 're_test_key_branding';
+				env.RSVP_SECRET = 'test-secret-branding';
+				await env.SHEETS_KV.put("data_json", JSON.stringify({
+					current_season: "Fall 2026",
+					seasons: [
+						{ name: "Fall 2026", standings: [] },
+						{
+							name: "TestLeague2026",
+							standings: [],
+							config: {
+								teams: [{ name: 'Hawks', name_fr: 'Faucons', colour: '#1c1f24', aliases: [] }],
+								league: {
+									name: 'TestLeague2026',
+									tagline: 'Test League of the Testing Suite',
+									fromEmail: 'test@testleague.example',
+									replyToEmail: 'reply@testleague.example',
+									siteUrl: 'https://testleague.example',
+									faviconUrl: 'https://testleague.example/favicon.svg'
+								}
+							}
+						}
+					],
+					players: []
+				}));
+				const past = new Date(Date.now() - 60000).toISOString();
+				await env.DB.prepare(`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time) VALUES ('brand-test-testleague', 'TestLeague2026', 1, 'Sunday', 'Gym', 'open', '10:30')`).run();
+				await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, email, role, token_salt) VALUES ('BRAND_P2', 'Brand Test Player Two', 'brandtest2@example.com', 'roster', 'salt-brand-2')`).run();
+				await env.DB.prepare(`INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at) VALUES ('brand-test-testleague', 'BRAND_P2', 'Hawks', 'pending', 'roster', 'auto', ?)`).bind(past).run();
+				await env.DB.prepare(`INSERT INTO outbox (kind, event_id, player_id, team, dedup_key, payload, send_after, created_at) VALUES ('gameday', 'brand-test-testleague', 'BRAND_P2', 'Hawks', 'brandtest:testleague:1', '{}', ?, ?)`).bind(past, past).run();
+
+				const result = await drain(env);
+				expect(result.sent).toBe(1);
+				expect(sent.length).toBe(1);
+				expect(sent[0].from).toBe('test@testleague.example');
+				expect(sent[0].reply_to).toBe('reply@testleague.example');
+				expect(sent[0].headers['List-Unsubscribe']).toBe('<mailto:test@testleague.example?subject=unsubscribe>');
+				expect(sent[0].html).toContain('TestLeague2026');
+				expect(sent[0].html).toContain('testleague.example');
+				expect(sent[0].html).not.toContain('SMBHL');
+				// The RSVP action links (yes/no, team-rsvp) still use env.PUBLIC_URL's fallback,
+				// a separate, already-existing mechanism from league.siteUrl (not part of this
+				// change) — only the "team page" / marketing-site link uses league.siteUrl.
+				expect(sent[0].html).toContain('testleague.example/#/team/');
+				expect(sent[0].html).not.toContain('href="https://smbhl.com');
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+	});
+
 	describe("Season-aware admin team resolution (custom 6-team season config)", () => {
 		const sixTeamConfig = {
 			teams: [

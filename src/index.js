@@ -43,7 +43,8 @@ import {
   getTeamNames,
   getTeamNameFr,
   isTeamValid,
-  normalizeTeamWithConfig
+  normalizeTeamWithConfig,
+  getLeagueConfig
 } from './season_config.js';
 
 /* SMBHL attendance
@@ -235,17 +236,18 @@ async function getStandingsTooltip(env) {
   }
 }
 
-function page(title, body, logoTooltip = '') {
+function page(title, body, logoTooltip = '', leagueCfg = null) {
+  const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
   const titleAttr = logoTooltip ? ` title="${esc(logoTooltip)}"` : '';
   return `<!DOCTYPE html><html lang="fr-CA"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} — SMBHL</title>
-<meta name="description" content="Plateforme de pr\u00e9sence et gestion d\u2019\u00e9quipe de la ligue de hockey balle SMBHL (Sunday Morning Ball Hockey League).">
+<title>${esc(title)} — ${esc(league.name)}</title>
+<meta name="description" content="Plateforme de présence et gestion d’équipe de la ligue de hockey balle ${esc(league.name)} (${esc(league.tagline)}).">
 <meta name="rating" content="general">
 <meta name="rating" content="safe for kids">
 <meta itemprop="isFamilyFriendly" content="true">
 <meta name="classification" content="Sports, Hockey">
-<link rel="icon" href="https://smbhl.com/img/favicon-32.svg" type="image/svg+xml">
+<link rel="icon" href="${esc(league.faviconUrl)}" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <script>
 (function() {
@@ -330,7 +332,7 @@ function page(title, body, logoTooltip = '') {
  footer a{color:var(--soft)}
 </style></head><body>
 <div class="top"><div class="wrap" style="display:flex;align-items:center;justify-content:space-between;">
-  <a href="https://smbhl.com/"${titleAttr} id="logo-link"><img src="/api/logo.svg" alt="SMBHL"${titleAttr}></a>
+  <a href="${esc(league.siteUrl)}/"${titleAttr} id="logo-link"><img src="/api/logo.svg" alt="${esc(league.name)}"${titleAttr}></a>
   <div class="langswitch">
     <button type="button" class="langbtn on" data-l="fr" id="btn-lang-fr" onclick="window.__setLang &amp;&amp; window.__setLang(&apos;fr&apos;)">FR</button>
     <button type="button" class="langbtn" data-l="en" id="btn-lang-en" onclick="window.__setLang &amp;&amp; window.__setLang(&apos;en&apos;)">EN</button>
@@ -347,7 +349,7 @@ if (window.__currentLang) {
 }
 </script>
 <div class="wrap">${body}</div>
-<footer class="wrap">SMBHL · Laval, Québec · <a href="https://smbhl.com/" id="footer-stats-link">Statistiques</a></footer>
+<footer class="wrap">${esc(league.name)} · Laval, Québec · <a href="${esc(league.siteUrl)}/" id="footer-stats-link">Statistiques</a></footer>
 <script>
 (function() {
   function triggerInitLang() {
@@ -528,19 +530,29 @@ export function sanitizeAndValidateEmail(raw) {
   return { valid: true, email };
 }
 
-async function sendMail(env, to, subject, text, html = null, attachments = null) {
+function extractEmailAddress(fromValue) {
+  const m = String(fromValue || '').match(/<([^>]+)>/);
+  return m ? m[1] : String(fromValue || '').trim();
+}
+
+// `leagueCfg` (from getLeagueConfig(seasonConfig)) lets season-scoped callers send
+// under that season's own identity. Omitting it (as most call sites still do)
+// preserves the exact SMBHL FROM/REPLY_TO/unsubscribe values used previously.
+async function sendMail(env, to, subject, text, html = null, attachments = null, leagueCfg = null) {
   if (!env.RESEND_API_KEY) throw new Error('RESEND_API_KEY not set');
   const check = sanitizeAndValidateEmail(to);
   if (!check.valid) throw new Error(`invalid email format: "${to}"`);
   const cleanTo = check.email;
+  const fromAddr = (leagueCfg && leagueCfg.fromEmail) || FROM;
+  const replyTo = (leagueCfg && leagueCfg.replyToEmail) || REPLY_TO;
   const payload = {
-    from: FROM,
+    from: fromAddr,
     to: [cleanTo],
-    reply_to: REPLY_TO,
+    reply_to: replyTo,
     subject,
     text,
     headers: {
-      'List-Unsubscribe': '<mailto:joueur@smbhl.com?subject=unsubscribe>'
+      'List-Unsubscribe': `<mailto:${extractEmailAddress(fromAddr)}?subject=unsubscribe>`
     }
   };
   if (html) payload.html = html;
@@ -676,7 +688,9 @@ function formatInviteDate(ev) {
   };
 }
 
-function emailWrap(title, contentHtml) {
+function emailWrap(title, contentHtml, leagueCfg = null) {
+  const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
+  const siteHost = String(league.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -688,7 +702,7 @@ function emailWrap(title, contentHtml) {
   <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:540px; margin:0 auto; background-color:#ffffff; border:1px solid #dde1e7; border-radius:8px; overflow:hidden;">
     <tr>
       <td style="background-color:#16181d; padding:14px 20px; color:#ffffff;">
-        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 SMBHL</span>
+        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 ${esc(league.name)}</span>
       </td>
     </tr>
     <tr>
@@ -698,7 +712,7 @@ function emailWrap(title, contentHtml) {
     </tr>
     <tr>
       <td style="background-color:#f8fafc; padding:14px 20px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b; text-align:center;">
-        SMBHL · Sunday Morning Ball Hockey League · <a href="https://smbhl.com" style="color:#2563eb; text-decoration:none;">smbhl.com</a>
+        ${esc(league.name)} · ${esc(league.tagline)} · <a href="${esc(league.siteUrl)}" style="color:#2563eb; text-decoration:none;">${esc(siteHost)}</a>
       </td>
     </tr>
   </table>
@@ -736,8 +750,10 @@ function renderInviteEmail({
   noUrl,
   leagueMessage,
   duesReminder,
-  highlights
+  highlights,
+  leagueCfg = null
 }) {
+  const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
   const subj = `Présence : ${dateFR(ev.date)} / RSVP: ${ev.date}`;
   const when = formatInviteDate(ev);
   const qFr = role === 'sub'
@@ -820,11 +836,11 @@ function renderInviteEmail({
     ${highlightsHtml}
   `;
 
-  const html = emailWrap(subj, contentHtml);
+  const html = emailWrap(subj, contentHtml, league);
 
   // Plain text content
   const textParts = [
-    '🏒 SMBHL',
+    `🏒 ${league.name}`,
     '',
     `Salut ${name} / Hi ${name},`,
     '',
@@ -860,16 +876,20 @@ function renderInviteEmail({
   }
 
   textParts.push('');
-  textParts.push('SMBHL · smbhl.com');
+  textParts.push(`${league.name} · ${String(league.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '')}`);
 
   const text = textParts.join('\n');
 
   return { subject: subj, text, html };
 }
 
-function body(kind, { ev, name, team, link, payload }) {
+function body(kind, { ev, name, team, link, payload, leagueCfg = null }) {
+  const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
+  const siteUrl = league.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl;
+  const siteHost = String(siteUrl).replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const wrapEmail = (title, contentHtml) => emailWrap(title, contentHtml, league);
   const w = whenLine(ev);
-  const sign = '\n\n—\nSMBHL · smbhl.com';
+  const sign = `\n\n—\n${league.name} · ${siteHost}`;
   const matchInfo = payload && payload.fixtureText ? payload.fixtureText : '';
 
   switch (kind) {
@@ -885,6 +905,7 @@ function body(kind, { ev, name, team, link, payload }) {
         noUrl: (payload && payload.no) || `${link}&v=out`,
         leagueMessage: payload && payload.leagueMessage,
         duesReminder: payload && payload.duesReminder,
+        leagueCfg: league,
         highlights: payload && payload.highlights
       });
     }
@@ -909,7 +930,7 @@ We still do not have your answer for ${w.en}.
 YES (In) : ${payload.yes}
 NO  (Out): ${payload.no}${sign}`;
 
-      const html = emailWrap(
+      const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>On n'a toujours pas ta réponse pour <b>${esc(w.fr)}</b>.</p>
         ${matchInfo ? `<div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:10px 14px; margin:0 0 16px; font-size:14px; white-space:pre-line;">${esc(matchInfo.trim())}</div>` : ''}
@@ -989,7 +1010,7 @@ ${webUrl ? `Fiche d'équipe : ${webUrl}\nTeam page: ${webUrl}\n` : ''}
 Tu ne peux plus venir ? Mets ton statut à jour ici. / Can't make it? Update your status here.
 Je ne peux pas jouer / I can't play : ${noUrl}${sign}`;
 
-      const html = emailWrap(
+      const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 4px; font-weight:700;">Salut <b>${esc(name)}</b> / Hi <b>${esc(name)}</b>,</p>
         <p style="font-size:16px; margin:0 0 3px; font-weight:600; color:#0f172a;">Rappel : tu es confirmé(e) avec <b>${esc(frTeam)}</b> pour demain, <b>${esc(w.fr)}</b> !</p>
@@ -1000,7 +1021,7 @@ Je ne peux pas jouer / I can't play : ${noUrl}${sign}`;
         <div style="margin:0 0 14px;">
           ${emailBtn(teamUrl, "📋 Voir l'alignement de l'équipe / View team lineup", '#17457f', '#ffffff')}
         </div>
-        ${webUrl ? `<p style="font-size:13px; margin:0 0 16px;"><a href="${esc(webUrl)}" style="color:#17457f; text-decoration:underline;">Consulter la fiche de l'équipe / Team page sur smbhl.com</a></p>` : ''}
+        ${webUrl ? `<p style="font-size:13px; margin:0 0 16px;"><a href="${esc(webUrl)}" style="color:#17457f; text-decoration:underline;">Consulter la fiche de l'équipe / Team page sur ${esc(siteHost)}</a></p>` : ''}
         <div style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px 14px; margin:0 0 18px;">
           <p style="font-size:13px; color:#334155; margin:0 0 4px; font-weight:700;">Tu ne peux plus venir ? Mets ton statut à jour ici.</p>
           <p style="font-size:12px; color:#64748b; margin:0 0 10px;">Can't make it? Update your status here.</p>
@@ -1048,7 +1069,7 @@ ${msgsListText}
 
 📋 View team board & lineup: ${teamUrl}${sign}`;
 
-      const html = emailWrap(
+      const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>Des coéquipiers ont laissé des notes sur le tableau de l'équipe <b>${esc(frTeam)}</b> pour <b>${esc(w.fr)}</b> !</p>
         ${matchInfo ? `<div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:10px 14px; margin:0 0 16px; font-size:14px; white-space:pre-line;">${esc(matchInfo.trim())}</div>` : ''}
@@ -1108,7 +1129,7 @@ ${msgsListText}
 📋 View team board: ${teamUrl}
 See you at the gym soon!${sign}`;
 
-      const html = emailWrap(
+      const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>De nouveaux messages ont été publiés ce matin pour l'équipe <b>${esc(frTeam)}</b> avant le match (<b>${esc(w.fr)}</b>) :</p>
         <div style="margin:0 0 18px; background-color:#fffbeb; border:1px solid #fde68a; border-left:4px solid #f59e0b; border-radius:4px; padding:12px 14px;">
@@ -1145,7 +1166,7 @@ ${payload.by === 'manager' ? 'The admin' : 'A teammate'} marked you ${
   payload.status === 'in' ? 'IN' : 'OUT'} for ${w.en}.
 Not right? Change it: ${link}${sign}`;
 
-      const html = emailWrap(
+      const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
         <p style="font-size:15px; margin:0 0 14px;">${payload.by === 'manager' ? 'L\u2019admin' : 'Un coéquipier'} t'a marqué <b>${payload.status === 'in' ? 'PRÉSENT' : 'ABSENT'}</b> pour <b>${esc(w.fr)}</b>.</p>
@@ -1189,7 +1210,7 @@ Apporte un chandail ${SHIRT_FR[team] || team.toLowerCase()}.
 You are playing for ${team} ${w.en}.
 Bring a ${team.toLowerCase()} shirt.${sign}`;
 
-      const html = emailWrap(
+      const html = wrapEmail(
         subj,
         goalie ?
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
@@ -1220,7 +1241,7 @@ Finalement on n'a plus besoin de toi avec ${tFR(team)} ${w.fr}. Désolé du dér
 
 We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}`;
 
-      const html = emailWrap(
+      const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
         <p style="font-size:15px; margin:0 0 16px;">Finalement on n'a plus besoin de toi avec <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>. Désolé du dérangement.</p>
@@ -1254,7 +1275,7 @@ Available?   YES: ${payload.yes}
 If the spot is taken you stay on the waitlist for the other teams.
 Want off the sub list? Just reply to this email.${sign}`;
 
-      const html = emailWrap(
+      const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 16px;">
           <b>${esc(tFR(team))}</b> cherche ${g ? 'un gardien' : 'un joueur'} <b>${esc(w.fr)}</b>.
@@ -1316,7 +1337,7 @@ ${team} ${en} for ${w.en}.
 See who has not answered, add a sub or a guest:
 ${payload.teamLink}${sign}`;
 
-      const html = emailWrap(
+      const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
         <p style="font-size:15px; margin:0 0 16px;"><b>${esc(tFR(team))}</b> ${esc(fr)} pour <b>${esc(w.fr)}</b>.</p>
@@ -1344,7 +1365,7 @@ ${payload.teamLink}${sign}`;
       const season = (payload && payload.season) || ev?.season || 'Fall 2026';
       const base = (payload && payload.base) || 'https://rsvp.smbhl.com';
       const recapUrl = `${base}/admin/season-recap?s=${encodeURIComponent(season)}`;
-      const subj = `[SMBHL] Préparation du bilan de fin de saison (${season}) / Season Recap Ready`;
+      const subj = `[${league.name}] Préparation du bilan de fin de saison (${season}) / Season Recap Ready`;
       const text =
 `Bonjour Roberto,
 
@@ -1360,9 +1381,9 @@ Tu peux maintenant accéder à la page d'administration pour :
 ${recapUrl}
 
 —
-SMBHL Automation`;
+${league.name} Automation`;
 
-      const html = emailWrap(
+      const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Bonjour <b>Roberto</b>,</p>
         <p style="font-size:15px; margin:0 0 14px;">
@@ -1391,7 +1412,7 @@ SMBHL Automation`;
       const awards = (payload && payload.awards) || {};
       const intro = (payload && payload.intro_note) || '';
       const outro = (payload && payload.outro_note) || '';
-      const subj = `SMBHL — Félicitations aux Champions (${champ}) & Bilan ${season} !`;
+      const subj = `${league.name} — Félicitations aux Champions (${champ}) & Bilan ${season} !`;
 
       const awardDefs = [
         { key: 'rocketRichard', name: 'Rocket Richard', desc: 'Meilleur buteur, Top Goal Scorer', icon: '🚀' },
@@ -1422,12 +1443,12 @@ ${intro ? intro + '\n\n' : ''}FÉLICITATIONS AUX CHAMPIONS DE LA SAISON ${season
 ${awardsText}
 ${outro ? '\n' + outro + '\n' : ''}
 Consulte toutes les statistiques finales, classements et fiches complètes sur le site officiel :
-https://smbhl.com
+${siteUrl}
 
 Merci à tous pour cette excellente saison et à très bientôt pour la prochaine saison !
 
 —
-SMBHL · Sunday Morning Ball Hockey League · smbhl.com`;
+${league.name} · ${league.tagline} · ${siteHost}`;
 
       const awardsHtml = awardDefs.map(a => {
         const val = (awards[a.key] || '').trim();
@@ -1473,11 +1494,11 @@ SMBHL · Sunday Morning Ball Hockey League · smbhl.com`;
         ${outro ? `<p style="font-size:15px; line-height:1.5; margin:0 0 20px; color:#334155;">${esc(outro).replace(/\n/g, '<br>')}</p>` : ''}
 
         <div style="text-align:center; margin:24px 0 10px;">
-          ${emailBtn('https://smbhl.com', '🌐 Voir les statistiques complètes sur smbhl.com ↗', '#17457f', '#ffffff')}
+          ${emailBtn(siteUrl, `🌐 Voir les statistiques complètes sur ${esc(siteHost)} ↗`, '#17457f', '#ffffff')}
         </div>
       `;
 
-      return { subject: subj, text, html: emailWrap(subj, contentHtml) };
+      return { subject: subj, text, html: wrapEmail(subj, contentHtml) };
     }
   }
   return null;
@@ -1533,6 +1554,7 @@ async function drain(env, limit = 40) {
       } else if (!ev) {
         throw new Error('event gone');
       }
+      const leagueCfg = getLeagueConfig(getSeasonConfig(await getDataJson(), ev.season));
       if (m.kind === 'holdcall') {
         await runHoldCall(env, m);
         await env.DB.prepare('UPDATE outbox SET sent_at=? WHERE id=?')
@@ -1668,8 +1690,7 @@ async function drain(env, limit = 40) {
               const salt = await teamSalt(env.DB, ev.season, playerTeam);
               const tt = await hmac(env.RSVP_SECRET, teamMsg(ev.season, playerTeam, salt));
               payload.teamLink = `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${playerTeam}&t=${tt}&p=${m.player_id}`;
-              const siteUrl = env.SITE_URL || 'https://smbhl.com';
-              payload.websiteTeamLink = `${siteUrl}/#/team/${encodeURIComponent(ev.season)}/${encodeURIComponent(playerTeam)}`;
+              payload.websiteTeamLink = `${leagueCfg.siteUrl}/#/team/${encodeURIComponent(ev.season)}/${encodeURIComponent(playerTeam)}`;
 
               if (m.kind === 'gameday' || m.kind === 'friday_board') {
                 payload.teamMessages = await getTeamMessages(env.DB, m.event_id, playerTeam, 5);
@@ -1717,9 +1738,9 @@ async function drain(env, limit = 40) {
           .bind('too close to game time', m.id).run();
         continue;
       }
-      const msg = body(m.kind, { ev, name, team: playerTeam || m.team, link, payload });
+      const msg = body(m.kind, { ev, name, team: playerTeam || m.team, link, payload, leagueCfg });
       if (!msg) throw new Error('unknown kind ' + m.kind);
-      await sendMail(env, to, msg.subject, msg.text, msg.html);
+      await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg);
       if (m.kind === 'sub_call') {
         await env.DB.prepare(
           `UPDATE contacts SET asked_streak = asked_streak + 1, last_asked = ?,
@@ -13951,6 +13972,8 @@ async function handleTeamsAdd(req, env) {
 
 async function teamsPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  const resolvedCfg = env ? await getSeasonConfigFromEnv(env, null) : null;
+  const leagueCfg = resolvedCfg ? getLeagueConfig(resolvedCfg) : null;
   return page('Équipes', `
   <style>
     .wrap { max-width: 1200px !important; }
@@ -14747,7 +14770,7 @@ async function teamsPage(env = null, isAuthed = false) {
     document.querySelectorAll('.picker').forEach(p => p.style.display = 'flex');
     load();
   }
-  </script>`, logoTooltip);
+  </script>`, logoTooltip, leagueCfg);
 }
 
 const TEAM_COLORS = {

@@ -834,7 +834,15 @@ describe('Multi-team season config (6-team season, Parts 3 & 4)', () => {
       goaliesPerTeam: 1,
       skatersPerTeam: 8,
       minSkaters: 5,
-      playoffFormat: 'top4_single_day'
+      playoffFormat: 'top4_single_day',
+      league: {
+        name: 'SMBHL',
+        tagline: 'Sunday Morning Ball Hockey League',
+        fromEmail: 'SMBHL - Hockey <joueur@smbhl.com>',
+        replyToEmail: 'info@smbhl.com',
+        siteUrl: 'https://smbhl.com',
+        faviconUrl: 'https://smbhl.com/img/favicon-32.svg'
+      }
     });
     expect(getTeamNames(getSeasonConfig({ name: 'Configless Season', standings: [], fixtures: [] })))
       .toEqual(['Red', 'Blue', 'White', 'Black']);

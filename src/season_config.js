@@ -1,8 +1,9 @@
 /**
  * season_config.js — Unified Season Configuration Engine
- * 
+ *
  * Provides dynamic season configurations (teams, colours, aliases, roster targets,
- * and playoff formats) with strict fallback to historical SMBHL defaults.
+ * playoff formats, and league branding/email identity) with strict fallback to
+ * historical SMBHL defaults.
  */
 
 export const DEFAULT_SEASON_CONFIG = {
@@ -15,7 +16,21 @@ export const DEFAULT_SEASON_CONFIG = {
   goaliesPerTeam: 1,
   skatersPerTeam: 8,
   minSkaters: 5,
-  playoffFormat: 'top4_single_day'
+  playoffFormat: 'top4_single_day',
+  // Branding/email identity. `fromEmail` is passed as-is to the mail API's `from`
+  // field (RFC5322 allows either a bare address or a "Display Name <addr>" form),
+  // preserved verbatim here to keep SMBHL's existing sender identity byte-for-byte.
+  league: {
+    name: 'SMBHL',
+    // Full descriptive name shown alongside `name` in page meta/email footers
+    // (e.g. "SMBHL · Sunday Morning Ball Hockey League"). Not explicitly asked
+    // for, but needed so the default output stays byte-for-byte identical.
+    tagline: 'Sunday Morning Ball Hockey League',
+    fromEmail: 'SMBHL - Hockey <joueur@smbhl.com>',
+    replyToEmail: 'info@smbhl.com',
+    siteUrl: 'https://smbhl.com',
+    faviconUrl: 'https://smbhl.com/img/favicon-32.svg'
+  }
 };
 
 /**
@@ -42,12 +57,23 @@ export function normalizeSeasonConfig(rawConfig) {
       }).filter(t => Boolean(t.name))
     : [...DEFAULT_SEASON_CONFIG.teams];
 
+  const rawLeague = (rawConfig.league && typeof rawConfig.league === 'object') ? rawConfig.league : {};
+  const league = {
+    name: rawLeague.name || DEFAULT_SEASON_CONFIG.league.name,
+    tagline: rawLeague.tagline || DEFAULT_SEASON_CONFIG.league.tagline,
+    fromEmail: rawLeague.fromEmail || DEFAULT_SEASON_CONFIG.league.fromEmail,
+    replyToEmail: rawLeague.replyToEmail || DEFAULT_SEASON_CONFIG.league.replyToEmail,
+    siteUrl: rawLeague.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl,
+    faviconUrl: rawLeague.faviconUrl || DEFAULT_SEASON_CONFIG.league.faviconUrl
+  };
+
   return {
     teams,
     goaliesPerTeam: Number(rawConfig.goaliesPerTeam) || DEFAULT_SEASON_CONFIG.goaliesPerTeam,
     skatersPerTeam: Number(rawConfig.skatersPerTeam) || DEFAULT_SEASON_CONFIG.skatersPerTeam,
     minSkaters: Number(rawConfig.minSkaters) || DEFAULT_SEASON_CONFIG.minSkaters,
-    playoffFormat: rawConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat
+    playoffFormat: rawConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat,
+    league
   };
 }
 
@@ -109,6 +135,23 @@ export function getSeasonConfig(seasonOrData, targetSeasonName = null) {
 export function getTeamNames(config) {
   const cfg = config && config.teams ? config : DEFAULT_SEASON_CONFIG;
   return cfg.teams.map(t => t.name);
+}
+
+/**
+ * Returns the branding/email-identity block for a given config, falling back to
+ * SMBHL's defaults field-by-field (so a partial `league` override doesn't lose
+ * the rest of the identity).
+ */
+export function getLeagueConfig(config) {
+  const raw = (config && config.league && typeof config.league === 'object') ? config.league : {};
+  return {
+    name: raw.name || DEFAULT_SEASON_CONFIG.league.name,
+    tagline: raw.tagline || DEFAULT_SEASON_CONFIG.league.tagline,
+    fromEmail: raw.fromEmail || DEFAULT_SEASON_CONFIG.league.fromEmail,
+    replyToEmail: raw.replyToEmail || DEFAULT_SEASON_CONFIG.league.replyToEmail,
+    siteUrl: raw.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl,
+    faviconUrl: raw.faviconUrl || DEFAULT_SEASON_CONFIG.league.faviconUrl
+  };
 }
 
 /**
