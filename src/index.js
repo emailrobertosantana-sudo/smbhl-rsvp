@@ -1,7 +1,7 @@
 import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
-import { handleSignup, handleLogin, handleLogout, handleVerifyEmail } from './auth.js';
+import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, checkUserSession, isUserEmailVerified } from './auth.js';
 import { handleLeagueCreate } from './leagues.js';
 import {
   cleanupOldReviews,
@@ -312,6 +312,258 @@ if (window.__currentLang) {
 }
 
 const notice = (fr, en, logoTooltip = '') => page(fr, `<h1>${esc(fr)}<span class="en">${esc(en)}</span></h1>`, logoTooltip);
+
+/* ---------- user-account pages (signup / login / dashboard) ----------
+ * Pure UI on top of the existing Part A/B/C backend routes (auth.js /
+ * leagues.js) — no new backend logic here. Reuses page()'s existing shared
+ * shell/styles (same .card/.btn/input look as every other page in this app)
+ * rather than introducing a separate visual system for these new pages.
+ */
+
+function renderSignupPage() {
+  return page('Créer un compte', `
+  <h1>Créer votre ligue<span class="en">Create your league</span></h1>
+  <p class="when">Un seul compte pour gérer votre ligue de hockey balle.<span class="en">One account to manage your ball hockey league.</span></p>
+  <div class="card">
+    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Courriel<span class="en" style="display:block;font-weight:400;">Email</span></span>
+      <input type="email" id="su_email" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Mot de passe (8 caractères min.)<span class="en" style="display:block;font-weight:400;">Password (min. 8 characters)</span></span>
+      <input type="password" id="su_password" required minlength="8" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <hr style="border:none;border-top:1px solid var(--rule);margin:20px 0;">
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Nom de la ligue<span class="en" style="display:block;font-weight:400;">League name</span></span>
+      <input type="text" id="su_league_name" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Division / groupe d'âge <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Division / age group <i>(optional)</i></span></span>
+      <input type="text" id="su_division" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Nombre d'équipes<span class="en" style="display:block;font-weight:400;">Number of teams</span></span>
+      <input type="number" id="su_team_count" min="2" max="16" value="4" style="width:100px;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <div id="teamNamesContainer" style="margin-bottom:14px;"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:20px;">
+      <input type="checkbox" id="su_tracks_stats" checked style="width:18px;height:18px;">
+      <span>Cette ligue suit les statistiques (buts, passes, classement)<span class="en" style="display:block;font-weight:400;">This league tracks stats (goals, assists, standings)</span></span>
+    </label>
+    <div class="btns">
+      <button type="button" class="btn" id="su_submit" onclick="submitSignup()">CRÉER MON COMPTE<span class="en" style="display:block;font-size:13px;font-weight:600;">CREATE MY ACCOUNT</span></button>
+    </div>
+  </div>
+  <p class="state">Déjà un compte? <a href="/login">Se connecter</a><span class="en"> · Already have an account? <a href="/login">Log in</a></span></p>
+<script>
+function teamNamesEl() { return document.getElementById('teamNamesContainer'); }
+function renderTeamInputs() {
+  const count = Math.max(2, Math.min(16, Number(document.getElementById('su_team_count').value) || 2));
+  const container = teamNamesEl();
+  const existing = Array.from(container.querySelectorAll('input')).map(i => i.value);
+  container.innerHTML = '';
+  const label = document.createElement('div');
+  label.style.cssText = 'font-weight:600;margin-bottom:4px;';
+  label.textContent = "Noms des équipes";
+  container.appendChild(label);
+  for (let i = 0; i < count; i++) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Équipe ' + (i + 1);
+    input.value = existing[i] || '';
+    input.style.cssText = 'width:100%;font:inherit;padding:9px;border:1px solid var(--rule2);border-radius:3px;margin-bottom:6px;display:block;';
+    container.appendChild(input);
+  }
+}
+document.getElementById('su_team_count').addEventListener('input', renderTeamInputs);
+renderTeamInputs();
+
+function showError(msg) {
+  const el = document.getElementById('formErr');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+function clearError() {
+  document.getElementById('formErr').style.display = 'none';
+}
+
+async function submitSignup() {
+  clearError();
+  const email = document.getElementById('su_email').value.trim();
+  const password = document.getElementById('su_password').value;
+  const leagueName = document.getElementById('su_league_name').value.trim();
+  const division = document.getElementById('su_division').value.trim();
+  const tracksStats = document.getElementById('su_tracks_stats').checked;
+  const teamNames = Array.from(teamNamesEl().querySelectorAll('input')).map(i => i.value.trim()).filter(Boolean);
+
+  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+    showError("Veuillez entrer un courriel valide. / Please enter a valid email address.");
+    return;
+  }
+  if (password.length < 8) {
+    showError("Le mot de passe doit contenir au moins 8 caractères. / Password must be at least 8 characters.");
+    return;
+  }
+  if (!leagueName) {
+    showError("Le nom de la ligue est requis. / League name is required.");
+    return;
+  }
+  if (teamNames.length < 2) {
+    showError("Veuillez entrer au moins 2 noms d'équipe. / Please enter at least 2 team names.");
+    return;
+  }
+
+  const btn = document.getElementById('su_submit');
+  btn.disabled = true;
+  try {
+    const signupRes = await fetch('/auth/signup', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const signupData = await signupRes.json().catch(() => ({}));
+    if (!signupRes.ok || !signupData.ok) {
+      if (signupRes.status === 429) {
+        showError("Trop de tentatives de création de compte. Veuillez réessayer plus tard. / Too many signup attempts. Please try again later.");
+      } else {
+        showError(signupData.error || "La création du compte a échoué. / Signup failed.");
+      }
+      btn.disabled = false;
+      return;
+    }
+
+    const leagueRes = await fetch('/leagues/create', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: leagueName, teamNames, tracksStats, divisionLabel: division || null })
+    });
+    const leagueData = await leagueRes.json().catch(() => ({}));
+    if (!leagueRes.ok || !leagueData.ok) {
+      showError("Votre compte a été créé, mais la création de la ligue a échoué : " + (leagueData.error || 'erreur inconnue') + ". Rafraîchissez la page et réessayez, ou connectez-vous. / Your account was created, but league setup failed: " + (leagueData.error || 'unknown error') + ". Refresh and try again, or log in.");
+      btn.disabled = false;
+      return;
+    }
+
+    window.location.href = '/dashboard';
+  } catch (e) {
+    showError("Erreur réseau. Veuillez réessayer. / Network error. Please try again.");
+    btn.disabled = false;
+  }
+}
+</script>`);
+}
+
+function renderLoginPage() {
+  return page('Connexion', `
+  <h1>Connexion<span class="en">Log in</span></h1>
+  <div class="card">
+    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Courriel<span class="en" style="display:block;font-weight:400;">Email</span></span>
+      <input type="email" id="li_email" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:18px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Mot de passe<span class="en" style="display:block;font-weight:400;">Password</span></span>
+      <input type="password" id="li_password" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <div class="btns">
+      <button type="button" class="btn" id="li_submit" onclick="submitLogin()">SE CONNECTER<span class="en" style="display:block;font-size:13px;font-weight:600;">LOG IN</span></button>
+    </div>
+  </div>
+  <p class="state">Pas de compte? <a href="/signup">Créer un compte</a><span class="en"> · No account? <a href="/signup">Sign up</a></span></p>
+<script>
+function showError(msg) {
+  const el = document.getElementById('formErr');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+function clearError() {
+  document.getElementById('formErr').style.display = 'none';
+}
+
+async function submitLogin() {
+  clearError();
+  const email = document.getElementById('li_email').value.trim();
+  const password = document.getElementById('li_password').value;
+  if (!email || !password) {
+    showError("Veuillez entrer votre courriel et mot de passe. / Please enter your email and password.");
+    return;
+  }
+  const btn = document.getElementById('li_submit');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/auth/login', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      // Deliberately the exact message the server sent — Part A's login
+      // route already returns the same generic error whether the email
+      // exists or not, and this page must not narrow that back down.
+      showError(data.error || "Invalid email or password.");
+      btn.disabled = false;
+      return;
+    }
+    window.location.href = '/dashboard';
+  } catch (e) {
+    showError("Erreur réseau. Veuillez réessayer. / Network error. Please try again.");
+    btn.disabled = false;
+  }
+}
+</script>`);
+}
+
+async function handleDashboardPage(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) {
+    return Response.redirect(url.origin + '/login', 302);
+  }
+
+  const leagueRow = await env.DB.prepare(
+    `SELECT l.* FROM leagues l JOIN league_admins la ON la.league_id = l.id
+      WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
+  ).bind(session.userId).first();
+  const verified = await isUserEmailVerified(env, session.userId);
+
+  const body = leagueRow ? `
+    <h1>${esc(leagueRow.name)}</h1>
+    ${leagueRow.division_label ? `<p class="when">${esc(leagueRow.division_label)}</p>` : ''}
+    ${!verified ? `
+      <div class="card" style="border-left:4px solid var(--orange);">
+        <p class="state" style="margin:0;">⚠️ Votre courriel n'est pas encore vérifié.<span class="en" style="display:block;">Your email is not yet verified.</span></p>
+      </div>
+    ` : ''}
+    <div class="card">
+      <h2>Équipes<span class="en">Teams</span></h2>
+      <ul style="margin:0;padding-left:20px;">
+        ${(() => { try { return JSON.parse(leagueRow.team_names || '[]'); } catch (_) { return []; } })()
+          .map(t => `<li>${esc(t)}</li>`).join('')}
+      </ul>
+      <p class="state">Statistiques suivies : <b>${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b><span class="en"> · Tracks stats: <b>${leagueRow.tracks_stats ? 'Yes' : 'No'}</b></span></p>
+    </div>
+  ` : `
+    <h1>Tableau de bord<span class="en">Dashboard</span></h1>
+    <div class="card"><p class="state" style="margin:0;">Vous n'avez pas encore de ligue.<span class="en" style="display:block;">You don't have a league yet.</span></p></div>
+  `;
+
+  return new Response(page('Tableau de bord', `
+    ${body}
+    <div class="btns" style="margin-top:20px;">
+      <button class="btn" id="logoutBtn" onclick="doLogout()">SE DÉCONNECTER<span class="en" style="display:block;font-size:13px;font-weight:600;">LOG OUT</span></button>
+    </div>
+<script>
+async function doLogout() {
+  await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  window.location.href = '/login';
+}
+</script>`), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
 
 /* ---------- data helpers ---------- */
 
@@ -14954,6 +15206,13 @@ async function handleFetch(req, env, ctx) {
       // comment for the architecture decision behind that.
       if (url.pathname === '/leagues/create' && req.method === 'POST')
         return await handleLeagueCreate(req, env);
+      // Signup/login/dashboard pages — pure UI on top of the routes above.
+      if ((url.pathname === '/signup' || url.pathname === '/signup/') && req.method === 'GET')
+        return new Response(renderSignupPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if ((url.pathname === '/login' || url.pathname === '/login/') && req.method === 'GET')
+        return new Response(renderLoginPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if ((url.pathname === '/dashboard' || url.pathname === '/dashboard/') && req.method === 'GET')
+        return await handleDashboardPage(req, env, url);
 
       if (url.pathname === '/admin' || url.pathname === '/admin/')
         return Response.redirect(url.origin + '/admin/board', 302);
