@@ -22,7 +22,7 @@ async function signup(email, password, ip = '203.0.113.10') {
   });
 }
 
-describe('Part A: user accounts, sessions, authentication foundation', () => {
+describe('Part A/B: user accounts, sessions, and league provisioning', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
@@ -38,6 +38,23 @@ describe('Part A: user accounts, sessions, authentication foundation', () => {
       ip TEXT PRIMARY KEY,
       window_start TEXT NOT NULL,
       count INTEGER NOT NULL DEFAULT 0
+    )`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS leagues (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      division_label TEXT,
+      tracks_stats INTEGER NOT NULL DEFAULT 1,
+      team_count INTEGER NOT NULL,
+      team_names TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS league_admins (
+      user_id TEXT NOT NULL,
+      league_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin',
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, league_id)
     )`).run();
   });
 
@@ -194,6 +211,66 @@ describe('Part A: user accounts, sessions, authentication foundation', () => {
       // A normal single signup from an unrelated IP is unaffected by the burst.
       const otherIpRes = await signup('normal.signup@example.com', 'a-strong-password-1', '198.51.100.99');
       expect(otherIpRes.status).toBe(200);
+    });
+  });
+
+  describe('POST /leagues/create', () => {
+    it('creates the league row and links the creating user as admin, given a valid session', async () => {
+      const signupRes = await signup('league.creator@example.com', 'a-strong-password-1', '203.0.113.20');
+      const { userId } = await signupRes.json();
+      const cookieHeader = extractCookie(signupRes);
+
+      const res = await SELF.fetch('http://example.com/leagues/create', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: cookieHeader },
+        body: JSON.stringify({
+          name: 'Tuesday Night Beer League',
+          teamNames: ['Ice Wolves', 'Rink Rats', 'Puck Hogs', 'Slap Shots'],
+          tracksStats: true
+        })
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.ok).toBe(true);
+      expect(json.league.id).toBeTruthy();
+      expect(json.league.teamCount).toBe(4);
+
+      const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(json.league.id).first();
+      expect(leagueRow.name).toBe('Tuesday Night Beer League');
+      expect(leagueRow.created_by).toBe(userId);
+      expect(JSON.parse(leagueRow.team_names)).toEqual(['Ice Wolves', 'Rink Rats', 'Puck Hogs', 'Slap Shots']);
+
+      const adminRow = await env.DB.prepare(
+        'SELECT * FROM league_admins WHERE league_id = ? AND user_id = ?'
+      ).bind(json.league.id, userId).first();
+      expect(adminRow).toBeTruthy();
+      expect(adminRow.role).toBe('admin');
+    });
+
+    it('rejects league creation with no session at all', async () => {
+      const res = await SELF.fetch('http://example.com/leagues/create', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'No Session League', teamNames: ['A', 'B'], tracksStats: true })
+      });
+      expect(res.status).toBe(401);
+      expect((await res.json()).ok).toBe(false);
+
+      const row = await env.DB.prepare('SELECT id FROM leagues WHERE name = ?').bind('No Session League').first();
+      expect(row).toBeNull();
+    });
+
+    it('rejects league creation with a tampered session cookie', async () => {
+      const signupRes = await signup('league.tampered@example.com', 'a-strong-password-1', '203.0.113.21');
+      const cookieHeader = extractCookie(signupRes);
+      const tampered = cookieHeader.slice(0, -1) + (cookieHeader.slice(-1) === '9' ? '8' : '9');
+
+      const res = await SELF.fetch('http://example.com/leagues/create', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: tampered },
+        body: JSON.stringify({ name: 'Tampered Cookie League', teamNames: ['A', 'B'], tracksStats: true })
+      });
+      expect(res.status).toBe(401);
     });
   });
 });
