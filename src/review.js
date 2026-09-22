@@ -1,7 +1,7 @@
 import PostalMime from 'postal-mime';
 import { computeWeeklyRecap } from './highlights.js';
 import { sortStandings, getRegularGoalsByTeam, updatePlayoffSchedule } from './awards.js';
-import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getTeamNames, normalizeTeamWithConfig, tracksStats, getLeagueConfig } from './season_config.js';
+import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getSeasonConfigFromEnv, getTeamNames, normalizeTeamWithConfig, tracksStats, getLeagueConfig } from './season_config.js';
 
 const STATS_DISABLED_MSG = 'Cette ligue ne suit pas de statistiques pour cette saison (tracksStats: false). / This league does not track stats for this season.';
 
@@ -845,6 +845,7 @@ export function renderReviewPage(review, adminKey, candidatePlayers = [], option
   const missingTeams = teamNames.filter(t => !receivedTeams.includes(t));
   const isPublished = review.status === 'published';
   const isDiscarded = review.status === 'discarded';
+  const showStatsTabs = tracksStats(options.config);
 
   return `<!DOCTYPE html>
 <html lang="fr">
@@ -1062,9 +1063,9 @@ export function renderReviewPage(review, adminKey, candidatePlayers = [], option
     <a class="tabbtn" href="/admin/schedule${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="schedule" data-fr="Calendrier 📅" data-en="Schedule 📅">Calendrier 📅</a>
     <a class="tabbtn" href="/admin/comms${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="comms" data-fr="Comms 💬" data-en="Comms 💬">Comms 💬</a>
     <a class="tabbtn" href="/admin/finances${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="finances" data-fr="Finances 💵" data-en="Finances 💵">Finances 💵</a>
-    <a class="tabbtn on" href="/admin/review${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>
+    ${showStatsTabs ? `<a class="tabbtn on" href="/admin/review${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>` : ''}
     <a class="tabbtn" href="/admin/polls${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="polls" data-fr="Sondages 🗳️" data-en="Polls 🗳️">Sondages 🗳️</a>
-    <a class="tabbtn" href="/admin/season-recap${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>
+    ${showStatsTabs ? `<a class="tabbtn" href="/admin/season-recap${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>` : ''}
   </div>
 
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:10px;">
@@ -2068,7 +2069,7 @@ applyLanguage(currentLang);
 </html>`;
 }
 
-export function renderReviewIndex(reviews = [], adminKey = '', backups = []) {
+export function renderReviewIndex(reviews = [], adminKey = '', backups = [], showStatsTabs = true) {
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -2160,9 +2161,9 @@ export function renderReviewIndex(reviews = [], adminKey = '', backups = []) {
     <a class="tabbtn" href="/admin/schedule${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="schedule" data-fr="Calendrier 📅" data-en="Schedule 📅">Calendrier 📅</a>
     <a class="tabbtn" href="/admin/comms${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="comms" data-fr="Comms 💬" data-en="Comms 💬">Comms 💬</a>
     <a class="tabbtn" href="/admin/finances${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="finances" data-fr="Finances 💵" data-en="Finances 💵">Finances 💵</a>
-    <a class="tabbtn on" href="/admin/review${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>
+    ${showStatsTabs ? `<a class="tabbtn on" href="/admin/review${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="review" data-fr="Feuilles 📸" data-en="Scoresheets 📸">Feuilles 📸</a>` : ''}
     <a class="tabbtn" href="/admin/polls${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="polls" data-fr="Sondages 🗳️" data-en="Polls 🗳️">Sondages 🗳️</a>
-    <a class="tabbtn" href="/admin/season-recap${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>
+    ${showStatsTabs ? `<a class="tabbtn" href="/admin/season-recap${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ''}" data-tab="recap" data-fr="Bilan 🏆" data-en="Season Recap 🏆">Bilan 🏆</a>` : ''}
   </div>
 
   <h1 id="pageHeading" data-i18n="pageHeading" style="font-family:'Barlow Condensed',sans-serif; font-size:28px; font-weight:700; margin:0 0 16px;">
@@ -2953,7 +2954,11 @@ export async function handleReviewGet(req, env, url) {
     const backupsRaw = await env.SHEETS_KV.get('backup:history');
     if (backupsRaw) backups = JSON.parse(backupsRaw);
   } catch (e) {}
-  return new Response(renderReviewIndex(reviews, env.ADMIN_KEY, backups), {
+  let showStatsTabs = true;
+  try {
+    showStatsTabs = tracksStats(await getSeasonConfigFromEnv(env, null));
+  } catch (_) {}
+  return new Response(renderReviewIndex(reviews, env.ADMIN_KEY, backups, showStatsTabs), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }

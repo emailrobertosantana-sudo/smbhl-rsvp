@@ -9,7 +9,9 @@ import {
   bufferToBase64,
   detectMime,
   extractJsonFromText,
-  deduceTeamFromPlayers
+  deduceTeamFromPlayers,
+  renderReviewPage,
+  renderReviewIndex
 } from '../src/review.js';
 import {
   sortStandings,
@@ -868,6 +870,61 @@ describe('Multi-team season config (6-team season, Parts 3 & 4)', () => {
     const semis = s0.fixtures.filter(f => f.week === 2 && f.time === '10:00 AM');
     expect(semis.find(f => f.gym === 'Gym #1').home).toBe('Blue');
     expect(semis.find(f => f.gym === 'Gym #2').home).toBe('Black');
+  });
+});
+
+describe('Admin nav tabs hide stats-only links when tracksStats is false', () => {
+  const attendanceConfig = getSeasonConfig({
+    name: 'AttendanceOnly2026',
+    standings: [],
+    config: {
+      teams: [
+        { name: 'Alpha', name_fr: 'Alpha', colour: '#334155', aliases: [] },
+        { name: 'Beta', name_fr: 'Beta', colour: '#64748b', aliases: [] }
+      ],
+      tracksStats: false
+    }
+  });
+  const statsConfig = getSeasonConfig(undefined); // SMBHL default, tracksStats: true
+
+  const baseReview = {
+    id: 1,
+    week: 3,
+    season: 'AttendanceOnly2026',
+    status: 'draft',
+    images_json: '[]',
+    validated_json: '[]',
+    extracted_json: '[]'
+  };
+
+  it('renderReviewPage: hides Scoresheets and Season Recap tabs when the review\'s season config has tracksStats: false', () => {
+    const html = renderReviewPage(baseReview, 'test-key', [], { config: attendanceConfig });
+    expect(html).not.toContain('data-tab="review"');
+    expect(html).not.toContain('data-tab="recap"');
+    expect(html).toContain('data-tab="subs"');
+    expect(html).toContain('data-tab="finances"');
+    expect(html).toContain('data-tab="polls"');
+  });
+
+  it('renderReviewPage: still shows Scoresheets and Season Recap tabs for a stats-tracking season (Fall 2026 default unaffected)', () => {
+    const html = renderReviewPage({ ...baseReview, season: 'Fall 2026' }, 'test-key', [], { config: statsConfig });
+    expect(html).toContain('data-tab="review"');
+    expect(html).toContain('data-tab="recap"');
+  });
+
+  it('renderReviewIndex: hides Scoresheets and Season Recap tabs when showStatsTabs is false', () => {
+    const html = renderReviewIndex([], 'test-key', [], false);
+    expect(html).not.toContain('data-tab="review"');
+    expect(html).not.toContain('data-tab="recap"');
+    expect(html).toContain('data-tab="subs"');
+    expect(html).toContain('data-tab="finances"');
+    expect(html).toContain('data-tab="polls"');
+  });
+
+  it('renderReviewIndex: shows Scoresheets and Season Recap tabs by default (Fall 2026 default unaffected)', () => {
+    const html = renderReviewIndex([], 'test-key', []);
+    expect(html).toContain('data-tab="review"');
+    expect(html).toContain('data-tab="recap"');
   });
 });
 
