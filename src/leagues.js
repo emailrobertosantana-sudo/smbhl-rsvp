@@ -55,34 +55,44 @@ export function leagueAccessResponse(status) {
   return Response.json({ ok: false, error: 'You do not have access to this league.' }, { status: 403 });
 }
 
+// League-context convention, shared by every session-scoped route (the
+// /league/contacts proof of concept below, and the two read-only routes
+// migrated in index.js — see the task report): an explicit `?league_id=`
+// query param if given (checkLeagueAccess still verifies the session user
+// actually administers it — this is never trusted on its own), else the
+// same "most recently created league this user administers" lookup
+// handleDashboardPage (index.js) already uses today. There is no league_id
+// anywhere in this app's URLs yet, so a request with no explicit league_id
+// acts on "your league", matching the current one-league-per-user
+// dashboard flow instead of inventing a new convention on top of it.
+// Returns null if there's no session, or the session's user administers no
+// league yet — callers treat that as "no session-based access available",
+// not an error on its own.
+export async function resolveSessionLeagueId(req, env, url) {
+  const explicit = url.searchParams.get('league_id');
+  if (explicit) return explicit;
+
+  const session = await checkUserSession(req, env);
+  if (!session) return null;
+
+  const row = await env.DB.prepare(
+    `SELECT la.league_id FROM league_admins la JOIN leagues l ON l.id = la.league_id
+      WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
+  ).bind(session.userId).first();
+  return row ? row.league_id : null;
+}
+
 /* ---------- proof of concept: GET /league/contacts ----------
- * The one new route this task wires up, to prove the whole chain works
- * end-to-end (session -> league lookup -> league_id-filtered query ->
- * isolated result) without touching any of the existing ADMIN_KEY-gated
- * contacts/events/rsvp routes in index.js.
- *
- * League context convention: `?league_id=` is accepted explicitly (and
- * checkLeagueAccess always verifies the session user actually administers
- * it — passing a different league's id here is exactly what the isolation
- * test below proves gets rejected, not trusted). When omitted, this falls
- * back to the same "most recently created league this user administers"
- * lookup handleDashboardPage (index.js) already uses today — there is no
- * league_id anywhere in this app's URLs yet, so a request with no explicit
- * league_id acts on "your league", matching the current one-league-per-user
- * dashboard flow instead of inventing a new convention on top of it.
+ * The one new (not migrated-from-ADMIN_KEY) route from the prior task, to
+ * prove the whole chain works end-to-end (session -> league lookup ->
+ * league_id-filtered query -> isolated result). See index.js for the
+ * read-only ADMIN_KEY routes now ALSO migrated to this same pattern.
  */
 export async function handleLeagueContacts(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
 
-  let leagueId = url.searchParams.get('league_id');
-  if (!leagueId) {
-    const row = await env.DB.prepare(
-      `SELECT la.league_id FROM league_admins la JOIN leagues l ON l.id = la.league_id
-        WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
-    ).bind(session.userId).first();
-    leagueId = row ? row.league_id : null;
-  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
     return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
   }

@@ -2,6 +2,30 @@
 // index.js and review.js authenticate through this module (rather than each
 // keeping their own copy) so the failed-attempt lockout is tracked
 // consistently across the whole admin surface, not just part of it.
+//
+// DESIGN DECISION — ADMIN_KEY vs. league-scoped session access (leagues.js's
+// checkLeagueAccess): ADMIN_KEY remains a SUPERUSER key that can act on ANY
+// league, not just SMBHL. This is an intentional "break glass"/support
+// access mechanism, not an oversight. Reasoning:
+//   - It's what ADMIN_KEY already does today. Since only SMBHL currently
+//     exists, ADMIN_KEY already administers everything; scoping it now
+//     (option "ADMIN_KEY = SMBHL's own key only") would be a silent, real
+//     behavior change for whoever already holds and relies on that one
+//     secret, sprung on them by an unrelated multi-tenancy feature.
+//   - A shared superuser key that bypasses per-league scoping is normal and
+//     expected for this app's actual operator model: one person (or a
+//     small operating team) runs the Worker across every league hosted on
+//     it, and needs to debug/support any of them without first being added
+//     as a session-based admin to each one individually.
+//   - checkLeagueAccess (leagues.js) remains the correct, and ONLY, access
+//     path for a real league admin acting on their own league day-to-day.
+//     ADMIN_KEY is the operator's override, not a normal user's path in.
+//
+// Every route migrated to accept both (see index.js's read-only rollout)
+// checks ADMIN_KEY FIRST, unscoped, exactly as before; the league-scoped
+// session path is additive and only ever reached when ADMIN_KEY doesn't
+// apply. See test/league_access.spec.js for the test proving this
+// explicitly (ADMIN_KEY reads a second league's data too).
 
 import { hmac, same } from './crypto_utils.js';
 

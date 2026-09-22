@@ -3,7 +3,7 @@ import { hmac, same } from './crypto_utils.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -15400,12 +15400,39 @@ async function handleFetch(req, env, ctx) {
         return new Response(await schedulePage(env, isAuthed),
           { headers: adminPageHeaders(isAuthed, env) });
       }
+      // Read-only route migration (batch 1 — see the task report): dual
+      // auth for GET /admin/schedule/data ("list my upcoming events").
+      // ADMIN_KEY path below is byte-for-byte identical to before this
+      // change — same call to handleScheduleData, same response, checked
+      // first. The session path is new and additive: it returns a
+      // narrower, pure-D1, league_id-filtered event list rather than
+      // handleScheduleData's full KV-merged view (data.json has no league
+      // concept yet — see the report), and is only reached when ADMIN_KEY
+      // doesn't apply, so nothing changes for an unauthenticated or
+      // wrong-key request either (same adminAuthResponse(auth) fallback).
+      if ((url.pathname === '/admin/schedule/data' || url.pathname === '/admin/schedule/data/') && req.method === 'GET') {
+        const auth = checkAdminAuth(req, env);
+        if (auth === 'ok') return await handleScheduleData(req, env, url);
+        const leagueId = await resolveSessionLeagueId(req, env, url);
+        if (leagueId) {
+          const sessionAuth = await checkLeagueAccess(req, env, leagueId);
+          if (sessionAuth === 'ok') {
+            const events = (await env.DB.prepare(
+              `SELECT id, season, week, date, venue, state, start_time, end_time
+                 FROM events WHERE league_id = ? ORDER BY date DESC, week DESC`
+            ).bind(leagueId).all()).results || [];
+            return Response.json({ ok: true, league_id: leagueId, events });
+          }
+        }
+        return adminAuthResponse(auth);
+      }
       if (url.pathname.startsWith('/admin/schedule')) {
         const auth = checkAdminAuth(req, env);
         if (auth !== 'ok') return adminAuthResponse(auth);
+        // GET /admin/schedule/data is handled above (dual auth); every
+        // other /admin/schedule/* sub-route below remains ADMIN_KEY-only —
+        // this task migrates read-only routes only.
         const sub = url.pathname.replace(/^\/admin\/schedule/, '');
-        if ((sub === '/data' || sub === '/data/') && req.method === 'GET')
-          return await handleScheduleData(req, env, url);
         if (sub === '/save' && req.method === 'POST')
           return await handleScheduleSave(req, env);
         if (sub === '/set-state' && req.method === 'POST')
@@ -15467,11 +15494,39 @@ async function handleFetch(req, env, ctx) {
         return new Response(await peoplePage(env, isAuthed),
           { headers: adminPageHeaders(isAuthed, env) });
       }
+      // Read-only route migration (batch 1 — see the task report): dual
+      // auth for GET /admin/people/data (and its /admin/contacts alias) —
+      // "list my roster". Same shape as /admin/schedule/data above:
+      // ADMIN_KEY path unchanged (still calls peopleData(env) exactly as
+      // before), session path new/additive and narrower (pure-D1,
+      // league_id-filtered contacts — peopleData's KV-merged team/roster
+      // enrichment isn't reproduced here; see the report), only reached
+      // when ADMIN_KEY doesn't apply.
+      if ((url.pathname.startsWith('/admin/people') || url.pathname.startsWith('/admin/contacts')) && req.method === 'GET') {
+        const sub = url.pathname.replace(/^\/admin\/(?:people|contacts)/, '');
+        if (sub === '/data' || sub === '/data/') {
+          const auth = checkAdminAuth(req, env);
+          if (auth === 'ok') return await peopleData(env);
+          const leagueId = await resolveSessionLeagueId(req, env, url);
+          if (leagueId) {
+            const sessionAuth = await checkLeagueAccess(req, env, leagueId);
+            if (sessionAuth === 'ok') {
+              const contacts = (await env.DB.prepare(
+                `SELECT player_id, name, email, phone, role FROM contacts WHERE league_id = ? ORDER BY name`
+              ).bind(leagueId).all()).results || [];
+              return Response.json({ ok: true, league_id: leagueId, contacts });
+            }
+          }
+          return adminAuthResponse(auth);
+        }
+      }
       if (url.pathname.startsWith('/admin/people') || url.pathname.startsWith('/admin/contacts')) {
         const auth = checkAdminAuth(req, env);
         if (auth !== 'ok') return adminAuthResponse(auth);
+        // GET .../data is handled above (dual auth); every other
+        // /admin/people|contacts/* sub-route below remains ADMIN_KEY-only —
+        // this task migrates read-only routes only.
         const sub = url.pathname.replace(/^\/admin\/(?:people|contacts)/, '');
-        if ((sub === '/data' || sub === '/data/') && req.method === 'GET') return await peopleData(env);
         if ((sub === '/search' || sub === '/search/') && req.method === 'GET') return await peopleSearch(env, url);
         if ((sub === '' || sub === '/') && req.method === 'POST')
           return await peopleAction(req, env);
