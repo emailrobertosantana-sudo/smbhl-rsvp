@@ -898,7 +898,7 @@ document.querySelectorAll('#su_structure_radio input[type=radio]').forEach(funct
     r.closest('.su-structure-opt').classList.add('on');
   });
 });
-function submitStep2() {
+async function submitStep2() {
   clearError();
   var name = document.getElementById('su_league_name').value.trim();
   var slug = document.getElementById('su_slug').value.trim();
@@ -906,6 +906,44 @@ function submitStep2() {
   var teamStructure = document.querySelector('#su_structure_radio input:checked').value;
   if (!name) { showError(window.__errorText('LEAGUE_NAME_REQUIRED_CLIENT')); return; }
   if (slug && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) { showError(window.__errorText('SLUG_INVALID_FORMAT')); return; }
+  // Live-testing task, Part 4: weekly_draw doesn't ask for team names at
+  // all -- teams are re-drawn every game, so a permanent name chosen
+  // upfront isn't meaningful the way it is for 'fixed'. Two teams are
+  // created automatically with a simple bilingual default name (no
+  // per-language toggle logic needed for a name that reads fine in
+  // either language), and the team-names step (3) is skipped entirely
+  // -- league creation happens right here, straight to the done page.
+  if (teamStructure === 'weekly_draw') {
+    var btn = document.getElementById('su_submit');
+    btn.disabled = true;
+    try {
+      var res = await fetch('/leagues/create', {
+        method: 'POST', credentials: 'same-origin',
+        headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+        body: JSON.stringify({ name: name, tracksStats: tracksStats, slug: slug || undefined, teamStructure: teamStructure, teamNames: ['Rouge / Red', 'Bleu / Blue'] })
+      });
+      var data = await res.json().catch(function() { return {}; });
+      if (!res.ok || !data.ok) {
+        if (data.errorKey === 'SLUG_TAKEN' || data.errorKey === 'SLUG_INVALID_FORMAT' || data.errorKey === 'SLUG_RESERVED') {
+          var isFr = (window.__currentLang || 'fr') === 'fr';
+          showError(window.__errorText(data.errorKey, data.error) + (isFr ? ' Modifie l\\'adresse à l\\'étape précédente.' : ' Change the address on the previous step.'));
+        } else {
+          showError(window.__errorText(data.errorKey, data.error));
+        }
+        btn.disabled = false;
+        return;
+      }
+      try {
+        sessionStorage.setItem('nl_signup_done', JSON.stringify({ slug: data.league.slug, name: data.league.name }));
+        sessionStorage.removeItem('nl_signup_league');
+      } catch (e) {}
+      window.__navWithLang('/signup?step=done');
+    } catch (e) {
+      showError(window.__errorText('NETWORK_ERROR'));
+      btn.disabled = false;
+    }
+    return;
+  }
   try { sessionStorage.setItem('nl_signup_league', JSON.stringify({ name: name, slug: slug, tracksStats: tracksStats, teamStructure: teamStructure })); } catch (e) {}
   window.__navWithLang('/signup?step=3');
 }
@@ -962,6 +1000,12 @@ ${signupLangScript()}
 var leagueDraft = null;
 try { leagueDraft = JSON.parse(sessionStorage.getItem('nl_signup_league') || 'null'); } catch (e) {}
 if (!leagueDraft || !leagueDraft.name) { window.__navWithLang('/signup?step=2'); }
+// Defensive: weekly_draw never writes nl_signup_league (submitStep2
+// creates the league directly and skips this step) -- a stale draft
+// from before this fix, or any unexpected way of landing here, sends
+// the user back to step 2 rather than showing a team-names UI that
+// doesn't apply to weekly_draw.
+if (leagueDraft && leagueDraft.teamStructure === 'weekly_draw') { window.__navWithLang('/signup?step=2'); }
 var isHeadcount = leagueDraft && leagueDraft.teamStructure === 'headcount';
 if (isHeadcount) {
   document.getElementById('su_teams_section').style.display = 'none';
