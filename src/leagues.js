@@ -340,7 +340,14 @@ export async function handleLeagueContactCreate(req, env) {
   if (email) {
     const check = sanitizeAndValidateEmail(email);
     if (!check.valid) {
-      return Response.json({ ok: false, error: check.error }, { status: 400 });
+      // Live-testing bug fix (Bug 6 sweep): no errorKey here left the
+      // roster page's admin-facing "add a player" form showing raw
+      // English validation text even in French mode. Reuses the same
+      // INVALID_EMAIL key every other email field's client-side check
+      // already displays -- check.error's exact wording varies by
+      // failure reason, but "enter a valid email" covers all of them
+      // accurately enough for a translated summary.
+      return Response.json({ ok: false, error: check.error, errorKey: 'INVALID_EMAIL' }, { status: 400 });
     }
     email = check.email;
 
@@ -374,7 +381,7 @@ export async function handleLeagueContactCreate(req, env) {
     const cfg = await getLeagueSeasonConfig(env, leagueId);
     const validTeams = getTeamNames(cfg);
     if (!validTeams.includes(team)) {
-      return Response.json({ ok: false, error: `team must be one of: ${validTeams.join(', ')}` }, { status: 400 });
+      return Response.json({ ok: false, error: `team must be one of: ${validTeams.join(', ')}`, errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
     }
   }
 
@@ -902,7 +909,9 @@ export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null
   let email = String(body.email || '').trim().toLowerCase();
   const check = sanitizeAndValidateEmail(email);
   if (!check.valid) {
-    return Response.json({ ok: false, error: check.error }, { status: 400 });
+    // Live-testing bug fix (Bug 6 sweep): same fix as
+    // handleLeagueContactCreate's own identical check above.
+    return Response.json({ ok: false, error: check.error, errorKey: 'INVALID_EMAIL' }, { status: 400 });
   }
   email = check.email;
 

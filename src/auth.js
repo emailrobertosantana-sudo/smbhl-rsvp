@@ -11,7 +11,8 @@
 // command was not run as part of this task (see the final report).
 
 import { hmac, same } from './crypto_utils.js';
-import { nlEmailWrap, nlEmailButton } from './design_system.js';
+import { nlEmailWrap, nlEmailButton, nlDocument } from './design_system.js';
+import { ERROR_I18N } from './error_i18n.js';
 
 /* ---------- password hashing ---------- */
 //
@@ -764,17 +765,61 @@ export async function handleLogout(req, env) {
   return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
 }
 
+// Live-testing bug fix (design system follow-up task, Bug 1): a real
+// person clicking this link from their email inbox is a normal
+// top-level browser navigation, which was landing on raw JSON --
+// `{"ok":true,"userId":"..."}` -- with no confirmation, no next step,
+// nothing styled. Content-negotiated on the Accept header: a real
+// browser navigation sends `Accept: text/html,...` and gets a real
+// styled nlDocument confirmation page; anything else (a bare fetch()
+// with no Accept header at all -- every existing test, curl, or a
+// genuine programmatic API consumer) keeps getting the exact same
+// JSON shape as before, so nothing that already depends on it breaks.
 export async function handleVerifyEmail(req, env, url) {
+  const wantsHtml = (req.headers.get('accept') || '').includes('text/html');
   const token = url.searchParams.get('token');
-  if (!token) return Response.json({ ok: false, error: 'Missing token', errorKey: 'MISSING_TOKEN' }, { status: 400 });
+  if (!token) {
+    if (wantsHtml) return renderVerifyEmailPage({ ok: false, errorKey: 'MISSING_TOKEN' }, 400);
+    return Response.json({ ok: false, error: 'Missing token', errorKey: 'MISSING_TOKEN' }, { status: 400 });
+  }
 
   const result = await verifyEmailToken(env, token);
   if (!result.ok) {
     const status = result.error === 'expired' ? 410 : 400;
     const errorKey = result.error === 'expired' ? 'LINK_EXPIRED' : result.error === 'malformed' ? 'LINK_MALFORMED' : 'LINK_INVALID';
+    if (wantsHtml) return renderVerifyEmailPage({ ok: false, errorKey }, status);
     return Response.json({ ok: false, error: result.error, errorKey }, { status });
   }
+  if (wantsHtml) return renderVerifyEmailPage({ ok: true }, 200);
   return Response.json({ ok: true, userId: result.userId });
+}
+
+// Bilingual single render (FR then EN together), same convention as
+// every other standalone confirmation/error page this app builds on
+// nlDocument (e.g. leagueRsvpNotice, src/index.js) -- no FR/EN toggle
+// script needed for a one-shot confirmation the visitor reads once.
+function renderVerifyEmailPage({ ok, errorKey }, status) {
+  const fr = ok
+    ? { title: 'Courriel confirmé', body: 'Ton compte est activé.', cta: 'Aller à mon tableau de bord', href: '/dashboard' }
+    : { title: (ERROR_I18N[errorKey] && ERROR_I18N[errorKey].fr) || 'Ce lien est invalide.', body: 'Connecte-toi, puis renvoie un courriel de confirmation depuis ton tableau de bord.', cta: 'Se connecter', href: '/login' };
+  const en = ok
+    ? { title: 'Email confirmed', body: 'Your account is active.', cta: 'Go to my dashboard', href: '/dashboard' }
+    : { title: (ERROR_I18N[errorKey] && ERROR_I18N[errorKey].en) || 'This link is invalid.', body: 'Log in, then resend a confirmation email from your dashboard.', cta: 'Log in', href: '/login' };
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const bodyHtml = `<style>.nl{display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:var(--space-5)}</style>
+<div style="max-width:420px">
+  <h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;margin:0 0 8px;">${esc(fr.title)}</h1>
+  <p class="nl-help" style="margin:0 0 24px;">${esc(fr.body)}</p>
+  <a href="${esc(fr.href)}" class="nl-btn nl-btn--primary">${esc(fr.cta)}</a>
+  <hr style="border:none;border-top:1px solid var(--line);margin:28px 0;">
+  <h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;margin:0 0 8px;">${esc(en.title)}</h1>
+  <p class="nl-help" style="margin:0 0 24px;">${esc(en.body)}</p>
+  <a href="${esc(en.href)}" class="nl-btn nl-btn--secondary">${esc(en.cta)}</a>
+</div>`;
+  return new Response(nlDocument({ title: fr.title, description: '', bodyHtml }), {
+    status,
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
 }
 
 // Requires an existing logged-in session (the same one handleSignup already

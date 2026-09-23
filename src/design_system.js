@@ -430,3 +430,42 @@ export function nlEmailWrap({ brandName, barColor = '#16181d', bodyHtml, footerH
 </td></tr></table>
 </body></html>`;
 }
+
+/* ---------- document shell ----------
+ * The real design-system page shell -- fonts, design tokens,
+ * bundle.css component styles, and bundle.js's vanilla DOM helpers
+ * (window.NotreLigue), all inlined (matching this app's own
+ * established convention of inlining every page's CSS/JS rather than
+ * serving separate static assets). A SEPARATE shell from SMBHL's own
+ * page() (src/index.js) -- SMBHL's real site and its legacy ADMIN_KEY
+ * admin pages keep using page() completely unchanged; nlDocument is
+ * used only by the new Notre Ligue product pages/emails built this
+ * session. Lives here (not in index.js, where every call site is)
+ * specifically so auth.js can also import it directly -- auth.js
+ * never imports from index.js (index.js imports auth.js, so the
+ * reverse would be circular), but both already import this module.
+ *
+ * leagueColor: player-facing pages (RSVP, public page) pass the
+ * league's own contrast-safe fill color (leagueFillColor()) here to
+ * override the --league/--on-league tokens for that one response --
+ * the "league's own color" rule (guidelines/20-public-site-themes.md)
+ * applies ONLY when this is set; every Notre-Ligue-branded page
+ * (marketing, signup, admin) leaves it unset and keeps the shared
+ * sample --league token, which is never shown to a real player. A
+ * second :root block, appended after TOKENS_CSS in the same <style>,
+ * wins the cascade (same specificity, later rule).
+ */
+export function nlDocument({ title, description = '', bodyHtml, lang = 'fr', leagueColor = null }) {
+  return `<!DOCTYPE html><html lang="${lang === 'en' ? 'en-CA' : 'fr-CA'}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${nlEmailEsc(title)}</title>
+${description ? `<meta name="description" content="${nlEmailEsc(description)}">` : ''}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<style>${TOKENS_CSS}${BUNDLE_CSS}${leagueColor ? `:root{--league:${nlEmailEsc(leagueColor)};--on-league:#ffffff}` : ''}</style>
+</head><body class="nl">
+${bodyHtml}
+<script>${BUNDLE_JS}</script>
+</body></html>`;
+}

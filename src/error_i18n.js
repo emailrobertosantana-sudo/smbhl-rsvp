@@ -76,8 +76,20 @@ export const ERROR_I18N = {
   DATE_REQUIRED: { fr: 'La date est requise, au format AAAA-MM-JJ.', en: 'date is required, in YYYY-MM-DD format.' },
   START_TIME_FORMAT: { fr: "L'heure de début doit être au format HH:MM.", en: 'start_time must be in HH:MM format.' },
   END_TIME_FORMAT: { fr: "L'heure de fin doit être au format HH:MM.", en: 'end_time must be in HH:MM format.' },
-  SEASON_REQUIRED: { fr: "Une saison est requise (publie d'abord une saison via /league/season/publish, ou spécifies-en une).", en: 'season is required (publish a season first via /league/season/publish, or pass one explicitly).' },
+  SEASON_REQUIRED: { fr: "Il te faut une saison active avant de créer un match. Lance ta saison depuis le tableau de bord.", en: 'You need an active season before creating an event. Start your season from the dashboard.' },
   EVENT_DATE_EXISTS: { fr: 'Un match existe déjà à cette date dans ta ligue.', en: 'An event already exists for this date in your league.' },
+  // Live-testing bug fix (Bug 6 sweep): the event-status page's admin
+  // IN/OUT override was reaching these 4 without an errorKey at all --
+  // window.__errorText() falls back to the raw English `error` string
+  // whenever no key matches, so a French admin hitting one of these
+  // (e.g. clicking IN/OUT on a just-locked event) saw untranslated
+  // English.
+  ADMIN_RSVP_FIELDS_REQUIRED: { fr: 'Des champs requis sont manquants.', en: 'event_id, player_id, and status (in|out) are required.' },
+  EVENT_NOT_FOUND: { fr: 'Match introuvable.', en: 'Event not found.' },
+  EVENT_LOCKED: { fr: "Ce match n'accepte plus de changements.", en: 'This event is locked.' },
+  PLAYER_NOT_FOUND: { fr: 'Joueur introuvable.', en: 'Player not found.' },
+  ADMIN_INVITE_SUBS_FIELDS_REQUIRED: { fr: 'Des champs requis sont manquants.', en: 'event_id, team, and need (goalie|skater) are required.' },
+  TEAM_UNKNOWN: { fr: 'Équipe inconnue pour cette ligue.', en: 'Unknown team for this league.' },
   SEASON_NAME_REQUIRED: { fr: 'Le nom de la saison est requis.', en: 'season_name is required.' },
   ROUTE_BLOCKED_PUBLISH: { fr: 'Cette route ne peut pas publier dans les données de cette ligue.', en: "This route cannot publish to this league's data." },
   NO_TEAM_NAMES: { fr: "Cette ligue n'a pas encore de noms d'équipe enregistrés.", en: 'This league has no team names on file yet.' },

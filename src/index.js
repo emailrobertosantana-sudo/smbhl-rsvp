@@ -2,7 +2,7 @@ import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
-import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor } from './design_system.js';
+import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument } from './design_system.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
@@ -180,47 +180,6 @@ async function getStandingsTooltip(env) {
   } catch (e) {
     return '';
   }
-}
-
-/* ---------- nlDocument: the real Notre Ligue design system shell ----------
- * (overnight follow-up task, "apply the design system"). A SEPARATE
- * document wrapper from page() below, deliberately -- page() is
- * SMBHL's own shell (and every legacy ADMIN_KEY page's), explicitly
- * out of scope for the design system per the task's own safety
- * constraint. nlDocument() is used ONLY by the Notre Ligue product
- * pages being migrated onto the real design system: the marketing
- * homepage, signup, login, forgot/reset-password, dashboard, roster,
- * schedule, event status, the player RSVP page, and the public league
- * page. Callers build their own <header class="nl-header"> markup
- * (product wordmark vs. league-branded vs. admin nav differ too much
- * per screen to abstract away) -- this just provides the document
- * shell: fonts, design tokens, the bundle.css component styles, and
- * bundle.js's vanilla DOM helpers (window.NotreLigue), all inlined
- * (matching this app's own established convention of inlining every
- * page's CSS/JS rather than serving separate static assets).
- */
-// leagueColor: player-facing pages (RSVP, public page) pass the
-// league's own contrast-safe fill color (leagueFillColor(), Part 1)
-// here to override the --league/--on-league tokens for that one
-// response -- the "league's own color" rule (guidelines/20-public-
-// site-themes.md) applies ONLY when this is set; every Notre-Ligue-
-// branded page (marketing, signup, admin) leaves it unset and keeps
-// the shared sample --league token, which is never shown to a real
-// player. A second :root block, appended after TOKENS_CSS in the same
-// <style>, wins the cascade (same specificity, later rule).
-function nlDocument({ title, description = '', bodyHtml, lang = 'fr', leagueColor = null }) {
-  return `<!DOCTYPE html><html lang="${lang === 'en' ? 'en-CA' : 'fr-CA'}"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)}</title>
-${description ? `<meta name="description" content="${esc(description)}">` : ''}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
-<style>${TOKENS_CSS}${BUNDLE_CSS}${leagueColor ? `:root{--league:${esc(leagueColor)};--on-league:#ffffff}` : ''}</style>
-</head><body class="nl">
-${bodyHtml}
-<script>${BUNDLE_JS}</script>
-</body></html>`;
 }
 
 // hideLangSwitch: Part 4 foundation -- a league whose language_mode is
@@ -961,7 +920,19 @@ function clearError() { document.getElementById('formErr').style.display = 'none
 async function submitStep3() {
   clearError();
   if (!leagueDraft) { window.location.href = '/signup?step=2'; return; }
-  var teamNames = Array.prototype.map.call(teamsEl().querySelectorAll('input'), function(i) { return i.value.trim(); }).filter(Boolean);
+  // Bug fix (live testing): the field's own placeholder ("Équipe 1")
+  // and helper text ("Pas encore décidé? Garde « Équipe 1, 2… ».")
+  // both promise a blank field is fine -- and the real design spec
+  // (ScreenSignup's own design-rules aside) says so explicitly: "Les
+  // noms sont optionnels. Rien ne bloque la création." A blank field
+  // now falls back to its own placeholder text as the real submitted
+  // name, so team count sent always equals teamCount (2-16), never
+  // silently dropped below the server's 2-name minimum.
+  var dict = window.__pageDict();
+  var teamNames = Array.prototype.map.call(teamsEl().querySelectorAll('input'), function(i, idx) {
+    var v = i.value.trim();
+    return v || (dict.teamPlaceholder + (idx + 1));
+  });
   var btn = document.getElementById('su_submit');
   btn.disabled = true;
   try {
@@ -1007,7 +978,7 @@ function renderSignupDone(league) {
   </div>
 </main>
 <div class="su-bottom">
-  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="addPlayers" onclick="location.href='/dashboard'">Ajouter mes joueurs</button>
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="addPlayers" onclick="location.href='/league/roster'">Ajouter mes joueurs</button>
 </div>
 <script>
 ${signupLangScript()}
@@ -1461,8 +1432,16 @@ async function handleDashboardPage(req, env, url) {
         <div class="dash-check" style="margin-top:12px">
           <div class="dash-ck done"><span class="b y">${DASH_ICON_CHECK}</span><span data-i18n="ckLeague">Créer la ligue</span></div>
           <div class="dash-ck done"><span class="b y">${DASH_ICON_CHECK}</span><span data-i18n="ckTeams">Nommer les équipes</span></div>
-          <div class="dash-ck${playerCount > 0 ? ' done' : ''}"><span class="b ${playerCount > 0 ? 'y">' + DASH_ICON_CHECK : 'n">'}</span><span data-i18n="ckPlayers">Ajouter les joueurs</span></div>
+          <!-- Live-testing bug fix (Bug 5): season, not players, is the
+               real blocking prerequisite (Bug 4 -- POST /league/events
+               fails without one) for the next real step (creating
+               matches), so it comes before "add players" here, matching
+               the actual backend dependency order rather than an
+               arbitrary one. This checklist only ever renders while
+               needsSeason is true, so this row is always "not done"
+               here by construction. -->
           <div class="dash-ck"><span class="b n"></span><span data-i18n="ckSeason">Créer la saison</span></div>
+          <div class="dash-ck${playerCount > 0 ? ' done' : ''}"><span class="b ${playerCount > 0 ? 'y">' + DASH_ICON_CHECK : 'n">'}</span><span data-i18n="ckPlayers">Ajouter les joueurs</span></div>
         </div>
       </section>
     </div>` : '';
@@ -2280,6 +2259,14 @@ async function handleLeagueSchedulePage(req, env, url) {
   const events = (await env.DB.prepare(
     'SELECT id, season, week, date, venue, state, start_time, end_time FROM events WHERE league_id = ? ORDER BY date DESC, week DESC'
   ).bind(leagueId).all()).results || [];
+  // Live-testing bug fix (Bug 4): POST /league/events fails with
+  // SEASON_REQUIRED whenever no season has been published yet (see
+  // leagues.js's own check) -- this page's create-match form must not
+  // even be reachable in that state, rather than letting an admin fill
+  // it out and hit a raw backend error. Same real signal the dashboard
+  // already uses for its own "start your season" prompt.
+  const leagueData = await getLeagueDataJson(env, leagueId);
+  const needsSeason = !leagueData.current_season;
 
   const I18N_SCHEDULE = {
     fr: {
@@ -2288,7 +2275,10 @@ async function handleLeagueSchedulePage(req, env, url) {
       date: 'Date', startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
       venueOpt: 'Lieu (optionnel)', createBtn: 'Créer le match', cancel: 'Annuler',
       noEvents: "Aucun match pour l'instant.",
-      stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé'
+      stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
+      needsSeasonTitle: "Lance ta saison d'abord",
+      needsSeasonBody: "Il te faut une saison active avant de pouvoir créer des matchs.",
+      goToDashboard: 'Aller au tableau de bord'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
@@ -2296,7 +2286,10 @@ async function handleLeagueSchedulePage(req, env, url) {
       date: 'Date', startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
       venueOpt: 'Venue (optional)', createBtn: 'Create the event', cancel: 'Cancel',
       noEvents: 'No events yet.',
-      stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled'
+      stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled',
+      needsSeasonTitle: 'Start your season first',
+      needsSeasonBody: 'You need an active season before you can create events.',
+      goToDashboard: 'Go to dashboard'
     }
   };
 
@@ -2330,12 +2323,22 @@ async function handleLeagueSchedulePage(req, env, url) {
   .sc-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
   @media (min-width: 900px) { .sc-panel { display: flex; } }
   @media (max-width: 640px) { .sc-game { grid-template-columns: 72px 1fr auto; } .sc-game .sc-chevron { display: none; } }
+  .sc-needs-season { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 2px solid var(--primary); }
+  .sc-needs-season h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
 </style>${header}
 <main class="dash-main sc-main">
   <div class="sc-top">
     <h1 data-i18n="title">Horaire</h1>
-    <button type="button" class="nl-btn nl-btn--primary" onclick="toggleSchedulePanel()" data-i18n="createEvent">Créer un match</button>
+    ${needsSeason ? '' : '<button type="button" class="nl-btn nl-btn--primary" onclick="toggleSchedulePanel()" data-i18n="createEvent">Créer un match</button>'}
   </div>
+  ${needsSeason ? `
+  <section class="nl-card sc-needs-season">
+    <h2 data-i18n="needsSeasonTitle">Lance ta saison d'abord</h2>
+    <p class="nl-help" data-i18n="needsSeasonBody">Il te faut une saison active avant de pouvoir créer des matchs.</p>
+    <div><a href="/dashboard" class="nl-btn nl-btn--primary" data-i18n="goToDashboard">Aller au tableau de bord</a></div>
+  </section>
+  <div class="sc-list" id="scheduleList">${rowsHtml}</div>
+  ` : `
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);">
     <div class="sc-list" id="scheduleList">${rowsHtml}</div>
     <aside class="sc-panel" id="sc_panel" aria-label="Créer un match">
@@ -2365,6 +2368,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       </div>
     </aside>
   </div>
+  `}
 </main>
 ${tabbar}`;
 
@@ -9807,7 +9811,11 @@ async function leagueRsvpGet(req, env, url) {
       doneOutTitle: 'Merci de nous le dire.',
       doneOutBody: "On invite un remplaçant pour ta place. Rien d'autre à faire.",
       change: 'Changer ma réponse',
-      poweredBy: 'Propulsé par Notre Ligue'
+      poweredBy: 'Propulsé par Notre Ligue',
+      errBadStatus: 'Réponse invalide. Réessaie.',
+      errBadToken: 'Ce lien est invalide ou expiré.',
+      errLocked: "Cet événement n'accepte plus de réponses.",
+      errNetwork: 'Erreur réseau. Réessaie.'
     } : {
       question: `${firstName}, are you playing${dayLabel ? ' ' + dayLabel.toLowerCase() : ''}?`,
       btnIn: "I'm in", btnOut: "Can't make it",
@@ -9817,7 +9825,11 @@ async function leagueRsvpGet(req, env, url) {
       doneOutTitle: 'Thanks for letting us know.',
       doneOutBody: "We'll invite a sub for your spot. Nothing else to do.",
       change: 'Change my answer',
-      poweredBy: 'Powered by Notre Ligue'
+      poweredBy: 'Powered by Notre Ligue',
+      errBadStatus: 'Invalid response. Please try again.',
+      errBadToken: 'This link is invalid or expired.',
+      errLocked: 'This event is no longer accepting responses.',
+      errNetwork: 'Network error. Please try again.'
     };
   }
   const RSVP_I18N = { fr: buildDict('fr'), en: buildDict('en') };
@@ -9930,6 +9942,14 @@ function showAnswerForm() {
   var f = document.getElementById('rv_form');
   if (f) f.style.display = '';
 }
+// Live-testing bug fix (Bug 6 sweep): this used to throw the raw
+// response body text (leagueRsvpPost's own old 'bad status'/'bad
+// token'/'locked' plain-text errors) straight into the page, verbatim
+// and untranslated. Now resolves through this page's own RV_I18N dict
+// via errorKey, same pattern as every other page's
+// window.__errorText() -- this page just can't use that shared helper
+// (see nlAuthScript's own comment for why its script is separate).
+var RV_ERR_KEY_MAP = { RSVP_BAD_STATUS: 'errBadStatus', RSVP_BAD_TOKEN: 'errBadToken', RSVP_LOCKED: 'errLocked' };
 document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(b) {
   b.addEventListener('click', async function() {
     var v = b.dataset.v;
@@ -9942,10 +9962,18 @@ document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(b) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ status: v })
       });
-      if (!res.ok) throw new Error(await res.text());
+      var data = await res.json().catch(function() { return {}; });
+      if (!res.ok || !data.ok) {
+        var dict = RV_I18N[window.__currentLang] || RV_I18N.fr;
+        var key = RV_ERR_KEY_MAP[data.errorKey];
+        if (msg) msg.textContent = key ? dict[key] : dict.errBadStatus;
+        document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(x) { x.disabled = false; });
+        return;
+      }
       location.reload();
     } catch (e) {
-      if (msg) msg.textContent = String(e.message || e);
+      var dict2 = RV_I18N[window.__currentLang] || RV_I18N.fr;
+      if (msg) msg.textContent = dict2.errNetwork;
       document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(x) { x.disabled = false; });
     }
   });
@@ -9968,18 +9996,33 @@ document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(b) {
 // use their own valid token to affect any other player's row — see
 // writeLeagueRsvpStatus's own comment and this task's dedicated isolation
 // test for the explicit proof.
+// Live-testing bug fix (Bug 6 sweep): this route used to return bare
+// plain-text bodies ('bad status', 'bad token', 'locked') -- raw
+// developer strings with no translation, that the RSVP page's own
+// click handler threw and displayed to a real player verbatim (see
+// that handler's own comment below). Real JSON + errorKey now,
+// resolved through this page's own small error dict (mirrors every
+// other page's ERROR_I18N-through-window.__errorText pattern, but
+// this page doesn't load that shared script -- see nlAuthScript's own
+// comment on why it's a separate, forcedLang-aware script).
 async function leagueRsvpPost(req, env, url) {
   const leagueId = url.searchParams.get('league');
   const eventId = url.searchParams.get('e');
   const playerId = url.searchParams.get('p');
   const token = url.searchParams.get('t');
   const { status } = await req.json().catch(() => ({}));
-  if (!['in', 'out'].includes(status)) return new Response('bad status', { status: 400 });
+  if (!['in', 'out'].includes(status)) {
+    return Response.json({ ok: false, error: 'Invalid status.', errorKey: 'RSVP_BAD_STATUS' }, { status: 400 });
+  }
 
   const result = await verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token);
-  if (!result.ok) return new Response('bad token', { status: 403 });
+  if (!result.ok) {
+    return Response.json({ ok: false, error: 'Invalid or expired link.', errorKey: 'RSVP_BAD_TOKEN' }, { status: 403 });
+  }
   const { contact, ev } = result;
-  if (ev.state !== 'open') return new Response('locked', { status: 409 });
+  if (ev.state !== 'open') {
+    return Response.json({ ok: false, error: 'This event is no longer accepting responses.', errorKey: 'RSVP_LOCKED' }, { status: 409 });
+  }
 
   await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status);
   if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
@@ -9998,12 +10041,12 @@ async function handleLeagueAdminSetRsvp(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
   if (!(await checkCsrfToken(req, env, session))) {
-    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
   }
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
 
   const access = await checkLeagueAccess(req, env, leagueId);
@@ -10014,17 +10057,17 @@ async function handleLeagueAdminSetRsvp(req, env, url) {
   const playerId = String(body.player_id || '').trim();
   const status = String(body.status || '').trim();
   if (!eventId || !playerId || !['in', 'out'].includes(status)) {
-    return Response.json({ ok: false, error: 'event_id, player_id, and status (in|out) are required.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'event_id, player_id, and status (in|out) are required.', errorKey: 'ADMIN_RSVP_FIELDS_REQUIRED' }, { status: 400 });
   }
 
   const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
     .bind(eventId, leagueId).first();
-  if (!ev) return Response.json({ ok: false, error: 'Event not found.' }, { status: 404 });
-  if (ev.state !== 'open') return Response.json({ ok: false, error: 'Event is locked.' }, { status: 409 });
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  if (ev.state !== 'open') return Response.json({ ok: false, error: 'Event is locked.', errorKey: 'EVENT_LOCKED' }, { status: 409 });
 
   const contact = await env.DB.prepare('SELECT * FROM contacts WHERE player_id = ? AND league_id = ?')
     .bind(playerId, leagueId).first();
-  if (!contact) return Response.json({ ok: false, error: 'Player not found.' }, { status: 404 });
+  if (!contact) return Response.json({ ok: false, error: 'Player not found.', errorKey: 'PLAYER_NOT_FOUND' }, { status: 404 });
 
   await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'manager');
   if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
@@ -10092,12 +10135,12 @@ async function handleLeagueInviteSubs(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
   if (!(await checkCsrfToken(req, env, session))) {
-    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
   }
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
 
   const access = await checkLeagueAccess(req, env, leagueId);
@@ -10105,6 +10148,10 @@ async function handleLeagueInviteSubs(req, env, url) {
 
   // Defense in depth (see putLeagueDataJson's own comment): this route
   // must never be able to act on SMBHL's behalf, even in principle.
+  // Deliberately no errorKey -- resolveSessionLeagueId always resolves
+  // to the session's OWN league, so a real league admin can never
+  // actually trigger this through the UI; it's an internal safety
+  // assertion, not a real user-facing error path.
   if (leagueId === SMBHL_LEAGUE_ID) {
     return Response.json({ ok: false, error: 'This route cannot invite subs for SMBHL.' }, { status: 403 });
   }
@@ -10114,16 +10161,16 @@ async function handleLeagueInviteSubs(req, env, url) {
   const team = String(body.team || '').trim();
   const need = String(body.need || '').trim();
   if (!eventId || !team || !['goalie', 'skater'].includes(need)) {
-    return Response.json({ ok: false, error: 'event_id, team, and need (goalie|skater) are required.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'event_id, team, and need (goalie|skater) are required.', errorKey: 'ADMIN_INVITE_SUBS_FIELDS_REQUIRED' }, { status: 400 });
   }
 
   const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
     .bind(eventId, leagueId).first();
-  if (!ev) return Response.json({ ok: false, error: 'Event not found.' }, { status: 404 });
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
   if (!getTeamNames(cfg).includes(team)) {
-    return Response.json({ ok: false, error: 'Unknown team for this league.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'Unknown team for this league.', errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
   }
 
   const invited = await callSubs(env, ev, team, need, 0, leagueId);
