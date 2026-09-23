@@ -732,6 +732,106 @@ async function submitContact() {
   });
 }
 
+// UI DECISION (Part T/U): the per-event "invite subs" button lives ONLY on
+// the detail page (handleLeagueEventDetailPage below), not duplicated here
+// in the list. The list page's "view status" link is enough to get there;
+// showing the invite button here too would mean either an N+1 status call
+// per row just to know which teams/needs are short, or a bare "invite
+// subs" button with no team/need context to act on. The detail page
+// already has that per-team breakdown, so it's the one place an admin can
+// make an informed choice about which team/need to invite for.
+async function handleLeagueSchedulePage(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return Response.redirect(url.origin + '/login', 302);
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
+
+  const events = (await env.DB.prepare(
+    'SELECT id, season, week, date, venue, state, start_time, end_time FROM events WHERE league_id = ? ORDER BY date DESC, week DESC'
+  ).bind(leagueId).all()).results || [];
+
+  const STATE_LABEL = { open: 'Ouvert / Open', closed: 'Fermé / Closed', cancelled: 'Annulé / Cancelled' };
+  const scheduleHtml = events.length
+    ? `<table>${events.map(ev => `<tr><td>${esc(ev.date)}${ev.venue ? `<span class="by">${esc(ev.venue)}</span>` : ''}${ev.start_time ? `<span class="by">${esc(ev.start_time)}</span>` : ''}</td><td class="s"><a href="/league/events/detail?e=${encodeURIComponent(ev.id)}">${esc(STATE_LABEL[ev.state] || ev.state)}</a></td></tr>`).join('')}</table>`
+    : `<p class="state" style="margin:0;">Aucun match pour l'instant.<span class="en" style="display:block;">No events yet.</span></p>`;
+
+  return new Response(page('Calendrier', `
+  <h1>Calendrier<span class="en">Schedule</span></h1>
+  <p class="state" style="margin:0 0 16px;"><a href="/dashboard">&larr; Tableau de bord<span class="en" style="display:inline;"> / Dashboard</span></a></p>
+
+  <div class="card">
+    <h2>Créer un match<span class="en">Create an event</span></h2>
+    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Date<span class="en" style="display:block;font-weight:400;">Date</span></span>
+      <input type="date" id="e_date" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Heure de début <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Start time <i>(optional)</i></span></span>
+      <input type="time" id="e_start" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Heure de fin <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">End time <i>(optional)</i></span></span>
+      <input type="time" id="e_end" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:16px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Lieu <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Venue <i>(optional)</i></span></span>
+      <input type="text" id="e_venue" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <div class="btns">
+      <button type="button" class="btn" id="e_submit" onclick="submitEvent()">CRÉER<span class="en" style="display:block;font-size:13px;font-weight:600;">CREATE</span></button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Matchs<span class="en">Events</span></h2>
+    <div id="scheduleList">${scheduleHtml}</div>
+  </div>
+<script>
+function showErr(msg) {
+  const el = document.getElementById('formErr');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+async function submitEvent() {
+  document.getElementById('formErr').style.display = 'none';
+  const date = document.getElementById('e_date').value;
+  const start_time = document.getElementById('e_start').value;
+  const end_time = document.getElementById('e_end').value;
+  const venue = document.getElementById('e_venue').value.trim();
+  if (!date) {
+    showErr('La date est requise. / Date is required.');
+    return;
+  }
+  const btn = document.getElementById('e_submit');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/league/events', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venue || undefined })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      showErr(data.error || "Échec de la création. / Failed to create.");
+      btn.disabled = false;
+      return;
+    }
+    window.location.reload();
+  } catch (e) {
+    showErr('Erreur réseau. / Network error.');
+    btn.disabled = false;
+  }
+}
+</script>`), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
 /* ---------- data helpers ---------- */
 
 async function getEvent(db, id) {
@@ -15808,6 +15908,8 @@ async function handleFetch(req, env, ctx) {
       // League-admin UI pages (Parts R-V — see the task report).
       if ((url.pathname === '/league/roster' || url.pathname === '/league/roster/') && req.method === 'GET')
         return await handleLeagueRosterPage(req, env, url);
+      if ((url.pathname === '/league/schedule' || url.pathname === '/league/schedule/') && req.method === 'GET')
+        return await handleLeagueSchedulePage(req, env, url);
 
       if (url.pathname === '/admin' || url.pathname === '/admin/')
         return Response.redirect(url.origin + '/admin/board', 302);
