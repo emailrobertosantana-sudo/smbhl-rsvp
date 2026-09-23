@@ -11,52 +11,16 @@
 // pre-existing INSERT pattern in this codebase (which never mentions
 // league_id) keeps working unchanged because of the column's DEFAULT.
 //
-// The statements below mirror migrate-020.sql exactly. They're inlined
-// (rather than reading the .sql file from disk) because tests run inside
-// the workerd sandbox via @cloudflare/vitest-pool-workers, which has no
-// Node `fs` access (no nodejs_compat flag is set in wrangler.jsonc). Keep
-// this array in sync with migrate-020.sql if that file changes.
+// migrate-020.sql's own statements are no longer hand-copied here (see
+// Part 2 of the migrate-020.sql FK-bug follow-up) -- getRealMigrationQueries
+// pulls them straight from the real file via test/support/real_schema.js,
+// so there is nothing left to keep in sync by hand.
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
-
-const MIGRATION_020_STATEMENTS = [
-  `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at)
-   SELECT 'smbhl', 'SMBHL', NULL, 1, 0, '[]', 'system', '2026-01-01T00:00:00.000Z'
-   WHERE NOT EXISTS (SELECT 1 FROM leagues WHERE id = 'smbhl')`,
-  `ALTER TABLE contacts         ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE events           ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE rsvp             ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE sheet_reviews    ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE team_messages    ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE settings         ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE outbox           ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE jobs             ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE availability     ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE season_costs     ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE season_pricing   ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE player_dues      ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE planned_absences ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE polls            ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `ALTER TABLE poll_votes       ADD COLUMN league_id TEXT NOT NULL DEFAULT 'smbhl'`,
-  `CREATE INDEX IF NOT EXISTS idx_contacts_league         ON contacts(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_events_league           ON events(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_rsvp_league             ON rsvp(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_sheet_reviews_league    ON sheet_reviews(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_team_messages_league    ON team_messages(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_settings_league         ON settings(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_outbox_league           ON outbox(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_jobs_league             ON jobs(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_availability_league     ON availability(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_season_costs_league     ON season_costs(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_season_pricing_league   ON season_pricing(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_player_dues_league      ON player_dues(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_planned_absences_league ON planned_absences(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_polls_league            ON polls(league_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_poll_votes_league       ON poll_votes(league_id)`
-];
+import { getRealMigrationQueries } from './support/real_schema.js';
 
 async function applyMigration020(db) {
-  for (const stmt of MIGRATION_020_STATEMENTS) {
+  for (const stmt of getRealMigrationQueries(20)) {
     await db.prepare(stmt).run();
   }
 }

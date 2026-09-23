@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { handleSignup, handleResendVerification } from '../src/auth.js';
+import { applyRealSchema } from './support/real_schema.js';
 
 const AUTH_SECRET = 'test-auth-email-secret';
 
@@ -15,20 +16,7 @@ function mockSendMail() {
 describe('Part E: verification email sending', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      email_verified_at TEXT,
-      last_login_at TEXT,
-      session_epoch INTEGER NOT NULL DEFAULT 0
-    )`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS signup_attempts (
-      ip TEXT PRIMARY KEY,
-      window_start TEXT NOT NULL,
-      count INTEGER NOT NULL DEFAULT 0
-    )`).run();
+    await applyRealSchema(env);
   });
 
   it('handleSignup calls sendMailFunc with the new user\'s own email and a working verification link', async () => {

@@ -16,6 +16,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { dataJsonKeyFor, SMBHL_LEAGUE_ID } from '../src/league_ids.js';
 import { getLeagueDataJson } from '../src/leagues.js';
+import { applyRealSchema } from './support/real_schema.js';
 
 const AUTH_SECRET = 'test-league-datajson-secret';
 const ADMIN_KEY = 'test-league-datajson-admin-key';
@@ -61,11 +62,7 @@ describe('League-scoped data_json (KV key namespacing)', () => {
     env.AUTH_SECRET = AUTH_SECRET;
     env.ADMIN_KEY = ADMIN_KEY;
 
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL, email_verified_at TEXT, last_login_at TEXT, session_epoch INTEGER NOT NULL DEFAULT 0)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS signup_attempts (ip TEXT PRIMARY KEY, window_start TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS leagues (id TEXT PRIMARY KEY, name TEXT NOT NULL, division_label TEXT, tracks_stats INTEGER NOT NULL DEFAULT 1, team_count INTEGER NOT NULL, team_names TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS league_admins (user_id TEXT NOT NULL, league_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', created_at TEXT NOT NULL, PRIMARY KEY (user_id, league_id))`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, role TEXT NOT NULL DEFAULT 'roster', is_goalie INT DEFAULT 0, preferred_team TEXT, position TEXT, token_salt TEXT NOT NULL DEFAULT '', league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
+    await applyRealSchema(env);
 
     // SMBHL's real, existing data — written at the literal 'data_json' key,
     // exactly as every existing route in this codebase already does.
@@ -78,10 +75,10 @@ describe('League-scoped data_json (KV key namespacing)', () => {
     cookieA = a.cookie;
     cookieB = b.cookie;
 
-    await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, league_id) VALUES (?, ?, ?, ?)`)
-      .bind(`${leagueA}:P0001`, 'League A Contact', 'a@example.com', leagueA).run();
-    await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, league_id) VALUES (?, ?, ?, ?)`)
-      .bind(`${leagueB}:P0001`, 'League B Contact', 'b@example.com', leagueB).run();
+    await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, token_salt, league_id) VALUES (?, ?, ?, ?, ?)`)
+      .bind(`${leagueA}:P0001`, 'League A Contact', 'a@example.com', 'salt-a', leagueA).run();
+    await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, token_salt, league_id) VALUES (?, ?, ?, ?, ?)`)
+      .bind(`${leagueB}:P0001`, 'League B Contact', 'b@example.com', 'salt-b', leagueB).run();
   });
 
   describe('dataJsonKeyFor()', () => {

@@ -5,6 +5,7 @@
 // league_id-scoped.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
+import { applyRealSchema } from './support/real_schema.js';
 
 const AUTH_SECRET = 'test-route-migration-g-secret';
 const ADMIN_KEY = 'test-route-migration-g-admin-key';
@@ -41,16 +42,7 @@ describe('Part G: /admin/board/data, /admin/subs/data, /admin/outbox', () => {
     env.ADMIN_KEY = ADMIN_KEY;
     env.RSVP_SECRET = env.RSVP_SECRET || 'test-rsvp-secret-route-migration-g';
 
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL, email_verified_at TEXT, last_login_at TEXT, session_epoch INTEGER NOT NULL DEFAULT 0)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS signup_attempts (ip TEXT PRIMARY KEY, window_start TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS leagues (id TEXT PRIMARY KEY, name TEXT NOT NULL, division_label TEXT, tracks_stats INTEGER NOT NULL DEFAULT 1, team_count INTEGER NOT NULL, team_names TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS league_admins (user_id TEXT NOT NULL, league_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', created_at TEXT NOT NULL, PRIMARY KEY (user_id, league_id))`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, role TEXT NOT NULL DEFAULT 'roster', is_goalie INT DEFAULT 0, is_backup_goalie INT DEFAULT 0, preferred_team TEXT, position TEXT, dormant INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, last_played TEXT, opted_out INT DEFAULT 0, token_salt TEXT NOT NULL DEFAULT '', league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INTEGER, date TEXT, venue TEXT, state TEXT NOT NULL DEFAULT 'open', start_time TEXT, end_time TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, guest_name TEXT, team TEXT, status TEXT NOT NULL DEFAULT 'pending', role TEXT NOT NULL DEFAULT 'roster', status_by TEXT NOT NULL DEFAULT 'auto', updated_at TEXT, PRIMARY KEY (event_id, player_id))`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS availability (event_id TEXT, player_id TEXT, need TEXT, status TEXT, answered_at TEXT, PRIMARY KEY (event_id, player_id, need))`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`).run();
+    await applyRealSchema(env);
 
     const a = await signupAndCreateLeague('routemig.g.a@example.com', '203.0.113.231', 'Route Migration G League A', ['Red', 'Blue']);
     const b = await signupAndCreateLeague('routemig.g.b@example.com', '203.0.113.232', 'Route Migration G League B', ['Gold', 'Silver']);
@@ -59,10 +51,10 @@ describe('Part G: /admin/board/data, /admin/subs/data, /admin/outbox', () => {
     cookieA = a.cookie;
     cookieB = b.cookie;
 
-    await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, league_id) VALUES (?, ?, ?, ?)`)
-      .bind(`${leagueA}:P0001`, 'League A Contact', 'a@example.com', leagueA).run();
-    await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, league_id) VALUES (?, ?, ?, ?)`)
-      .bind(`${leagueB}:P0001`, 'League B Contact', 'b@example.com', leagueB).run();
+    await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, token_salt, league_id) VALUES (?, ?, ?, ?, ?)`)
+      .bind(`${leagueA}:P0001`, 'League A Contact', 'a@example.com', 'salt-a', leagueA).run();
+    await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, token_salt, league_id) VALUES (?, ?, ?, ?, ?)`)
+      .bind(`${leagueB}:P0001`, 'League B Contact', 'b@example.com', 'salt-b', leagueB).run();
 
     await env.DB.prepare(`INSERT INTO events (id, season, week, date, venue, state, league_id) VALUES (?, 'League A Season', 1, '2026-10-04', 'League A Venue', 'open', ?)`)
       .bind(`${leagueA}:2026-10-04`, leagueA).run();

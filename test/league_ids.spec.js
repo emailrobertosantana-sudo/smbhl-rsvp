@@ -19,6 +19,7 @@ import {
   extractTrailingNumber
 } from '../src/league_ids.js';
 import { eventStart } from '../src/index.js';
+import { applyRealSchema } from './support/real_schema.js';
 
 describe('league_ids.js — pure ID-scheme helpers', () => {
   it('SMBHL_LEAGUE_ID matches the sentinel row migrate-020.sql creates in `leagues`', () => {
@@ -89,8 +90,7 @@ describe('eventStart() — identical behavior for old ids, correct for new prefi
 
 describe('Collision safety: two leagues writing data for the same calendar date / same counter value', () => {
   beforeAll(async () => {
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INTEGER, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT)`).run();
+    await applyRealSchema(env);
   });
 
   it('demonstrates the actual bug this fix prevents: under the OLD bare-date-id scheme, two leagues writing an event for the same date silently collide via this codebase\'s own ON CONFLICT(id) DO UPDATE pattern', async () => {
@@ -142,13 +142,7 @@ describe('Collision safety: two leagues writing data for the same calendar date 
 
 describe('SMBHL\'s existing (old-style) ids and already-issued links resolve completely unchanged', () => {
   beforeAll(async () => {
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INTEGER, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, guest_name TEXT, team TEXT, status TEXT, role TEXT, status_by TEXT, updated_at TEXT, PRIMARY KEY (event_id, player_id))`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS polls (id INTEGER PRIMARY KEY AUTOINCREMENT, season TEXT NOT NULL, title TEXT NOT NULL, description TEXT, category TEXT NOT NULL DEFAULT 'general', target_position TEXT, allow_subs INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, closed_at TEXT, last_sent_at TEXT, sent_count INTEGER DEFAULT 0, show_on_rsvp INTEGER NOT NULL DEFAULT 0, show_results INTEGER NOT NULL DEFAULT 0)`).run();
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS poll_votes (id INTEGER PRIMARY KEY AUTOINCREMENT, poll_id INTEGER NOT NULL, voter_id TEXT NOT NULL, candidate_id TEXT, candidate_name TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(poll_id, voter_id))`).run();
+    await applyRealSchema(env);
 
     env.RSVP_SECRET = 'test-secret-existing-link';
     await env.DB.prepare(`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time) VALUES ('2026-09-20', 'Fall 2026', 3, 'Sunday September 20', 'College Jean-de-Brebeuf', 'open', '10:30')`).run();

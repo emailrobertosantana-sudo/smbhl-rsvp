@@ -8,6 +8,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG } from '../src/season_config.js';
 import { getLeagueSeasonConfig } from '../src/leagues.js';
+import { applyRealSchema } from './support/real_schema.js';
 
 const AUTH_SECRET = 'test-league-season-config-secret';
 
@@ -66,10 +67,7 @@ describe('Part H: getSeasonConfig fallback uses a league\'s own team names', () 
   describe('getLeagueSeasonConfig() end-to-end', () => {
     beforeAll(async () => {
       env.AUTH_SECRET = AUTH_SECRET;
-      await env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL, email_verified_at TEXT, last_login_at TEXT, session_epoch INTEGER NOT NULL DEFAULT 0)`).run();
-      await env.DB.prepare(`CREATE TABLE IF NOT EXISTS signup_attempts (ip TEXT PRIMARY KEY, window_start TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0)`).run();
-      await env.DB.prepare(`CREATE TABLE IF NOT EXISTS leagues (id TEXT PRIMARY KEY, name TEXT NOT NULL, division_label TEXT, tracks_stats INTEGER NOT NULL DEFAULT 1, team_count INTEGER NOT NULL, team_names TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL)`).run();
-      await env.DB.prepare(`CREATE TABLE IF NOT EXISTS league_admins (user_id TEXT NOT NULL, league_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', created_at TEXT NOT NULL, PRIMARY KEY (user_id, league_id))`).run();
+      await applyRealSchema(env);
     });
 
     it("a brand-new league with no season data yet gets ITS OWN signup team names, not SMBHL's", async () => {

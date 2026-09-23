@@ -40,8 +40,28 @@ CREATE TABLE rsvp (
   updated_at  TEXT NOT NULL
 );
 
-CREATE UNIQUE INDEX idx_rsvp_player ON rsvp(event_id, player_id)
-  WHERE player_id IS NOT NULL;
+-- CORRECTED 2026-09-22 (Part 2 of the migrate-020.sql FK-bug follow-up):
+-- this index was documented here as a PARTIAL unique index
+-- (`WHERE player_id IS NOT NULL`), but that was never what's actually on
+-- the real database -- verified with a read-only query against production
+-- (`SELECT sql FROM sqlite_master WHERE tbl_name = 'rsvp'`), which returned
+-- a plain, unconditional unique index with no WHERE clause. The partial
+-- version in this file was undetected drift: every hand-rolled test schema
+-- used an unconditional `PRIMARY KEY (event_id, player_id)` instead of
+-- replaying this file, so nothing ever exercised the (wrong) partial
+-- predicate written here. It matters because every `INSERT ... ON
+-- CONFLICT(event_id, player_id) DO UPDATE` in src/index.js (five call
+-- sites, including writeLeagueRsvpStatus) targets the unconditional form;
+-- SQLite only matches an ON CONFLICT target to a partial index when the
+-- target repeats that index's own WHERE clause, so the partial version
+-- written here would make every one of those real, already-working writes
+-- fail with "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE
+-- constraint" -- which is exactly what surfaced this, once schema.sql
+-- started being replayed for real in the test suite instead of hand-rolled
+-- per spec file. This is a correction to this file's record, not a change
+-- to be applied anywhere -- the real database has always had the
+-- unconditional index; this file was just wrong about it.
+CREATE UNIQUE INDEX idx_rsvp_player ON rsvp(event_id, player_id);
 CREATE INDEX idx_rsvp_team ON rsvp(event_id, team);
 
 CREATE TABLE IF NOT EXISTS sheet_reviews (

@@ -8,27 +8,11 @@ import { describe, it, expect, beforeAll } from "vitest";
 import worker, { body, drain, notifyAdminGoalieCancel, getTeamMessages, addTeamMessage, getStandingsTooltip, sanitizeAndValidateEmail, acceptAvailability, sortTeamBoardRows, computeTeamBalance, resolveTeamGoalies, boardData, ensureNextEvent, teamState, expected, handleLeagueMessageGet, handleLeagueMessageSave, runSchedule, handleSendSampleInvites } from "../src";
 import { handleReviewPublish, handleReviewManualStart, handleScoresheetEmail } from "../src/review.js";
 import { generateReviewToken } from "../src/admin_auth.js";
+import { applyRealSchema } from "./support/real_schema.js";
 
 describe("SMBHL Worker", () => {
 	beforeAll(async () => {
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS sheet_reviews (id TEXT PRIMARY KEY, event_id TEXT NOT NULL, season TEXT NOT NULL, week INTEGER NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', images_json TEXT, extracted_json TEXT, validated_json TEXT, published_at TEXT)`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS team_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL, team TEXT NOT NULL, player_name TEXT NOT NULL, player_id TEXT, message TEXT NOT NULL, created_at TEXT NOT NULL)`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS season_pricing (season TEXT PRIMARY KEY, price_player REAL NOT NULL DEFAULT 170, price_goalie REAL NOT NULL DEFAULT 0, price_sub_player REAL NOT NULL DEFAULT 10, price_sub_goalie REAL NOT NULL DEFAULT 0, etransfer_phone TEXT, updated_at TEXT NOT NULL)`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS player_dues (season TEXT NOT NULL, player_id TEXT NOT NULL, custom_due REAL, adjustment REAL NOT NULL DEFAULT 0, amount_paid REAL NOT NULL DEFAULT 0, notes TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (season, player_id))`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS season_costs (id TEXT PRIMARY KEY, season TEXT NOT NULL, category TEXT NOT NULL, description TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS planned_absences (id INTEGER PRIMARY KEY AUTOINCREMENT, player_id TEXT NOT NULL, date TEXT NOT NULL, season TEXT NOT NULL, reason TEXT, created_at TEXT NOT NULL, UNIQUE(player_id, date))` ).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`).run();
-		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN position TEXT DEFAULT NULL`).run().catch(() => {});
-		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN previous_role TEXT DEFAULT NULL`).run().catch(() => {});
-		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN archive_reason TEXT DEFAULT NULL`).run().catch(() => {});
-		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN is_backup_goalie INT DEFAULT 0`).run().catch(() => {});
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS polls (id INTEGER PRIMARY KEY AUTOINCREMENT, season TEXT NOT NULL, title TEXT NOT NULL, description TEXT, category TEXT NOT NULL DEFAULT 'general', target_position TEXT, allow_subs INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, closed_at TEXT, last_sent_at TEXT, sent_count INTEGER DEFAULT 0, show_on_rsvp INTEGER NOT NULL DEFAULT 0, show_results INTEGER NOT NULL DEFAULT 0)`).run();
-		await env.DB.prepare(`ALTER TABLE polls ADD COLUMN last_sent_at TEXT DEFAULT NULL`).run().catch(() => {});
-		await env.DB.prepare(`ALTER TABLE polls ADD COLUMN sent_count INTEGER DEFAULT 0`).run().catch(() => {});
-		await env.DB.prepare(`ALTER TABLE polls ADD COLUMN show_on_rsvp INTEGER NOT NULL DEFAULT 0`).run().catch(() => {});
-		await env.DB.prepare(`ALTER TABLE polls ADD COLUMN show_results INTEGER NOT NULL DEFAULT 0`).run().catch(() => {});
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS poll_votes (id INTEGER PRIMARY KEY AUTOINCREMENT, poll_id INTEGER NOT NULL REFERENCES polls(id), voter_id TEXT NOT NULL, candidate_id TEXT, candidate_name TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(poll_id, voter_id))` ).run();
+		await applyRealSchema(env);
 	});
 
 	it("responds with ok on /health", async () => {
@@ -195,7 +179,6 @@ describe("SMBHL Worker", () => {
 
 		beforeAll(async () => {
 			env.ADMIN_KEY = E2E_ADMIN_KEY;
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
 			await env.DB.prepare(
 				`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time, end_time)
 				 VALUES ('e2e-manual-evt-1', ?, 1, 'Sunday', 'Court A', 'open', '10:00', '11:00')`
@@ -277,7 +260,6 @@ describe("SMBHL Worker", () => {
 		beforeAll(async () => {
 			env.ADMIN_KEY = RT_ADMIN_KEY;
 			env.RSVP_SECRET = RT_SECRET;
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
 			await env.DB.prepare(
 				`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time, end_time)
 				 VALUES ('rt-evt-1', ?, 1, 'Sunday', 'Court A', 'open', '10:00', '11:00')`
@@ -555,15 +537,6 @@ describe("SMBHL Worker", () => {
 	});
 
 	it("cancels queued gameday email if player is no longer confirmed in", async () => {
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN is_sub INT DEFAULT 0`).run().catch(() => {});
-		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN preferred_team TEXT`).run().catch(() => {});
-		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN last_played TEXT`).run().catch(() => {});
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, guest_name TEXT, team TEXT, status TEXT, role TEXT, status_by TEXT, updated_at TEXT, PRIMARY KEY (event_id, player_id))`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`).run();
-
 		env.RSVP_SECRET = 'test-secret-12345';
 		const now = new Date().toISOString();
 		await env.DB.prepare(`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time) VALUES ('2026-09-20', 'Fall 2026', 3, 'Sunday September 20', 'College Jean-de-Brebeuf', 'open', '10:30')`).run();
@@ -596,13 +569,6 @@ describe("SMBHL Worker", () => {
 			env.RESEND_API_KEY = 're_test_key_123';
 			env.RSVP_SECRET = 'test-secret-12345';
 			const past = new Date(Date.now() - 60000).toISOString();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-			await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN is_sub INT DEFAULT 0`).run().catch(() => {});
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, guest_name TEXT, team TEXT, status TEXT, role TEXT, status_by TEXT, updated_at TEXT, PRIMARY KEY (event_id, player_id))`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS team_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL, team TEXT NOT NULL, player_name TEXT NOT NULL, player_id TEXT, message TEXT NOT NULL, created_at TEXT NOT NULL)`).run();
 
 			await env.DB.prepare(`INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time) VALUES ('2026-09-20', 'Fall 2026', 3, 'Sunday September 20', 'College Jean-de-Brebeuf', 'open', '10:30')`).run();
 			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, email, role, token_salt) VALUES ('P8888', 'Pending Regular', 'pending@smbhl.com', 'roster', 'salt888')`).run();
@@ -684,9 +650,6 @@ describe("SMBHL Worker", () => {
 			env.RESEND_API_KEY = 're_test_key_123';
 			env.RSVP_SECRET = 'test-secret-12345';
 			const now = new Date().toISOString();
-
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS availability (event_id TEXT, player_id TEXT, need TEXT, status TEXT, answered_at TEXT, PRIMARY KEY (event_id, player_id, need))`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS jobs (event_id TEXT, job TEXT, ran_at TEXT, PRIMARY KEY (event_id, job))`).run();
 
 			// Setup goalie & skater contacts
 			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, email, role, is_goalie, token_salt) VALUES ('G001', 'Goalie Bob', 'goalie@smbhl.com', 'roster', 1, 'salt_g')`).run();
@@ -1423,7 +1386,7 @@ describe("SMBHL Worker", () => {
 		// 1. Setup former regular player who was archived
 		await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, phone, role, previous_role, preferred_team, is_sub, is_goalie, dormant, asked_streak, token_salt) VALUES ('P_FORMER_ROSTER', 'Ex Regular', 'ex@example.com', '514-555-0000', 'archived', 'roster', 'Red', 0, 0, 1, 4, 'salt_ex')").run();
 		await env.DB.prepare("INSERT OR REPLACE INTO events (id, season, week, date, state) VALUES ('2026-10-11', 'Fall 2026', 2, '2026-10-11', 'open')").run();
-		await env.DB.prepare("INSERT OR REPLACE INTO rsvp (event_id, player_id, team, role, status) VALUES ('2026-10-11', 'P_FORMER_ROSTER', 'Red', 'roster', 'out')").run();
+		await env.DB.prepare("INSERT OR REPLACE INTO rsvp (event_id, player_id, team, role, status, updated_at) VALUES ('2026-10-11', 'P_FORMER_ROSTER', 'Red', 'roster', 'out', datetime('now'))").run();
 
 		// 2. Restore via 1-Click Restore ([⚡ RÉACTIVER])
 		const restoreResp = await SELF.fetch("http://example.com/admin/contacts", {
@@ -1502,21 +1465,21 @@ describe("SMBHL Worker", () => {
 
 		// Blue and White are full (8 skaters each)
 		for (let i = 1; i <= 8; i++) {
-			await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role) VALUES (?, ?, 'Blue', 'in', 'roster')").bind(evId, `P_BLU_${i}`).run();
-			await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role) VALUES (?, ?, 'White', 'in', 'roster')").bind(evId, `P_WHT_${i}`).run();
+			await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES (?, ?, 'Blue', 'in', 'roster', datetime('now'))").bind(evId, `P_BLU_${i}`).run();
+			await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES (?, ?, 'White', 'in', 'roster', datetime('now'))").bind(evId, `P_WHT_${i}`).run();
 		}
 
 		// Red has 7 expected skaters (1 open spot)
 		for (let i = 1; i <= 6; i++) {
-			await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role) VALUES (?, ?, 'Red', 'in', 'roster')").bind(evId, `P_RED_${i}`).run();
+			await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES (?, ?, 'Red', 'in', 'roster', datetime('now'))").bind(evId, `P_RED_${i}`).run();
 		}
-		await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role) VALUES (?, 'P_RED_PENDING', 'Red', 'pending', 'roster')").bind(evId).run();
+		await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES (?, 'P_RED_PENDING', 'Red', 'pending', 'roster', datetime('now'))").bind(evId).run();
 
 		// Black has 6 expected skaters (2 open spots - higher shortage!)
 		for (let i = 1; i <= 5; i++) {
-			await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role) VALUES (?, ?, 'Black', 'in', 'roster')").bind(evId, `P_BLK_${i}`).run();
+			await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES (?, ?, 'Black', 'in', 'roster', datetime('now'))").bind(evId, `P_BLK_${i}`).run();
 		}
-		await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role) VALUES (?, 'P_BLK_PENDING', 'Black', 'pending', 'roster')").bind(evId).run();
+		await env.DB.prepare("INSERT INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES (?, 'P_BLK_PENDING', 'Black', 'pending', 'roster', datetime('now'))").bind(evId).run();
 
 		// Sub with no preferred team
 		await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role, token_salt, preferred_team) VALUES ('P_SUB_NEUTRAL', 'Neutral Sub', 'neutral@example.com', 1, 'sub_skater', 'salt_neu', NULL)").run();
@@ -1637,17 +1600,17 @@ describe("SMBHL Worker", () => {
 			await env.SHEETS_KV.put("data_json", JSON.stringify(mockData));
 
 			// Contacts table
-			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role) VALUES ('P_TEST_REG_SKATER', 'Adam Regular', 'adam@test.com', 0, 'roster')").run();
-			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role, is_goalie) VALUES ('P_TEST_REG_GOALIE', 'Anthony Goalie', 'anthony@test.com', 0, 'roster', 1)").run();
-			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role) VALUES ('P_TEST_HENRIK', 'Henrik Santana', 'henrik@test.com', 1, 'sub_skater')").run();
-			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role) VALUES ('P_TEST_ARMANDO', 'Armando Tempestilli', 'armando@test.com', 1, 'sub_skater')").run();
-			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role) VALUES ('P_TEST_ALEXANDRE', 'Alexandre Oliveira', 'alex@test.com', 1, 'sub_skater')").run();
+			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role, token_salt) VALUES ('P_TEST_REG_SKATER', 'Adam Regular', 'adam@test.com', 0, 'roster', 'salt-reg-skater')").run();
+			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role, is_goalie, token_salt) VALUES ('P_TEST_REG_GOALIE', 'Anthony Goalie', 'anthony@test.com', 0, 'roster', 1, 'salt-reg-goalie')").run();
+			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role, token_salt) VALUES ('P_TEST_HENRIK', 'Henrik Santana', 'henrik@test.com', 1, 'sub_skater', 'salt-henrik')").run();
+			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role, token_salt) VALUES ('P_TEST_ARMANDO', 'Armando Tempestilli', 'armando@test.com', 1, 'sub_skater', 'salt-armando')").run();
+			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role, token_salt) VALUES ('P_TEST_ALEXANDRE', 'Alexandre Oliveira', 'alex@test.com', 1, 'sub_skater', 'salt-alexandre')").run();
 
 			// Setup an upcoming OPEN event for next week with subs signed up 'in'
 			// These subs have NOT played yet, so they must NOT owe anything or appear
 			await env.DB.prepare("INSERT OR REPLACE INTO events (id, season, week, date, venue, state, start_time) VALUES ('2027-01-20', 'Winter 2027', 3, 'Sunday Jan 20', 'Letendre', 'open', '10:30')").run();
-			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role) VALUES ('P_TEST_UPCOMING_SUB', 'Upcoming Sub', 'upcoming@test.com', 1, 'sub_skater')").run();
-			await env.DB.prepare("INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role) VALUES ('2027-01-20', 'P_TEST_UPCOMING_SUB', 'Red', 'in', 'sub')").run();
+			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role, token_salt) VALUES ('P_TEST_UPCOMING_SUB', 'Upcoming Sub', 'upcoming@test.com', 1, 'sub_skater', 'salt-upcoming-sub')").run();
+			await env.DB.prepare("INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES ('2027-01-20', 'P_TEST_UPCOMING_SUB', 'Red', 'in', 'sub', datetime('now'))").run();
 
 			// Clean any prior dues for clean assertions
 			await env.DB.prepare("DELETE FROM season_pricing WHERE season = ?").bind(season).run();
@@ -2184,11 +2147,11 @@ describe("SMBHL Worker", () => {
 				.bind(eventId).run();
 
 			const subId = "P_SUB_TEST";
-			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, role, is_sub) VALUES (?, 'Sub Test', 'subtest@example.com', 'sub_skater', 1)")
+			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, role, is_sub, token_salt) VALUES (?, 'Sub Test', 'subtest@example.com', 'sub_skater', 1, 'salt-sub-test')")
 				.bind(subId).run();
 
 			// Place sub on White
-			await env.DB.prepare("INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, status_by) VALUES (?, ?, 'White', 'in', 'sub', 'admin')")
+			await env.DB.prepare("INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at) VALUES (?, ?, 'White', 'in', 'sub', 'admin', datetime('now'))")
 				.bind(eventId, subId).run();
 
 			// Reassign sub to Black via /admin/subs/reassign
@@ -2383,7 +2346,7 @@ describe("SMBHL Worker", () => {
 			const salt = "teamsalt_red_123";
 			env.RSVP_SECRET = 'test-secret-12345';
 			await env.DB.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('teamsalt:Fall 2026:Red', ?)`).bind(salt).run();
-			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, email, role, position) VALUES ('P9999', 'Test Skater', 'test@smbhl.com', 'roster', NULL)`).run();
+			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, email, role, position, token_salt) VALUES ('P9999', 'Test Skater', 'test@smbhl.com', 'roster', NULL, 'salt-p9999')`).run();
 
 			const encoder = new TextEncoder();
 			const key = await crypto.subtle.importKey("raw", encoder.encode(env.RSVP_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -2464,7 +2427,7 @@ describe("SMBHL Worker", () => {
 		});
 
 		it("renders standalone /poll page and records vote with poll HMAC token", async () => {
-			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, position, is_goalie) VALUES ('D010', 'Arber Xhekaj', 'D', 0)`).run();
+			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, position, is_goalie, token_salt) VALUES ('D010', 'Arber Xhekaj', 'D', 0, 'salt-d010')`).run();
 			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, email, token_salt) VALUES ('V002', 'Martin St-Louis', 'martin@smbhl.com', 'salt_marty')`).run();
 
 			const pollRes = await env.DB.prepare(`
@@ -2522,8 +2485,8 @@ describe("SMBHL Worker", () => {
 		});
 
 		it("manages polls, filters candidates by target_position, and records votes", async () => {
-			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, position, is_goalie) VALUES ('D001', 'David Savard', 'D', 0)`).run();
-			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, position, is_goalie) VALUES ('F001', 'Cole Caufield', 'F', 0)`).run();
+			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, position, is_goalie, token_salt) VALUES ('D001', 'David Savard', 'D', 0, 'salt-d001')`).run();
+			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, position, is_goalie, token_salt) VALUES ('F001', 'Cole Caufield', 'F', 0, 'salt-f001')`).run();
 			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, token_salt) VALUES ('V001', 'Voter Guy', 'salt_v1')`).run();
 
 			// Create Norris poll with target_position = 'D'
@@ -2570,7 +2533,7 @@ describe("SMBHL Worker", () => {
 			expect(voteData.results.votes[0].pct).toBe(100);
 
 			// Update vote (upsert check)
-			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, position, is_goalie) VALUES ('D002', 'Mike Matheson', 'D', 0)`).run();
+			await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, position, is_goalie, token_salt) VALUES ('D002', 'Mike Matheson', 'D', 0, 'salt-d002')`).run();
 			const updateVoteRes = await worker.fetch(new Request("http://example.com/api/poll/vote", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
@@ -2612,7 +2575,7 @@ describe("SMBHL Worker", () => {
 				await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, email, role, token_salt) VALUES ('R002', 'Juraj Slafkovsky', 'juraj@smbhl.com', 'roster', 'salt_juraj')`).run();
 				await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, email, role, token_salt) VALUES ('S001', 'Sub Player', 'sub@smbhl.com', 'sub', 'salt_sub')`).run();
 				await env.DB.prepare(`INSERT OR REPLACE INTO events (id, season, week, date, venue, state) VALUES ('ev-poll-1', 'Fall 2026', 1, 'Sunday Sept 20', 'Gym', 'open')`).run();
-				await env.DB.prepare(`INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role) VALUES ('ev-poll-1', 'S001', 'Red', 'in', 'sub')`).run();
+				await env.DB.prepare(`INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES ('ev-poll-1', 'S001', 'Red', 'in', 'sub', datetime('now'))`).run();
 
 				// GET /admin/polls
 				const pageRes = await worker.fetch(new Request("http://example.com/admin/polls"), env);
@@ -2718,8 +2681,8 @@ describe("SMBHL Worker", () => {
 
 			// Seed open event
 			await env.DB.prepare(`INSERT OR REPLACE INTO events (id, season, week, date, venue, state) VALUES ('ev-rsvp-poll', 'Fall 2026', 2, 'Sunday Sept 27', 'Arena', 'open')`).run();
-			await env.DB.prepare(`INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role) VALUES ('ev-rsvp-poll', 'REG1', 'Red', 'in', 'roster')`).run();
-			await env.DB.prepare(`INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role) VALUES ('ev-rsvp-poll', 'SUB1', 'Red', 'in', 'sub')`).run();
+			await env.DB.prepare(`INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES ('ev-rsvp-poll', 'REG1', 'Red', 'in', 'roster', datetime('now'))`).run();
+			await env.DB.prepare(`INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES ('ev-rsvp-poll', 'SUB1', 'Red', 'in', 'sub', datetime('now'))`).run();
 
 			// Generate HMAC tokens
 			const encoder = new TextEncoder();
@@ -2879,13 +2842,6 @@ describe("SMBHL Worker", () => {
 	});
 
 	describe("Admin Schedule Management (/admin/schedule)", () => {
-		beforeAll(async () => {
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, team TEXT, status TEXT, role TEXT, status_by TEXT, updated_at TEXT, guest_name TEXT, PRIMARY KEY(event_id, player_id))`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, send_after TEXT, sent_at TEXT, cancelled INT, error TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS jobs (event_id TEXT, job TEXT, ran_at TEXT, PRIMARY KEY(event_id, job))`).run();
-		});
-
 		it("renders /admin/schedule page with navigation tabs and controls", async () => {
 			const res = await worker.fetch(new Request("http://example.com/admin/schedule"), env);
 			expect(res.status).toBe(200);
@@ -2987,10 +2943,10 @@ describe("SMBHL Worker", () => {
 
 			// Add contact and RSVP
 			await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, role, token_salt) VALUES ('P_CANCEL', 'Carey Price', 'carey@smbhl.com', 'roster', 'salt_price')").run();
-			await env.DB.prepare("INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role) VALUES (?, 'P_CANCEL', 'Red', 'in', 'roster')").bind(evId).run();
+			await env.DB.prepare("INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, updated_at) VALUES (?, 'P_CANCEL', 'Red', 'in', 'roster', datetime('now'))").bind(evId).run();
 
 			// Queue a reminder in outbox for this event
-			await env.DB.prepare("INSERT INTO outbox (kind, event_id, player_id, team, send_after, cancelled) VALUES ('reminder', ?, 'P_CANCEL', 'Red', '2026-12-05T12:00:00Z', 0)").bind(evId).run();
+			await env.DB.prepare("INSERT INTO outbox (kind, event_id, player_id, team, send_after, cancelled, created_at) VALUES ('reminder', ?, 'P_CANCEL', 'Red', '2026-12-05T12:00:00Z', 0, datetime('now'))").bind(evId).run();
 
 			// Confirm outbox entry is active (cancelled = 0)
 			let outboxItem = await env.DB.prepare("SELECT * FROM outbox WHERE event_id = ? AND player_id = 'P_CANCEL'").bind(evId).first();
@@ -3098,8 +3054,8 @@ describe("SMBHL Worker", () => {
 
 				// Add a pending outbox entry to ensure it gets cancelled
 				await env.DB.prepare(
-					`INSERT INTO outbox (kind, event_id, player_id, team, send_after, cancelled)
-					 VALUES ('invite', ?, 'P9901', 'Red', datetime('now', '+1 hour'), 0)`
+					`INSERT INTO outbox (kind, event_id, player_id, team, send_after, cancelled, created_at)
+					 VALUES ('invite', ?, 'P9901', 'Red', datetime('now', '+1 hour'), 0, datetime('now'))`
 				).bind(cancelEvId).run();
 
 				// Test send-cancellation validation
@@ -3422,12 +3378,6 @@ describe("SMBHL Worker", () => {
 	});
 
 	describe("Season-config-driven league branding & email identity", () => {
-		beforeAll(async () => {
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, guest_name TEXT, team TEXT, status TEXT, role TEXT, status_by TEXT, updated_at TEXT, PRIMARY KEY (event_id, player_id))`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
-		});
-
 		it("Fall 2026 (no league override) still sends under SMBHL's exact original identity — byte-for-byte unchanged", async () => {
 			const originalFetch = globalThis.fetch;
 			const sent = [];
@@ -3944,8 +3894,8 @@ describe("SMBHL Worker", () => {
 
 				// 3. Insert an outbox message and test cancelling it
 				const insRes = await env.DB.prepare(`
-					INSERT INTO outbox (kind, event_id, player_id, team, send_after, cancelled)
-					VALUES ('test_cancel', 'event-1', 'P9999', 'Red', datetime('now', '+1 hour'), 0)
+					INSERT INTO outbox (kind, event_id, player_id, team, send_after, cancelled, created_at)
+					VALUES ('test_cancel', 'event-1', 'P9999', 'Red', datetime('now', '+1 hour'), 0, datetime('now'))
 				`).run();
 				const outboxId = insRes.meta.last_row_id;
 
