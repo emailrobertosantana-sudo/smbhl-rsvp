@@ -1318,6 +1318,9 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       teamsLabel: 'équipes', playersLabel: 'joueurs',
       publicPage: 'Page publique', copyLink: 'Copier', copied: 'Copié !',
       teams: 'Équipes', tracksStatsLabel: 'Statistiques suivies', yes: 'Oui', no: 'Non',
+      teamsPerGame: 'Équipes (par match)', noFixedTeams: 'Aucune équipe fixe',
+      noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.",
+      weeklyDrawTeamsDesc: 'Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.',
       coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteBtn: 'Inviter',
       langExposure: 'Langue exposée aux joueurs',
       langExposureDesc: 'Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.',
@@ -1330,6 +1333,7 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       remindersSaved: 'Enregistré !',
       deactivateLeague: 'Désactiver la ligue',
       deactivateDesc: "Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.",
+      deactivateConfirmLabel: 'Tape le nom de ta ligue pour confirmer',
       deactivateBtn: 'Désactiver'
     });
     Object.assign(en, {
@@ -1337,6 +1341,9 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       teamsLabel: 'teams', playersLabel: 'players',
       publicPage: 'Public page', copyLink: 'Copy', copied: 'Copied!',
       teams: 'Teams', tracksStatsLabel: 'Tracks stats', yes: 'Yes', no: 'No',
+      teamsPerGame: 'Teams (per game)', noFixedTeams: 'No fixed teams',
+      noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
+      weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
       coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteBtn: 'Invite',
       langExposure: 'Language exposed to players',
       langExposureDesc: "Controls whether your players' public page and RSVP page show a FR/EN toggle, or a single fixed language.",
@@ -1349,6 +1356,7 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       remindersSaved: 'Saved!',
       deactivateLeague: 'Deactivate league',
       deactivateDesc: 'This deactivates your league. Your data is kept, but management access is blocked.',
+      deactivateConfirmLabel: "Type your league's name to confirm",
       deactivateBtn: 'Deactivate'
     });
     if (needsSeason) {
@@ -1503,6 +1511,16 @@ async function handleDashboardPage(req, env, url) {
   const currentSeason = leagueData ? leagueData.current_season : null;
 
   const teamNames = leagueRow ? (() => { try { return JSON.parse(leagueRow.team_names || '[]'); } catch (_) { return []; } })() : [];
+  // Live-testing bug fix: the "Équipes" tile/card used to show
+  // teamNames straight from leagues.team_names, which is real team
+  // names for 'fixed'/'weekly_draw' but the internal HEADCOUNT_TEAM_NAME
+  // sentinel for 'headcount' -- shown verbatim to the league's own
+  // admin as if it were a real team ("1 équipe: Tous"). Branch on the
+  // league's own team_structure (its permanent default -- same basis
+  // teamNames itself already uses here, not a season override) instead.
+  const dashTeamStructure = leagueRow ? (leagueRow.team_structure || 'fixed') : 'fixed';
+  const dashIsHeadcount = dashTeamStructure === 'headcount';
+  const dashIsWeeklyDraw = dashTeamStructure === 'weekly_draw';
   const playerCountRow = leagueRow ? await env.DB.prepare('SELECT COUNT(*) AS c FROM contacts WHERE league_id = ?').bind(leagueRow.id).first() : null;
   const playerCount = playerCountRow ? Number(playerCountRow.c) || 0 : 0;
 
@@ -1583,7 +1601,7 @@ async function handleDashboardPage(req, env, url) {
         ${needsSeason
           ? `<span class="nl-badge nl-badge--pending" data-i18n="noSeason">Pas de saison active</span>`
           : `<span><span data-i18n="currentSeasonLabel">Saison actuelle</span> : <b>${esc(currentSeason)}</b></span>`}
-        <span>${teamNames.length} <span data-i18n="teamsLabel">équipes</span> · ${playerCount} <span data-i18n="playersLabel">joueurs</span></span>
+        <span>${dashIsHeadcount ? '' : `${teamNames.length} <span data-i18n="teamsLabel">équipes</span> · `}${playerCount} <span data-i18n="playersLabel">joueurs</span></span>
       </div>
     </div>
   </div>
@@ -1595,7 +1613,12 @@ async function handleDashboardPage(req, env, url) {
   </section>` : ''}
   ${startGridHtml}
   <div class="dash-tiles">
-    <section class="nl-card nl-card--pad-lg dash-tile"><div class="overline" data-i18n="teams">Équipes</div><div class="stat tnum">${teamNames.length}</div></section>
+    <section class="nl-card nl-card--pad-lg dash-tile">
+      <div class="overline" data-i18n="${dashIsWeeklyDraw ? 'teamsPerGame' : 'teams'}">${dashIsWeeklyDraw ? 'Équipes (par match)' : 'Équipes'}</div>
+      ${dashIsHeadcount
+        ? `<div class="stat tnum" style="font-size:20px" data-i18n="noFixedTeams">Aucune équipe fixe</div>`
+        : `<div class="stat tnum">${teamNames.length}</div>`}
+    </section>
     <section class="nl-card nl-card--pad-lg dash-tile"><div class="overline" data-i18n="navRoster">Joueurs</div><div class="stat tnum">${playerCount}</div><a href="/league/roster" data-i18n="navRoster">Joueurs</a></section>
     <section class="nl-card nl-card--pad-lg dash-tile">
       <div class="overline" data-i18n="publicPage">Page publique</div>
@@ -1604,8 +1627,12 @@ async function handleDashboardPage(req, env, url) {
   </div>
   <section class="nl-card nl-card--pad-lg">
     <div class="h3" data-i18n="teams">Équipes</div>
+    ${dashIsHeadcount ? `
+    <p class="nl-help" style="margin-top:12px" data-i18n="noFixedTeamsDesc">Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.</p>` : `
     <div class="nl-list" style="margin-top:12px">
       ${teamNames.map(t => `<div class="nl-row"><span class="grow">${esc(t)}</span></div>`).join('')}
+    </div>
+    ${dashIsWeeklyDraw ? `<p class="nl-help" style="margin-top:12px" data-i18n="weeklyDrawTeamsDesc">Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.</p>` : ''}`}
     </div>
     <p class="nl-help" style="margin-top:12px;"><span data-i18n="tracksStatsLabel">Statistiques suivies</span> : <b data-i18n="${leagueRow.tracks_stats ? 'yes' : 'no'}">${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b></p>
   </section>
@@ -1702,8 +1729,8 @@ async function handleDashboardPage(req, env, url) {
     <p class="nl-help" data-i18n="deactivateDesc">Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.</p>
     <div id="deactivateErr" class="nl-error" style="display:none"></div>
     <div class="nl-field">
-      <label class="nl-label" for="deactivate_confirm">${esc(leagueRow.name)}</label>
-      <input class="nl-input" id="deactivate_confirm" type="text">
+      <label class="nl-label" for="deactivate_confirm" data-i18n="deactivateConfirmLabel">Tape le nom de ta ligue pour confirmer</label>
+      <input class="nl-input" id="deactivate_confirm" type="text" placeholder="${esc(leagueRow.name)}" autocomplete="off">
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="deactivate_submit" data-i18n="deactivateBtn" onclick="submitDeactivate()" style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);">Désactiver</button></div>
   </section>
@@ -2255,7 +2282,8 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   .pb-g-venue { font-size: 14px; color: #a3a6ad; }
   .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
   .pb-tg div { height: 64px; border-radius: var(--radius-md); padding: var(--space-3); font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #fff; display: flex; align-items: flex-end; }
-  .pb-foot { padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: #a3a6ad; }
+  .pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: #a3a6ad; text-decoration: none; }
+  .pb-foot:hover { text-decoration: underline; }
   .nl-header { border-bottom: 1px solid #2a2e36; }
   .nl-lang button { color: #a3a6ad; }
   .nl-lang button[aria-pressed="true"] { background: #f4f4f2; color: #16181d; }
@@ -2274,7 +2302,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   ${upcomingHtml}
   ${teamsHtml}
 </main>
-<div class="pb-foot" data-i18n="poweredBy">${esc(t.poweredBy)}</div>
+<a class="pb-foot" href="https://notreligue.ca" data-i18n="poweredBy">${esc(t.poweredBy)}</a>
 <script>
 var PB_I18N = ${JSON.stringify(I18N_PUBLIC)};
 var PB_FORCED_LANG = ${JSON.stringify(forcedLang)};
@@ -2791,7 +2819,7 @@ ${tabbar}`;
       poolTitle: 'Joueurs',
       unassignedTitle: 'Confirmés, pas encore assignés', unassignedDesc: 'Assigne chaque joueur confirmé à une équipe pour ce match.',
       noUnassigned: 'Tous les joueurs confirmés sont assignés.',
-      assignTo: 'Assigner à…', assign: 'Assigner'
+      assignTo: 'Assigner à…', assign: 'Assigner', randomDraw: 'Tirage aléatoire'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
@@ -2806,7 +2834,7 @@ ${tabbar}`;
       poolTitle: 'Players',
       unassignedTitle: 'Confirmed, not yet assigned', unassignedDesc: 'Assign each confirmed player to a team for this game.',
       noUnassigned: 'Every confirmed player is assigned.',
-      assignTo: 'Assign to…', assign: 'Assign'
+      assignTo: 'Assign to…', assign: 'Assign', randomDraw: 'Random draw'
     }
   };
   const BADGE_ICON_CHECK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 10.5l4 4 8-9"/></svg>';
@@ -2913,8 +2941,13 @@ ${tabbar}`;
     const teamOptions = teamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
     unassignedHtml = `
     <section class="nl-card nl-card--pad-lg">
-      <div class="h3" data-i18n="unassignedTitle">Confirmés, pas encore assignés</div>
-      <p class="nl-help" data-i18n="unassignedDesc">Assigne chaque joueur confirmé à une équipe pour ce match.</p>
+      <div class="ev-th">
+        <div>
+          <div class="h3" data-i18n="unassignedTitle">Confirmés, pas encore assignés</div>
+          <p class="nl-help" data-i18n="unassignedDesc">Assigne chaque joueur confirmé à une équipe pour ce match.</p>
+        </div>
+        ${unassignedRows.length && teamNames.length > 1 ? `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="randomDraw" onclick="randomAssignTeams(this)">Tirage aléatoire</button>` : ''}
+      </div>
       <div class="ev-ppl" id="ev_unassigned_list">
         ${unassignedRows.length ? unassignedRows.map(p => `<div class="ev-p" data-player-row="${esc(p.player_id)}">
             <span>${esc(p.name)}</span>
@@ -2983,6 +3016,33 @@ async function assignTeam(playerId, btn) {
     // The now-current per-team cards (teamState, unchanged) reflect
     // this player once reloaded -- same server-rendered-is-truth
     // pattern every other write on this page already uses.
+    window.location.reload();
+  } catch (e) {
+    if (msg) { msg.textContent = window.__errorText('NETWORK_ERROR'); msg.style.display = 'block'; }
+    btn.disabled = false;
+  }
+}
+// Live-testing issue 4 (deferred nice-to-have from the team-structure
+// task, now built): a convenience alternative to assignTeam() above,
+// not a replacement -- it just calls the same kind of per-player
+// UPDATE server-side for every currently-unassigned confirmed player
+// at once. Manual assignTeam() still works on any player afterward,
+// same as always (nothing about this button changes that route).
+async function randomAssignTeams(btn) {
+  var msg = document.querySelector('.assignMsg');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/events/random-assign', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)} })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) {
+      if (msg) { msg.textContent = window.__errorText(data.errorKey, data.error); msg.style.display = 'block'; }
+      btn.disabled = false;
+      return;
+    }
     window.location.reload();
   } catch (e) {
     if (msg) { msg.textContent = window.__errorText('NETWORK_ERROR'); msg.style.display = 'block'; }
@@ -10676,6 +10736,84 @@ async function handleLeagueAssignEventTeam(req, env, url) {
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, team });
 }
 
+/* ---------- weekly_draw random draw (live-testing issue 4) ----------
+ * A convenience ALTERNATIVE to handleLeagueAssignEventTeam above, not
+ * a replacement -- assigns every currently confirmed-but-unassigned
+ * player for this event to a real team in one action, using the exact
+ * same per-player UPDATE rsvp SET team = ... that route uses. An admin
+ * can still freely re-assign any individual player afterward through
+ * the ordinary manual control; nothing about this route locks anything
+ * in.
+ *
+ * Split policy (judgment call, documented here since the task left it
+ * open): goalies and skaters are shuffled and round-robin-distributed
+ * across the season's real team names SEPARATELY, rather than one flat
+ * shuffle over everyone. A single shuffle could easily stack every
+ * goalie on one team by chance -- a real gameplay problem for ball
+ * hockey, not a hypothetical one -- so goalie coverage is kept as even
+ * as the pool allows. Beyond that even-across-teams split, there's no
+ * further roster-size/min-max weighting: the task's own framing calls
+ * an even split "sensible," and this league's shortage math (teamState
+ * etc.) already runs fresh against whatever the split produces, same
+ * as after any manual assignment.
+ */
+function shuffleInPlace(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+async function handleLeagueRandomAssignEventTeams(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const body = await req.json().catch(() => ({}));
+  const eventId = String(body.event_id || '').trim();
+  if (!eventId) {
+    return Response.json({ ok: false, error: 'event_id is required.', errorKey: 'ASSIGN_TEAM_FIELDS_REQUIRED' }, { status: 400 });
+  }
+
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+
+  // Same season-aware structure check as the manual assign-team route.
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  if ((cfg.teamStructure || 'fixed') !== 'weekly_draw') {
+    return Response.json({ ok: false, error: 'This league does not assign teams per event.', errorKey: 'NOT_WEEKLY_DRAW' }, { status: 400 });
+  }
+  const teamNames = getTeamNames(cfg);
+  if (teamNames.length < 1) {
+    return Response.json({ ok: false, error: 'This league has no team names on file yet.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
+  }
+
+  const unassigned = (await env.DB.prepare(
+    `SELECT c.player_id, c.is_goalie FROM contacts c
+       JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+      WHERE c.league_id = ? AND r.status = 'in' AND r.team IS NULL`
+  ).bind(eventId, leagueId).all()).results || [];
+
+  const goalies = shuffleInPlace(unassigned.filter(p => p.is_goalie === 1));
+  const skaters = shuffleInPlace(unassigned.filter(p => p.is_goalie !== 1));
+  const assignments = [
+    ...goalies.map((p, i) => ({ playerId: p.player_id, team: teamNames[i % teamNames.length] })),
+    ...skaters.map((p, i) => ({ playerId: p.player_id, team: teamNames[i % teamNames.length] }))
+  ];
+
+  for (const a of assignments) {
+    await env.DB.prepare('UPDATE rsvp SET team = ? WHERE event_id = ? AND player_id = ?').bind(a.team, eventId, a.playerId).run();
+  }
+
+  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, assigned: assignments.length });
+}
 
 // Design system Part 4: player RSVP page, matching
 // components/ScreenRSVP/preview.html -- the league's OWN color rule
@@ -10862,7 +11000,8 @@ async function leagueRsvpGet(req, env, url) {
   .rv-mark svg { width: 28px; height: 28px; }
   .rv-done h2 { font: 700 26px/32px var(--font-display); font-stretch: 118%; }
   .rv-done--ok h2 { color: var(--success); }
-  .rv-foot { padding: var(--space-4); border-top: 1px solid var(--line); font-size: 13px; line-height: 18px; color: var(--ink-muted); text-align: center; }
+  .rv-foot { display: block; padding: var(--space-4); border-top: 1px solid var(--line); font-size: 13px; line-height: 18px; color: var(--ink-muted); text-align: center; text-decoration: none; }
+  .rv-foot:hover { text-decoration: underline; }
 </style>
 <header class="nl-header">
   <span class="nl-brand nl-brand--league">${esc(leagueCfg.name)}</span>
@@ -10876,7 +11015,7 @@ async function leagueRsvpGet(req, env, url) {
   ${answeredHtml}
   ${formHtml}
 </main>
-<div class="rv-foot" data-i18n="poweredBy">${esc(t.poweredBy)}</div>
+<a class="rv-foot" href="https://notreligue.ca" data-i18n="poweredBy">${esc(t.poweredBy)}</a>
 <script>
 var RV_I18N = ${JSON.stringify(RSVP_I18N)};
 var RV_FORCED_LANG = ${JSON.stringify(forcedLang)};
@@ -18970,6 +19109,9 @@ async function handleFetch(req, env, ctx) {
       // assignment.
       if (url.pathname === '/league/events/assign-team' && req.method === 'POST')
         return await handleLeagueAssignEventTeam(req, env, url);
+      // Live-testing issue 4: random-draw convenience for weekly_draw.
+      if (url.pathname === '/league/events/random-assign' && req.method === 'POST')
+        return await handleLeagueRandomAssignEventTeams(req, env, url);
       // League provisioning (leagues.js) — requires a valid user session.
       // Rows in the shared DB, scoped by league_id; see leagues.js's header
       // comment for the architecture decision behind that.
