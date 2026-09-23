@@ -2293,8 +2293,23 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   .pb-g-venue { font-size: 14px; color: #a3a6ad; }
   .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
   .pb-tg div { height: 64px; border-radius: var(--radius-md); padding: var(--space-3); font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #fff; display: flex; align-items: flex-end; }
-  .pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: #a3a6ad; text-decoration: none; }
-  .pb-foot:hover { text-decoration: underline; }
+  /* Live-testing bug fix: the shared base stylesheet's .nl a rule
+     (design_system.js, color: var(--ink)) has HIGHER specificity
+     (.nl a = 0,1,1) than a bare .pb-foot class selector (0,1,0), so it
+     silently won regardless of this rule's own color -- in a
+     light-OS-theme browser, var(--ink) resolves to near-black
+     (#16181d), rendered on this page's own always-dark surface-hero
+     background (also #16181d, fixed in both themes -- see
+     tokens.json's own surface-hero entry), making the link invisible.
+     .nl a.pb-foot (0,2,1) reliably wins regardless of source order.
+     Color: ink-inverse's own token value (#f4f4f2, "text on
+     surface-hero only" per tokens.json -- NOT var(--ink)/var(--ink-muted),
+     both of which flip with the user's OS theme and are meant for
+     surface/surface-sunken, not this always-dark hero) at reduced
+     opacity, matching this exact page's own established pattern for
+     de-emphasized text on the hero (.pb-hero-venue's rgba(255,255,255,.75)). */
+  .nl a.pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: rgba(244,244,242,.65); text-decoration: none; }
+  .nl a.pb-foot:hover { color: rgba(244,244,242,.85); text-decoration: underline; }
   .nl-header { border-bottom: 1px solid #2a2e36; }
   .nl-lang button { color: #a3a6ad; }
   .nl-lang button[aria-pressed="true"] { background: #f4f4f2; color: #16181d; }
@@ -11054,8 +11069,13 @@ async function leagueRsvpGet(req, env, url) {
   .rv-mark svg { width: 28px; height: 28px; }
   .rv-done h2 { font: 700 26px/32px var(--font-display); font-stretch: 118%; }
   .rv-done--ok h2 { color: var(--success); }
-  .rv-foot { display: block; padding: var(--space-4); border-top: 1px solid var(--line); font-size: 13px; line-height: 18px; color: var(--ink-muted); text-align: center; text-decoration: none; }
-  .rv-foot:hover { text-decoration: underline; }
+  /* Same root cause as the public page's .pb-foot fix: the shared base
+     stylesheet's .nl a rule (0,1,1 specificity) was silently
+     overriding a bare .rv-foot class selector's own color (0,1,0),
+     forcing full-strength var(--ink) instead of the intended muted
+     var(--ink-muted). .nl a.rv-foot (0,2,1) reliably wins. */
+  .nl a.rv-foot { display: block; padding: var(--space-4); border-top: 1px solid var(--line); font-size: 13px; line-height: 18px; color: var(--ink-muted); text-align: center; text-decoration: none; }
+  .nl a.rv-foot:hover { text-decoration: underline; }
 </style>
 <header class="nl-header">
   <span class="nl-brand nl-brand--league">${esc(leagueCfg.name)}</span>
