@@ -17177,14 +17177,22 @@ async function handleFetch(req, env, ctx) {
       if (url.pathname === '/health')
         return new Response('ok');
       if (url.pathname === '/' || url.pathname === '') {
-        // Part 0: this Worker now also serves other leagues' own domains
-        // (e.g. notreligue.ca) directly, not just SMBHL's. SMBHL's own
-        // deployment (env.PUBLIC_URL pointing at smbhl.com) keeps its
-        // exact original behavior -- everyone else lands on /signup,
-        // which is already a real, bilingual FR-default product intro +
-        // form (not a bare form), so a direct redirect is a genuine
-        // "simple homepage", not a dead end.
-        if ((env.PUBLIC_URL || '').includes('smbhl.com')) {
+        // Part 0 (fixed post-deploy): this Worker serves other leagues'
+        // own domains (e.g. notreligue.ca) directly, not just SMBHL's,
+        // and multiple custom domains can be routed to the SAME
+        // deployment -- so the decision must be based on the actual
+        // incoming request's own hostname, never env.PUBLIC_URL (a
+        // single fixed value for the whole deployment, identical no
+        // matter which domain routed the request in). SMBHL's own
+        // hostname (smbhl.com or any subdomain of it, e.g.
+        // rsvp.smbhl.com) keeps its exact original behavior -- everyone
+        // else lands on THEIR OWN hostname's /signup, which is already
+        // a real, bilingual FR-default product intro + form (not a bare
+        // form), so a direct redirect is a genuine "simple homepage",
+        // not a dead end. This also means any future league's own
+        // domain works correctly out of the box with zero
+        // per-domain PUBLIC_URL reconfiguration.
+        if (url.hostname.includes('smbhl.com')) {
           return Response.redirect('https://smbhl.com', 302);
         }
         return Response.redirect(url.origin + '/signup', 302);
