@@ -832,6 +832,95 @@ async function submitEvent() {
   });
 }
 
+// Server-renders Part O's per-team shortage breakdown directly (reusing
+// teamState/openSpots — the exact same shared logic
+// GET /league/events/status calls — not a duplicate implementation), plus
+// an "invite subs" button per short team/need (see Part T's own comment
+// for why this button lives here and not in the list page). This is the
+// admin-initiated trigger — distinct from the automatic self-out trigger
+// a player's own OUT can cause (Part R of the backend task), same
+// POST /league/events/invite-subs route either way.
+async function handleLeagueEventDetailPage(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return Response.redirect(url.origin + '/login', 302);
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
+
+  const eventId = url.searchParams.get('e');
+  const ev = eventId ? await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
+    .bind(eventId, leagueId).first() : null;
+  if (!ev) {
+    return new Response(page('Match introuvable', `
+      <h1>Match introuvable<span class="en">Event not found</span></h1>
+      <p class="state"><a href="/league/schedule">&larr; Calendrier<span class="en" style="display:inline;"> / Schedule</span></a></p>
+    `), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  const teamCards = [];
+  for (const team of getTeamNames(cfg)) {
+    const st = await teamState(env.DB, ev.id, team, cfg);
+    const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
+    const openSkaters = await openSpots(env.DB, ev.id, team, 'skater', cfg);
+    const inviteButtons = [];
+    if (openGoalies > 0) inviteButtons.push(`<button type="button" class="mini" onclick="inviteSubs('${esc(team)}','goalie',this)">INVITER GARDIEN<span class="en" style="display:block;">INVITE GOALIE</span></button>`);
+    if (openSkaters > 0) inviteButtons.push(`<button type="button" class="mini" onclick="inviteSubs('${esc(team)}','skater',this)">INVITER JOUEUR<span class="en" style="display:block;">INVITE SKATER</span></button>`);
+
+    teamCards.push(`
+    <div class="card">
+      <h2>${esc(team)}${st.short ? ` <span class="short">— court / short</span>` : ''}</h2>
+      <ul class="counts">
+        <li><b>${st.skaters}</b>Joueurs confirmés<span class="en" style="display:block;">Skaters confirmed</span></li>
+        <li><b>${st.goalies}</b>Gardiens confirmés<span class="en" style="display:block;">Goalies confirmed</span></li>
+        <li><b>${openSkaters}</b>Places joueurs ouvertes<span class="en" style="display:block;">Open skater spots</span></li>
+        <li><b>${openGoalies}</b>Places gardien ouvertes<span class="en" style="display:block;">Open goalie spots</span></li>
+      </ul>
+      ${inviteButtons.length ? `<div class="btns" style="margin-top:12px;">${inviteButtons.join('')}</div>` : ''}
+      <p class="inviteMsg state" style="display:none;margin-top:8px;"></p>
+    </div>`);
+  }
+
+  return new Response(page('Statut du match', `
+  <h1>${esc(ev.date)}<span class="en"></span></h1>
+  <p class="when">${ev.venue ? esc(ev.venue) : ''}${ev.start_time ? ' · ' + esc(ev.start_time) : ''} · ${esc(ev.state)}</p>
+  <p class="state" style="margin:0 0 16px;"><a href="/league/schedule">&larr; Calendrier<span class="en" style="display:inline;"> / Schedule</span></a></p>
+  ${teamCards.join('')}
+<script>
+async function inviteSubs(team, need, btn) {
+  const card = btn.closest('.card');
+  const msg = card.querySelector('.inviteMsg');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/league/events/invite-subs', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, team: team, need: need })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = data.error || "Échec de l'invitation. / Failed to invite.";
+    } else {
+      msg.style.color = 'var(--soft)';
+      msg.textContent = data.invited > 0
+        ? (data.invited + ' substitut(s) invité(s). / ' + data.invited + ' sub(s) invited.')
+        : "Aucun substitut disponible pour l'instant. / No subs available right now.";
+    }
+  } catch (e) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Erreur réseau. / Network error.';
+  }
+  msg.style.display = 'block';
+  btn.disabled = false;
+}
+</script>`), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
 /* ---------- data helpers ---------- */
 
 async function getEvent(db, id) {
@@ -15910,6 +15999,8 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueRosterPage(req, env, url);
       if ((url.pathname === '/league/schedule' || url.pathname === '/league/schedule/') && req.method === 'GET')
         return await handleLeagueSchedulePage(req, env, url);
+      if (url.pathname === '/league/events/detail' && req.method === 'GET')
+        return await handleLeagueEventDetailPage(req, env, url);
 
       if (url.pathname === '/admin' || url.pathname === '/admin/')
         return Response.redirect(url.origin + '/admin/board', 302);
