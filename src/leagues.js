@@ -182,7 +182,7 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
   let leagueTeamNames = null;
   let leagueBranding = null;
   const leagueRow = await env.DB.prepare(
-    `SELECT l.name, l.team_names, u.email AS admin_email
+    `SELECT l.name, l.team_names, l.language_mode, u.email AS admin_email
        FROM leagues l JOIN users u ON u.id = l.created_by
       WHERE l.id = ?`
   ).bind(leagueId).first();
@@ -198,7 +198,10 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
         name: leagueRow.name,
         fromEmail: `${leagueRow.name} <${leagueRow.admin_email}>`,
         replyToEmail: leagueRow.admin_email,
-        siteUrl: env.PUBLIC_URL || DEFAULT_SEASON_CONFIG.league.siteUrl
+        siteUrl: env.PUBLIC_URL || DEFAULT_SEASON_CONFIG.league.siteUrl,
+        // Part 4 foundation: no UI to set this away from 'both' yet --
+        // see migrate-023.sql. Every league today reads 'both' here.
+        languageMode: leagueRow.language_mode || 'both'
       };
     }
   }

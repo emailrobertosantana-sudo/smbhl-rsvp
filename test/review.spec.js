@@ -843,7 +843,8 @@ describe('Multi-team season config (6-team season, Parts 3 & 4)', () => {
         fromEmail: 'SMBHL - Hockey <joueur@smbhl.com>',
         replyToEmail: 'info@smbhl.com',
         siteUrl: 'https://smbhl.com',
-        faviconUrl: 'https://smbhl.com/img/favicon-32.svg'
+        faviconUrl: 'https://smbhl.com/img/favicon-32.svg',
+        languageMode: 'both'
       },
       tracksStats: true
     });

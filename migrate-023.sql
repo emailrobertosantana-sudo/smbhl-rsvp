@@ -1,0 +1,22 @@
+-- Migration 023: per-league language exposure setting (foundation
+-- only). Purely additive, matching every prior league-scoped migration
+-- in this project: a nullable-with-default column, no existing row's
+-- data touched.
+--
+-- Apply with:
+--   npx wrangler d1 execute smbhl-rsvp --remote --file=./migrate-023.sql
+--
+-- WHAT THIS DOES: adds `language_mode TEXT DEFAULT 'both'` to
+-- `leagues`. 'both' (the default for every existing row, including
+-- SMBHL's own bootstrap row from migrate-020.sql, and every league
+-- created today) means "show the real FR/EN toggle, exactly as it
+-- already works" -- zero behavior difference for every league that
+-- exists today. 'fr' or 'en' means "this league only exposes that one
+-- language to players" -- getLeagueSeasonConfig (leagues.js) surfaces
+-- it as leagueBranding.languageMode, and page() (index.js) hides the
+-- language switcher entirely on a league's public/player-facing pages
+-- (GET /league/public, GET /league/rsvp) when it's set to anything
+-- other than 'both'. No UI to actually CHANGE this setting exists yet
+-- -- that's an intentional follow-up, not part of this task's scope.
+
+ALTER TABLE leagues ADD COLUMN language_mode TEXT DEFAULT 'both';

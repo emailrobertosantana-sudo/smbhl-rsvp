@@ -29,7 +29,12 @@ export const DEFAULT_SEASON_CONFIG = {
     fromEmail: 'SMBHL - Hockey <joueur@smbhl.com>',
     replyToEmail: 'info@smbhl.com',
     siteUrl: 'https://smbhl.com',
-    faviconUrl: 'https://smbhl.com/img/favicon-32.svg'
+    faviconUrl: 'https://smbhl.com/img/favicon-32.svg',
+    // Part 4 foundation: 'both' (default) shows the real FR/EN toggle
+    // exactly as it already works; 'fr'/'en' would hide it and pin
+    // that one language on public/player-facing pages -- see
+    // migrate-023.sql. SMBHL's own default is 'both', unchanged.
+    languageMode: 'both'
   },
   // When false, standings/playoffs/awards/OCR/season-recap are disabled for this
   // season; only the attendance/RSVP/shortage/sub-invite operational core runs.
@@ -67,7 +72,12 @@ export function normalizeSeasonConfig(rawConfig) {
     fromEmail: rawLeague.fromEmail || DEFAULT_SEASON_CONFIG.league.fromEmail,
     replyToEmail: rawLeague.replyToEmail || DEFAULT_SEASON_CONFIG.league.replyToEmail,
     siteUrl: rawLeague.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl,
-    faviconUrl: rawLeague.faviconUrl || DEFAULT_SEASON_CONFIG.league.faviconUrl
+    faviconUrl: rawLeague.faviconUrl || DEFAULT_SEASON_CONFIG.league.faviconUrl,
+    // Part 4 foundation: this explicit field list previously dropped
+    // any field not named here (found while wiring languageMode
+    // through -- leagueBranding.languageMode was being silently
+    // stripped for any league that had already published a season).
+    languageMode: rawLeague.languageMode || DEFAULT_SEASON_CONFIG.league.languageMode
   };
 
   return {

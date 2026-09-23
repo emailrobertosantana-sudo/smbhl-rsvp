@@ -180,7 +180,13 @@ async function getStandingsTooltip(env) {
   }
 }
 
-function page(title, body, logoTooltip = '', leagueCfg = null) {
+// hideLangSwitch: Part 4 foundation -- a league whose language_mode is
+// 'fr' or 'en' only (default 'both' for every league, including
+// SMBHL's own DEFAULT_SEASON_CONFIG.league and every league created
+// today) hides the switcher entirely rather than offering a toggle to
+// a language it doesn't actually expose. Every existing call site
+// (none of which pass this 5th argument) is completely unchanged.
+function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = false) {
   const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
   const titleAttr = logoTooltip ? ` title="${esc(logoTooltip)}"` : '';
   return `<!DOCTYPE html><html lang="fr-CA"><head>
@@ -287,10 +293,10 @@ window.__csrfHeader = function() {
 </style></head><body>
 <div class="top"><div class="wrap" style="display:flex;align-items:center;justify-content:space-between;">
   <a href="${esc(league.siteUrl)}/"${titleAttr} id="logo-link"><img src="/api/logo.svg" alt="${esc(league.name)}"${titleAttr}></a>
-  <div class="langswitch">
+  ${hideLangSwitch ? '' : `<div class="langswitch">
     <button type="button" class="langbtn on" data-l="fr" id="btn-lang-fr" onclick="window.__setLang &amp;&amp; window.__setLang(&apos;fr&apos;)">FR</button>
     <button type="button" class="langbtn" data-l="en" id="btn-lang-en" onclick="window.__setLang &amp;&amp; window.__setLang(&apos;en&apos;)">EN</button>
-  </div>
+  </div>`}
 </div></div>
 <script>
 if (window.__currentLang) {
@@ -1492,6 +1498,25 @@ async function handleLeaguePublicPage(req, env, url) {
   const cfg = await getLeagueSeasonConfig(env, leagueId);
   const teamNames = getTeamNames(cfg);
 
+  // Real FR/EN toggle (this task): page()'s own shared .langswitch
+  // buttons/window.__setLang infrastructure already renders on this
+  // page (cfg.league passed to page()); this script hooks into it the
+  // same way every other new public page does.
+  // Part 4 foundation: a league whose language_mode isn't 'both' pins
+  // that one language and hides the switcher entirely (migrate-023.sql)
+  // -- AND, unlike a 'both' league (which always server-renders French
+  // by default, then swaps client-side), the initial SSR itself is
+  // rendered directly in the forced language, so there's no
+  // flash-of-wrong-language before JS runs (and the page works
+  // correctly with JS disabled, in the one language it actually
+  // exposes).
+  const forcedLang = cfg.league.languageMode && cfg.league.languageMode !== 'both' ? cfg.league.languageMode : null;
+  const I18N_PUBLIC = {
+    fr: { teams: 'Équipes', upcoming: 'Prochains matchs', noEvents: "Aucun match à venir pour l'instant.", standings: 'Classement' },
+    en: { teams: 'Teams', upcoming: 'Upcoming events', noEvents: 'No upcoming events yet.', standings: 'Standings' }
+  };
+  const t = I18N_PUBLIC[forcedLang || 'fr'];
+
   const today = new Date().toISOString().slice(0, 10);
   const events = (await env.DB.prepare(
     `SELECT date, venue, start_time, state FROM events
@@ -1500,7 +1525,7 @@ async function handleLeaguePublicPage(req, env, url) {
   ).bind(leagueId, today).all()).results || [];
   const scheduleHtml = events.length
     ? `<table>${events.map(ev => `<tr><td>${esc(ev.date)}${ev.venue ? `<span class="by">${esc(ev.venue)}</span>` : ''}${ev.start_time ? `<span class="by">${esc(ev.start_time)}</span>` : ''}</td></tr>`).join('')}</table>`
-    : `<p class="state" style="margin:0;" data-i18n="noEvents">Aucun match à venir pour l'instant.</p>`;
+    : `<p class="state" style="margin:0;" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
 
   let standingsHtml = '';
   if (leagueRow.tracks_stats) {
@@ -1510,34 +1535,27 @@ async function handleLeaguePublicPage(req, env, url) {
     if (standings.length) {
       standingsHtml = `
       <div class="card">
-        <h2 data-i18n="standings">Classement</h2>
+        <h2 data-i18n="standings">${esc(t.standings)}</h2>
         <table>${standings.map(s => `<tr><td>${esc(s.team)}</td><td class="s">${Number(s.w) || 0}-${Number(s.l) || 0}</td></tr>`).join('')}</table>
       </div>`;
     }
   }
 
-  // Real FR/EN toggle (this task): page()'s own shared .langswitch
-  // buttons/window.__setLang infrastructure already renders on this
-  // page (cfg.league passed to page()); this script hooks into it the
-  // same way every other new public page does. The 'standings' i18n
-  // key is included in the shipped dict below ONLY when standingsHtml
-  // is non-empty -- a no-stats league's page must never mention
-  // "Classement"/"Standings" vocabulary anywhere, including inert JS.
   return new Response(page(leagueRow.name, `
   <h1>${esc(leagueRow.name)}<span class="en"></span></h1>
   ${leagueRow.division_label ? `<p class="when">${esc(leagueRow.division_label)}</p>` : ''}
 
   <div class="card">
-    <h2 data-i18n="teams">Équipes</h2>
+    <h2 data-i18n="teams">${esc(t.teams)}</h2>
     <ul style="margin:0;padding-left:20px;">
-      ${teamNames.map(t => `<li>${esc(t)}</li>`).join('')}
+      ${teamNames.map(tm => `<li>${esc(tm)}</li>`).join('')}
     </ul>
   </div>
 
   ${standingsHtml}
 
   <div class="card">
-    <h2 data-i18n="upcoming">Prochains matchs</h2>
+    <h2 data-i18n="upcoming">${esc(t.upcoming)}</h2>
     ${scheduleHtml}
   </div>
 <script>
@@ -1552,10 +1570,14 @@ function applyLanguage(lang) {
     if (dict[k] != null) el.innerHTML = dict[k];
   });
 }
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+var forcedLang = ${JSON.stringify(forcedLang)};
+if (forcedLang) applyLanguage(forcedLang);
+else {
+  if (window.__currentLang) applyLanguage(window.__currentLang);
+  window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+}
 </script>
-  `, '', cfg.league), {
+  `, '', cfg.league, Boolean(forcedLang)), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -9143,6 +9165,10 @@ async function leagueRsvpGet(req, env, url) {
 
   const leagueCfg = (await getLeagueSeasonConfig(env, leagueId, ev.season)).league;
   const locked = ev.state !== 'open';
+  // Part 4 foundation: a league whose language_mode isn't 'both' pins
+  // that one language and hides the switcher on this player-facing
+  // page entirely (see migrate-023.sql / page()'s hideLangSwitch).
+  const forcedLang = leagueCfg.languageMode && leagueCfg.languageMode !== 'both' ? leagueCfg.languageMode : null;
 
   // Part V: same interactive fetch+POST button pattern as SMBHL's real
   // /rsvp page (rsvpGet, above) — buttons that POST in place with a
@@ -9152,30 +9178,37 @@ async function leagueRsvpGet(req, env, url) {
   // Real FR/EN toggle (this task): status label/badge and button text
   // are re-rendered client-side from RSVP_I18N on admin_lang_changed,
   // same data-i18n + dict mechanism as every other new public page.
+  // When forcedLang is set (Part 4 foundation), the initial SSR itself
+  // is rendered directly in that language -- see handleLeaguePublicPage's
+  // own comment for why (no flash-of-wrong-language, works with JS off).
+  const RSVP_I18N = {
+    fr: { playing: 'Tu joues ?', statusLabel: 'Statut actuel :', locked: "Cet événement n'accepte plus de réponses.",
+          btnIn: 'JE JOUE', btnOut: 'JE NE JOUE PAS', recorded: 'Réponse enregistrée avec succès !',
+          status: { in: 'PRÉSENT', out: 'ABSENT', pending: 'EN ATTENTE' }, err: 'Erreur : ' },
+    en: { playing: 'Are you playing?', statusLabel: 'Current status:', locked: 'This event is no longer accepting responses.',
+          btnIn: "I'M IN", btnOut: "I'M OUT", recorded: 'Response recorded!',
+          status: { in: 'IN', out: 'OUT', pending: 'PENDING' }, err: 'Error: ' }
+  };
+  const t = RSVP_I18N[forcedLang || 'fr'];
+  const recordedKey = ['in', 'out'].includes(autoVal) ? 'recorded' : '';
+
   const body = `
     <h1>${esc(contact.name)}<span class="en"></span></h1>
     <p class="when">${esc(ev.date)}${ev.venue ? ' · ' + esc(ev.venue) : ''}${ev.start_time ? ' · ' + esc(ev.start_time) : ''}</p>
     <div class="card">
-      <h2 data-i18n="playing">Tu joues ?</h2>
-      <p class="state" style="margin-top:0;"><span data-i18n="statusLabel">Statut actuel :</span>
-        <b id="statusBadge" data-status="${status}" class="${status === 'in' ? 'in' : status === 'out' ? 'out' : 'pend'}">${status === 'in' ? 'PRÉSENT' : status === 'out' ? 'ABSENT' : 'EN ATTENTE'}</b>
+      <h2 data-i18n="playing">${esc(t.playing)}</h2>
+      <p class="state" style="margin-top:0;"><span data-i18n="statusLabel">${esc(t.statusLabel)}</span>
+        <b id="statusBadge" data-status="${status}" class="${status === 'in' ? 'in' : status === 'out' ? 'out' : 'pend'}">${esc(t.status[status] || t.status.pending)}</b>
       </p>
-      ${locked ? `<p class="state" data-i18n="locked">Cet événement n'accepte plus de réponses.</p>` : `
+      ${locked ? `<p class="state" data-i18n="locked">${esc(t.locked)}</p>` : `
       <div class="btns">
-        <button class="btn in${status === 'in' ? ' on' : ''}" data-v="in" data-i18n="btnIn">JE JOUE</button>
-        <button class="btn out${status === 'out' ? ' on' : ''}" data-v="out" data-i18n="btnOut">JE NE JOUE PAS</button>
+        <button class="btn in${status === 'in' ? ' on' : ''}" data-v="in" data-i18n="btnIn">${esc(t.btnIn)}</button>
+        <button class="btn out${status === 'out' ? ' on' : ''}" data-v="out" data-i18n="btnOut">${esc(t.btnOut)}</button>
       </div>
-      <p class="state" id="msg" data-i18n="${['in', 'out'].includes(autoVal) ? 'recorded' : ''}">${['in', 'out'].includes(autoVal) ? 'Réponse enregistrée avec succès !' : ''}</p>`}
+      <p class="state" id="msg" data-i18n="${recordedKey}">${recordedKey ? esc(t.recorded) : ''}</p>`}
     </div>
 <script>
-var RSVP_I18N = {
-  fr: { playing: 'Tu joues ?', statusLabel: 'Statut actuel :', locked: "Cet événement n'accepte plus de réponses.",
-        btnIn: 'JE JOUE', btnOut: 'JE NE JOUE PAS', recorded: 'Réponse enregistrée avec succès !',
-        status: { in: 'PRÉSENT', out: 'ABSENT', pending: 'EN ATTENTE' }, err: 'Erreur : ' },
-  en: { playing: 'Are you playing?', statusLabel: 'Current status:', locked: 'This event is no longer accepting responses.',
-        btnIn: "I'M IN", btnOut: "I'M OUT", recorded: 'Response recorded!',
-        status: { in: 'IN', out: 'OUT', pending: 'PENDING' }, err: 'Error: ' }
-};
+var RSVP_I18N = ${JSON.stringify(RSVP_I18N)};
 function applyLanguage(lang) {
   var dict = RSVP_I18N[lang] || RSVP_I18N.fr;
   document.querySelectorAll('[data-i18n]').forEach(function(el) {
@@ -9185,8 +9218,12 @@ function applyLanguage(lang) {
   var badge = document.getElementById('statusBadge');
   if (badge) badge.textContent = dict.status[badge.dataset.status] || dict.status.pending;
 }
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+var forcedLang = ${JSON.stringify(forcedLang)};
+if (forcedLang) applyLanguage(forcedLang);
+else {
+  if (window.__currentLang) applyLanguage(window.__currentLang);
+  window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+}
 
 document.querySelectorAll('.btn[data-v]').forEach(function(b) {
   b.addEventListener('click', async function() {
@@ -9202,7 +9239,7 @@ document.querySelectorAll('.btn[data-v]').forEach(function(b) {
       if (!res.ok) throw new Error(await res.text());
       location.reload();
     } catch (e) {
-      var dict = RSVP_I18N[window.__currentLang || 'fr'] || RSVP_I18N.fr;
+      var dict = RSVP_I18N[forcedLang || window.__currentLang || 'fr'] || RSVP_I18N.fr;
       document.getElementById('msg').textContent = dict.err + e.message;
       document.querySelectorAll('.btn[data-v]').forEach(function(x) { x.disabled = false; });
     }
@@ -9210,7 +9247,7 @@ document.querySelectorAll('.btn[data-v]').forEach(function(b) {
 });
 </script>`;
 
-  return page(leagueCfg.name, body, '', leagueCfg);
+  return page(leagueCfg.name, body, '', leagueCfg, Boolean(forcedLang));
 }
 
 // The `p=` URL param is the ONLY player this request can ever write to —
