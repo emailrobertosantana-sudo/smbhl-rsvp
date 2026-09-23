@@ -817,7 +817,7 @@ async function submitStep1() {
     var res = await fetch('/auth/signup', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: email, password: password })
+      body: JSON.stringify({ email: email, password: password, lang: window.__currentLang })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {

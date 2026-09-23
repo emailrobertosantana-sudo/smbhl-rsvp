@@ -302,42 +302,44 @@ export async function verifyEmailToken(env, token) {
 // site's own primary color token. Deliberately safe to touch: this
 // email builder belongs exclusively to the new user-account system
 // (auth.js) -- SMBHL has no user accounts and never sends this email
-// (see this module's own top-of-file comment). The subject/body stay
-// bilingual in a single send (FR then EN) rather than a toggle link,
-// matching every other bilingual transactional email already in this
-// app -- there's nothing to "switch" to when both languages are
-// already shown together. Kept as a small pure function so tests can
-// assert on subject/link content without going through an HTTP round
-// trip.
-function buildVerificationEmail(verificationLink) {
-  const subject = 'Confirme ton courriel / Confirm your email';
-  const text =
-`Bienvenue ! Confirme ton courriel en cliquant sur ce lien :
+// (see this module's own top-of-file comment).
+//
+// Live-testing bug fix: this used to always send BOTH languages
+// stacked in one email regardless of which language the person
+// actually signed up in. Fixed to send only the one language the
+// signup was completed in -- `lang` comes from the signup form's own
+// active language (see handleSignup) and defaults to 'fr' to match
+// every other lang fallback in this app (nlAuthScript etc). Kept as a
+// small pure function so tests can assert on subject/link content
+// without going through an HTTP round trip.
+function buildVerificationEmail(verificationLink, lang = 'fr') {
+  const isEn = lang === 'en';
+  const subject = isEn ? 'Confirm your email' : 'Confirme ton courriel';
+  const text = isEn
+    ? `Welcome! Confirm your email by clicking this link:
 ${verificationLink}
 
-Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.
-
----
-
-Welcome! Confirm your email by clicking this link:
+This link expires in 24 hours. If you didn't create an account, you can ignore this email.`
+    : `Bienvenue ! Confirme ton courriel en cliquant sur ce lien :
 ${verificationLink}
 
-This link expires in 24 hours. If you didn't create an account, you can ignore this email.`;
-  const bodyHtml = `
-    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Confirme ton courriel</h1>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Bienvenue ! Clique sur le bouton ci-dessous pour activer ton compte.</p>
-    ${nlEmailButton(verificationLink, 'Confirmer mon courriel')}
-    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.</p>
-    <hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">
+Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.`;
+  const bodyHtml = isEn
+    ? `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Confirm your email</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Welcome! Click the button below to activate your account.</p>
     ${nlEmailButton(verificationLink, 'Confirm my email')}
-    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>`;
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>`
+    : `
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Confirme ton courriel</h1>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Bienvenue ! Clique sur le bouton ci-dessous pour activer ton compte.</p>
+    ${nlEmailButton(verificationLink, 'Confirmer mon courriel')}
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.</p>`;
   const html = nlEmailWrap({
     brandName: 'Notre Ligue',
     barColor: '#16181d',
     bodyHtml,
-    footerHtml: 'Envoyé par Notre Ligue'
+    footerHtml: isEn ? 'Sent by Notre Ligue' : 'Envoyé par Notre Ligue'
   });
   return { subject, text, html };
 }
@@ -349,14 +351,14 @@ This link expires in 24 hours. If you didn't create an account, you can ignore t
 // best-effort notification email in this codebase (see handleScoresheetEmail
 // / handleReviewPublish in review.js). It must never take down the request
 // that triggered it (signup, or an explicit resend).
-async function sendVerificationEmail(env, sendMailFunc, email, userId) {
+async function sendVerificationEmail(env, sendMailFunc, email, userId, lang = 'fr') {
   const { token, exp } = await generateVerificationToken(env, userId);
   const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
   const verificationLink = `${publicUrl}/auth/verify?token=${encodeURIComponent(token)}`;
 
   if (typeof sendMailFunc === 'function') {
     try {
-      const { subject, text, html } = buildVerificationEmail(verificationLink);
+      const { subject, text, html } = buildVerificationEmail(verificationLink, lang);
       await sendMailFunc(env, email, subject, text, html);
       console.log(`[auth] Verification email sent to ${email}`);
     } catch (err) {
@@ -678,6 +680,7 @@ export async function handleSignup(req, env, sendMailFunc = null) {
     const body = await req.json().catch(() => ({}));
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
+    const lang = body.lang === 'en' ? 'en' : 'fr';
 
     if (!isValidEmail(email)) {
       return Response.json({ ok: false, error: 'Please enter a valid email address.', errorKey: 'INVALID_EMAIL' }, { status: 400 });
@@ -702,11 +705,11 @@ export async function handleSignup(req, env, sendMailFunc = null) {
     const passwordHash = await hashPassword(password);
 
     await env.DB.prepare(
-      `INSERT INTO users (id, email, password_hash, created_at, email_verified_at, last_login_at, session_epoch)
-       VALUES (?, ?, ?, ?, NULL, ?, 0)`
-    ).bind(userId, email, passwordHash, now, now).run();
+      `INSERT INTO users (id, email, password_hash, created_at, email_verified_at, last_login_at, session_epoch, signup_lang)
+       VALUES (?, ?, ?, ?, NULL, ?, 0, ?)`
+    ).bind(userId, email, passwordHash, now, now, lang).run();
 
-    const { token, exp, verificationLink } = await sendVerificationEmail(env, sendMailFunc, email, userId);
+    const { token, exp, verificationLink } = await sendVerificationEmail(env, sendMailFunc, email, userId, lang);
 
     return new Response(JSON.stringify({
       ok: true,
@@ -837,7 +840,7 @@ export async function handleResendVerification(req, env, sendMailFunc = null) {
     return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
   }
 
-  const user = await env.DB.prepare('SELECT email, email_verified_at FROM users WHERE id = ?').bind(session.userId).first();
+  const user = await env.DB.prepare('SELECT email, email_verified_at, signup_lang FROM users WHERE id = ?').bind(session.userId).first();
   if (!user) {
     return Response.json({ ok: false, error: 'Account not found.', errorKey: 'ACCOUNT_NOT_FOUND' }, { status: 404 });
   }
@@ -845,6 +848,6 @@ export async function handleResendVerification(req, env, sendMailFunc = null) {
     return Response.json({ ok: true, alreadyVerified: true });
   }
 
-  await sendVerificationEmail(env, sendMailFunc, user.email, session.userId);
+  await sendVerificationEmail(env, sendMailFunc, user.email, session.userId, user.signup_lang || 'fr');
   return Response.json({ ok: true, alreadyVerified: false });
 }
