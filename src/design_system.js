@@ -378,3 +378,55 @@ export function leagueFillColor(originalHex) {
   }
   return '#16181d'; // fell through every step -- fall back to ink, never ship a failing contrast
 }
+
+/* ---------- transactional emails (design system Part 5) ----------
+ * A small, self-contained implementation of guidelines/30-emails.md's
+ * build rules: 560px content table, role="presentation", inline
+ * styles only, no flexbox/grid/background-images, Archivo/Arial/
+ * Helvetica with font-stretch:118% on the headline, a 6px color bar +
+ * white header row (the color appears twice only: the bar and the
+ * button), one bulletproof button, language-switch link in the
+ * footer. Deliberately separate from this app's existing shared
+ * emailWrap()/body() (src/index.js) -- that system is used identically
+ * by SMBHL's own real, live transactional emails (the weekly game
+ * invite, the sub-call, etc.), so redesigning it would restyle
+ * SMBHL's actual production email output, which this task's own scope
+ * explicitly forbids. This helper is used ONLY by email templates
+ * that are exclusively part of the new account/league system
+ * (verification, password reset, co-admin invite) and never touched
+ * by any SMBHL code path.
+ */
+function nlEmailEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+export function nlEmailButton(url, label, color = '#16181d') {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+  <td style="background:${nlEmailEsc(color)};border-radius:4px;text-align:center;"><a href="${nlEmailEsc(url)}" style="display:block;padding:16px 0;font:700 17px/20px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;text-decoration:none;">${nlEmailEsc(label)}</a></td>
+</tr></table>`;
+}
+
+// footerHtml gets the language-switch link inlined by the caller
+// (each template's own two languages know their own toggle URL/label);
+// this just provides the shared structural wrapper.
+export function nlEmailWrap({ brandName, barColor = '#16181d', bodyHtml, footerHtml }) {
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:24px 0;background:#f4f4f2;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
+<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="width:560px;background:#ffffff;border-radius:6px;border:1px solid #e3e3e0;font-family:Archivo,Arial,Helvetica,sans-serif;color:#16181d;">
+  <tr><td style="background:${nlEmailEsc(barColor)};height:6px;line-height:6px;font-size:0;border-radius:6px 6px 0 0;">&nbsp;</td></tr>
+  <tr><td style="padding:18px 28px;border-bottom:1px solid #e3e3e0;">
+    <span style="font:800 18px/24px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${nlEmailEsc(brandName)}</span>
+  </td></tr>
+  <tr><td style="padding:32px 28px 8px;">
+    ${bodyHtml}
+  </td></tr>
+  <tr><td style="padding:16px 28px 28px;font-size:12px;line-height:18px;color:#55585f;">
+    ${footerHtml}
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+}

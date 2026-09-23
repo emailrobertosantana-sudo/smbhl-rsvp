@@ -11,6 +11,7 @@
 // command was not run as part of this task (see the final report).
 
 import { hmac, same } from './crypto_utils.js';
+import { nlEmailWrap, nlEmailButton } from './design_system.js';
 
 /* ---------- password hashing ---------- */
 //
@@ -291,31 +292,52 @@ export async function verifyEmailToken(env, token) {
   return { ok: true, userId };
 }
 
-// Bilingual (FR/EN) content, matching every other user-facing email and page
-// in this app. Kept as a small pure function so tests can assert on subject/
-// link content without going through an HTTP round trip.
+// Design system Part 5: rebuilt on the real Notre Ligue design system
+// (nlEmailWrap/nlEmailButton, guidelines/30-emails.md's build rules --
+// 560px table, inline styles, Archivo/Arial/Helvetica, one bulletproof
+// button). This account-level email (sent before any league exists)
+// has no league color to brand with, so it uses Notre Ligue's own
+// product black (#16181d) for the bar/button, same as the marketing
+// site's own primary color token. Deliberately safe to touch: this
+// email builder belongs exclusively to the new user-account system
+// (auth.js) -- SMBHL has no user accounts and never sends this email
+// (see this module's own top-of-file comment). The subject/body stay
+// bilingual in a single send (FR then EN) rather than a toggle link,
+// matching every other bilingual transactional email already in this
+// app -- there's nothing to "switch" to when both languages are
+// already shown together. Kept as a small pure function so tests can
+// assert on subject/link content without going through an HTTP round
+// trip.
 function buildVerificationEmail(verificationLink) {
-  const subject = 'Confirmez votre courriel — SMBHL Ligue / Confirm your email';
+  const subject = 'Confirme ton courriel / Confirm your email';
   const text =
-`Bienvenue! Veuillez confirmer votre adresse courriel en cliquant sur ce lien :
+`Bienvenue ! Confirme ton courriel en cliquant sur ce lien :
 ${verificationLink}
 
-Ce lien expire dans 24 heures. Si vous n'avez pas créé de compte, ignorez ce courriel.
+Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.
 
 ---
 
-Welcome! Please confirm your email address by clicking this link:
+Welcome! Confirm your email by clicking this link:
 ${verificationLink}
 
 This link expires in 24 hours. If you didn't create an account, you can ignore this email.`;
-  const html =
-`<p>Bienvenue&nbsp;! Veuillez confirmer votre adresse courriel en cliquant sur le lien ci-dessous&nbsp;:</p>
-<p><a href="${verificationLink}">${verificationLink}</a></p>
-<p>Ce lien expire dans 24 heures. Si vous n'avez pas créé de compte, ignorez ce courriel.</p>
-<hr>
-<p>Welcome! Please confirm your email address by clicking the link below:</p>
-<p><a href="${verificationLink}">${verificationLink}</a></p>
-<p>This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>`;
+  const bodyHtml = `
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Confirme ton courriel</h1>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Bienvenue ! Clique sur le bouton ci-dessous pour activer ton compte.</p>
+    ${nlEmailButton(verificationLink, 'Confirmer mon courriel')}
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.</p>
+    <hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Confirm your email</h1>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Welcome! Click the button below to activate your account.</p>
+    ${nlEmailButton(verificationLink, 'Confirm my email')}
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>`;
+  const html = nlEmailWrap({
+    brandName: 'Notre Ligue',
+    barColor: '#16181d',
+    bodyHtml,
+    footerHtml: 'Envoyé par Notre Ligue'
+  });
   return { subject, text, html };
 }
 
@@ -389,28 +411,40 @@ async function verifyPasswordResetToken(env, token) {
   return { ok: true, userId };
 }
 
+// Design system Part 5: same rebuild as buildVerificationEmail above
+// (real design system, black product bar/button, bilingual single
+// send) -- see that function's own comment for why this is safe to
+// touch (exclusively the new account system, never SMBHL).
 function buildPasswordResetEmail(resetLink) {
-  const subject = 'Réinitialisation de mot de passe — SMBHL Ligue / Password reset';
+  const subject = 'Réinitialise ton mot de passe / Reset your password';
   const text =
-`Vous avez demandé une réinitialisation de mot de passe. Cliquez sur ce lien pour choisir un nouveau mot de passe :
+`Tu as demandé à réinitialiser ton mot de passe. Clique sur ce lien pour en choisir un nouveau :
 ${resetLink}
 
-Ce lien expire dans 1 heure. Si vous n'avez pas demandé ceci, ignorez ce courriel — votre mot de passe actuel reste inchangé.
+Ce lien expire dans 1 heure. Si tu n'as pas demandé ceci, ignore ce courriel -- ton mot de passe actuel reste inchangé.
 
 ---
 
 You requested a password reset. Click this link to choose a new password:
 ${resetLink}
 
-This link expires in 1 hour. If you didn't request this, you can ignore this email — your current password stays unchanged.`;
-  const html =
-`<p>Vous avez demandé une réinitialisation de mot de passe. Cliquez sur le lien ci-dessous pour choisir un nouveau mot de passe&nbsp;:</p>
-<p><a href="${resetLink}">${resetLink}</a></p>
-<p>Ce lien expire dans 1 heure. Si vous n'avez pas demandé ceci, ignorez ce courriel — votre mot de passe actuel reste inchangé.</p>
-<hr>
-<p>You requested a password reset. Click the link below to choose a new password:</p>
-<p><a href="${resetLink}">${resetLink}</a></p>
-<p>This link expires in 1 hour. If you didn't request this, you can ignore this email — your current password stays unchanged.</p>`;
+This link expires in 1 hour. If you didn't request this, you can ignore this email -- your current password stays unchanged.`;
+  const bodyHtml = `
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Réinitialise ton mot de passe</h1>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Tu as demandé à réinitialiser ton mot de passe. Clique sur le bouton ci-dessous pour en choisir un nouveau.</p>
+    ${nlEmailButton(resetLink, 'Choisir un nouveau mot de passe')}
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 1 heure. Si tu n'as pas demandé ceci, ignore ce courriel -- ton mot de passe actuel reste inchangé.</p>
+    <hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Reset your password</h1>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">You requested a password reset. Click the button below to choose a new one.</p>
+    ${nlEmailButton(resetLink, 'Choose a new password')}
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 1 hour. If you didn't request this, you can ignore this email -- your current password stays unchanged.</p>`;
+  const html = nlEmailWrap({
+    brandName: 'Notre Ligue',
+    barColor: '#16181d',
+    bodyHtml,
+    footerHtml: 'Envoyé par Notre Ligue'
+  });
   return { subject, text, html };
 }
 

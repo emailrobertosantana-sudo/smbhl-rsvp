@@ -21,6 +21,7 @@ import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
+import { nlEmailWrap, nlEmailButton, leagueFillColor } from './design_system.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -834,13 +835,24 @@ export async function verifyInviteToken(env, token) {
   return { ok: true, leagueId, email };
 }
 
-function buildInviteEmail(leagueName, inviteLink) {
+// Design system Part 5: rebuilt on the real design system
+// (nlEmailWrap/nlEmailButton, guidelines/30-emails.md's build rules).
+// Safe to touch: co-admin invites are Part 9's own multi-admin system,
+// exclusive to the new league product -- SMBHL has no multi-admin
+// invite flow and never sends this email. Unlike the account-level
+// verification/reset emails, a real league (and its own stored color)
+// exists by this point, so the header bar/button use the league's own
+// contrast-safe color (leagueFillColor()), same rule as the RSVP/
+// public pages. Bilingual single send (FR then EN), matching every
+// other transactional email in this app.
+function buildInviteEmail(leagueName, inviteLink, leagueColor = '#b3122e') {
+  const barColor = leagueFillColor(leagueColor || '#b3122e');
   const subject = `Invitation à co-administrer ${leagueName} / Invitation to co-admin ${leagueName}`;
   const text =
-`Vous avez été invité(e) à devenir co-administrateur(-trice) de la ligue ${leagueName}. Cliquez sur ce lien pour accepter :
+`Tu as été invité(e) à devenir co-administrateur(-trice) de la ligue ${leagueName}. Clique sur ce lien pour accepter :
 ${inviteLink}
 
-Ce lien expire dans 48 heures. Si vous ne connaissez pas cette ligue, ignorez ce courriel.
+Ce lien expire dans 48 heures. Si tu ne connais pas cette ligue, ignore ce courriel.
 
 ---
 
@@ -848,15 +860,26 @@ You've been invited to become a co-admin of the ${leagueName} league. Click this
 ${inviteLink}
 
 This link expires in 48 hours. If you don't recognize this league, you can ignore this email.`;
-  const html =
-`<p>Vous avez été invité(e) à devenir co-administrateur(-trice) de la ligue <b>${leagueName}</b>. Cliquez sur le lien ci-dessous pour accepter&nbsp;:</p>
-<p><a href="${inviteLink}">${inviteLink}</a></p>
-<p>Ce lien expire dans 48 heures. Si vous ne connaissez pas cette ligue, ignorez ce courriel.</p>
-<hr>
-<p>You've been invited to become a co-admin of the <b>${leagueName}</b> league. Click the link below to accept:</p>
-<p><a href="${inviteLink}">${inviteLink}</a></p>
-<p>This link expires in 48 hours. If you don't recognize this league, you can ignore this email.</p>`;
+  const bodyHtml = `
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Invitation à co-administrer</h1>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Tu as été invité(e) à devenir co-administrateur(-trice) de <b>${nlEmailWrapEsc(leagueName)}</b>.</p>
+    ${nlEmailButton(inviteLink, 'Accepter l’invitation', barColor)}
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 48 heures. Si tu ne connais pas cette ligue, ignore ce courriel.</p>
+    <hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Co-admin invitation</h1>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">You've been invited to become a co-admin of <b>${nlEmailWrapEsc(leagueName)}</b>.</p>
+    ${nlEmailButton(inviteLink, 'Accept the invitation', barColor)}
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 48 hours. If you don't recognize this league, you can ignore this email.</p>`;
+  const html = nlEmailWrap({
+    brandName: leagueName,
+    barColor,
+    bodyHtml,
+    footerHtml: `Envoyé par Notre Ligue pour ${nlEmailWrapEsc(leagueName)}`
+  });
   return { subject, text, html };
+}
+function nlEmailWrapEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 // POST /league/admins/invite -- session+CSRF-gated, same discipline as
@@ -904,14 +927,16 @@ export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null
 
   if (typeof sendMailFunc === 'function') {
     try {
-      const { subject, text, html } = buildInviteEmail(leagueRow.name, inviteLink);
-      // Bug fix (Part 1, this task): this league already exists by this
-      // point (leagueRow was just fetched above) -- pass its own real
-      // branding (getLeagueSeasonConfig's leagueBranding, the same
-      // admin's-own-email fromEmail every other league-scoped email in
-      // this app already uses) instead of falling through to sendMail's
-      // generic default identity, which this call previously did.
+      // Bug fix (Part 1, an earlier task this session): this league
+      // already exists by this point (leagueRow was just fetched
+      // above) -- pass its own real branding (getLeagueSeasonConfig's
+      // leagueBranding, the same admin's-own-email fromEmail every
+      // other league-scoped email in this app already uses) instead of
+      // falling through to sendMail's generic default identity, which
+      // this call previously did. cfg.league.color (design system
+      // Part 1) is also the email's own header bar/button color.
       const cfg = await getLeagueSeasonConfig(env, leagueId);
+      const { subject, text, html } = buildInviteEmail(leagueRow.name, inviteLink, cfg.league.color);
       await sendMailFunc(env, email, subject, text, html, null, cfg.league);
     } catch (err) {
       console.error(`[leagues] Failed to send admin invite to ${email}: ${err.message}`);
