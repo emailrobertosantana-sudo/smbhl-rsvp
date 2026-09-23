@@ -847,7 +847,8 @@ describe('Multi-team season config (6-team season, Parts 3 & 4)', () => {
         languageMode: 'both',
         color: '#b3122e'
       },
-      tracksStats: true
+      tracksStats: true,
+      teamStructure: 'fixed'
     });
     expect(getTeamNames(getSeasonConfig({ name: 'Configless Season', standings: [], fixtures: [] })))
       .toEqual(['Red', 'Blue', 'White', 'Black']);

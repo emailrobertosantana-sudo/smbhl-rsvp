@@ -95,6 +95,8 @@ export const ERROR_I18N = {
   NO_TEAM_NAMES: { fr: "Cette ligue n'a pas encore de noms d'équipe enregistrés.", en: 'This league has no team names on file yet.' },
   LEAGUE_NAME_REQUIRED: { fr: 'Le nom de la ligue est requis.', en: 'League name is required.' },
   MIN_TEAM_NAMES: { fr: "Au moins 2 noms d'équipe sont requis.", en: 'At least 2 team names are required.' },
+  HEADCOUNT_LIMITS_REQUIRED: { fr: 'Un nombre minimum et maximum de joueurs est requis.', en: 'A minimum and maximum player count are required.' },
+  HEADCOUNT_MAX_TOO_LOW: { fr: 'Le maximum doit être au moins égal au minimum.', en: 'The maximum must be at least the minimum.' },
   LEAGUE_NOT_FOUND: { fr: 'Ligue introuvable.', en: 'League not found.' },
   ALREADY_ADMIN: { fr: 'Cette personne est déjà administratrice de cette ligue.', en: 'This person is already an admin of this league.' },
   LEAGUE_GONE: { fr: "Cette ligue n'existe plus.", en: 'League no longer exists.' },

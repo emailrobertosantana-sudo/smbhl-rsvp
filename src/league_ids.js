@@ -34,6 +34,17 @@
 // they're migrated to real per-league routing.
 export const SMBHL_LEAGUE_ID = 'smbhl';
 
+// Team-structure task: a 'headcount' league (no team concept at all)
+// still stores real team-shaped data underneath -- a single implicit
+// team every one of its rsvp rows gets tagged with -- so the existing
+// teamState/openSpots/expected shortage-detection machinery (built for
+// 'fixed' mode) works completely unchanged for it. Never shown in any
+// headcount UI surface (roster, event status, RSVP, public page all
+// hide team display entirely for this mode); it exists purely so the
+// data model underneath stays uniform across all three team-structure
+// modes instead of forking the shortage-detection logic itself.
+export const HEADCOUNT_TEAM_NAME = 'Tous';
+
 const DATE_SUFFIX = /(\d{4}-\d{2}-\d{2})$/;
 
 // events.id for a NEW event: `${leagueId}:${date}`, e.g. 'smbhl:2026-10-04'.

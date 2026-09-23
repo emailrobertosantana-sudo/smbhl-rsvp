@@ -44,7 +44,10 @@ export const DEFAULT_SEASON_CONFIG = {
   },
   // When false, standings/playoffs/awards/OCR/season-recap are disabled for this
   // season; only the attendance/RSVP/shortage/sub-invite operational core runs.
-  tracksStats: true
+  tracksStats: true,
+  // Team-structure task: SMBHL (and every league before this task) is
+  // 'fixed' -- teams set once, players belong to one all season.
+  teamStructure: 'fixed'
 };
 
 /**
@@ -96,7 +99,14 @@ export function normalizeSeasonConfig(rawConfig) {
     minSkaters: Number(rawConfig.minSkaters) || DEFAULT_SEASON_CONFIG.minSkaters,
     playoffFormat: rawConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat,
     league,
-    tracksStats: rawConfig.tracksStats === false ? false : DEFAULT_SEASON_CONFIG.tracksStats
+    tracksStats: rawConfig.tracksStats === false ? false : DEFAULT_SEASON_CONFIG.tracksStats,
+    // Team-structure task: 'fixed' (default, every league before this
+    // task and every league that doesn't set it) | 'headcount' |
+    // 'weekly_draw'. Not part of data.json/season shape at all --
+    // always threaded in from the league's own leagues.team_structure
+    // column (see getLeagueSeasonConfig), same mechanism as
+    // leagueTeamNames/leagueBranding/leagueRosterLimits above.
+    teamStructure: rawConfig.teamStructure || 'fixed'
   };
 }
 
@@ -125,18 +135,56 @@ export function normalizeSeasonConfig(rawConfig) {
 // nothing to do with SMBHL. leagueBranding is null for every existing
 // 2/3-arg getSeasonConfig call (SMBHL's own, unconditionally), so this is
 // a no-op there — config is returned completely unchanged.
-function withLeagueBrandingDefault(config, leagueBranding) {
-  if (!leagueBranding || typeof leagueBranding !== 'object') return config;
-  return { ...config, league: { ...leagueBranding, ...(config.league || {}) } };
+// Team-structure task: teamStructure is threaded through the SAME way
+// leagueBranding already is -- a league-level property (leagues.
+// team_structure), not part of data.json/season shape at all, so it
+// has to be merged in here too, not just in fallbackSeasonConfig's own
+// "no season yet" path. Without this, a league that HAS published a
+// season would always read back teamStructure: 'fixed' regardless of
+// its real value, since a published season's own .config object never
+// carries it (the exact "explicit field list" trap languageMode/color
+// already got caught by once each -- fixed here before it became a
+// live bug instead of after).
+function withLeagueBrandingDefault(config, leagueBranding, teamStructure) {
+  let out = config;
+  if (leagueBranding && typeof leagueBranding === 'object') {
+    out = { ...out, league: { ...leagueBranding, ...(out.league || {}) } };
+  }
+  if (teamStructure) {
+    out = { ...out, teamStructure: out.teamStructure || teamStructure };
+  }
+  return out;
 }
 
-function fallbackSeasonConfig(leagueTeamNames, leagueBranding) {
+// leagueRosterLimits: team-structure task -- a 'headcount' league's own
+// min/max player count (leagues.min_players/max_players), used the
+// same way leagueTeamNames/leagueBranding already are: only when no
+// real season config exists yet, so shortage detection against a
+// headcount league's OWN chosen numbers works correctly even before
+// its first season is ever published, instead of silently reading
+// DEFAULT_SEASON_CONFIG's generic 8/5 (SMBHL's own numbers). Reuses
+// the existing skatersPerTeam/minSkaters fields rather than inventing
+// parallel ones -- a headcount league has exactly one implicit "team"
+// (see writeLeagueRsvpStatus's own comment), so these fields already
+// mean exactly "how many people total" for it.
+function fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure) {
   const hasTeams = Array.isArray(leagueTeamNames) && leagueTeamNames.length > 0;
   const hasBranding = leagueBranding && typeof leagueBranding === 'object';
-  if (hasTeams || hasBranding) {
+  const hasLimits = leagueRosterLimits && typeof leagueRosterLimits === 'object'
+    && Number.isFinite(Number(leagueRosterLimits.maxPlayers)) && Number.isFinite(Number(leagueRosterLimits.minPlayers));
+  if (hasTeams || hasBranding || hasLimits || leagueTeamStructure) {
     return normalizeSeasonConfig({
       ...(hasTeams ? { teams: leagueTeamNames } : {}),
-      ...(hasBranding ? { league: leagueBranding } : {})
+      ...(hasBranding ? { league: leagueBranding } : {}),
+      // Deliberately no goaliesPerTeam override here: normalizeSeasonConfig's
+      // own `Number(x) || DEFAULT` resolution treats 0 as falsy and would
+      // silently fall back to the default (1) anyway. Headcount rosters
+      // never expose the is_goalie flag at all (see the roster page's own
+      // comment), so teamState's existing goalie-priority logic naturally
+      // finds zero goalie-flagged players and folds everyone into
+      // `skaters` regardless of this field's value -- no override needed.
+      ...(hasLimits ? { skatersPerTeam: Number(leagueRosterLimits.maxPlayers), minSkaters: Number(leagueRosterLimits.minPlayers) } : {}),
+      ...(leagueTeamStructure ? { teamStructure: leagueTeamStructure } : {})
     });
   }
   return { ...DEFAULT_SEASON_CONFIG };
@@ -158,16 +206,24 @@ function fallbackSeasonConfig(leagueTeamNames, leagueBranding) {
  * @param {Object} [leagueBranding] - A league's own .league identity block
  *   (name/fromEmail/replyToEmail/siteUrl/...), used the same way as
  *   leagueTeamNames — only when no real season config is found
+ * @param {Object} [leagueRosterLimits] - A 'headcount' league's own
+ *   {minPlayers, maxPlayers}, used the same way — only when no real
+ *   season config is found
+ * @param {string} [leagueTeamStructure] - A league's own team_structure
+ *   ('fixed' | 'headcount' | 'weekly_draw') — unlike the other
+ *   league-level params above, this one is merged in REGARDLESS of
+ *   whether a real season config exists (see withLeagueBrandingDefault's
+ *   own comment for why)
  * @returns {Object} Normalized season config
  */
-export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTeamNames = null, leagueBranding = null) {
+export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTeamNames = null, leagueBranding = null, leagueRosterLimits = null, leagueTeamStructure = null) {
   if (!seasonOrData || typeof seasonOrData !== 'object') {
-    return fallbackSeasonConfig(leagueTeamNames, leagueBranding);
+    return fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure);
   }
 
   // Case 1: Direct season object carrying .config
   if (seasonOrData.config && typeof seasonOrData.config === 'object') {
-    return normalizeSeasonConfig(withLeagueBrandingDefault(seasonOrData.config, leagueBranding));
+    return normalizeSeasonConfig(withLeagueBrandingDefault(seasonOrData.config, leagueBranding, leagueTeamStructure));
   }
 
   // Case 2: Direct season object that has no config (e.g. historical season with standings or fixtures).
@@ -195,11 +251,11 @@ export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTea
     }
 
     if (seasonObj && seasonObj.config) {
-      return normalizeSeasonConfig(withLeagueBrandingDefault(seasonObj.config, leagueBranding));
+      return normalizeSeasonConfig(withLeagueBrandingDefault(seasonObj.config, leagueBranding, leagueTeamStructure));
     }
   }
 
-  return fallbackSeasonConfig(leagueTeamNames, leagueBranding);
+  return fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure);
 }
 
 /**

@@ -3,7 +3,7 @@ import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton } from './design_system.js';
-import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
+import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings } from './leagues.js';
@@ -607,9 +607,16 @@ const I18N_SIGNUP = {
     lblLeagueName: 'Nom de la ligue', lblSlug: 'Adresse de ta page',
     slugHelp: 'Créée à partir du nom. Tu peux la changer.',
     lblStats: 'Suivre les statistiques?', statsHelp: "Buts, passes, gardiens. Tu pourras l'activer plus tard.",
+    structureLabel: 'Comment sont organisées tes équipes?',
+    structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'Les mêmes équipes toute la saison.',
+    structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: "Juste une liste de joueurs, pas d'équipes.",
+    structureWeeklyTitle: 'Équipes chaque semaine', structureWeeklyDesc: 'Les équipes changent à chaque match.',
     back: 'Retour',
     step3: 'Étape 3 sur 3', title3: "Combien d'équipes?",
     teamNamesLabel: 'Noms des équipes', teamPlaceholder: 'Équipe ', teamHelp: 'Pas encore décidé? Garde « Équipe 1, 2… ».',
+    title3Headcount: 'Combien de joueurs?',
+    lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
+    minMaxHelp: "On invite des remplaçants automatiquement quand tu es sous le minimum.",
     createLeague: 'Créer la ligue',
     doneBadge: 'Ligue créée', doneTitle: 'Ta ligue est prête.',
     doneBody: 'Ta page publique est déjà en ligne. Partage-la dans le groupe de la ligue.',
@@ -624,9 +631,16 @@ const I18N_SIGNUP = {
     lblLeagueName: 'League name', lblSlug: 'Your page address',
     slugHelp: 'Created from the name. You can change it.',
     lblStats: 'Track stats?', statsHelp: 'Goals, assists, goalies. You can turn this on later.',
+    structureLabel: 'How are your teams organized?',
+    structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same teams all season.',
+    structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of players, no teams.",
+    structureWeeklyTitle: 'Teams change weekly', structureWeeklyDesc: 'Teams are different every game.',
     back: 'Back',
     step3: 'Step 3 of 3', title3: 'How many teams?',
     teamNamesLabel: 'Team names', teamPlaceholder: 'Team ', teamHelp: 'Not decided yet? Keep "Team 1, 2...".',
+    title3Headcount: 'How many players?',
+    lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
+    minMaxHelp: 'Subs are invited automatically when you drop below the minimum.',
     createLeague: 'Create the league',
     doneBadge: 'League created', doneTitle: 'Your league is ready.',
     doneBody: 'Your public page is already live. Share it in the league group chat.',
@@ -662,6 +676,13 @@ function signupStyles() {
   .su-done { display: flex; flex-direction: column; gap: var(--space-4); }
   .su-url { background: var(--primary-tint); border-radius: var(--radius-md); padding: var(--space-3); font: 600 15px/22px var(--font-sans); color: var(--primary); word-break: break-all; }
   .nl-error { color: var(--danger, #b3122e); font-weight: 600; font-size: 14px; }
+  .su-structure { display: flex; flex-direction: column; gap: var(--space-2); }
+  .su-structure-opt { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3); border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); cursor: pointer; }
+  .su-structure-opt.on { border: 2px solid var(--primary); background: var(--primary-tint); }
+  .su-structure-opt input { margin-top: 3px; flex: none; }
+  .su-structure-opt .t { font-weight: 600; font-size: 15px; }
+  .su-structure-opt .d { font-size: 13px; color: var(--ink-muted); margin-top: 2px; }
+  .su-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
   @media (min-width: 640px) { .su-body { padding-top: var(--space-7); } }
 </style>`;
 }
@@ -830,6 +851,23 @@ function renderSignupStep2() {
     <div><div class="nl-label" data-i18n="lblStats">Suivre les statistiques?</div><div class="nl-help" data-i18n="statsHelp">Buts, passes, gardiens. Tu pourras l'activer plus tard.</div></div>
     <button type="button" class="nl-switch" role="switch" aria-checked="true" id="su_stats_switch" onclick="toggleStats()"></button>
   </div>
+  <div class="nl-field">
+    <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>
+    <div class="su-structure" id="su_structure_radio">
+      <label class="su-structure-opt on" data-value="fixed">
+        <input type="radio" name="su_structure" value="fixed" checked>
+        <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">Les mêmes équipes toute la saison.</span></span>
+      </label>
+      <label class="su-structure-opt" data-value="headcount">
+        <input type="radio" name="su_structure" value="headcount">
+        <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de joueurs, pas d'équipes.</span></span>
+      </label>
+      <label class="su-structure-opt" data-value="weekly_draw">
+        <input type="radio" name="su_structure" value="weekly_draw">
+        <span><span class="t" data-i18n="structureWeeklyTitle">Équipes chaque semaine</span><span class="d" data-i18n="structureWeeklyDesc">Les équipes changent à chaque match.</span></span>
+      </label>
+    </div>
+  </div>
 </main>
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="continueBtn" onclick="submitStep2()">Continuer</button>
@@ -848,14 +886,21 @@ document.getElementById('su_slug').addEventListener('input', function() { slugTo
 document.getElementById('su_league_name').addEventListener('input', function() {
   if (!slugTouched) document.getElementById('su_slug').value = window.NotreLigue.slugify(this.value);
 });
+document.querySelectorAll('#su_structure_radio input[type=radio]').forEach(function(r) {
+  r.addEventListener('change', function() {
+    document.querySelectorAll('.su-structure-opt').forEach(function(opt) { opt.classList.remove('on'); });
+    r.closest('.su-structure-opt').classList.add('on');
+  });
+});
 function submitStep2() {
   clearError();
   var name = document.getElementById('su_league_name').value.trim();
   var slug = document.getElementById('su_slug').value.trim();
   var tracksStats = document.getElementById('su_stats_switch').getAttribute('aria-checked') === 'true';
+  var teamStructure = document.querySelector('#su_structure_radio input:checked').value;
   if (!name) { showError(window.__errorText('LEAGUE_NAME_REQUIRED_CLIENT')); return; }
   if (slug && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) { showError(window.__errorText('SLUG_INVALID_FORMAT')); return; }
-  try { sessionStorage.setItem('nl_signup_league', JSON.stringify({ name: name, slug: slug, tracksStats: tracksStats })); } catch (e) {}
+  try { sessionStorage.setItem('nl_signup_league', JSON.stringify({ name: name, slug: slug, tracksStats: tracksStats, teamStructure: teamStructure })); } catch (e) {}
   window.location.href = '/signup?step=3';
 }
 </script>`;
@@ -869,17 +914,32 @@ function renderSignupStep3() {
     <div class="overline" data-i18n="step3">Étape 3 sur 3</div>
     ${signupStepper(3)}
   </div>
-  <div class="su-title"><h1 data-i18n="title3">Combien d'équipes?</h1></div>
+  <div class="su-title"><h1 id="su_step3_title" data-i18n="title3">Combien d'équipes?</h1></div>
   <div id="formErr" class="nl-error" style="display:none"></div>
-  <div class="su-count" role="group" aria-label="Nombre d'équipes">
-    <button type="button" aria-label="Moins" onclick="changeCount(-1)">−</button>
-    <output id="su_team_count_out">4</output>
-    <button type="button" aria-label="Plus" onclick="changeCount(1)">+</button>
+  <div id="su_teams_section">
+    <div class="su-count" role="group" aria-label="Nombre d'équipes">
+      <button type="button" aria-label="Moins" onclick="changeCount(-1)">−</button>
+      <output id="su_team_count_out">4</output>
+      <button type="button" aria-label="Plus" onclick="changeCount(1)">+</button>
+    </div>
+    <div class="nl-field">
+      <span class="nl-label" data-i18n="teamNamesLabel">Noms des équipes</span>
+      <div class="su-teams" id="su_teams"></div>
+      <p class="nl-help" data-i18n="teamHelp">Pas encore décidé? Garde « Équipe 1, 2… ».</p>
+    </div>
   </div>
-  <div class="nl-field">
-    <span class="nl-label" data-i18n="teamNamesLabel">Noms des équipes</span>
-    <div class="su-teams" id="su_teams"></div>
-    <p class="nl-help" data-i18n="teamHelp">Pas encore décidé? Garde « Équipe 1, 2… ».</p>
+  <div id="su_headcount_section" style="display:none">
+    <div class="su-two">
+      <div class="nl-field">
+        <label class="nl-label" for="su_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
+        <input class="nl-input" id="su_min_players" type="number" min="1" value="8">
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="su_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
+        <input class="nl-input" id="su_max_players" type="number" min="1" value="12">
+      </div>
+    </div>
+    <p class="nl-help" data-i18n="minMaxHelp">On invite des remplaçants automatiquement quand tu es sous le minimum.</p>
   </div>
 </main>
 <div class="su-bottom">
@@ -891,6 +951,13 @@ ${signupLangScript()}
 var leagueDraft = null;
 try { leagueDraft = JSON.parse(sessionStorage.getItem('nl_signup_league') || 'null'); } catch (e) {}
 if (!leagueDraft || !leagueDraft.name) { window.location.href = '/signup?step=2'; }
+var isHeadcount = leagueDraft && leagueDraft.teamStructure === 'headcount';
+if (isHeadcount) {
+  document.getElementById('su_teams_section').style.display = 'none';
+  document.getElementById('su_headcount_section').style.display = '';
+  document.getElementById('su_step3_title').setAttribute('data-i18n', 'title3Headcount');
+  document.getElementById('su_step3_title').textContent = window.__pageDict().title3Headcount;
+}
 var teamCount = 4;
 function teamsEl() { return document.getElementById('su_teams'); }
 function renderTeams() {
@@ -920,26 +987,36 @@ function clearError() { document.getElementById('formErr').style.display = 'none
 async function submitStep3() {
   clearError();
   if (!leagueDraft) { window.location.href = '/signup?step=2'; return; }
-  // Bug fix (live testing): the field's own placeholder ("Équipe 1")
-  // and helper text ("Pas encore décidé? Garde « Équipe 1, 2… ».")
-  // both promise a blank field is fine -- and the real design spec
-  // (ScreenSignup's own design-rules aside) says so explicitly: "Les
-  // noms sont optionnels. Rien ne bloque la création." A blank field
-  // now falls back to its own placeholder text as the real submitted
-  // name, so team count sent always equals teamCount (2-16), never
-  // silently dropped below the server's 2-name minimum.
-  var dict = window.__pageDict();
-  var teamNames = Array.prototype.map.call(teamsEl().querySelectorAll('input'), function(i, idx) {
-    var v = i.value.trim();
-    return v || (dict.teamPlaceholder + (idx + 1));
-  });
+  var payload = { name: leagueDraft.name, tracksStats: leagueDraft.tracksStats, slug: leagueDraft.slug || undefined, teamStructure: leagueDraft.teamStructure };
+  if (isHeadcount) {
+    var minPlayers = Number(document.getElementById('su_min_players').value);
+    var maxPlayers = Number(document.getElementById('su_max_players').value);
+    if (!minPlayers || !maxPlayers) { showError(window.__errorText('HEADCOUNT_LIMITS_REQUIRED')); return; }
+    if (maxPlayers < minPlayers) { showError(window.__errorText('HEADCOUNT_MAX_TOO_LOW')); return; }
+    payload.minPlayers = minPlayers;
+    payload.maxPlayers = maxPlayers;
+  } else {
+    // Bug fix (live testing): the field's own placeholder ("Équipe 1")
+    // and helper text ("Pas encore décidé? Garde « Équipe 1, 2… ».")
+    // both promise a blank field is fine -- and the real design spec
+    // (ScreenSignup's own design-rules aside) says so explicitly: "Les
+    // noms sont optionnels. Rien ne bloque la création." A blank field
+    // now falls back to its own placeholder text as the real submitted
+    // name, so team count sent always equals teamCount (2-16), never
+    // silently dropped below the server's 2-name minimum.
+    var dict = window.__pageDict();
+    payload.teamNames = Array.prototype.map.call(teamsEl().querySelectorAll('input'), function(i, idx) {
+      var v = i.value.trim();
+      return v || (dict.teamPlaceholder + (idx + 1));
+    });
+  }
   var btn = document.getElementById('su_submit');
   btn.disabled = true;
   try {
     var res = await fetch('/leagues/create', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ name: leagueDraft.name, teamNames: teamNames, tracksStats: leagueDraft.tracksStats, slug: leagueDraft.slug || undefined })
+      body: JSON.stringify(payload)
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {
@@ -9707,10 +9784,25 @@ async function verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token) {
 
 // Shared write path for the GET one-click (?v=in/out), POST /league/rsvp
 // (both self, via the player's own token), and the admin-set path below
-// (status_by='manager'). team comes from the contact's own preferred_team
-// (there is no roster-to-team assignment flow for a second league yet —
-// see the report — so this is the only team signal available); role
-// mirrors the roster/sub split contacts.role already uses.
+// (status_by='manager'). role mirrors the roster/sub split
+// contacts.role already uses.
+//
+// team-structure task: what gets written to rsvp.team now depends on
+// the league's own team_structure (fetched here rather than threaded
+// through all 3 call sites, none of which otherwise need it -- keeps
+// this function self-contained about its own "what team goes here"
+// responsibility):
+//   - 'fixed' (every league before this task, unchanged): the
+//     contact's own preferred_team, exactly as before.
+//   - 'headcount': always HEADCOUNT_TEAM_NAME, the single implicit
+//     team every headcount rsvp row shares (see that constant's own
+//     comment) -- never a real per-player choice.
+//   - 'weekly_draw': null at RSVP time. Teams for this mode are
+//     assigned PER EVENT by the admin afterward (a dedicated UPDATE,
+//     see handleLeagueAssignEventTeam below) -- the ON CONFLICT clause
+//     here deliberately never touches `team` on a status change, so a
+//     later self-service IN/OUT flip can never clobber an admin's own
+//     per-event assignment.
 //
 // DELIBERATE SCOPE NOTE (Part R): this function — and every caller of it
 // — always writes to the SAME playerId that was authenticated (either the
@@ -9724,7 +9816,10 @@ async function verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token) {
 // see leagueRsvpPost's own comment and test/league_rsvp_no_teammate_edit.spec.js.
 async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, statusBy = 'self') {
   const now = new Date().toISOString();
-  const team = contact?.preferred_team || null;
+  const teamStructure = await getLeagueTeamStructure(env, leagueId);
+  const team = teamStructure === 'headcount' ? HEADCOUNT_TEAM_NAME
+    : teamStructure === 'weekly_draw' ? null
+    : (contact?.preferred_team || null);
   const role = contact?.role === 'roster' ? 'roster' : 'sub';
   await env.DB.prepare(
     `INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at, league_id)
@@ -9732,6 +9827,17 @@ async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, 
      ON CONFLICT(event_id, player_id) DO UPDATE SET
        status = excluded.status, status_by = excluded.status_by, updated_at = excluded.updated_at`
   ).bind(eventId, playerId, team, status, role, statusBy, now, leagueId).run();
+}
+
+// Small, cheap, self-contained lookup so writeLeagueRsvpStatus (and
+// anything else that just needs the mode, not a full season config)
+// doesn't have to resolve a whole getLeagueSeasonConfig(). Defaults to
+// 'fixed' for SMBHL (no row in most call contexts) and any league
+// somehow missing the column.
+async function getLeagueTeamStructure(env, leagueId) {
+  if (leagueId === SMBHL_LEAGUE_ID) return 'fixed';
+  const row = await env.DB.prepare('SELECT team_structure FROM leagues WHERE id = ?').bind(leagueId).first();
+  return (row && row.team_structure) || 'fixed';
 }
 
 // Part R: immediate (not batched/delayed) sub-invite when a self- or

@@ -18,7 +18,7 @@
 
 import { checkUserSession, checkCsrfToken, hashPassword, sessionResponseHeaders } from './auth.js';
 import { sanitizeAndValidateEmail } from './validation.js';
-import { SMBHL_LEAGUE_ID, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS } from './league_ids.js';
+import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor } from './design_system.js';
@@ -182,8 +182,10 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
 
   let leagueTeamNames = null;
   let leagueBranding = null;
+  let leagueRosterLimits = null;
+  let leagueTeamStructure = null;
   const leagueRow = await env.DB.prepare(
-    `SELECT l.name, l.team_names, l.language_mode, l.color, u.email AS admin_email
+    `SELECT l.name, l.team_names, l.language_mode, l.color, l.team_structure, l.min_players, l.max_players, u.email AS admin_email
        FROM leagues l JOIN users u ON u.id = l.created_by
       WHERE l.id = ?`
   ).bind(leagueId).first();
@@ -209,9 +211,15 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
         color: leagueRow.color || '#b3122e'
       };
     }
+    // Team-structure task: migrate-027.sql, default 'fixed' for every
+    // existing row.
+    leagueTeamStructure = leagueRow.team_structure || 'fixed';
+    if (leagueRow.min_players != null && leagueRow.max_players != null) {
+      leagueRosterLimits = { minPlayers: leagueRow.min_players, maxPlayers: leagueRow.max_players };
+    }
   }
 
-  return getSeasonConfig(leagueData, seasonName, leagueTeamNames, leagueBranding);
+  return getSeasonConfig(leagueData, seasonName, leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure);
 }
 
 /* ---------- proof of concept: GET /league/contacts ----------
@@ -704,17 +712,52 @@ export async function handleLeagueCreate(req, env) {
 
     const body = await req.json().catch(() => ({}));
     const name = String(body.name || '').trim();
-    const teamNames = Array.isArray(body.teamNames)
-      ? body.teamNames.map(t => String(t || '').trim()).filter(Boolean)
-      : [];
     const tracksStats = body.tracksStats !== false; // defaults to true, matching season_config.js's own default
     const divisionLabel = body.divisionLabel ? String(body.divisionLabel).trim() : null;
+
+    // Team-structure task: chosen once at signup, never changed after
+    // (same posture as the slug -- see migrate-027.sql's own comment).
+    // Defaults to 'fixed' so every existing caller (every test/client
+    // that doesn't send this field) gets byte-for-byte the same
+    // behavior as before this task.
+    const teamStructure = ['fixed', 'headcount', 'weekly_draw'].includes(body.teamStructure) ? body.teamStructure : 'fixed';
 
     if (!name) {
       return Response.json({ ok: false, error: 'League name is required.', errorKey: 'LEAGUE_NAME_REQUIRED' }, { status: 400 });
     }
-    if (teamNames.length < 2) {
-      return Response.json({ ok: false, error: 'At least 2 team names are required.', errorKey: 'MIN_TEAM_NAMES' }, { status: 400 });
+
+    let teamNames = [];
+    let minPlayers = null;
+    let maxPlayers = null;
+    if (teamStructure === 'headcount') {
+      // No team concept at all -- a single minimum/maximum player
+      // count instead (reuses the exact same min/max PATTERN fixed-mode
+      // teams already use -- see getSeasonConfig's own comment).
+      minPlayers = Number(body.minPlayers);
+      maxPlayers = Number(body.maxPlayers);
+      if (!Number.isFinite(minPlayers) || !Number.isFinite(maxPlayers) || minPlayers < 1) {
+        return Response.json({ ok: false, error: 'A minimum and maximum player count are required.', errorKey: 'HEADCOUNT_LIMITS_REQUIRED' }, { status: 400 });
+      }
+      if (maxPlayers < minPlayers) {
+        return Response.json({ ok: false, error: 'The maximum must be at least the minimum.', errorKey: 'HEADCOUNT_MAX_TOO_LOW' }, { status: 400 });
+      }
+      // The single implicit "team" every headcount league's rsvp rows
+      // get tagged with -- never shown in any headcount UI surface
+      // (see writeLeagueRsvpStatus's own comment), but real team-shaped
+      // data underneath so teamState/openSpots/expected (fixed mode's
+      // own shortage-detection machinery) work completely unchanged.
+      teamNames = [HEADCOUNT_TEAM_NAME];
+    } else {
+      // 'fixed' and 'weekly_draw' both need real named teams -- fixed
+      // assigns players to them permanently at roster time,
+      // weekly_draw assigns per event instead, but both need the
+      // names to assign FROM.
+      teamNames = Array.isArray(body.teamNames)
+        ? body.teamNames.map(t => String(t || '').trim()).filter(Boolean)
+        : [];
+      if (teamNames.length < 2) {
+        return Response.json({ ok: false, error: 'At least 2 team names are required.', errorKey: 'MIN_TEAM_NAMES' }, { status: 400 });
+      }
     }
 
     // Part 2: a short, human-readable public URL slug -- auto-suggested
@@ -743,9 +786,9 @@ export async function handleLeagueCreate(req, env) {
     const now = new Date().toISOString();
 
     await env.DB.prepare(
-      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at, slug)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug).run();
+      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at, slug, team_structure, min_players, max_players)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug, teamStructure, minPlayers, maxPlayers).run();
 
     await env.DB.prepare(
       `INSERT INTO league_admins (user_id, league_id, role, created_at) VALUES (?, ?, 'admin', ?)`
@@ -760,7 +803,10 @@ export async function handleLeagueCreate(req, env) {
         tracksStats,
         teamCount: teamNames.length,
         teamNames,
-        slug
+        slug,
+        teamStructure,
+        minPlayers,
+        maxPlayers
       }
     });
   } catch (err) {
