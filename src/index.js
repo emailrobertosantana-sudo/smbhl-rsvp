@@ -612,6 +612,126 @@ async function resendVerification() {
   });
 }
 
+/* ---------- league-admin UI pages (Parts R-V) ----------
+ * Pure UI on top of the existing session-gated /league/* JSON routes from
+ * Parts I-P — no new backend logic in this section, same as the signup/
+ * login/dashboard pages above. Shell is server-rendered (auth-checked the
+ * same way handleDashboardPage is: redirect to /login with no session);
+ * the actual list contents and form submissions go through fetch() calls
+ * to the real JSON routes (GET/POST /league/contacts, /league/events,
+ * etc.) — not a parallel data path, and not an HTTP round-trip to itself
+ * for the initial render, just the browser calling the same routes a
+ * curl/API user already would.
+ */
+
+const ROLE_LABEL_FR_EN = {
+  roster: 'Régulier / Roster',
+  sub_skater: 'Sub — joueur / Sub skater',
+  sub_goalie: 'Sub — gardien / Sub goalie'
+};
+
+// Server-renders the roster table directly from the same query
+// GET /league/contacts uses (leagues.js's handleLeagueContacts) — not an
+// HTTP round-trip to itself, just the same data, so the page's very first
+// response already shows real content (and is directly testable without a
+// JS-executing browser), rather than a client-fetched "Loading…" shell.
+async function handleLeagueRosterPage(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return Response.redirect(url.origin + '/login', 302);
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
+
+  const contacts = (await env.DB.prepare(
+    'SELECT player_id, name, email, phone, role FROM contacts WHERE league_id = ? ORDER BY name'
+  ).bind(leagueId).all()).results || [];
+
+  const rosterHtml = contacts.length
+    ? `<table>${contacts.map(c => `<tr><td>${esc(c.name)}${c.email ? `<span class="by">${esc(c.email)}</span>` : ''}</td><td class="s">${esc(ROLE_LABEL_FR_EN[c.role] || c.role)}</td></tr>`).join('')}</table>`
+    : `<p class="state" style="margin:0;">Aucun joueur pour l'instant.<span class="en" style="display:block;">No players yet.</span></p>`;
+
+  return new Response(page('Effectif', `
+  <h1>Effectif<span class="en">Roster</span></h1>
+  <p class="state" style="margin:0 0 16px;"><a href="/dashboard">&larr; Tableau de bord<span class="en" style="display:inline;"> / Dashboard</span></a></p>
+
+  <div class="card">
+    <h2>Ajouter un joueur<span class="en">Add a player</span></h2>
+    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Nom complet<span class="en" style="display:block;font-weight:400;">Full name</span></span>
+      <input type="text" id="r_name" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Courriel <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Email <i>(optional)</i></span></span>
+      <input type="email" id="r_email" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Téléphone <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Phone <i>(optional)</i></span></span>
+      <input type="tel" id="r_phone" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:16px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Rôle<span class="en" style="display:block;font-weight:400;">Role</span></span>
+      <select id="r_role" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+        <option value="roster">Régulier / Roster</option>
+        <option value="sub_skater">Sub — joueur / skater</option>
+        <option value="sub_goalie">Sub — gardien / goalie</option>
+      </select>
+    </label>
+    <div class="btns">
+      <button type="button" class="btn" id="r_submit" onclick="submitContact()">AJOUTER<span class="en" style="display:block;font-size:13px;font-weight:600;">ADD</span></button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Joueurs<span class="en">Players</span></h2>
+    <div id="rosterList">${rosterHtml}</div>
+  </div>
+<script>
+function showErr(msg) {
+  const el = document.getElementById('formErr');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+async function submitContact() {
+  document.getElementById('formErr').style.display = 'none';
+  const name = document.getElementById('r_name').value.trim();
+  const email = document.getElementById('r_email').value.trim();
+  const phone = document.getElementById('r_phone').value.trim();
+  const role = document.getElementById('r_role').value;
+  if (!name) {
+    showErr('Le nom est requis. / Name is required.');
+    return;
+  }
+  const btn = document.getElementById('r_submit');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/league/contacts', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: role })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      showErr(data.error || "Échec de l'ajout. / Failed to add.");
+      btn.disabled = false;
+      return;
+    }
+    // Server-rendered list is the source of truth -- reload to see it
+    // reflected, same as the rest of this app's plain-HTML-form pages.
+    window.location.reload();
+  } catch (e) {
+    showErr('Erreur réseau. / Network error.');
+    btn.disabled = false;
+  }
+}
+</script>`), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
 /* ---------- data helpers ---------- */
 
 async function getEvent(db, id) {
@@ -15685,6 +15805,9 @@ async function handleFetch(req, env, ctx) {
         return new Response(renderLoginPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/dashboard' || url.pathname === '/dashboard/') && req.method === 'GET')
         return await handleDashboardPage(req, env, url);
+      // League-admin UI pages (Parts R-V — see the task report).
+      if ((url.pathname === '/league/roster' || url.pathname === '/league/roster/') && req.method === 'GET')
+        return await handleLeagueRosterPage(req, env, url);
 
       if (url.pathname === '/admin' || url.pathname === '/admin/')
         return Response.redirect(url.origin + '/admin/board', 302);
