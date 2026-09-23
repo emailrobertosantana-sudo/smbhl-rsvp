@@ -86,7 +86,9 @@ describe('Part 2: league branding on session-based pages', () => {
   it('GET /league/roster shows the real league name, not SMBHL', async () => {
     const res = await SELF.fetch('http://example.com/league/roster', { headers: { cookie } });
     const html = await res.text();
-    expect(html).toContain(`<title>Effectif — ${LEAGUE_NAME}</title>`);
+    // Design system Part 3: "Effectif" -> "Joueurs" (the same term the
+    // real nav/tabbar use throughout, ScreenRoster's own heading).
+    expect(html).toContain(`<title>Joueurs — ${LEAGUE_NAME}</title>`);
     expect(html).not.toContain('SMBHL');
   });
 

@@ -1680,12 +1680,6 @@ async function submitLanguageMode() {
  * curl/API user already would.
  */
 
-const ROLE_LABEL_FR_EN = {
-  roster: 'Régulier / Roster',
-  sub_skater: 'Sub — joueur / Sub skater',
-  sub_goalie: 'Sub — gardien / Sub goalie'
-};
-
 // Part 9: multi-admin invite acceptance page. Does a real server-side
 // verifyInviteToken() check before rendering (unlike /reset-password,
 // which renders unconditionally) specifically so it can show the RIGHT
@@ -1960,6 +1954,18 @@ else {
 // HTTP round-trip to itself, just the same data, so the page's very first
 // response already shows real content (and is directly testable without a
 // JS-executing browser), rather than a client-fetched "Loading…" shell.
+// Design system Part 3: roster page, matching
+// components/ScreenRoster/preview.html -- a filter bar above a real
+// table, with the add-player form as a side panel on desktop (a
+// bottom sheet-style toggle on phones, since there's no room for a
+// permanent side panel there). Two deliberate drops from the literal
+// preview, both because the underlying capability doesn't exist yet:
+// no per-Sunday RSVP status column (this page has no per-event RSVP
+// summary -- that lives on the event status page), and team is shown
+// as plain text, not an inline-editable <select> (no update-contact
+// endpoint exists to actually change it from here).
+const ROSTER_TEAM_DOTS = ['#8b4a1c', '#0b7f71', '#1f6feb', '#c2255c', '#6d3fae', '#b8860b', '#0f766e', '#a3123a'];
+
 async function handleLeagueRosterPage(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
@@ -1969,138 +1975,185 @@ async function handleLeagueRosterPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
+  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
+
   const contacts = (await env.DB.prepare(
     'SELECT player_id, name, email, phone, role, preferred_team FROM contacts WHERE league_id = ? ORDER BY name'
   ).bind(leagueId).all()).results || [];
 
-  // Part 1 fix: real team names (signup-provided before a season is
-  // published, the published season's own config after), so the
-  // add-player form can offer real choices instead of no team field at
-  // all -- the root cause of every team always showing 0 confirmed on
-  // the shortage page regardless of actual roster size.
   const seasonCfg = await getLeagueSeasonConfig(env, leagueId);
   const teamNames = getTeamNames(seasonCfg);
-  // Part 2 fix: this page's branding was silently falling back to
-  // SMBHL's own (see handleDashboardPage's comment for the full story).
-  const leagueCfg = seasonCfg.league;
 
-  const rosterHtml = contacts.length
-    ? `<table>${contacts.map(c => `<tr><td>${esc(c.name)}${c.email ? `<span class="by">${esc(c.email)}</span>` : ''}</td><td class="s">${esc(ROLE_LABEL_FR_EN[c.role] || c.role)}</td><td class="s">${c.preferred_team ? esc(c.preferred_team) : '<span style="color:var(--faint);" data-i18n="unassigned">Non assigné</span>'}</td></tr>`).join('')}</table>`
-    : `<p class="state" style="margin:0;" data-i18n="noPlayers">Aucun joueur pour l'instant.</p>`;
+  const subCount = contacts.filter(c => c.role !== 'roster').length;
+  const unassignedCount = contacts.filter(c => c.role === 'roster' && !c.preferred_team).length;
+  const teamCounts = teamNames.map(t => contacts.filter(c => c.preferred_team === t).length);
 
   const I18N_ROSTER = {
     fr: {
-      title: 'Effectif', backLink: '&larr; Tableau de bord', addPlayer: 'Ajouter un joueur',
-      fullName: 'Nom complet', emailOpt: 'Courriel <i>(optionnel)</i>', phoneOpt: 'Téléphone <i>(optionnel)</i>',
-      role: 'Rôle', roleRoster: 'Régulier / Roster', roleSubSkater: 'Sub — joueur / skater', roleSubGoalie: 'Sub — gardien / goalie',
-      teamOpt: 'Équipe <i>(optionnel)</i>', teamUnassigned: 'Non assigné', addBtn: 'AJOUTER',
+      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', logout: 'Se déconnecter',
+      title: 'Joueurs', addPlayer: 'Ajouter un joueur',
+      filterAll: 'Tous', filterSubs: 'Remplaçants', filterUnassigned: 'Sans équipe',
+      colPlayer: 'Joueur', colTeam: 'Équipe', colRole: 'Rôle',
+      fullName: 'Nom complet', emailOpt: 'Courriel (optionnel)', phoneOpt: 'Téléphone (optionnel)',
+      role: 'Rôle', roleRoster: 'Régulier', roleSubSkater: 'Remplaçant — joueur', roleSubGoalie: 'Remplaçant — gardien',
+      teamOpt: 'Équipe (optionnel)', teamUnassigned: 'Non assigné', addBtn: 'Ajouter', cancel: 'Annuler',
       players: 'Joueurs', unassigned: 'Non assigné', noPlayers: "Aucun joueur pour l'instant."
     },
     en: {
-      title: 'Roster', backLink: '&larr; Dashboard', addPlayer: 'Add a player',
-      fullName: 'Full name', emailOpt: 'Email <i>(optional)</i>', phoneOpt: 'Phone <i>(optional)</i>',
-      role: 'Role', roleRoster: 'Regular / Roster', roleSubSkater: 'Sub skater', roleSubGoalie: 'Sub goalie',
-      teamOpt: 'Team <i>(optional)</i>', teamUnassigned: 'Unassigned', addBtn: 'ADD',
+      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
+      title: 'Players', addPlayer: 'Add a player',
+      filterAll: 'All', filterSubs: 'Subs', filterUnassigned: 'Unassigned',
+      colPlayer: 'Player', colTeam: 'Team', colRole: 'Role',
+      fullName: 'Full name', emailOpt: 'Email (optional)', phoneOpt: 'Phone (optional)',
+      role: 'Role', roleRoster: 'Regular', roleSubSkater: 'Sub — skater', roleSubGoalie: 'Sub — goalie',
+      teamOpt: 'Team (optional)', teamUnassigned: 'Unassigned', addBtn: 'Add', cancel: 'Cancel',
       players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.'
     }
   };
 
-  return new Response(page('Effectif', `
-  <h1 data-i18n="title">Effectif</h1>
-  <p class="state" style="margin:0 0 16px;"><a href="/dashboard" data-i18n="backLink">&larr; Tableau de bord</a></p>
+  const { header, tabbar } = dashChrome(leagueRow.name, 'roster');
 
-  <div class="card">
-    <h2 data-i18n="addPlayer">Ajouter un joueur</h2>
-    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="fullName">Nom complet</span>
-      <input type="text" id="r_name" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="emailOpt">Courriel <i>(optionnel)</i></span>
-      <input type="email" id="r_email" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="phoneOpt">Téléphone <i>(optionnel)</i></span>
-      <input type="tel" id="r_phone" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="role">Rôle</span>
-      <select id="r_role" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-        <option value="roster" data-i18n="roleRoster">Régulier / Roster</option>
-        <option value="sub_skater" data-i18n="roleSubSkater">Sub — joueur / skater</option>
-        <option value="sub_goalie" data-i18n="roleSubGoalie">Sub — gardien / goalie</option>
-      </select>
-    </label>
-    <label style="display:block;margin-bottom:16px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="teamOpt">Équipe <i>(optionnel)</i></span>
-      <select id="r_team" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-        <option value="" data-i18n="teamUnassigned">Non assigné</option>
-        ${teamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
-      </select>
-    </label>
-    <div class="btns">
-      <button type="button" class="btn" id="r_submit" data-i18n="addBtn" onclick="submitContact()">AJOUTER</button>
+  const filterPills = [
+    `<button type="button" class="ro-f" data-filter="all" aria-pressed="true"><span data-i18n="filterAll">Tous</span> ${contacts.length}</button>`,
+    ...teamNames.map((t, i) => `<button type="button" class="ro-f" data-filter="team:${esc(t)}" aria-pressed="false"><span class="nl-dot" style="background:${ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length]}"></span>${esc(t)} ${teamCounts[i]}</button>`),
+    `<button type="button" class="ro-f" data-filter="subs" aria-pressed="false"><span data-i18n="filterSubs">Remplaçants</span> ${subCount}</button>`,
+    `<button type="button" class="ro-f" data-filter="unassigned" aria-pressed="false"><span data-i18n="filterUnassigned">Sans équipe</span> ${unassignedCount}</button>`
+  ].join('');
+
+  const rows = contacts.map(c => {
+    const roleKey = c.role === 'sub_skater' ? 'roleSubSkater' : c.role === 'sub_goalie' ? 'roleSubGoalie' : 'roleRoster';
+    const filterAttr = c.role !== 'roster' ? 'subs' : c.preferred_team ? `team:${c.preferred_team}` : 'unassigned';
+    return `<tr data-row-filter="${esc(filterAttr)}">
+      <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}</td>
+      <td>${c.preferred_team ? esc(c.preferred_team) : `<span class="nl-help" data-i18n="teamUnassigned">Non assigné</span>`}</td>
+      <td><span data-i18n="${roleKey}">${esc(I18N_ROSTER.fr[roleKey])}</span></td>
+    </tr>`;
+  }).join('');
+
+  const bodyHtml = `${dashStyles()}<style>
+  .ro-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+  .ro-top { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--space-3); flex-wrap: wrap; }
+  .ro-top h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; }
+  .ro-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+  .ro-f { height: 36px; padding: 0 var(--space-3); border: 1.5px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); font: 600 14px/1 var(--font-sans); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .ro-f[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+  .ro-table-wrap { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
+  .ro-table-wrap table { width: 100%; border-collapse: collapse; }
+  .ro-table-wrap th { text-align: left; font: 600 13px/18px var(--font-sans); color: var(--ink-muted); background: var(--surface-sunken); padding: 10px var(--space-4); border-bottom: 1px solid var(--line); }
+  .ro-table-wrap td { padding: 0 var(--space-4); height: 56px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .ro-table-wrap tr:last-child td { border-bottom: 0; }
+  .ro-who b { display: block; font-weight: 600; }
+  .ro-who span { font-size: 13px; color: var(--ink-muted); }
+  .ro-panel { display: none; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); flex-direction: column; gap: var(--space-4); max-width: 400px; }
+  .ro-panel.open { display: flex; }
+  .ro-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
+  .ro-radio { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--space-2); }
+  .ro-radio label { display: flex; align-items: center; justify-content: center; height: 44px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); font: 600 13px/1 var(--font-sans); cursor: pointer; text-align: center; padding: 0 4px; }
+  .ro-radio input { position: absolute; opacity: 0; pointer-events: none; }
+  .ro-radio label.on { border: 2px solid var(--primary); background: var(--primary-tint); color: var(--primary); }
+  @media (min-width: 900px) { .ro-panel { display: flex; } }
+</style>${header}
+<main class="dash-main ro-main">
+  <div class="ro-top">
+    <div><h1 data-i18n="title">Joueurs</h1></div>
+    <button type="button" class="nl-btn nl-btn--primary" id="ro_toggle_panel" data-i18n="addPlayer" onclick="toggleRosterPanel()">Ajouter un joueur</button>
+  </div>
+  <div class="ro-filters">${filterPills}</div>
+  <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);" class="ro-grid">
+    <div class="ro-table-wrap">
+      <table>
+        <thead><tr><th data-i18n="colPlayer">Joueur</th><th data-i18n="colTeam">Équipe</th><th data-i18n="colRole">Rôle</th></tr></thead>
+        <tbody id="ro_tbody">${rows || ''}</tbody>
+      </table>
+      ${!contacts.length ? `<p class="nl-help" style="padding:var(--space-4);margin:0;" data-i18n="noPlayers">Aucun joueur pour l'instant.</p>` : ''}
     </div>
+    <aside class="ro-panel" id="ro_panel" aria-label="Ajouter un joueur">
+      <h2 data-i18n="addPlayer">Ajouter un joueur</h2>
+      <div id="formErr" class="nl-error" style="display:none"></div>
+      <div class="nl-field">
+        <label class="nl-label" for="r_name" data-i18n="fullName">Nom complet</label>
+        <input class="nl-input" id="r_name" type="text" required>
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="r_email" data-i18n="emailOpt">Courriel (optionnel)</label>
+        <input class="nl-input" id="r_email" type="email">
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="r_phone" data-i18n="phoneOpt">Téléphone (optionnel)</label>
+        <input class="nl-input" id="r_phone" type="tel">
+      </div>
+      <div class="nl-field">
+        <span class="nl-label" data-i18n="role">Rôle</span>
+        <div class="ro-radio" id="r_role_radio">
+          <label class="on" data-value="roster"><span data-i18n="roleRoster">Régulier</span></label>
+          <label data-value="sub_skater"><span data-i18n="roleSubSkater">Remplaçant — joueur</span></label>
+          <label data-value="sub_goalie"><span data-i18n="roleSubGoalie">Remplaçant — gardien</span></label>
+        </div>
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="r_team" data-i18n="teamOpt">Équipe (optionnel)</label>
+        <select class="nl-select" id="r_team">
+          <option value="" data-i18n="teamUnassigned">Non assigné</option>
+          ${teamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="r_submit" data-i18n="addBtn" onclick="submitContact()">Ajouter</button>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleRosterPanel()">Annuler</button>
+      </div>
+    </aside>
   </div>
+</main>
+${tabbar}`;
 
-  <div class="card">
-    <h2 data-i18n="players">Joueurs</h2>
-    <div id="rosterList">${rosterHtml}</div>
-  </div>
-<script>
-window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
-var I18N_ROSTER = ${JSON.stringify(I18N_ROSTER)};
-function applyLanguage(lang) {
-  var dict = I18N_ROSTER[lang] || I18N_ROSTER.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (k && dict[k] != null) el.innerHTML = dict[k];
+  const script = `
+${nlAuthScript(I18N_ROSTER)}
+var r_role = 'roster';
+document.querySelectorAll('#r_role_radio label').forEach(function(l) {
+  l.addEventListener('click', function() {
+    document.querySelectorAll('#r_role_radio label').forEach(function(x) { x.classList.remove('on'); });
+    l.classList.add('on');
+    r_role = l.getAttribute('data-value');
   });
+});
+function toggleRosterPanel() {
+  document.getElementById('ro_panel').classList.toggle('open');
 }
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-
-function showErr(msg) {
-  const el = document.getElementById('formErr');
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-
+document.querySelectorAll('.ro-f').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.ro-f').forEach(function(x) { x.setAttribute('aria-pressed', 'false'); });
+    btn.setAttribute('aria-pressed', 'true');
+    var filter = btn.getAttribute('data-filter');
+    document.querySelectorAll('#ro_tbody tr').forEach(function(row) {
+      row.style.display = (filter === 'all' || row.getAttribute('data-row-filter') === filter) ? '' : 'none';
+    });
+  });
+});
+function showErr(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 async function submitContact() {
   document.getElementById('formErr').style.display = 'none';
-  const name = document.getElementById('r_name').value.trim();
-  const email = document.getElementById('r_email').value.trim();
-  const phone = document.getElementById('r_phone').value.trim();
-  const role = document.getElementById('r_role').value;
-  const team = document.getElementById('r_team').value;
-  if (!name) {
-    showErr(window.__errorText('NAME_REQUIRED_CLIENT'));
-    return;
-  }
-  const btn = document.getElementById('r_submit');
+  var name = document.getElementById('r_name').value.trim();
+  var email = document.getElementById('r_email').value.trim();
+  var phone = document.getElementById('r_phone').value.trim();
+  var team = document.getElementById('r_team').value;
+  if (!name) { showErr(window.__errorText('NAME_REQUIRED_CLIENT')); return; }
+  var btn = document.getElementById('r_submit');
   btn.disabled = true;
   try {
-    const res = await fetch('/league/contacts', {
+    var res = await fetch('/league/contacts', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: role, team: team || undefined })
+      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined })
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
-      showErr(window.__errorText(data.errorKey, data.error));
-      btn.disabled = false;
-      return;
-    }
-    // Server-rendered list is the source of truth -- reload to see it
-    // reflected, same as the rest of this app's plain-HTML-form pages.
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
     window.location.reload();
   } catch (e) {
-    showErr(window.__errorText('NETWORK_ERROR'));
-    btn.disabled = false;
+    showErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
   }
-}
-</script>`, '', leagueCfg), {
+}`;
+
+  return new Response(nlDocument({ title: `Joueurs — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }

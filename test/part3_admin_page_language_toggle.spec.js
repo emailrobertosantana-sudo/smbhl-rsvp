@@ -86,10 +86,10 @@ describe('Part 3: real FR/EN toggle on every session-authenticated admin page', 
     assertRealToggleNl(html, ['Players', 'Schedule', 'Co-admins', 'Log out']);
   });
 
-  it('the roster page has a real, working toggle with genuine English content', async () => {
+  it('the roster page has a real, working toggle with genuine English content (design system, ScreenRoster)', async () => {
     const res = await SELF.fetch('http://example.com/league/roster', { headers: { cookie } });
     const html = await res.text();
-    assertRealToggle(html, ['Add a player', 'Full name', 'Unassigned', 'No players yet.']);
+    assertRealToggleNl(html, ['Add a player', 'Full name', 'Unassigned', 'No players yet.']);
   });
 
   it('the schedule page has a real, working toggle with genuine English content', async () => {
