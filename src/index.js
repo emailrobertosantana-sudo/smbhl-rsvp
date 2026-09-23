@@ -1,6 +1,7 @@
 import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
+import { ERROR_I18N } from './error_i18n.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
@@ -232,6 +233,34 @@ function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = 
 window.__csrfHeader = function() {
   var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return m ? { 'X-CSRF-Token': decodeURIComponent(m[1]) } : {};
+};
+// Part 1 (overnight follow-up task): a server error response includes
+// both error (English, unchanged, for logs/API consumers) and
+// errorKey (new). Every page's error-display code calls this instead
+// of showing data.error directly, so the SAME toggle that already
+// governs static content also governs server-returned error text --
+// one system, not two. Falls back to the raw server string (or a
+// generic message) when no key is present/matched -- e.g. the few
+// exception-message-suffixed 500s that have no meaningful translation.
+// Deliberately just the lookup FUNCTION here, not the dictionary data
+// itself: window.__ERROR_I18N is defined per-page (same as every other
+// I18N_* dict in this file), only on pages that actually display
+// errors. Embedding the full dictionary in this shared shell (every
+// page calls page()) would ship its vocabulary onto pages that have
+// nothing to do with those errors, breaking their own unrelated
+// content checks elsewhere in the suite. Lesson learned twice already
+// this task (see error_i18n.js's own comment) -- a comment mentioning
+// one of those words directly, inside this same script block, hit the
+// exact bug it was describing.
+window.__errorText = function(errorKey, fallback, vars) {
+  var lang = window.__currentLang || 'fr';
+  var src = window.__ERROR_I18N || {};
+  var dict = src[lang] || src.fr || {};
+  var text = (errorKey && dict[errorKey]) || fallback || (lang === 'fr' ? 'Une erreur est survenue.' : 'An error occurred.');
+  if (vars) {
+    Object.keys(vars).forEach(function(k) { text = text.split('{' + k + '}').join(vars[k]); });
+  }
+  return text;
 };
 </script>
 <style>
@@ -653,6 +682,7 @@ function renderSignupPage() {
   </div>
   <p class="state" data-i18n="footer">Déjà un compte? <a href="/login">Se connecter</a></p>
 <script>
+window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
 var I18N_SIGNUP = ${JSON.stringify(I18N_SIGNUP)};
 function signupDict() { return I18N_SIGNUP[window.__currentLang || 'fr'] || I18N_SIGNUP.fr; }
 function teamNamesEl() { return document.getElementById('teamNamesContainer'); }
@@ -706,19 +736,19 @@ async function submitSignup() {
   const teamNames = Array.from(teamNamesEl().querySelectorAll('input')).map(i => i.value.trim()).filter(Boolean);
 
   if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
-    showError("Veuillez entrer un courriel valide. / Please enter a valid email address.");
+    showError(window.__errorText('INVALID_EMAIL'));
     return;
   }
   if (password.length < 8) {
-    showError("Le mot de passe doit contenir au moins 8 caractères. / Password must be at least 8 characters.");
+    showError(window.__errorText('WEAK_PASSWORD'));
     return;
   }
   if (!leagueName) {
-    showError("Le nom de la ligue est requis. / League name is required.");
+    showError(window.__errorText('LEAGUE_NAME_REQUIRED_CLIENT'));
     return;
   }
   if (teamNames.length < 2) {
-    showError("Veuillez entrer au moins 2 noms d'équipe. / Please enter at least 2 team names.");
+    showError(window.__errorText('MIN_TEAM_NAMES_CLIENT'));
     return;
   }
 
@@ -733,9 +763,9 @@ async function submitSignup() {
     const signupData = await signupRes.json().catch(() => ({}));
     if (!signupRes.ok || !signupData.ok) {
       if (signupRes.status === 429) {
-        showError("Trop de tentatives de création de compte. Veuillez réessayer plus tard. / Too many signup attempts. Please try again later.");
+        showError(window.__errorText('RATE_LIMITED_SIGNUP'));
       } else {
-        showError(signupData.error || "La création du compte a échoué. / Signup failed.");
+        showError(window.__errorText(signupData.errorKey, signupData.error));
       }
       btn.disabled = false;
       return;
@@ -748,14 +778,18 @@ async function submitSignup() {
     });
     const leagueData = await leagueRes.json().catch(() => ({}));
     if (!leagueRes.ok || !leagueData.ok) {
-      showError("Votre compte a été créé, mais la création de la ligue a échoué : " + (leagueData.error || 'erreur inconnue') + ". Rafraîchissez la page et réessayez, ou connectez-vous. / Your account was created, but league setup failed: " + (leagueData.error || 'unknown error') + ". Refresh and try again, or log in.");
+      var isFr = (window.__currentLang || 'fr') === 'fr';
+      var detail = window.__errorText(leagueData.errorKey, leagueData.error);
+      showError(isFr
+        ? 'Votre compte a été créé, mais la création de la ligue a échoué : ' + detail + '. Rafraîchissez la page et réessayez, ou connectez-vous.'
+        : 'Your account was created, but league setup failed: ' + detail + '. Refresh and try again, or log in.');
       btn.disabled = false;
       return;
     }
 
     window.location.href = '/dashboard';
   } catch (e) {
-    showError("Erreur réseau. Veuillez réessayer. / Network error. Please try again.");
+    showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
   }
 }
@@ -801,6 +835,7 @@ function renderLoginPage() {
   <p class="state" data-i18n="footerSignup">Pas de compte? <a href="/signup">Créer un compte</a></p>
   <p class="state" data-i18n="footerForgot"><a href="/forgot-password">Mot de passe oublié?</a></p>
 <script>
+window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
 var I18N_LOGIN = ${JSON.stringify(I18N_LOGIN)};
 function applyLanguage(lang) {
   var dict = I18N_LOGIN[lang] || I18N_LOGIN.fr;
@@ -826,7 +861,7 @@ async function submitLogin() {
   const email = document.getElementById('li_email').value.trim();
   const password = document.getElementById('li_password').value;
   if (!email || !password) {
-    showError("Veuillez entrer votre courriel et mot de passe. / Please enter your email and password.");
+    showError(window.__errorText('EMAIL_PASSWORD_REQUIRED_CLIENT'));
     return;
   }
   const btn = document.getElementById('li_submit');
@@ -839,16 +874,18 @@ async function submitLogin() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      // Deliberately the exact message the server sent — Part A's login
-      // route already returns the same generic error whether the email
-      // exists or not, and this page must not narrow that back down.
-      showError(data.error || "Invalid email or password.");
+      // Deliberately the exact SAME message regardless of whether the
+      // email exists or not (Part A's login route already returns the
+      // same generic error either way) -- errorKey-resolved so it's
+      // still translated, this page must not narrow the generic error
+      // back down to something more specific.
+      showError(window.__errorText(data.errorKey, data.error));
       btn.disabled = false;
       return;
     }
     window.location.href = '/dashboard';
   } catch (e) {
-    showError("Erreur réseau. Veuillez réessayer. / Network error. Please try again.");
+    showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
   }
 }
@@ -860,22 +897,47 @@ async function submitLogin() {
 // real account -- matches handleRequestPasswordReset's own anti-enumeration
 // design (a real difference in UI text here would leak exactly what the
 // route itself deliberately avoids leaking).
+const I18N_FORGOT = {
+  fr: {
+    h1: 'Mot de passe oublié',
+    ok: 'Si un compte existe avec ce courriel, un lien de réinitialisation a été envoyé.',
+    lblEmail: 'Courriel', submit: 'ENVOYER', back: '&larr; Se connecter'
+  },
+  en: {
+    h1: 'Forgot password',
+    ok: 'If an account exists with this email, a reset link has been sent.',
+    lblEmail: 'Email', submit: 'SEND', back: '&larr; Log in'
+  }
+};
+
 function renderForgotPasswordPage() {
   return page('Mot de passe oublié', `
-  <h1>Mot de passe oublié<span class="en">Forgot password</span></h1>
+  <h1 data-i18n="h1">Mot de passe oublié</h1>
   <div class="card">
     <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-    <div id="formOk" class="state" style="display:none;">Si un compte existe avec ce courriel, un lien de réinitialisation a été envoyé.<span class="en" style="display:block;">If an account exists with this email, a reset link has been sent.</span></div>
+    <div id="formOk" class="state" style="display:none;" data-i18n="ok">Si un compte existe avec ce courriel, un lien de réinitialisation a été envoyé.</div>
     <label style="display:block;margin-bottom:12px;" id="emailLabel">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Courriel<span class="en" style="display:block;font-weight:400;">Email</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblEmail">Courriel</span>
       <input type="email" id="fp_email" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <div class="btns" id="submitBtns">
-      <button type="button" class="btn" id="fp_submit" onclick="submitForgot()">ENVOYER<span class="en" style="display:block;font-size:13px;font-weight:600;">SEND</span></button>
+      <button type="button" class="btn" id="fp_submit" data-i18n="submit" onclick="submitForgot()">ENVOYER</button>
     </div>
   </div>
-  <p class="state"><a href="/login">&larr; Se connecter</a><span class="en" style="display:block;"><a href="/login">&larr; Log in</a></span></p>
+  <p class="state"><a href="/login" data-i18n="back">&larr; Se connecter</a></p>
 <script>
+window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
+var I18N_FORGOT = ${JSON.stringify(I18N_FORGOT)};
+function applyLanguage(lang) {
+  var dict = I18N_FORGOT[lang] || I18N_FORGOT.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+
 function showError(msg) {
   const el = document.getElementById('formErr');
   el.textContent = msg;
@@ -886,7 +948,7 @@ async function submitForgot() {
   document.getElementById('formErr').style.display = 'none';
   const email = document.getElementById('fp_email').value.trim();
   if (!email) {
-    showError('Le courriel est requis. / Email is required.');
+    showError(window.__errorText('EMAIL_REQUIRED_CLIENT'));
     return;
   }
   const btn = document.getElementById('fp_submit');
@@ -899,7 +961,7 @@ async function submitForgot() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      showError(data.error || "Échec de la demande. / Request failed.");
+      showError(window.__errorText(data.errorKey, data.error));
       btn.disabled = false;
       return;
     }
@@ -907,7 +969,7 @@ async function submitForgot() {
     document.getElementById('submitBtns').style.display = 'none';
     document.getElementById('formOk').style.display = 'block';
   } catch (e) {
-    showError('Erreur réseau. / Network error.');
+    showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
   }
 }
@@ -919,19 +981,35 @@ async function submitForgot() {
 // just forwarded verbatim to POST /auth/reset-password, which does the
 // real verification (this page never decodes or trusts it client-side).
 function renderResetPasswordPage(token) {
+  const I18N_RESET = {
+    fr: { h1: 'Nouveau mot de passe', lblPassword: 'Nouveau mot de passe (8 caractères min.)', submit: 'RÉINITIALISER' },
+    en: { h1: 'New password', lblPassword: 'New password (min. 8 characters)', submit: 'RESET' }
+  };
   return page('Réinitialiser le mot de passe', `
-  <h1>Nouveau mot de passe<span class="en">New password</span></h1>
+  <h1 data-i18n="h1">Nouveau mot de passe</h1>
   <div class="card">
     <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Nouveau mot de passe (8 caractères min.)<span class="en" style="display:block;font-weight:400;">New password (min. 8 characters)</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblPassword">Nouveau mot de passe (8 caractères min.)</span>
       <input type="password" id="rp_password" required minlength="8" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <div class="btns">
-      <button type="button" class="btn" id="rp_submit" onclick="submitReset()">RÉINITIALISER<span class="en" style="display:block;font-size:13px;font-weight:600;">RESET</span></button>
+      <button type="button" class="btn" id="rp_submit" data-i18n="submit" onclick="submitReset()">RÉINITIALISER</button>
     </div>
   </div>
 <script>
+window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
+var I18N_RESET = ${JSON.stringify(I18N_RESET)};
+function applyLanguage(lang) {
+  var dict = I18N_RESET[lang] || I18N_RESET.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+
 function showError(msg) {
   const el = document.getElementById('formErr');
   el.textContent = msg;
@@ -942,7 +1020,7 @@ async function submitReset() {
   document.getElementById('formErr').style.display = 'none';
   const password = document.getElementById('rp_password').value;
   if (password.length < 8) {
-    showError('Le mot de passe doit contenir au moins 8 caractères. / Password must be at least 8 characters.');
+    showError(window.__errorText('WEAK_PASSWORD'));
     return;
   }
   const btn = document.getElementById('rp_submit');
@@ -955,15 +1033,13 @@ async function submitReset() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      showError(data.error === 'expired'
-        ? "Ce lien a expiré. Veuillez en demander un nouveau. / This link has expired. Please request a new one."
-        : (data.error || "Échec de la réinitialisation. / Reset failed."));
+      showError(window.__errorText(data.errorKey, data.error));
       btn.disabled = false;
       return;
     }
     window.location.href = '/dashboard';
   } catch (e) {
-    showError('Erreur réseau. / Network error.');
+    showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
   }
 }
@@ -1214,7 +1290,7 @@ async function submitSeason() {
   el.style.display = 'none';
   const name = document.getElementById('season_name').value.trim();
   if (!name) {
-    el.textContent = 'Le nom de la saison est requis. / Season name is required.';
+    el.textContent = window.__errorText('SEASON_NAME_REQUIRED_CLIENT');
     el.style.display = 'block';
     return;
   }
@@ -1228,14 +1304,14 @@ async function submitSeason() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      el.textContent = data.error || "Échec du démarrage de la saison. / Failed to start season.";
+      el.textContent = window.__errorText(data.errorKey, data.error);
       el.style.display = 'block';
       btn.disabled = false;
       return;
     }
     window.location.reload();
   } catch (e) {
-    el.textContent = 'Erreur réseau. / Network error.';
+    el.textContent = window.__errorText('NETWORK_ERROR');
     el.style.display = 'block';
     btn.disabled = false;
   }
@@ -1248,7 +1324,7 @@ async function submitInvite() {
   ok.style.display = 'none';
   const email = document.getElementById('invite_email').value.trim();
   if (!email) {
-    err.textContent = 'Le courriel est requis. / Email is required.';
+    err.textContent = window.__errorText('EMAIL_REQUIRED_CLIENT');
     err.style.display = 'block';
     return;
   }
@@ -1262,17 +1338,18 @@ async function submitInvite() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      err.textContent = data.error || "Échec de l'invitation. / Failed to invite.";
+      err.textContent = window.__errorText(data.errorKey, data.error);
       err.style.display = 'block';
       btn.disabled = false;
       return;
     }
-    ok.textContent = 'Invitation envoyée à ' + email + '. / Invitation sent to ' + email + '.';
+    var isFr = (window.__currentLang || 'fr') === 'fr';
+    ok.textContent = isFr ? ('Invitation envoyée à ' + email + '.') : ('Invitation sent to ' + email + '.');
     ok.style.display = 'block';
     document.getElementById('invite_email').value = '';
     btn.disabled = false;
   } catch (e) {
-    err.textContent = 'Erreur réseau. / Network error.';
+    err.textContent = window.__errorText('NETWORK_ERROR');
     err.style.display = 'block';
     btn.disabled = false;
   }
@@ -1292,19 +1369,20 @@ async function submitDeactivate() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      err.textContent = data.error || 'Échec de la désactivation. / Failed to deactivate.';
+      err.textContent = window.__errorText(data.errorKey, data.error);
       err.style.display = 'block';
       btn.disabled = false;
       return;
     }
     window.location.reload();
   } catch (e) {
-    err.textContent = 'Erreur réseau. / Network error.';
+    err.textContent = window.__errorText('NETWORK_ERROR');
     err.style.display = 'block';
     btn.disabled = false;
   }
 }
 
+window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
 var I18N_DASH = ${JSON.stringify(I18N_DASH)};
 function applyLanguage(lang) {
   var dict = I18N_DASH[lang] || I18N_DASH.fr;
@@ -1365,16 +1443,35 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
   const existingUser = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(result.email).first();
   const session = await checkUserSession(req, env);
 
+  const toggleScript = `
+<script>
+window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
+if (window.__currentLang) {
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var dict = { fr: el.getAttribute('data-fr'), en: el.getAttribute('data-en') };
+    var t = dict[window.__currentLang];
+    if (t != null) el.innerHTML = t;
+  });
+}
+window.addEventListener('admin_lang_changed', function(e) {
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var dict = { fr: el.getAttribute('data-fr'), en: el.getAttribute('data-en') };
+    var t = dict[e.detail.lang];
+    if (t != null) el.innerHTML = t;
+  });
+});
+</script>`;
+
   let body;
   if (existingUser) {
     if (session && session.userId === existingUser.id) {
       body = `
-        <h1>Rejoindre ${esc(leagueRow.name)}<span class="en">Join ${esc(leagueRow.name)}</span></h1>
+        <h1 data-i18n data-fr="Rejoindre ${esc(leagueRow.name)}" data-en="Join ${esc(leagueRow.name)}">Rejoindre ${esc(leagueRow.name)}</h1>
         <div class="card">
-          <p class="state" style="margin-top:0;">Accepter l'invitation à co-administrer cette ligue avec le compte <b>${esc(result.email)}</b>?<span class="en" style="display:block;">Accept the invitation to co-admin this league with the account <b>${esc(result.email)}</b>?</span></p>
+          <p class="state" style="margin-top:0;" data-i18n data-fr="Accepter l'invitation à co-administrer cette ligue avec le compte <b>${esc(result.email)}</b>?" data-en="Accept the invitation to co-admin this league with the account <b>${esc(result.email)}</b>?">Accepter l'invitation à co-administrer cette ligue avec le compte <b>${esc(result.email)}</b>?</p>
           <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
           <div class="btns">
-            <button type="button" class="btn" id="accept_submit" onclick="submitAccept()">ACCEPTER<span class="en" style="display:block;font-size:13px;font-weight:600;">ACCEPT</span></button>
+            <button type="button" class="btn" id="accept_submit" data-i18n data-fr="ACCEPTER" data-en="ACCEPT" onclick="submitAccept()">ACCEPTER</button>
           </div>
         </div>
       <script>
@@ -1391,41 +1488,41 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok || !data.ok) {
-            el.textContent = data.error || "Échec de l'acceptation. / Failed to accept.";
+            el.textContent = window.__errorText(data.errorKey, data.error, data.errorVars);
             el.style.display = 'block';
             btn.disabled = false;
             return;
           }
           window.location.href = '/dashboard';
         } catch (e) {
-          el.textContent = 'Erreur réseau. / Network error.';
+          el.textContent = window.__errorText('NETWORK_ERROR');
           el.style.display = 'block';
           btn.disabled = false;
         }
       }
-      </script>`;
+      </script>${toggleScript}`;
     } else {
       body = `
-        <h1>Rejoindre ${esc(leagueRow.name)}<span class="en">Join ${esc(leagueRow.name)}</span></h1>
+        <h1 data-i18n data-fr="Rejoindre ${esc(leagueRow.name)}" data-en="Join ${esc(leagueRow.name)}">Rejoindre ${esc(leagueRow.name)}</h1>
         <div class="card">
-          <p class="state" style="margin-top:0;">Un compte existe déjà pour <b>${esc(result.email)}</b>. Connectez-vous avec ce compte, puis revenez sur ce lien pour accepter.<span class="en" style="display:block;">An account already exists for <b>${esc(result.email)}</b>. Log in with that account, then come back to this link to accept.</span></p>
+          <p class="state" style="margin-top:0;" data-i18n data-fr="Un compte existe déjà pour <b>${esc(result.email)}</b>. Connectez-vous avec ce compte, puis revenez sur ce lien pour accepter." data-en="An account already exists for <b>${esc(result.email)}</b>. Log in with that account, then come back to this link to accept.">Un compte existe déjà pour <b>${esc(result.email)}</b>. Connectez-vous avec ce compte, puis revenez sur ce lien pour accepter.</p>
           <div class="btns">
-            <a class="btn" href="/login">SE CONNECTER<span class="en" style="display:block;font-size:13px;font-weight:600;">LOG IN</span></a>
+            <a class="btn" href="/login" data-i18n data-fr="SE CONNECTER" data-en="LOG IN">SE CONNECTER</a>
           </div>
-        </div>`;
+        </div>${toggleScript}`;
     }
   } else {
     body = `
-      <h1>Rejoindre ${esc(leagueRow.name)}<span class="en">Join ${esc(leagueRow.name)}</span></h1>
+      <h1 data-i18n data-fr="Rejoindre ${esc(leagueRow.name)}" data-en="Join ${esc(leagueRow.name)}">Rejoindre ${esc(leagueRow.name)}</h1>
       <div class="card">
-        <p class="state" style="margin-top:0;">Créez votre mot de passe pour co-administrer cette ligue avec <b>${esc(result.email)}</b>.<span class="en" style="display:block;">Create your password to co-admin this league as <b>${esc(result.email)}</b>.</span></p>
+        <p class="state" style="margin-top:0;" data-i18n data-fr="Créez votre mot de passe pour co-administrer cette ligue avec <b>${esc(result.email)}</b>." data-en="Create your password to co-admin this league as <b>${esc(result.email)}</b>.">Créez votre mot de passe pour co-administrer cette ligue avec <b>${esc(result.email)}</b>.</p>
         <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
         <label style="display:block;margin-bottom:12px;">
-          <span style="display:block;font-weight:600;margin-bottom:4px;">Mot de passe (8 caractères min.)<span class="en" style="display:block;font-weight:400;">Password (min. 8 characters)</span></span>
+          <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n data-fr="Mot de passe (8 caractères min.)" data-en="Password (min. 8 characters)">Mot de passe (8 caractères min.)</span>
           <input type="password" id="accept_password" required minlength="8" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
         </label>
         <div class="btns">
-          <button type="button" class="btn" id="accept_submit" onclick="submitAccept()">CRÉER MON COMPTE<span class="en" style="display:block;font-size:13px;font-weight:600;">CREATE MY ACCOUNT</span></button>
+          <button type="button" class="btn" id="accept_submit" data-i18n data-fr="CRÉER MON COMPTE" data-en="CREATE MY ACCOUNT" onclick="submitAccept()">CRÉER MON COMPTE</button>
         </div>
       </div>
     <script>
@@ -1434,7 +1531,7 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
       el.style.display = 'none';
       const password = document.getElementById('accept_password').value;
       if (password.length < 8) {
-        el.textContent = 'Le mot de passe doit contenir au moins 8 caractères. / Password must be at least 8 characters.';
+        el.textContent = window.__errorText('WEAK_PASSWORD');
         el.style.display = 'block';
         return;
       }
@@ -1448,19 +1545,19 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) {
-          el.textContent = data.error || "Échec de la création. / Failed to create account.";
+          el.textContent = window.__errorText(data.errorKey, data.error, data.errorVars);
           el.style.display = 'block';
           btn.disabled = false;
           return;
         }
         window.location.href = '/dashboard';
       } catch (e) {
-        el.textContent = 'Erreur réseau. / Network error.';
+        el.textContent = window.__errorText('NETWORK_ERROR');
         el.style.display = 'block';
         btn.disabled = false;
       }
     }
-    </script>`;
+    </script>${toggleScript}`;
   }
 
   return new Response(page('Invitation', body), {
@@ -1676,6 +1773,7 @@ async function handleLeagueRosterPage(req, env, url) {
     <div id="rosterList">${rosterHtml}</div>
   </div>
 <script>
+window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
 var I18N_ROSTER = ${JSON.stringify(I18N_ROSTER)};
 function applyLanguage(lang) {
   var dict = I18N_ROSTER[lang] || I18N_ROSTER.fr;
@@ -1701,7 +1799,7 @@ async function submitContact() {
   const role = document.getElementById('r_role').value;
   const team = document.getElementById('r_team').value;
   if (!name) {
-    showErr('Le nom est requis. / Name is required.');
+    showErr(window.__errorText('NAME_REQUIRED_CLIENT'));
     return;
   }
   const btn = document.getElementById('r_submit');
@@ -1714,7 +1812,7 @@ async function submitContact() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      showErr(data.error || "Échec de l'ajout. / Failed to add.");
+      showErr(window.__errorText(data.errorKey, data.error));
       btn.disabled = false;
       return;
     }
@@ -1722,7 +1820,7 @@ async function submitContact() {
     // reflected, same as the rest of this app's plain-HTML-form pages.
     window.location.reload();
   } catch (e) {
-    showErr('Erreur réseau. / Network error.');
+    showErr(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
   }
 }
@@ -1808,6 +1906,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     <div id="scheduleList">${scheduleHtml}</div>
   </div>
 <script>
+window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
 var I18N_SCHEDULE = ${JSON.stringify(I18N_SCHEDULE)};
 function applyLanguage(lang) {
   var dict = I18N_SCHEDULE[lang] || I18N_SCHEDULE.fr;
@@ -1832,7 +1931,7 @@ async function submitEvent() {
   const end_time = document.getElementById('e_end').value;
   const venue = document.getElementById('e_venue').value.trim();
   if (!date) {
-    showErr('La date est requise. / Date is required.');
+    showErr(window.__errorText('DATE_REQUIRED_CLIENT'));
     return;
   }
   const btn = document.getElementById('e_submit');
@@ -1845,13 +1944,13 @@ async function submitEvent() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
-      showErr(data.error || "Échec de la création. / Failed to create.");
+      showErr(window.__errorText(data.errorKey, data.error));
       btn.disabled = false;
       return;
     }
     window.location.reload();
   } catch (e) {
-    showErr('Erreur réseau. / Network error.');
+    showErr(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
   }
 }

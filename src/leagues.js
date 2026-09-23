@@ -62,12 +62,12 @@ export async function checkLeagueAccess(req, env, leagueId) {
 
 export function leagueAccessResponse(status) {
   if (status === 'unauthenticated') {
-    return Response.json({ ok: false, error: 'Authentication required.' }, { status: 401 });
+    return Response.json({ ok: false, error: 'Authentication required.', errorKey: 'AUTH_REQUIRED' }, { status: 401 });
   }
   if (status === 'deactivated') {
-    return Response.json({ ok: false, error: 'This league has been deactivated.' }, { status: 410 });
+    return Response.json({ ok: false, error: 'This league has been deactivated.', errorKey: 'LEAGUE_DEACTIVATED' }, { status: 410 });
   }
-  return Response.json({ ok: false, error: 'You do not have access to this league.' }, { status: 403 });
+  return Response.json({ ok: false, error: 'You do not have access to this league.', errorKey: 'LEAGUE_NO_ACCESS' }, { status: 403 });
 }
 
 // League-context convention, shared by every session-scoped route (the
@@ -221,7 +221,7 @@ export async function handleLeagueContacts(req, env, url) {
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
 
   const access = await checkLeagueAccess(req, env, leagueId);
@@ -248,7 +248,7 @@ export async function handleLeagueEvents(req, env, url) {
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
 
   const access = await checkLeagueAccess(req, env, leagueId);
@@ -298,7 +298,7 @@ export async function handleLeagueContactCreate(req, env) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
   if (!(await checkCsrfToken(req, env, session))) {
-    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
   }
 
   const url = new URL(req.url);
@@ -306,7 +306,7 @@ export async function handleLeagueContactCreate(req, env) {
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
 
   const access = await checkLeagueAccess(req, env, leagueId);
@@ -315,20 +315,20 @@ export async function handleLeagueContactCreate(req, env) {
   // Defense in depth (see putLeagueDataJson's own comment): this route
   // must never be able to write a row tagged as SMBHL's, even in principle.
   if (leagueId === SMBHL_LEAGUE_ID) {
-    return Response.json({ ok: false, error: 'This route cannot create contacts for SMBHL.' }, { status: 403 });
+    return Response.json({ ok: false, error: 'This route cannot create contacts for SMBHL.', errorKey: 'ROUTE_BLOCKED_CONTACTS' }, { status: 403 });
   }
 
   const name = String(body.name || '').trim().split(/\s+/).filter(Boolean).join(' ');
   if (!name || name.split(' ').length < 2) {
-    return Response.json({ ok: false, error: 'Full name (first and last) is required.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'Full name (first and last) is required.', errorKey: 'FULL_NAME_REQUIRED' }, { status: 400 });
   }
   if (name.length > 60) {
-    return Response.json({ ok: false, error: 'Name is too long.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'Name is too long.', errorKey: 'NAME_TOO_LONG' }, { status: 400 });
   }
 
   const role = String(body.role || 'roster').trim();
   if (!['roster', 'sub_skater', 'sub_goalie'].includes(role)) {
-    return Response.json({ ok: false, error: 'role must be roster, sub_skater, or sub_goalie.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'role must be roster, sub_skater, or sub_goalie.', errorKey: 'INVALID_ROLE' }, { status: 400 });
   }
 
   let email = String(body.email || '').trim();
@@ -343,7 +343,7 @@ export async function handleLeagueContactCreate(req, env) {
       'SELECT player_id FROM contacts WHERE league_id = ? AND lower(email) = lower(?)'
     ).bind(leagueId, email).first();
     if (dupe) {
-      return Response.json({ ok: false, error: 'A contact with this email already exists in your league.' }, { status: 409 });
+      return Response.json({ ok: false, error: 'A contact with this email already exists in your league.', errorKey: 'CONTACT_EMAIL_EXISTS' }, { status: 409 });
     }
   } else {
     email = null;
@@ -435,7 +435,7 @@ export async function handleLeagueEventCreate(req, env) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
   if (!(await checkCsrfToken(req, env, session))) {
-    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
   }
 
   const url = new URL(req.url);
@@ -443,7 +443,7 @@ export async function handleLeagueEventCreate(req, env) {
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
 
   const access = await checkLeagueAccess(req, env, leagueId);
@@ -452,22 +452,22 @@ export async function handleLeagueEventCreate(req, env) {
   // Defense in depth (see putLeagueDataJson's own comment): this route
   // must never be able to write a row tagged as SMBHL's, even in principle.
   if (leagueId === SMBHL_LEAGUE_ID) {
-    return Response.json({ ok: false, error: 'This route cannot create events for SMBHL.' }, { status: 403 });
+    return Response.json({ ok: false, error: 'This route cannot create events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
   }
 
   const date = String(body.date || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return Response.json({ ok: false, error: 'date is required, in YYYY-MM-DD format.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'date is required, in YYYY-MM-DD format.', errorKey: 'DATE_REQUIRED' }, { status: 400 });
   }
 
   const timePattern = /^\d{2}:\d{2}$/;
   const startTime = String(body.start_time || '').trim();
   if (startTime && !timePattern.test(startTime)) {
-    return Response.json({ ok: false, error: 'start_time must be in HH:MM format.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'start_time must be in HH:MM format.', errorKey: 'START_TIME_FORMAT' }, { status: 400 });
   }
   const endTime = String(body.end_time || '').trim();
   if (endTime && !timePattern.test(endTime)) {
-    return Response.json({ ok: false, error: 'end_time must be in HH:MM format.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'end_time must be in HH:MM format.', errorKey: 'END_TIME_FORMAT' }, { status: 400 });
   }
 
   const venue = String(body.venue || '').trim() || null;
@@ -475,7 +475,7 @@ export async function handleLeagueEventCreate(req, env) {
   const leagueData = await getLeagueDataJson(env, leagueId);
   const season = String(body.season || '').trim() || leagueData.current_season;
   if (!season) {
-    return Response.json({ ok: false, error: 'season is required (publish a season first via /league/season/publish, or pass one explicitly).' }, { status: 400 });
+    return Response.json({ ok: false, error: 'season is required (publish a season first via /league/season/publish, or pass one explicitly).', errorKey: 'SEASON_REQUIRED' }, { status: 400 });
   }
 
   let week = Number(body.week);
@@ -489,7 +489,7 @@ export async function handleLeagueEventCreate(req, env) {
   const eventId = makeEventId(leagueId, date);
   const existing = await env.DB.prepare('SELECT 1 FROM events WHERE id = ?').bind(eventId).first();
   if (existing) {
-    return Response.json({ ok: false, error: 'An event already exists for this date in your league.' }, { status: 409 });
+    return Response.json({ ok: false, error: 'An event already exists for this date in your league.', errorKey: 'EVENT_DATE_EXISTS' }, { status: 409 });
   }
 
   await env.DB.prepare(
@@ -531,19 +531,19 @@ export async function handleLeagueSeasonPublish(req, env) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
   if (!(await checkCsrfToken(req, env, session))) {
-    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
   }
 
   const url = new URL(req.url);
   const body = await req.json().catch(() => ({}));
   const seasonName = String(body.season_name || '').trim();
   if (!seasonName) {
-    return Response.json({ ok: false, error: 'season_name is required.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'season_name is required.', errorKey: 'SEASON_NAME_REQUIRED' }, { status: 400 });
   }
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
 
   const access = await checkLeagueAccess(req, env, leagueId);
@@ -564,7 +564,7 @@ export async function handleLeagueSeasonPublish(req, env) {
     } catch (_) {}
   }
   if (teamNames.length < 2) {
-    return Response.json({ ok: false, error: 'This league has no team names on file yet.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'This league has no team names on file yet.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
   }
 
   const existing = await getLeagueDataJson(env, leagueId);
@@ -614,10 +614,10 @@ export async function handleLeagueCreate(req, env) {
   try {
     const session = await checkUserSession(req, env);
     if (!session) {
-      return Response.json({ ok: false, error: 'Authentication required.' }, { status: 401 });
+      return Response.json({ ok: false, error: 'Authentication required.', errorKey: 'AUTH_REQUIRED' }, { status: 401 });
     }
     if (!(await checkCsrfToken(req, env, session))) {
-      return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+      return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
     }
 
     const body = await req.json().catch(() => ({}));
@@ -629,10 +629,10 @@ export async function handleLeagueCreate(req, env) {
     const divisionLabel = body.divisionLabel ? String(body.divisionLabel).trim() : null;
 
     if (!name) {
-      return Response.json({ ok: false, error: 'League name is required.' }, { status: 400 });
+      return Response.json({ ok: false, error: 'League name is required.', errorKey: 'LEAGUE_NAME_REQUIRED' }, { status: 400 });
     }
     if (teamNames.length < 2) {
-      return Response.json({ ok: false, error: 'At least 2 team names are required.' }, { status: 400 });
+      return Response.json({ ok: false, error: 'At least 2 team names are required.', errorKey: 'MIN_TEAM_NAMES' }, { status: 400 });
     }
 
     const leagueId = crypto.randomUUID();
@@ -768,12 +768,12 @@ export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
   if (!(await checkCsrfToken(req, env, session))) {
-    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
   }
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return leagueAccessResponse(access);
@@ -787,7 +787,7 @@ export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null
   email = check.email;
 
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
-  if (!leagueRow) return Response.json({ ok: false, error: 'League not found.' }, { status: 404 });
+  if (!leagueRow) return Response.json({ ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' }, { status: 404 });
 
   // Already an admin of this league? Nothing to invite -- a clear,
   // specific error beats silently sending a redundant invite email.
@@ -797,7 +797,7 @@ export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null
       'SELECT 1 FROM league_admins WHERE user_id = ? AND league_id = ?'
     ).bind(existingUser.id, leagueId).first();
     if (alreadyAdmin) {
-      return Response.json({ ok: false, error: 'This person is already an admin of this league.' }, { status: 409 });
+      return Response.json({ ok: false, error: 'This person is already an admin of this league.', errorKey: 'ALREADY_ADMIN' }, { status: 409 });
     }
   }
 
@@ -838,12 +838,13 @@ export async function handleLeagueAdminAccept(req, env) {
   const result = await verifyInviteToken(env, body.token);
   if (!result.ok) {
     const status = result.error === 'expired' ? 410 : 400;
-    return Response.json({ ok: false, error: result.error }, { status });
+    const errorKey = result.error === 'expired' ? 'LINK_EXPIRED' : result.error === 'malformed' ? 'LINK_MALFORMED' : 'LINK_INVALID';
+    return Response.json({ ok: false, error: result.error, errorKey }, { status });
   }
   const { leagueId, email } = result;
 
   const leagueRow = await env.DB.prepare('SELECT id FROM leagues WHERE id = ?').bind(leagueId).first();
-  if (!leagueRow) return Response.json({ ok: false, error: 'League no longer exists.' }, { status: 404 });
+  if (!leagueRow) return Response.json({ ok: false, error: 'League no longer exists.', errorKey: 'LEAGUE_GONE' }, { status: 404 });
 
   const existingUser = await env.DB.prepare('SELECT id, session_epoch FROM users WHERE email = ?').bind(email).first();
   const now = new Date().toISOString();
@@ -851,13 +852,13 @@ export async function handleLeagueAdminAccept(req, env) {
   if (existingUser) {
     const session = await checkUserSession(req, env);
     if (!session || session.userId !== existingUser.id) {
-      return Response.json({ ok: false, error: 'Please log in as ' + email + ' to accept this invite.', requiresLogin: true, email }, { status: 401 });
+      return Response.json({ ok: false, error: 'Please log in as ' + email + ' to accept this invite.', errorKey: 'LOGIN_AS_EMAIL', errorVars: { email }, requiresLogin: true, email }, { status: 401 });
     }
     // A real session is being used here (unlike the fresh-account branch
     // below, which has no session yet) -- CSRF-protect it like every
     // other route that acts on an existing session.
     if (!(await checkCsrfToken(req, env, session))) {
-      return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+      return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
     }
     const already = await env.DB.prepare(
       'SELECT 1 FROM league_admins WHERE user_id = ? AND league_id = ?'
@@ -873,7 +874,7 @@ export async function handleLeagueAdminAccept(req, env) {
   // No account yet -- create one, same validation as real signup.
   const password = String(body.password || '');
   if (password.length < 8) {
-    return Response.json({ ok: false, error: 'Password must be at least 8 characters.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'Password must be at least 8 characters.', errorKey: 'WEAK_PASSWORD' }, { status: 400 });
   }
 
   const userId = crypto.randomUUID();
@@ -908,23 +909,23 @@ export async function handleLeagueDeactivate(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
   if (!(await checkCsrfToken(req, env, session))) {
-    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
   }
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return leagueAccessResponse(access);
 
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
-  if (!leagueRow) return Response.json({ ok: false, error: 'League not found.' }, { status: 404 });
+  if (!leagueRow) return Response.json({ ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' }, { status: 404 });
 
   const body = await req.json().catch(() => ({}));
   const confirmName = String(body.confirmName || '').trim();
   if (confirmName !== leagueRow.name) {
-    return Response.json({ ok: false, error: 'Confirmation text does not match the league name.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'Confirmation text does not match the league name.', errorKey: 'CONFIRM_NAME_MISMATCH' }, { status: 400 });
   }
 
   await env.DB.prepare('UPDATE leagues SET deactivated_at = ? WHERE id = ?').bind(new Date().toISOString(), leagueId).run();

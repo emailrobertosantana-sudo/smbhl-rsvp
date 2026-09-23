@@ -454,13 +454,13 @@ export async function handleRequestPasswordReset(req, env, sendMailFunc = null) 
   const body = await req.json().catch(() => ({}));
   const email = String(body.email || '').trim().toLowerCase();
   if (!isValidEmail(email)) {
-    return Response.json({ ok: false, error: 'Please enter a valid email address.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'Please enter a valid email address.', errorKey: 'INVALID_EMAIL' }, { status: 400 });
   }
 
   const ip = req.headers.get('cf-connecting-ip') || '127.0.0.1';
   const rateLimitStatus = await checkPasswordResetRateLimit(env, ip);
   if (rateLimitStatus === 'rate_limited') {
-    return Response.json({ ok: false, error: 'Too many reset attempts from this network. Please try again later.' }, { status: 429 });
+    return Response.json({ ok: false, error: 'Too many reset attempts from this network. Please try again later.', errorKey: 'RATE_LIMITED_RESET' }, { status: 429 });
   }
 
   const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
@@ -495,13 +495,14 @@ export async function handleResetPassword(req, env) {
   const password = String(body.password || '');
 
   if (!isValidPassword(password)) {
-    return Response.json({ ok: false, error: 'Password must be at least 8 characters.' }, { status: 400 });
+    return Response.json({ ok: false, error: 'Password must be at least 8 characters.', errorKey: 'WEAK_PASSWORD' }, { status: 400 });
   }
 
   const result = await verifyPasswordResetToken(env, token);
   if (!result.ok) {
     const status = result.error === 'expired' ? 410 : 400;
-    return Response.json({ ok: false, error: result.error }, { status });
+    const errorKey = result.error === 'expired' ? 'LINK_EXPIRED' : result.error === 'malformed' ? 'LINK_MALFORMED' : 'LINK_INVALID';
+    return Response.json({ ok: false, error: result.error, errorKey }, { status });
   }
 
   const passwordHash = await hashPassword(password);
@@ -644,21 +645,21 @@ export async function handleSignup(req, env, sendMailFunc = null) {
     const password = String(body.password || '');
 
     if (!isValidEmail(email)) {
-      return Response.json({ ok: false, error: 'Please enter a valid email address.' }, { status: 400 });
+      return Response.json({ ok: false, error: 'Please enter a valid email address.', errorKey: 'INVALID_EMAIL' }, { status: 400 });
     }
     if (!isValidPassword(password)) {
-      return Response.json({ ok: false, error: 'Password must be at least 8 characters.' }, { status: 400 });
+      return Response.json({ ok: false, error: 'Password must be at least 8 characters.', errorKey: 'WEAK_PASSWORD' }, { status: 400 });
     }
 
     const ip = req.headers.get('cf-connecting-ip') || '127.0.0.1';
     const rateLimitStatus = await checkSignupRateLimit(env, ip);
     if (rateLimitStatus === 'rate_limited') {
-      return Response.json({ ok: false, error: 'Too many signup attempts from this network. Please try again later.' }, { status: 429 });
+      return Response.json({ ok: false, error: 'Too many signup attempts from this network. Please try again later.', errorKey: 'RATE_LIMITED_SIGNUP' }, { status: 429 });
     }
 
     const existing = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
     if (existing) {
-      return Response.json({ ok: false, error: 'An account with this email already exists.' }, { status: 409 });
+      return Response.json({ ok: false, error: 'An account with this email already exists.', errorKey: 'EMAIL_EXISTS' }, { status: 409 });
     }
 
     const userId = crypto.randomUUID();
@@ -691,12 +692,12 @@ export async function handleLogin(req, env) {
     const body = await req.json().catch(() => ({}));
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
-    const genericFailure = () => Response.json({ ok: false, error: 'Invalid email or password.' }, { status: 401 });
+    const genericFailure = () => Response.json({ ok: false, error: 'Invalid email or password.', errorKey: 'INVALID_CREDENTIALS' }, { status: 401 });
 
     const ip = req.headers.get('cf-connecting-ip') || '127.0.0.1';
     const rateLimitStatus = await checkLoginRateLimit(env, ip);
     if (rateLimitStatus === 'rate_limited') {
-      return Response.json({ ok: false, error: 'Too many login attempts from this network. Please try again later.' }, { status: 429 });
+      return Response.json({ ok: false, error: 'Too many login attempts from this network. Please try again later.', errorKey: 'RATE_LIMITED_LOGIN' }, { status: 429 });
     }
 
     if (!email || !password) return genericFailure();
@@ -731,12 +732,13 @@ export async function handleLogout(req, env) {
 
 export async function handleVerifyEmail(req, env, url) {
   const token = url.searchParams.get('token');
-  if (!token) return Response.json({ ok: false, error: 'Missing token' }, { status: 400 });
+  if (!token) return Response.json({ ok: false, error: 'Missing token', errorKey: 'MISSING_TOKEN' }, { status: 400 });
 
   const result = await verifyEmailToken(env, token);
   if (!result.ok) {
     const status = result.error === 'expired' ? 410 : 400;
-    return Response.json({ ok: false, error: result.error }, { status });
+    const errorKey = result.error === 'expired' ? 'LINK_EXPIRED' : result.error === 'malformed' ? 'LINK_MALFORMED' : 'LINK_INVALID';
+    return Response.json({ ok: false, error: result.error, errorKey }, { status });
   }
   return Response.json({ ok: true, userId: result.userId });
 }
@@ -750,15 +752,15 @@ export async function handleVerifyEmail(req, env, url) {
 export async function handleResendVerification(req, env, sendMailFunc = null) {
   const session = await checkUserSession(req, env);
   if (!session) {
-    return Response.json({ ok: false, error: 'Authentication required.' }, { status: 401 });
+    return Response.json({ ok: false, error: 'Authentication required.', errorKey: 'AUTH_REQUIRED' }, { status: 401 });
   }
   if (!(await checkCsrfToken(req, env, session))) {
-    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
   }
 
   const user = await env.DB.prepare('SELECT email, email_verified_at FROM users WHERE id = ?').bind(session.userId).first();
   if (!user) {
-    return Response.json({ ok: false, error: 'Account not found.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'Account not found.', errorKey: 'ACCOUNT_NOT_FOUND' }, { status: 404 });
   }
   if (user.email_verified_at) {
     return Response.json({ ok: true, alreadyVerified: true });
