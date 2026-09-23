@@ -2189,6 +2189,15 @@ async function handleLeagueRosterPage(req, env, url) {
 
   const seasonCfg = await getLeagueSeasonConfig(env, leagueId);
   const teamNames = getTeamNames(seasonCfg);
+  // Team-structure task: 'headcount' has no team concept at all (its
+  // one real team, HEADCOUNT_TEAM_NAME, is purely internal plumbing --
+  // see that constant's own comment); 'weekly_draw' has real named
+  // teams, but players aren't assigned to one HERE -- that happens per
+  // event (Part 3), so the roster shows no permanent team either, for
+  // a different reason. Both hide every team-related control on this
+  // page; only 'fixed' shows them, unchanged from before this task.
+  const teamStructure = seasonCfg.teamStructure || 'fixed';
+  const showTeams = teamStructure === 'fixed';
 
   const subCount = contacts.filter(c => c.role !== 'roster').length;
   const unassignedCount = contacts.filter(c => c.role === 'roster' && !c.preferred_team).length;
@@ -2201,9 +2210,10 @@ async function handleLeagueRosterPage(req, env, url) {
       filterAll: 'Tous', filterSubs: 'Remplaçants', filterUnassigned: 'Sans équipe',
       colPlayer: 'Joueur', colTeam: 'Équipe', colRole: 'Rôle',
       fullName: 'Nom complet', emailOpt: 'Courriel (optionnel)', phoneOpt: 'Téléphone (optionnel)',
-      role: 'Rôle', roleRoster: 'Régulier', roleSubSkater: 'Remplaçant — joueur', roleSubGoalie: 'Remplaçant — gardien',
+      role: 'Rôle', roleRoster: 'Régulier', roleSubSkater: 'Remplaçant — joueur', roleSubGoalie: 'Remplaçant — gardien', roleSub: 'Remplaçant',
       teamOpt: 'Équipe (optionnel)', teamUnassigned: 'Non assigné', addBtn: 'Ajouter', cancel: 'Annuler',
-      players: 'Joueurs', unassigned: 'Non assigné', noPlayers: "Aucun joueur pour l'instant."
+      players: 'Joueurs', unassigned: 'Non assigné', noPlayers: "Aucun joueur pour l'instant.",
+      weeklyDrawNote: "Les équipes sont assignées à chaque match, pas ici — voir la page d'un match."
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
@@ -2211,9 +2221,10 @@ async function handleLeagueRosterPage(req, env, url) {
       filterAll: 'All', filterSubs: 'Subs', filterUnassigned: 'Unassigned',
       colPlayer: 'Player', colTeam: 'Team', colRole: 'Role',
       fullName: 'Full name', emailOpt: 'Email (optional)', phoneOpt: 'Phone (optional)',
-      role: 'Role', roleRoster: 'Regular', roleSubSkater: 'Sub — skater', roleSubGoalie: 'Sub — goalie',
+      role: 'Role', roleRoster: 'Regular', roleSubSkater: 'Sub — skater', roleSubGoalie: 'Sub — goalie', roleSub: 'Sub',
       teamOpt: 'Team (optional)', teamUnassigned: 'Unassigned', addBtn: 'Add', cancel: 'Cancel',
-      players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.'
+      players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.',
+      weeklyDrawNote: 'Teams are assigned per game, not here — see a game’s own page.'
     }
   };
 
@@ -2221,9 +2232,9 @@ async function handleLeagueRosterPage(req, env, url) {
 
   const filterPills = [
     `<button type="button" class="ro-f" data-filter="all" aria-pressed="true"><span data-i18n="filterAll">Tous</span> ${contacts.length}</button>`,
-    ...teamNames.map((t, i) => `<button type="button" class="ro-f" data-filter="team:${esc(t)}" aria-pressed="false"><span class="nl-dot" style="background:${ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length]}"></span>${esc(t)} ${teamCounts[i]}</button>`),
+    ...(showTeams ? teamNames.map((t, i) => `<button type="button" class="ro-f" data-filter="team:${esc(t)}" aria-pressed="false"><span class="nl-dot" style="background:${ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length]}"></span>${esc(t)} ${teamCounts[i]}</button>`) : []),
     `<button type="button" class="ro-f" data-filter="subs" aria-pressed="false"><span data-i18n="filterSubs">Remplaçants</span> ${subCount}</button>`,
-    `<button type="button" class="ro-f" data-filter="unassigned" aria-pressed="false"><span data-i18n="filterUnassigned">Sans équipe</span> ${unassignedCount}</button>`
+    ...(showTeams ? [`<button type="button" class="ro-f" data-filter="unassigned" aria-pressed="false"><span data-i18n="filterUnassigned">Sans équipe</span> ${unassignedCount}</button>`] : [])
   ].join('');
 
   const rows = contacts.map(c => {
@@ -2231,7 +2242,7 @@ async function handleLeagueRosterPage(req, env, url) {
     const filterAttr = c.role !== 'roster' ? 'subs' : c.preferred_team ? `team:${c.preferred_team}` : 'unassigned';
     return `<tr data-row-filter="${esc(filterAttr)}">
       <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}</td>
-      <td>${c.preferred_team ? esc(c.preferred_team) : `<span class="nl-help" data-i18n="teamUnassigned">Non assigné</span>`}</td>
+      ${showTeams ? `<td>${c.preferred_team ? esc(c.preferred_team) : `<span class="nl-help" data-i18n="teamUnassigned">Non assigné</span>`}</td>` : ''}
       <td><span data-i18n="${roleKey}">${esc(I18N_ROSTER.fr[roleKey])}</span></td>
     </tr>`;
   }).join('');
@@ -2268,10 +2279,11 @@ async function handleLeagueRosterPage(req, env, url) {
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);" class="ro-grid">
     <div class="ro-table-wrap">
       <table>
-        <thead><tr><th data-i18n="colPlayer">Joueur</th><th data-i18n="colTeam">Équipe</th><th data-i18n="colRole">Rôle</th></tr></thead>
+        <thead><tr><th data-i18n="colPlayer">Joueur</th>${showTeams ? '<th data-i18n="colTeam">Équipe</th>' : ''}<th data-i18n="colRole">Rôle</th></tr></thead>
         <tbody id="ro_tbody">${rows || ''}</tbody>
       </table>
       ${!contacts.length ? `<p class="nl-help" style="padding:var(--space-4);margin:0;" data-i18n="noPlayers">Aucun joueur pour l'instant.</p>` : ''}
+      ${teamStructure === 'weekly_draw' ? `<p class="nl-help" style="padding:var(--space-4);margin:0;border-top:1px solid var(--line);" data-i18n="weeklyDrawNote">Les équipes sont assignées à chaque match, pas ici — voir la page d'un match.</p>` : ''}
     </div>
     <aside class="ro-panel" id="ro_panel" aria-label="Ajouter un joueur">
       <h2 data-i18n="addPlayer">Ajouter un joueur</h2>
@@ -2290,19 +2302,21 @@ async function handleLeagueRosterPage(req, env, url) {
       </div>
       <div class="nl-field">
         <span class="nl-label" data-i18n="role">Rôle</span>
-        <div class="ro-radio" id="r_role_radio">
+        <div class="ro-radio" id="r_role_radio" style="${teamStructure === 'headcount' ? 'grid-template-columns:1fr 1fr' : ''}">
           <label class="on" data-value="roster"><span data-i18n="roleRoster">Régulier</span></label>
-          <label data-value="sub_skater"><span data-i18n="roleSubSkater">Remplaçant — joueur</span></label>
-          <label data-value="sub_goalie"><span data-i18n="roleSubGoalie">Remplaçant — gardien</span></label>
+          ${teamStructure === 'headcount'
+            ? `<label data-value="sub_skater"><span data-i18n="roleSub">Remplaçant</span></label>`
+            : `<label data-value="sub_skater"><span data-i18n="roleSubSkater">Remplaçant — joueur</span></label>
+          <label data-value="sub_goalie"><span data-i18n="roleSubGoalie">Remplaçant — gardien</span></label>`}
         </div>
       </div>
-      <div class="nl-field">
+      ${showTeams ? `<div class="nl-field">
         <label class="nl-label" for="r_team" data-i18n="teamOpt">Équipe (optionnel)</label>
         <select class="nl-select" id="r_team">
           <option value="" data-i18n="teamUnassigned">Non assigné</option>
           ${teamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
         </select>
-      </div>
+      </div>` : ''}
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="r_submit" data-i18n="addBtn" onclick="submitContact()">Ajouter</button>
         <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleRosterPanel()">Annuler</button>
@@ -2341,7 +2355,8 @@ async function submitContact() {
   var name = document.getElementById('r_name').value.trim();
   var email = document.getElementById('r_email').value.trim();
   var phone = document.getElementById('r_phone').value.trim();
-  var team = document.getElementById('r_team').value;
+  var teamEl = document.getElementById('r_team');
+  var team = teamEl ? teamEl.value : '';
   if (!name) { showErr(window.__errorText('NAME_REQUIRED_CLIENT')); return; }
   var btn = document.getElementById('r_submit');
   btn.disabled = true;
