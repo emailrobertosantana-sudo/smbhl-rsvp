@@ -2288,6 +2288,27 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     poolGoalieMin = cfg.goaliesPerTeam || 0;
   }
 
+  // Live-testing task, Part 8: once the draw has happened for the next
+  // event, anyone (no login) can see who's on which team -- player
+  // names only, matching this page's existing no-personal-info rule
+  // (never email/phone). Reads the SAME rsvp.team column the random
+  // draw (handleLeagueRandomAssignEventTeams) and manual assign-team
+  // route already write, so this is always current, not a separate
+  // snapshot that could drift. Before a draw (or if nobody's assigned
+  // yet), the section still renders with an explicit "not drawn yet"
+  // placeholder rather than silently disappearing, so a player knows
+  // to check back rather than wondering if the page is broken.
+  const isWeeklyDraw = teamStructure === 'weekly_draw';
+  let weeklyDrawAssignments = [];
+  if (isWeeklyDraw && nextEvent) {
+    const nextEventId = makeEventId(leagueId, nextEvent.date);
+    weeklyDrawAssignments = (await env.DB.prepare(
+      `SELECT c.name, r.team FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+        WHERE r.event_id = ? AND r.status = 'in' AND r.team IS NOT NULL
+        ORDER BY c.name`
+    ).bind(nextEventId).all()).results || [];
+  }
+
   // Scoped to whether standings/the headcount pool figure actually
   // render (real player/league data, not static markup) -- a league
   // that doesn't track stats or isn't headcount must never carry these
@@ -2313,6 +2334,11 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     }
     if (isHeadcount && poolGoalieMin > 0) {
       Object.assign(base, lang === 'fr' ? { poolGoalies: 'gardiens confirmés' } : { poolGoalies: 'goalies confirmed' });
+    }
+    if (isWeeklyDraw && nextEvent) {
+      Object.assign(base, lang === 'fr'
+        ? { drawnTeams: 'Équipes du prochain match', drawnTeamsNone: "Les équipes n'ont pas encore été formées." }
+        : { drawnTeams: 'Teams for the next game', drawnTeamsNone: 'Teams have not been drawn yet.' });
     }
     return base;
   }
@@ -2355,6 +2381,14 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   <h2 data-i18n="teams">${esc(t.teams)}</h2>
   <div class="pb-tg">${teamNames.map((tm, i) => `<div style="background:${esc(leagueFillColor(teamDot(i)))}">${esc(tm)}</div>`).join('')}</div>`;
 
+  const weeklyDrawTeamsHtml = (isWeeklyDraw && nextEvent) ? `
+  <h2 data-i18n="drawnTeams">${esc(t.drawnTeams)}</h2>
+  ${weeklyDrawAssignments.length ? `<div class="pb-draw-list">${teamNames.map((tm, i) => {
+      const players = weeklyDrawAssignments.filter(r => r.team === tm);
+      if (!players.length) return '';
+      return `<div class="pb-draw-team"><div class="pb-draw-team-name"><i style="background:${esc(teamDot(i))}"></i>${esc(tm)}</div><div class="pb-draw-players">${players.map(p => esc(p.name)).join(', ')}</div></div>`;
+    }).join('')}</div>` : `<p class="nl-help" data-i18n="drawnTeamsNone">${esc(t.drawnTeamsNone)}</p>`}` : '';
+
   const bodyHtml = `<style>
   .nl { background: var(--surface-hero, #16181d); color: var(--ink-inverse, #f4f4f2); min-height: 100vh; display: flex; flex-direction: column; }
   .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
@@ -2377,6 +2411,10 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   .pb-g-venue { font-size: 14px; color: #a3a6ad; }
   .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
   .pb-tg div { height: 64px; border-radius: var(--radius-md); padding: var(--space-3); font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #fff; display: flex; align-items: flex-end; }
+  .pb-draw-list { display: flex; flex-direction: column; gap: var(--space-3); }
+  .pb-draw-team-name { display: flex; align-items: center; gap: 8px; font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #fff; margin-bottom: 4px; }
+  .pb-draw-team-name i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .pb-draw-players { font: 500 14px/20px var(--font-sans); color: #d8dae0; }
   /* Live-testing bug fix: the shared base stylesheet's .nl a rule
      (design_system.js, color: var(--ink)) has HIGHER specificity
      (.nl a = 0,1,1) than a bare .pb-foot class selector (0,1,0), so it
@@ -2411,6 +2449,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   ${standingsHtml}
   ${upcomingHtml}
   ${teamsHtml}
+  ${weeklyDrawTeamsHtml}
 </main>
 <a class="pb-foot" href="https://notreligue.ca" data-i18n="poweredBy">${esc(t.poweredBy)}</a>
 <script>
@@ -11023,9 +11062,22 @@ async function getNonResponders(env, leagueId, eventId, season = null) {
 }
 
 // Confirmed players: a real rsvp row with status = 'in'.
+// Live-testing task, Part 8: was `c.preferred_team` (contacts' own
+// permanent team, set once at RSVP time for 'fixed', never touched by
+// weekly_draw at all -- see writeLeagueRsvpStatus's own comment) --
+// changed to `r.team`, this SPECIFIC event's actual rsvp.team, which
+// is the same column teamState() already groups shortage detection by
+// for every team structure. For 'fixed' the two are normally equal
+// (rsvp.team is seeded from preferred_team at RSVP time); for
+// 'weekly_draw', rsvp.team is the only place a real per-event team
+// assignment ever lives, and it's set well after RSVP (by the manual
+// assign-team route or the random draw) -- reading preferred_team here
+// meant the 12h "you're confirmed" logistics email below NEVER showed
+// a weekly_draw player their team, even when the draw had already
+// happened before the email went out.
 async function getConfirmedPlayers(env, leagueId, eventId) {
   return (await env.DB.prepare(
-    `SELECT c.player_id, c.name, c.email, c.token_salt, c.preferred_team
+    `SELECT c.player_id, c.name, c.email, c.token_salt, r.team AS rsvp_team
        FROM contacts c
        JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
       WHERE c.league_id = ? AND r.status = 'in'
@@ -11100,7 +11152,7 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
       const firstName = (contact.name || '').split(' ')[0] || contact.name;
       const { inLink, outLink, optOutLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
       const mail = kind === 'logistics_12h'
-        ? renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: contact.preferred_team, optOutLink, forcedLang })
+        ? renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: contact.rsvp_team, optOutLink, forcedLang })
         : renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang });
       await sendMail(env, contact.email, mail.subject, mail.text, mail.html, null, cfg.league);
       sent++;
