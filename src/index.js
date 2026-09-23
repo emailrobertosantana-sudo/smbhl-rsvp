@@ -6,7 +6,7 @@ import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmail
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -2539,7 +2539,17 @@ async function handleLeagueRosterPage(req, env, url) {
       weeklyDrawNote: "Les équipes sont assignées à chaque match, pas ici — voir la page d'un match.",
       goalieAxis: 'Gardien ou joueur?', axisPlayer: 'Joueur', axisGoalie: 'Gardien',
       goalieAxisHelp: 'Indépendant de Régulier/Remplaçant — un gardien peut être régulier ou remplaçant.',
-      colGoalie: 'Gardien'
+      colGoalie: 'Gardien',
+      bulkImport: "Importer d'un tableur", bulkImportTitle: 'Importer des joueurs',
+      bulkImportHelp: "Colle une liste copiée d'un tableur (Excel, Google Sheets) — une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée.",
+      bulkPreviewBtn: 'Prévisualiser', bulkConfirmBtn: "Confirmer l'import",
+      lblEmailCol: 'Courriel', lblPhoneCol: 'Téléphone', bulkStatusCol: 'Statut',
+      bulkStatusOk: 'Sera importé', bulkStatusNoName: 'Ignoré — nom manquant ou invalide',
+      bulkStatusDupeBatch: 'Ignoré — doublon dans la liste', bulkEmptyErr: 'Colle au moins une ligne.',
+      bulkSummary: '{ok} sur {total} seront importés.',
+      bulkResultSummary: '{created} ajouté(s), {skipped} ignoré(s).',
+      bulkResultCreated: 'Ajouté', bulkResultSkippedDupeExisting: 'Ignoré — existe déjà dans ta ligue',
+      bulkResultSkippedInvalid: 'Ignoré — invalide', bulkResultSkippedDupeBatch: 'Ignoré — doublon dans la liste'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
@@ -2553,7 +2563,17 @@ async function handleLeagueRosterPage(req, env, url) {
       weeklyDrawNote: 'Teams are assigned per game, not here — see a game’s own page.',
       goalieAxis: 'Goalie or player?', axisPlayer: 'Player', axisGoalie: 'Goalie',
       goalieAxisHelp: "Independent of Regular/Sub — a goalie can be regular or sub.",
-      colGoalie: 'Goalie'
+      colGoalie: 'Goalie',
+      bulkImport: 'Import from spreadsheet', bulkImportTitle: 'Import players',
+      bulkImportHelp: 'Paste a list copied from a spreadsheet (Excel, Google Sheets) — one person per line, columns separated by a tab or comma. A header row is fine, it will be skipped.',
+      bulkPreviewBtn: 'Preview', bulkConfirmBtn: 'Confirm import',
+      lblEmailCol: 'Email', lblPhoneCol: 'Phone', bulkStatusCol: 'Status',
+      bulkStatusOk: 'Will be imported', bulkStatusNoName: 'Skipped — missing or invalid name',
+      bulkStatusDupeBatch: 'Skipped — duplicate in list', bulkEmptyErr: 'Paste at least one line.',
+      bulkSummary: '{ok} of {total} will be imported.',
+      bulkResultSummary: '{created} added, {skipped} skipped.',
+      bulkResultCreated: 'Added', bulkResultSkippedDupeExisting: 'Skipped — already in your league',
+      bulkResultSkippedInvalid: 'Skipped — invalid', bulkResultSkippedDupeBatch: 'Skipped — duplicate in list'
     }
   };
 
@@ -2599,11 +2619,23 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-radio input { position: absolute; opacity: 0; pointer-events: none; }
   .ro-radio label.on { border: 2px solid var(--primary); background: var(--primary-tint); color: var(--primary); }
   @media (min-width: 900px) { .ro-panel { display: flex; } }
+  .ro-bulk-overlay { display: none; position: fixed; inset: 0; background: rgba(15,15,20,0.55); z-index: 100; align-items: flex-start; justify-content: center; padding: var(--space-5) var(--space-4); overflow-y: auto; }
+  .ro-bulk-overlay.open { display: flex; }
+  .ro-bulk-card { background: var(--surface-raised); border-radius: var(--radius-lg); padding: var(--space-5); max-width: 720px; width: 100%; display: flex; flex-direction: column; gap: var(--space-4); }
+  .ro-bulk-card h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
+  .ro-bulk-card textarea { width: 100%; min-height: 140px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); padding: var(--space-3); font: 400 14px/1.4 var(--font-mono, monospace); resize: vertical; }
+  .ro-bulk-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .ro-bulk-table th, .ro-bulk-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  .ro-bulk-table .ro-bulk-skip { color: var(--ink-muted); font-style: italic; }
+  .ro-bulk-summary { font-size: 14px; color: var(--ink-muted); }
 </style>${header}
 <main class="dash-main ro-main">
   <div class="ro-top">
     <div><h1 data-i18n="title">Joueurs</h1></div>
-    <button type="button" class="nl-btn nl-btn--primary" id="ro_toggle_panel" data-i18n="addPlayer" onclick="toggleRosterPanel()">Ajouter un joueur</button>
+    <div style="display:flex;gap:var(--space-2);flex-wrap:wrap;">
+      <button type="button" class="nl-btn nl-btn--secondary" id="ro_toggle_bulk" data-i18n="bulkImport" onclick="toggleBulkImport()">Importer d'un tableur</button>
+      <button type="button" class="nl-btn nl-btn--primary" id="ro_toggle_panel" data-i18n="addPlayer" onclick="toggleRosterPanel()">Ajouter un joueur</button>
+    </div>
   </div>
   <div class="ro-filters">${filterPills}</div>
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);" class="ro-grid">
@@ -2661,6 +2693,30 @@ async function handleLeagueRosterPage(req, env, url) {
       </div>
     </aside>
   </div>
+  <div class="ro-bulk-overlay" id="ro_bulk_overlay">
+    <div class="ro-bulk-card">
+      <h2 data-i18n="bulkImportTitle">Importer des joueurs</h2>
+      <p class="nl-help" data-i18n="bulkImportHelp">Colle une liste copiée d'un tableur (Excel, Google Sheets) -- une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée.</p>
+      <div id="bulkErr" class="nl-error" style="display:none"></div>
+      <textarea id="ro_bulk_text" placeholder="Marie Tremblay, marie@example.com, 514-555-0100&#10;Jean Bouchard, jean@example.com"></textarea>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="nl-btn nl-btn--secondary" data-i18n="bulkPreviewBtn" onclick="bulkPreview()">Prévisualiser</button>
+      </div>
+      <div id="ro_bulk_preview" style="display:none;flex-direction:column;gap:var(--space-3);">
+        <div class="ro-bulk-summary" id="ro_bulk_summary"></div>
+        <div style="max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:var(--radius-md);">
+          <table class="ro-bulk-table">
+            <thead><tr><th data-i18n="colPlayer">Joueur</th><th data-i18n="lblEmailCol">Courriel</th><th data-i18n="lblPhoneCol">Téléphone</th><th data-i18n="bulkStatusCol">Statut</th></tr></thead>
+            <tbody id="ro_bulk_tbody"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="nl-btn nl-btn--primary" id="ro_bulk_confirm" data-i18n="bulkConfirmBtn" onclick="bulkConfirm()">Confirmer l'import</button>
+          <button type="button" class="nl-btn nl-btn--ghost" data-i18n="cancel" onclick="toggleBulkImport()">Annuler</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </main>
 ${tabbar}`;
 
@@ -2709,6 +2765,102 @@ document.querySelectorAll('#r_goalie_radio label').forEach(function(l) {
 updateGoalieAxisVisibility();
 function toggleRosterPanel() {
   document.getElementById('ro_panel').classList.toggle('open');
+}
+// Part 6 (live-testing task): bulk roster import. Parsing happens
+// entirely client-side (pure text transformation, no reason for a
+// server round trip just to show a preview) -- only the confirmed rows
+// are sent to the server, which runs them through the exact same
+// createLeagueContactRow validation/dedup path the single-add form
+// above uses (see leagues.js's own comment on that function). Column
+// order isn't assumed fixed: whichever field contains '@' is the
+// email, whichever remaining field looks like a phone number (mostly
+// digits, 7+ chars) is the phone, and whatever's left is the name --
+// this reads correctly whether a real-world paste is "Name, Email,
+// Phone" or "Name, Phone, Email". A first row that looks like a header
+// (any field matching a common header word) is skipped entirely.
+function toggleBulkImport() {
+  document.getElementById('ro_bulk_overlay').classList.toggle('open');
+}
+var BULK_HEADER_WORDS = ['name', 'nom', 'full name', 'nom complet', 'email', 'e-mail', 'courriel', 'phone', 'téléphone', 'telephone', 'tel'];
+function parseBulkText(text) {
+  var lines = text.split(/\r\n|\r|\n/);
+  var rows = [];
+  var headerChecked = false;
+  for (var i = 0; i < lines.length; i++) {
+    var raw = lines[i];
+    if (!raw || !raw.trim()) continue;
+    var sep = raw.indexOf('\t') !== -1 ? '\t' : ',';
+    var fields = raw.split(sep).map(function(f) { return f.trim(); });
+    while (fields.length && !fields[fields.length - 1]) fields.pop();
+    if (!fields.length) continue;
+    if (!headerChecked) {
+      headerChecked = true;
+      var looksHeader = fields.some(function(f) { return BULK_HEADER_WORDS.indexOf(f.toLowerCase()) !== -1; });
+      if (looksHeader) continue;
+    }
+    var remaining = fields.slice();
+    var emailIdx = -1;
+    for (var j = 0; j < remaining.length; j++) { if (remaining[j].indexOf('@') !== -1) { emailIdx = j; break; } }
+    var email = emailIdx !== -1 ? remaining.splice(emailIdx, 1)[0] : '';
+    var phoneIdx = -1;
+    for (var k = 0; k < remaining.length; k++) { if (/^[\d+().\s-]{7,}$/.test(remaining[k])) { phoneIdx = k; break; } }
+    var phone = phoneIdx !== -1 ? remaining.splice(phoneIdx, 1)[0] : '';
+    var name = remaining.join(' ').replace(/\s+/g, ' ').trim();
+    rows.push({ name: name, email: email, phone: phone });
+  }
+  return rows;
+}
+var BULK_ROWS = [];
+function bulkTableCell(text, cls) {
+  var td = document.createElement('td');
+  if (cls) td.className = cls;
+  td.textContent = text;
+  return td;
+}
+function bulkPreview() {
+  var errEl = document.getElementById('bulkErr'); errEl.style.display = 'none';
+  var dict = window.__pageDict();
+  var rows = parseBulkText(document.getElementById('ro_bulk_text').value);
+  if (!rows.length) { errEl.textContent = dict.bulkEmptyErr; errEl.style.display = 'block'; return; }
+  var seen = {};
+  var okCount = 0;
+  BULK_ROWS = [];
+  var tbody = document.getElementById('ro_bulk_tbody');
+  tbody.innerHTML = '';
+  rows.forEach(function(r) {
+    var status = 'ok';
+    if (!r.name || r.name.split(' ').filter(Boolean).length < 2) { status = 'noname'; }
+    else if (r.email && seen[r.email.toLowerCase()]) { status = 'dupe'; }
+    if (status === 'ok') { okCount++; if (r.email) seen[r.email.toLowerCase()] = true; BULK_ROWS.push(r); }
+    var statusText = status === 'ok' ? dict.bulkStatusOk : status === 'noname' ? dict.bulkStatusNoName : dict.bulkStatusDupeBatch;
+    var tr = document.createElement('tr');
+    tr.appendChild(bulkTableCell(r.name || '—'));
+    tr.appendChild(bulkTableCell(r.email || '—'));
+    tr.appendChild(bulkTableCell(r.phone || '—'));
+    tr.appendChild(bulkTableCell(statusText, status !== 'ok' ? 'ro-bulk-skip' : ''));
+    tbody.appendChild(tr);
+  });
+  document.getElementById('ro_bulk_summary').textContent = dict.bulkSummary.split('{ok}').join(String(okCount)).split('{total}').join(String(rows.length));
+  document.getElementById('ro_bulk_preview').style.display = 'flex';
+  document.getElementById('ro_bulk_confirm').disabled = okCount === 0;
+}
+async function bulkConfirm() {
+  if (!BULK_ROWS.length) return;
+  var btn = document.getElementById('ro_bulk_confirm');
+  btn.disabled = true;
+  var errEl = document.getElementById('bulkErr'); errEl.style.display = 'none';
+  try {
+    var res = await fetch('/league/contacts/bulk', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ contacts: BULK_ROWS.map(function(r) { return { name: r.name, email: r.email || undefined, phone: r.phone || undefined }; }) })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { errEl.textContent = window.__errorText(data.errorKey, data.error); errEl.style.display = 'block'; btn.disabled = false; return; }
+    window.location.reload();
+  } catch (e) {
+    errEl.textContent = window.__errorText('NETWORK_ERROR'); errEl.style.display = 'block'; btn.disabled = false;
+  }
 }
 document.querySelectorAll('.ro-f').forEach(function(btn) {
   btn.addEventListener('click', function() {
@@ -19387,6 +19539,8 @@ async function handleFetch(req, env, ctx) {
       // these must never become a new door into SMBHL's data.
       if (url.pathname === '/league/contacts' && req.method === 'POST')
         return await handleLeagueContactCreate(req, env);
+      if (url.pathname === '/league/contacts/bulk' && req.method === 'POST')
+        return await handleLeagueContactsBulkCreate(req, env);
       if (url.pathname === '/league/events' && req.method === 'POST')
         return await handleLeagueEventCreate(req, env);
       if (url.pathname === '/league/season/publish' && req.method === 'POST')

@@ -72,6 +72,7 @@ export const ERROR_I18N = {
   NAME_TOO_LONG: { fr: 'Le nom est trop long.', en: 'Name is too long.' },
   INVALID_ROLE: { fr: 'Le rôle doit être régulier, sub joueur ou sub gardien.', en: 'role must be roster, sub_skater, or sub_goalie.' },
   CONTACT_EMAIL_EXISTS: { fr: 'Un contact avec ce courriel existe déjà dans ta ligue.', en: 'A contact with this email already exists in your league.' },
+  BULK_CONTACTS_REQUIRED: { fr: 'Aucun joueur à importer.', en: 'No contacts provided.' },
   ROUTE_BLOCKED_EVENTS: { fr: 'Cette route ne peut pas créer de matchs pour cette ligue.', en: 'This route cannot create events for this league.' },
   DATE_REQUIRED: { fr: 'La date est requise, au format AAAA-MM-JJ.', en: 'date is required, in YYYY-MM-DD format.' },
   START_TIME_FORMAT: { fr: "L'heure de début doit être au format HH:MM.", en: 'start_time must be in HH:MM format.' },

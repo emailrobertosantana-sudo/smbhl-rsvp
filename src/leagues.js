@@ -332,41 +332,28 @@ export async function handleLeagueEvents(req, env, url) {
  *     is a legacy artifact of SMBHL's own numbering history, not a rule
  *     worth replicating for a league that has no such history.
  */
-export async function handleLeagueContactCreate(req, env) {
-  const session = await checkUserSession(req, env);
-  if (!session) return leagueAccessResponse('unauthenticated');
-  if (!(await checkCsrfToken(req, env, session))) {
-    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
-  }
-
-  const url = new URL(req.url);
-  const body = await req.json().catch(() => ({}));
-
-  const leagueId = await resolveSessionLeagueId(req, env, url);
-  if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
-  }
-
-  const access = await checkLeagueAccess(req, env, leagueId);
-  if (access !== 'ok') return leagueAccessResponse(access);
-
-  // Defense in depth (see putLeagueDataJson's own comment): this route
-  // must never be able to write a row tagged as SMBHL's, even in principle.
-  if (leagueId === SMBHL_LEAGUE_ID) {
-    return Response.json({ ok: false, error: 'This route cannot create contacts for SMBHL.', errorKey: 'ROUTE_BLOCKED_CONTACTS' }, { status: 403 });
-  }
-
+// Live-testing task, Part 6: the actual per-row validation/creation
+// logic used to live inline in handleLeagueContactCreate -- pulled out
+// here (same leagueId+body shape, no session/CSRF/access handling of
+// its own, since those are per-REQUEST concerns, not per-ROW) so the
+// new bulk-import route (handleLeagueContactsBulkCreate below) can run
+// the exact same validation and dedup check per pasted row instead of
+// reimplementing or bypassing any of it. Returns a plain result object
+// ({ ok, error, errorKey, contact } | { ok: false, ... }), not an HTTP
+// Response -- handleLeagueContactCreate wraps it in one for the single-
+// add route; the bulk route collects one per row instead.
+async function createLeagueContactRow(env, leagueId, body) {
   const name = String(body.name || '').trim().split(/\s+/).filter(Boolean).join(' ');
   if (!name || name.split(' ').length < 2) {
-    return Response.json({ ok: false, error: 'Full name (first and last) is required.', errorKey: 'FULL_NAME_REQUIRED' }, { status: 400 });
+    return { ok: false, error: 'Full name (first and last) is required.', errorKey: 'FULL_NAME_REQUIRED' };
   }
   if (name.length > 60) {
-    return Response.json({ ok: false, error: 'Name is too long.', errorKey: 'NAME_TOO_LONG' }, { status: 400 });
+    return { ok: false, error: 'Name is too long.', errorKey: 'NAME_TOO_LONG' };
   }
 
   const role = String(body.role || 'roster').trim();
   if (!['roster', 'sub_skater', 'sub_goalie'].includes(role)) {
-    return Response.json({ ok: false, error: 'role must be roster, sub_skater, or sub_goalie.', errorKey: 'INVALID_ROLE' }, { status: 400 });
+    return { ok: false, error: 'role must be roster, sub_skater, or sub_goalie.', errorKey: 'INVALID_ROLE' };
   }
 
   let email = String(body.email || '').trim();
@@ -380,7 +367,7 @@ export async function handleLeagueContactCreate(req, env) {
       // already displays -- check.error's exact wording varies by
       // failure reason, but "enter a valid email" covers all of them
       // accurately enough for a translated summary.
-      return Response.json({ ok: false, error: check.error, errorKey: 'INVALID_EMAIL' }, { status: 400 });
+      return { ok: false, error: check.error, errorKey: 'INVALID_EMAIL' };
     }
     email = check.email;
 
@@ -388,7 +375,7 @@ export async function handleLeagueContactCreate(req, env) {
       'SELECT player_id FROM contacts WHERE league_id = ? AND lower(email) = lower(?)'
     ).bind(leagueId, email).first();
     if (dupe) {
-      return Response.json({ ok: false, error: 'A contact with this email already exists in your league.', errorKey: 'CONTACT_EMAIL_EXISTS' }, { status: 409 });
+      return { ok: false, error: 'A contact with this email already exists in your league.', errorKey: 'CONTACT_EMAIL_EXISTS' };
     }
   } else {
     email = null;
@@ -417,7 +404,7 @@ export async function handleLeagueContactCreate(req, env) {
   if (team) {
     const validTeams = getTeamNames(cfg);
     if (!validTeams.includes(team)) {
-      return Response.json({ ok: false, error: `team must be one of: ${validTeams.join(', ')}`, errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
+      return { ok: false, error: `team must be one of: ${validTeams.join(', ')}`, errorKey: 'TEAM_UNKNOWN' };
     }
   }
   // Part 5: for a headcount league whose sport has a goalie role,
@@ -457,10 +444,116 @@ export async function handleLeagueContactCreate(req, env) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(playerId, name, email, phone, role, isGoalie, position, team, salt, leagueId).run();
 
+  return {
+    ok: true,
+    contact: { player_id: playerId, name, email, phone, role, is_goalie: isGoalie, position, team }
+  };
+}
+
+export async function handleLeagueContactCreate(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  // Defense in depth (see putLeagueDataJson's own comment): this route
+  // must never be able to write a row tagged as SMBHL's, even in principle.
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot create contacts for SMBHL.', errorKey: 'ROUTE_BLOCKED_CONTACTS' }, { status: 403 });
+  }
+
+  const result = await createLeagueContactRow(env, leagueId, body);
+  if (!result.ok) {
+    const status = result.errorKey === 'CONTACT_EMAIL_EXISTS' ? 409 : 400;
+    return Response.json(result, { status });
+  }
+  return Response.json({ ok: true, league_id: leagueId, contact: result.contact });
+}
+
+/* ---------- POST /league/contacts/bulk (Part 6, live-testing task) ----------
+ * Bulk roster import: an admin pastes a block of text (from a
+ * spreadsheet) into the roster page, which parses it CLIENT-SIDE into
+ * rows and shows a preview before committing (see the roster page's own
+ * script for the parser -- kept client-side since it's pure text
+ * transformation with no need for a server round trip, and lets the
+ * preview update instantly as the admin edits the pasted text). This
+ * route only runs once the admin confirms the preview: it takes the
+ * already-parsed rows and creates each one through the EXACT SAME
+ * createLeagueContactRow validation/dedup path the single-add route
+ * uses -- never a second, looser copy of that logic.
+ *
+ * Decision (documented): a bad row (missing name, invalid email, a
+ * duplicate against an existing roster entry OR another row earlier in
+ * this same pasted block) is skipped with a per-row reason in the
+ * response, not a hard failure of the whole batch -- a realistic paste
+ * of 20 players shouldn't be all-or-nothing over one typo. Within-batch
+ * duplicate emails are detected here (case-insensitive) before each
+ * row hits createLeagueContactRow, since that function's own dedup
+ * check only sees rows already committed to the DB, not earlier rows
+ * in the same in-flight batch.
+ */
+export async function handleLeagueContactsBulkCreate(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot create contacts for SMBHL.', errorKey: 'ROUTE_BLOCKED_CONTACTS' }, { status: 403 });
+  }
+
+  const rows = Array.isArray(body.contacts) ? body.contacts.slice(0, 200) : [];
+  if (!rows.length) {
+    return Response.json({ ok: false, error: 'No contacts provided.', errorKey: 'BULK_CONTACTS_REQUIRED' }, { status: 400 });
+  }
+
+  const results = [];
+  const seenEmails = new Set();
+  for (const row of rows) {
+    const rowEmail = String(row.email || '').trim().toLowerCase();
+    if (rowEmail && seenEmails.has(rowEmail)) {
+      results.push({ status: 'skipped', name: row.name || '', reason: 'duplicate_in_batch', errorKey: 'CONTACT_EMAIL_EXISTS' });
+      continue;
+    }
+    const created = await createLeagueContactRow(env, leagueId, row);
+    if (created.ok) {
+      if (rowEmail) seenEmails.add(rowEmail);
+      results.push({ status: 'created', contact: created.contact });
+    } else {
+      results.push({ status: 'skipped', name: row.name || '', reason: created.errorKey === 'CONTACT_EMAIL_EXISTS' ? 'duplicate_existing' : 'invalid', error: created.error, errorKey: created.errorKey });
+    }
+  }
+
   return Response.json({
     ok: true,
     league_id: leagueId,
-    contact: { player_id: playerId, name, email, phone, role, is_goalie: isGoalie, position, team }
+    createdCount: results.filter(r => r.status === 'created').length,
+    skippedCount: results.filter(r => r.status === 'skipped').length,
+    results
   });
 }
 
