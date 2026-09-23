@@ -4,7 +4,7 @@ import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -751,7 +751,35 @@ async function handleDashboardPage(req, env, url) {
     </div>
   ` : '';
 
-  const body = leagueRow ? `
+  // Part 10: a deactivated league shows a clear, dedicated state --
+  // never the normal management UI (no nav, no forms) -- confirming the
+  // action took effect, without implying any of this league's other
+  // data was touched (it wasn't; deactivating is purely an access gate).
+  const deactivatedHtml = leagueRow && leagueRow.deactivated_at ? `
+    <h1>${esc(leagueRow.name)}</h1>
+    <div class="card" style="border-left:4px solid var(--red);">
+      <p class="state" style="margin:0;">Cette ligue a été désactivée le ${esc(leagueRow.deactivated_at.slice(0, 10))}.<span class="en" style="display:block;">This league was deactivated on ${esc(leagueRow.deactivated_at.slice(0, 10))}.</span></p>
+    </div>
+  ` : '';
+
+  // Part 10: session-gated soft-delete, guarded by typing the league's
+  // own exact name (server-enforced too -- see handleLeagueDeactivate).
+  const deactivateHtml = leagueRow && !leagueRow.deactivated_at ? `
+    <div class="card" style="border-left:4px solid var(--red);">
+      <h2>Désactiver la ligue<span class="en">Deactivate league</span></h2>
+      <p class="state" style="margin-top:0;">Cette action désactive votre ligue -- vos données sont conservées, mais l'accès à la gestion est bloqué.<span class="en" style="display:block;">This deactivates your league -- your data is kept, but management access is blocked.</span></p>
+      <div id="deactivateErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+      <label style="display:block;margin:12px 0;">
+        <span style="display:block;font-weight:600;margin-bottom:4px;">Tapez le nom exact de la ligue pour confirmer : <i>${esc(leagueRow.name)}</i><span class="en" style="display:block;font-weight:400;">Type the league's exact name to confirm: <i>${esc(leagueRow.name)}</i></span></span>
+        <input type="text" id="deactivate_confirm" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+      </label>
+      <div class="btns">
+        <button type="button" class="btn" id="deactivate_submit" onclick="submitDeactivate()" style="border-color:var(--red);color:var(--red);">DÉSACTIVER<span class="en" style="display:block;font-size:13px;font-weight:600;">DEACTIVATE</span></button>
+      </div>
+    </div>
+  ` : '';
+
+  const body = leagueRow && leagueRow.deactivated_at ? deactivatedHtml : leagueRow ? `
     <h1>${esc(leagueRow.name)}</h1>
     ${leagueRow.division_label ? `<p class="when">${esc(leagueRow.division_label)}</p>` : ''}
     ${currentSeason ? `<p class="state" style="margin:0 0 4px;">Saison actuelle : <b>${esc(currentSeason)}</b><span class="en" style="display:block;">Current season: <b>${esc(currentSeason)}</b></span></p>` : ''}
@@ -776,6 +804,7 @@ async function handleDashboardPage(req, env, url) {
       <p class="state">Statistiques suivies : <b>${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b><span class="en"> · Tracks stats: <b>${leagueRow.tracks_stats ? 'Yes' : 'No'}</b></span></p>
     </div>
     ${adminsHtml}
+    ${deactivateHtml}
   ` : `
     <h1>Tableau de bord<span class="en">Dashboard</span></h1>
     <div class="card"><p class="state" style="margin:0;">Vous n'avez pas encore de ligue.<span class="en" style="display:block;">You don't have a league yet.</span></p></div>
@@ -871,6 +900,33 @@ async function submitInvite() {
     ok.style.display = 'block';
     document.getElementById('invite_email').value = '';
     btn.disabled = false;
+  } catch (e) {
+    err.textContent = 'Erreur réseau. / Network error.';
+    err.style.display = 'block';
+    btn.disabled = false;
+  }
+}
+
+async function submitDeactivate() {
+  const err = document.getElementById('deactivateErr');
+  err.style.display = 'none';
+  const confirmName = document.getElementById('deactivate_confirm').value;
+  const btn = document.getElementById('deactivate_submit');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/league/deactivate', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ confirmName })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      err.textContent = data.error || 'Échec de la désactivation. / Failed to deactivate.';
+      err.style.display = 'block';
+      btn.disabled = false;
+      return;
+    }
+    window.location.reload();
   } catch (e) {
     err.textContent = 'Erreur réseau. / Network error.';
     err.style.display = 'block';
@@ -1048,6 +1104,14 @@ async function handleLeaguePublicPage(req, env, url) {
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow) return new Response('not found', { status: 404 });
+  // Part 10: a deactivated league's public page stops being publicly
+  // viewable too -- consistent with checkLeagueAccess blocking every
+  // session-gated route for the same league.
+  if (leagueRow.deactivated_at) {
+    return new Response(page('Ligue désactivée', `
+      <h1>Cette ligue n'est plus active<span class="en">This league is no longer active</span></h1>
+    `), { status: 410, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  }
 
   const cfg = await getLeagueSeasonConfig(env, leagueId);
   const teamNames = getTeamNames(cfg);
@@ -16557,6 +16621,10 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueAdminAccept(req, env);
       if (url.pathname === '/league/admins/invite' && req.method === 'POST')
         return await handleLeagueAdminInvite(req, env, url, sendMail);
+      // Part 10: soft-delete a league. Session+CSRF+checkLeagueAccess-
+      // gated like every other league write route.
+      if (url.pathname === '/league/deactivate' && req.method === 'POST')
+        return await handleLeagueDeactivate(req, env, url);
       // League provisioning (leagues.js) — requires a valid user session.
       // Rows in the shared DB, scoped by league_id; see leagues.js's header
       // comment for the architecture decision behind that.

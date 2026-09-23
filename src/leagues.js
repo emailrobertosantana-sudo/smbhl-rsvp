@@ -46,13 +46,26 @@ export async function checkLeagueAccess(req, env, leagueId) {
   const link = await env.DB.prepare(
     'SELECT 1 FROM league_admins WHERE user_id = ? AND league_id = ?'
   ).bind(session.userId, leagueId).first();
+  if (!link) return 'forbidden';
 
-  return link ? 'ok' : 'forbidden';
+  // Part 10: a deactivated (soft-deleted) league blocks EVERY session-
+  // gated write/read route that already goes through this one check --
+  // including its own admin -- without needing a separate check bolted
+  // onto each route individually. The data itself is untouched (no row
+  // is deleted), matching the task's "soft-delete, not destructive"
+  // requirement; this is purely an access gate.
+  const league = await env.DB.prepare('SELECT deactivated_at FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (league && league.deactivated_at) return 'deactivated';
+
+  return 'ok';
 }
 
 export function leagueAccessResponse(status) {
   if (status === 'unauthenticated') {
     return Response.json({ ok: false, error: 'Authentication required.' }, { status: 401 });
+  }
+  if (status === 'deactivated') {
+    return Response.json({ ok: false, error: 'This league has been deactivated.' }, { status: 410 });
   }
   return Response.json({ ok: false, error: 'You do not have access to this league.' }, { status: 403 });
 }
@@ -867,4 +880,43 @@ export async function handleLeagueAdminAccept(req, env) {
     status: 200,
     headers: await sessionResponseHeaders(env, userId, 0)
   });
+}
+
+/* ---------- deactivate a league (Part 10) ----------
+ * Soft-delete: sets leagues.deactivated_at, never deletes a row. Once
+ * set, checkLeagueAccess blocks every session-gated route for this
+ * league -- including its own admins -- so there's no separate
+ * "is this league deactivated" check needed anywhere else. Requires the
+ * caller to type the league's own exact current name as `confirmName`
+ * -- the task's explicit "clear confirmation step" requirement,
+ * enforced server-side (not just a client-side dialog an API caller
+ * could skip), matching the "type the name to confirm" pattern this
+ * kind of consequential-but-reversible-in-the-database action usually
+ * gets.
+ */
+export async function handleLeagueDeactivate(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+  }
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) return Response.json({ ok: false, error: 'League not found.' }, { status: 404 });
+
+  const body = await req.json().catch(() => ({}));
+  const confirmName = String(body.confirmName || '').trim();
+  if (confirmName !== leagueRow.name) {
+    return Response.json({ ok: false, error: 'Confirmation text does not match the league name.' }, { status: 400 });
+  }
+
+  await env.DB.prepare('UPDATE leagues SET deactivated_at = ? WHERE id = ?').bind(new Date().toISOString(), leagueId).run();
+  return Response.json({ ok: true, leagueId });
 }
