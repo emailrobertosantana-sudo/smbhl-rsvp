@@ -1369,6 +1369,39 @@ function buildDashI18n({ state, needsSeason, unverified }) {
     } else {
       Object.assign(fr, { currentSeasonLabel: 'Saison actuelle' });
       Object.assign(en, { currentSeasonLabel: 'Current season' });
+      // Season-level team-structure override task: a control to create
+      // an additional season, or republish (edit) the current one --
+      // the dashboard's own established "start a season" flow only
+      // ever appears once, before a league's first season exists, so
+      // this is the only UI surface for a SECOND (or later) season at
+      // all. Reuses the exact same structure-radio pattern as the
+      // signup wizard's own step 2 (structureFixedTitle/Desc etc.) and
+      // the same season_name + /league/season/publish route as the
+      // "first season" flow above -- re-submitting the CURRENT season's
+      // own name edits it in place (the route's own pre-existing
+      // overwrite behavior), a different name creates a new one.
+      Object.assign(fr, {
+        seasonsTitle: 'Saisons', seasonsDesc: "Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.",
+        seasonMgmtNameHelp: 'Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.',
+        seasonStructureHelp: "Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.",
+        seasonSaveBtn: 'Enregistrer la saison',
+        structureLabel: 'Comment sont organisées tes équipes?',
+        structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'Les mêmes équipes toute la saison.',
+        structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: "Juste une liste de joueurs, pas d'équipes.",
+        structureWeeklyTitle: 'Équipes chaque semaine', structureWeeklyDesc: 'Les équipes changent à chaque match.',
+        lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs'
+      });
+      Object.assign(en, {
+        seasonsTitle: 'Seasons', seasonsDesc: 'Create an additional season, or republish the current one to edit it. Each season can have its own team structure.',
+        seasonMgmtNameHelp: "A new name creates a new season. The current season's own name edits it.",
+        seasonStructureHelp: "By default, a new season uses your league's usual structure. Change it here just for this season.",
+        seasonSaveBtn: 'Save season',
+        structureLabel: 'How are your teams organized?',
+        structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same teams all season.',
+        structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a player list, no teams.",
+        structureWeeklyTitle: 'New teams every week', structureWeeklyDesc: 'Teams change every game.',
+        lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players'
+      });
     }
     if (unverified) {
       Object.assign(fr, { notVerified: "Ton courriel n'est pas encore vérifié.", resendBtn: 'Renvoyer le courriel' });
@@ -1438,6 +1471,13 @@ function dashStyles() {
   .dash-share code { flex: 1; min-width: 160px; font: 500 14px/20px var(--font-sans); color: var(--primary); background: var(--primary-tint); padding: 10px 12px; border-radius: var(--radius-md); word-break: break-all; }
   .nl-error { color: var(--danger, #b3122e); font-weight: 600; font-size: 14px; }
   .nl-ok { color: var(--success, #1c7a4a); font-weight: 600; font-size: 14px; }
+  .su-structure { display: flex; flex-direction: column; gap: var(--space-2); }
+  .su-structure-opt { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3); border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); cursor: pointer; }
+  .su-structure-opt.on { border: 2px solid var(--primary); background: var(--primary-tint); }
+  .su-structure-opt input { margin-top: 3px; flex: none; }
+  .su-structure-opt .t { font-weight: 600; font-size: 15px; }
+  .su-structure-opt .d { font-size: 13px; color: var(--ink-muted); margin-top: 2px; }
+  .su-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
   @media (min-width: 640px) { .nl-tabbar { display: none; } }
   @media (max-width: 639px) { .nl-nav { display: none; } .dash-main { padding-bottom: 76px; } .dash-grid { grid-template-columns: 1fr; } }
 </style>`;
@@ -1569,6 +1609,49 @@ async function handleDashboardPage(req, env, url) {
     </div>
     <p class="nl-help" style="margin-top:12px;"><span data-i18n="tracksStatsLabel">Statistiques suivies</span> : <b data-i18n="${leagueRow.tracks_stats ? 'yes' : 'no'}">${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b></p>
   </section>
+  ${!needsSeason ? `
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="seasonsTitle">Saisons</div>
+    <p class="nl-help" data-i18n="seasonsDesc">Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.</p>
+    <div id="seasonMgmtErr" class="nl-error" style="display:none"></div>
+    <div id="seasonMgmtOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-field" style="max-width:360px">
+      <label class="nl-label" for="season_mgmt_name" data-i18n="seasonNameLabel">Nom de la saison</label>
+      <input class="nl-input" id="season_mgmt_name" type="text" placeholder="Ex. Saison Hiver 2026">
+      <p class="nl-help" data-i18n="seasonMgmtNameHelp">Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.</p>
+    </div>
+    <div class="nl-field">
+      <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>
+      <div class="su-structure" id="season_structure_radio">
+        <label class="su-structure-opt${leagueRow.team_structure === 'headcount' ? '' : ' on'}" data-value="fixed">
+          <input type="radio" name="season_structure" value="fixed" ${leagueRow.team_structure === 'headcount' || leagueRow.team_structure === 'weekly_draw' ? '' : 'checked'}>
+          <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">Les mêmes équipes toute la saison.</span></span>
+        </label>
+        <label class="su-structure-opt${leagueRow.team_structure === 'headcount' ? ' on' : ''}" data-value="headcount">
+          <input type="radio" name="season_structure" value="headcount" ${leagueRow.team_structure === 'headcount' ? 'checked' : ''}>
+          <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de joueurs, pas d'équipes.</span></span>
+        </label>
+        <label class="su-structure-opt${leagueRow.team_structure === 'weekly_draw' ? ' on' : ''}" data-value="weekly_draw">
+          <input type="radio" name="season_structure" value="weekly_draw" ${leagueRow.team_structure === 'weekly_draw' ? 'checked' : ''}>
+          <span><span class="t" data-i18n="structureWeeklyTitle">Équipes chaque semaine</span><span class="d" data-i18n="structureWeeklyDesc">Les équipes changent à chaque match.</span></span>
+        </label>
+      </div>
+      <p class="nl-help" data-i18n="seasonStructureHelp">Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.</p>
+    </div>
+    <div id="season_headcount_section" style="${leagueRow.team_structure === 'headcount' ? '' : 'display:none'}">
+      <div class="su-two">
+        <div class="nl-field">
+          <label class="nl-label" for="season_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
+          <input class="nl-input" id="season_min_players" type="number" min="1" value="${esc(String(leagueRow.min_players || 8))}">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="season_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
+          <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(String(leagueRow.max_players || 12))}">
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>
+  </section>` : ''}
   <section class="nl-card nl-card--pad-lg">
     <div class="h3" data-i18n="langExposure">Langue exposée aux joueurs</div>
     <p class="nl-help" data-i18n="langExposureDesc">Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.</p>
@@ -1687,6 +1770,50 @@ async function submitSeason() {
     window.location.reload();
   } catch (e) {
     el.textContent = window.__errorText('NETWORK_ERROR'); el.style.display = 'block'; btn.disabled = false;
+  }
+}
+// Season-level team-structure override task: create an additional
+// season, or edit the current one (re-submitting its own name), with
+// an optional per-season structure override -- omitting team_structure
+// entirely (the radio just isn't touched) makes the season inherit the
+// league's own default, exactly like the "first season" form above.
+(function() {
+  var radioGroup = document.getElementById('season_structure_radio');
+  if (!radioGroup) return;
+  radioGroup.querySelectorAll('input[type=radio]').forEach(function(r) {
+    r.addEventListener('change', function() {
+      radioGroup.querySelectorAll('.su-structure-opt').forEach(function(opt) { opt.classList.remove('on'); });
+      r.closest('.su-structure-opt').classList.add('on');
+      var hc = document.getElementById('season_headcount_section');
+      if (hc) hc.style.display = r.value === 'headcount' ? '' : 'none';
+    });
+  });
+})();
+async function submitSeasonMgmt() {
+  var err = document.getElementById('seasonMgmtErr');
+  var ok = document.getElementById('seasonMgmtOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var name = document.getElementById('season_mgmt_name').value.trim();
+  if (!name) { err.textContent = window.__errorText('SEASON_NAME_REQUIRED_CLIENT'); err.style.display = 'block'; return; }
+  var structure = document.querySelector('#season_structure_radio input:checked').value;
+  var payload = { season_name: name, team_structure: structure };
+  if (structure === 'headcount') {
+    payload.min_players = Number(document.getElementById('season_min_players').value);
+    payload.max_players = Number(document.getElementById('season_max_players').value);
+  }
+  var btn = document.getElementById('season_mgmt_submit');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/season/publish', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    window.location.reload();
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
 }
 async function submitInvite() {
@@ -9969,9 +10096,15 @@ async function verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token) {
 // That capability is genuinely not built for a second league — not
 // partially, not silently degraded — per this task's explicit decision;
 // see leagueRsvpPost's own comment and test/league_rsvp_no_teammate_edit.spec.js.
-async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, statusBy = 'self') {
+async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, statusBy = 'self', season = null) {
   const now = new Date().toISOString();
-  const teamStructure = await getLeagueTeamStructure(env, leagueId);
+  // Season-level team-structure override task: this event's own SEASON
+  // (not just the league's permanent default) decides what gets
+  // written to rsvp.team -- a headcount pickup season on an otherwise
+  // fixed-teams league must tag its rsvp rows with the sentinel too,
+  // exactly like a headcount-DEFAULT league already does. Every real
+  // caller below now passes the event's own `season` through.
+  const teamStructure = await getLeagueTeamStructure(env, leagueId, season);
   const team = teamStructure === 'headcount' ? HEADCOUNT_TEAM_NAME
     : teamStructure === 'weekly_draw' ? null
     : (contact?.preferred_team || null);
@@ -9984,13 +10117,29 @@ async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, 
   ).bind(eventId, playerId, team, status, role, statusBy, now, leagueId).run();
 }
 
-// Small, cheap, self-contained lookup so writeLeagueRsvpStatus (and
-// anything else that just needs the mode, not a full season config)
-// doesn't have to resolve a whole getLeagueSeasonConfig(). Defaults to
-// 'fixed' for SMBHL (no row in most call contexts) and any league
-// somehow missing the column.
-async function getLeagueTeamStructure(env, leagueId) {
+// Cheap self-contained lookup so writeLeagueRsvpStatus (and anything
+// else that just needs the mode, not a full season config) doesn't
+// have to resolve a whole getLeagueSeasonConfig() in the common case.
+// Defaults to 'fixed' for SMBHL (no row in most call contexts) and any
+// league somehow missing the column.
+//
+// Season-level team-structure override task: when a `season` name is
+// given, this now resolves through getLeagueSeasonConfig instead of
+// reading leagues.team_structure directly -- that's the only way to
+// see a season's own override (getSeasonConfig's own resolution checks
+// the season's config.teamStructure FIRST, falling back to the
+// league's leagues.team_structure column only if that season hasn't
+// set one -- see season_config.js's withLeagueBrandingDefault). Every
+// call site that has an event (and therefore its season) in scope now
+// passes it; the `season`-less 2-arg form is kept only for callers
+// that genuinely have no event context, and still behaves exactly as
+// before (reads the league's own permanent default).
+async function getLeagueTeamStructure(env, leagueId, season = null) {
   if (leagueId === SMBHL_LEAGUE_ID) return 'fixed';
+  if (season) {
+    const cfg = await getLeagueSeasonConfig(env, leagueId, season);
+    return cfg.teamStructure || 'fixed';
+  }
   const row = await env.DB.prepare('SELECT team_structure FROM leagues WHERE id = ?').bind(leagueId).first();
   return (row && row.team_structure) || 'fixed';
 }
@@ -10291,8 +10440,8 @@ function reminderDayLabel(dateStr, lang) {
 // with a roster player who was left team-unassigned is a real (if
 // narrow) existing-behavior case, and "fixed mode provably unaffected"
 // is this task's own paramount constraint.
-async function getNonResponders(env, leagueId, eventId) {
-  const teamStructure = await getLeagueTeamStructure(env, leagueId);
+async function getNonResponders(env, leagueId, eventId, season = null) {
+  const teamStructure = await getLeagueTeamStructure(env, leagueId, season);
   const rosterCondition = teamStructure === 'fixed' ? 'c.preferred_team IS NOT NULL' : "c.role = 'roster'";
   return (await env.DB.prepare(
     `SELECT c.player_id, c.name, c.email, c.token_salt, c.preferred_team
@@ -10359,7 +10508,7 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
   const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
   const recipients = kind === 'logistics_12h'
     ? await getConfirmedPlayers(env, leagueRow.id, ev.id)
-    : await getNonResponders(env, leagueRow.id, ev.id);
+    : await getNonResponders(env, leagueRow.id, ev.id, ev.season);
 
   let sent = 0;
   for (const contact of recipients) {
@@ -10403,7 +10552,6 @@ async function runLeagueReminders(env) {
   ).bind(SMBHL_LEAGUE_ID).all()).results || [];
 
   for (const leagueRow of leagues) {
-    const cfg = await getLeagueSeasonConfig(env, leagueRow.id);
     const events = (await env.DB.prepare(
       `SELECT * FROM events WHERE league_id = ? AND state = 'open' AND start_time IS NOT NULL`
     ).bind(leagueRow.id).all()).results || [];
@@ -10414,6 +10562,13 @@ async function runLeagueReminders(env) {
       const hoursUntil = (start.getTime() - Date.now()) / 3600000;
       if (hoursUntil <= 0 || hoursUntil > 72) continue;
 
+      // Season-level team-structure override task: resolved PER EVENT
+      // (this event's own ev.season), not once per league -- a league
+      // can have open events spanning more than one published season
+      // (an older season's event left open while a new season is
+      // already current), and each must use its OWN season's config,
+      // not whichever season happens to be current right now.
+      const cfg = await getLeagueSeasonConfig(env, leagueRow.id, ev.season);
       const results = await sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil);
       const total = results.reminder_72h + results.reminder_24h + results.logistics_12h;
       if (total > 0) log.push(`${leagueRow.id}:${ev.id} 72h=${results.reminder_72h} 24h=${results.reminder_24h} logistics=${results.logistics_12h}`);
@@ -10450,7 +10605,7 @@ async function handleLeagueSendReminderNow(req, env, url) {
   if (!ev) return Response.json({ ok: false, error: 'No upcoming event found.', errorKey: 'NO_UPCOMING_EVENT' }, { status: 404 });
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
-  const cfg = await getLeagueSeasonConfig(env, leagueId);
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
   const sent = await sendLeagueReminderKind(env, leagueRow, cfg, ev, 'reminder_72h', { writeLog: false });
   return Response.json({ ok: true, league_id: leagueId, event_id: ev.id, sent });
 }
@@ -10481,11 +10636,6 @@ async function handleLeagueAssignEventTeam(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return leagueAccessResponse(access);
 
-  const leagueRow = await env.DB.prepare('SELECT team_structure FROM leagues WHERE id = ?').bind(leagueId).first();
-  if (!leagueRow || leagueRow.team_structure !== 'weekly_draw') {
-    return Response.json({ ok: false, error: 'This league does not assign teams per event.', errorKey: 'NOT_WEEKLY_DRAW' }, { status: 400 });
-  }
-
   const body = await req.json().catch(() => ({}));
   const eventId = String(body.event_id || '').trim();
   const playerId = String(body.player_id || '').trim();
@@ -10497,7 +10647,20 @@ async function handleLeagueAssignEventTeam(req, env, url) {
   const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
   if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
 
+  // Season-level team-structure override task: this event's own SEASON
+  // decides whether per-event assignment applies here, not just the
+  // league's permanent default -- a season overridden to 'weekly_draw'
+  // on an otherwise-fixed league needs this route to work for it, and
+  // (the reverse) a season overridden AWAY from 'weekly_draw' on an
+  // otherwise-weekly_draw league must correctly reject it. Checked
+  // after the event lookup (not before, like the league-level-only
+  // version of this check used to) since ev.season is what makes this
+  // resolution correct at all -- getLeagueTeamStructure's season-less
+  // 2-arg form would only ever see the league's own default.
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  if ((cfg.teamStructure || 'fixed') !== 'weekly_draw') {
+    return Response.json({ ok: false, error: 'This league does not assign teams per event.', errorKey: 'NOT_WEEKLY_DRAW' }, { status: 400 });
+  }
   if (!getTeamNames(cfg).includes(team)) {
     return Response.json({ ok: false, error: 'Unknown team for this league.', errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
   }
@@ -10577,7 +10740,7 @@ async function leagueRsvpGet(req, env, url) {
     const wasConfirmed = row && row.status === 'in';
     const isLateReversalOptOut = autoVal === 'out' && wasConfirmed && url.searchParams.get('src') === 'logistics12h';
 
-    await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, autoVal);
+    await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, autoVal, 'self', ev.season);
     status = autoVal;
     if (autoVal === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
     if (isLateReversalOptOut) await sendLateReversalAdminAlert(env, leagueId, ev, contact);
@@ -10838,7 +11001,7 @@ async function leagueRsvpPost(req, env, url) {
     return Response.json({ ok: false, error: 'This event is no longer accepting responses.', errorKey: 'RSVP_LOCKED' }, { status: 409 });
   }
 
-  await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status);
+  await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'self', ev.season);
   if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
   return Response.json({ ok: true, league_id: leagueId, status });
 }
@@ -10883,7 +11046,7 @@ async function handleLeagueAdminSetRsvp(req, env, url) {
     .bind(playerId, leagueId).first();
   if (!contact) return Response.json({ ok: false, error: 'Player not found.', errorKey: 'PLAYER_NOT_FOUND' }, { status: 404 });
 
-  await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'manager');
+  await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'manager', ev.season);
   if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
 
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, status });

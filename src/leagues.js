@@ -583,11 +583,49 @@ export async function handleLeagueSeasonPublish(req, env) {
       if (Array.isArray(parsed)) teamNames = parsed.filter(Boolean);
     } catch (_) {}
   }
-  // A 'headcount' league only ever stores exactly one team name (the
+
+  // Season-level team-structure override task: a season can override the
+  // league's own default team_structure for just itself (e.g. a
+  // fixed-teams league running one headcount pickup season, without
+  // changing its permanent signup-time default). body.team_structure is
+  // OPTIONAL and absent from every pre-existing caller (the dashboard's
+  // "start your first season" form, every test written before this
+  // task) -- when it's not given, seasonTeamStructure stays null,
+  // config.teamStructure is never set below, and getSeasonConfig's own
+  // resolution (withLeagueBrandingDefault, season_config.js) falls
+  // through to the league's own leagues.team_structure exactly as it
+  // already did before this feature existed. That's what keeps every
+  // pre-existing league/season completely unaffected -- this whole
+  // block is purely additive on top of the untouched original path.
+  let seasonTeamStructure = null;
+  if (body.team_structure !== undefined && body.team_structure !== null && String(body.team_structure).trim() !== '') {
+    const val = String(body.team_structure).trim();
+    if (!['fixed', 'headcount', 'weekly_draw'].includes(val)) {
+      return Response.json({ ok: false, error: "team_structure must be 'fixed', 'headcount', or 'weekly_draw'.", errorKey: 'INVALID_TEAM_STRUCTURE' }, { status: 400 });
+    }
+    seasonTeamStructure = val;
+  }
+  const effectiveStructure = seasonTeamStructure || (leagueRow && leagueRow.team_structure) || 'fixed';
+
+  // A 'headcount' season (whether via the league's own default or an
+  // explicit override) only ever stores exactly one team name (the
   // HEADCOUNT_TEAM_NAME sentinel -- see league_ids.js): that's correct
-  // and expected for that mode, not a sign teams are missing.
-  const minTeamNames = (leagueRow && leagueRow.team_structure === 'headcount') ? 1 : 2;
-  if (teamNames.length < minTeamNames) {
+  // and expected for that mode, not a sign teams are missing. A season
+  // overridden TO headcount on a league whose own real team_names are
+  // something else (Otters/Falcons, say) must NOT carry those into this
+  // season's config -- teamState/writeLeagueRsvpStatus/the event-status
+  // page all key off the sentinel for this mode (see their own
+  // comments), so this season's own team list has to be the sentinel
+  // too, regardless of what the league's stored team_names say.
+  const seasonTeamNames = effectiveStructure === 'headcount' ? [HEADCOUNT_TEAM_NAME] : teamNames;
+  const minTeamNames = effectiveStructure === 'headcount' ? 1 : 2;
+  if (seasonTeamNames.length < minTeamNames) {
+    // Most common real case: overriding a headcount-default league's
+    // season TO 'fixed'/'weekly_draw' when the league itself only ever
+    // has the single sentinel team name on file (it never collected
+    // real team names at signup) -- there's no reasonable team list to
+    // fall back to, so this is a real, clear rejection rather than a
+    // silent guess at team names the admin never chose.
     return Response.json({ ok: false, error: 'This league has no team names on file yet.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
   }
 
@@ -602,16 +640,47 @@ export async function handleLeagueSeasonPublish(req, env) {
   // hasn't set its own (same "last resort, not SMBHL's live data" pattern
   // as leagueTeamNames/leagueBranding), not a requirement to configure
   // this before publishing a season at all.
-  const config = { teams: teamNames };
+  const config = { teams: seasonTeamNames };
   for (const [bodyKey, cfgKey] of [['goalies_per_team', 'goaliesPerTeam'], ['skaters_per_team', 'skatersPerTeam'], ['min_skaters', 'minSkaters']]) {
     const n = Number(body[bodyKey]);
     if (Number.isFinite(n) && n > 0) config[cfgKey] = n;
   }
 
+  // Season-level min/max (headcount only): required whenever THIS
+  // publish call is explicitly turning a season's OWN structure to
+  // 'headcount' (there's no other source to fall back to -- same
+  // requirement handleLeagueCreate already has for a headcount league
+  // at signup). When the season instead just inherits an already-
+  // headcount league's default (no explicit team_structure override in
+  // this request at all -- the pre-existing shape of this call), this
+  // branch is intentionally NOT reached, so a plain re-publish with
+  // only {season_name} keeps behaving exactly as it did before this
+  // task (see this function's own top comment).
+  if (seasonTeamStructure === 'headcount') {
+    const minP = Number(body.min_players);
+    const maxP = Number(body.max_players);
+    if (!Number.isFinite(minP) || !Number.isFinite(maxP) || minP < 1) {
+      return Response.json({ ok: false, error: 'A minimum and maximum player count are required.', errorKey: 'HEADCOUNT_LIMITS_REQUIRED' }, { status: 400 });
+    }
+    if (maxP < minP) {
+      return Response.json({ ok: false, error: 'The maximum must be at least the minimum.', errorKey: 'HEADCOUNT_MAX_TOO_LOW' }, { status: 400 });
+    }
+    // Deliberately no goaliesPerTeam override here -- same reasoning as
+    // fallbackSeasonConfig's own comment in season_config.js (headcount
+    // rosters never expose is_goalie, so it's never consulted for this
+    // mode regardless of its value).
+    config.skatersPerTeam = maxP;
+    config.minSkaters = minP;
+  }
+
+  if (seasonTeamStructure) {
+    config.teamStructure = seasonTeamStructure;
+  }
+
   const newSeasonEntry = {
     name: seasonName,
     config,
-    standings: teamNames.map(team => ({ team, gp: 0, w: 0, l: 0, t: 0, pts: 0, gf: 0, ga: 0 })),
+    standings: seasonTeamNames.map(team => ({ team, gp: 0, w: 0, l: 0, t: 0, pts: 0, gf: 0, ga: 0 })),
     games: 0
   };
 
@@ -631,7 +700,7 @@ export async function handleLeagueSeasonPublish(req, env) {
 
   await putLeagueDataJson(env, leagueId, updated);
 
-  return Response.json({ ok: true, league_id: leagueId, current_season: seasonName, teams: teamNames, overwritten });
+  return Response.json({ ok: true, league_id: leagueId, current_season: seasonName, teams: seasonTeamNames, team_structure: effectiveStructure, overwritten });
 }
 
 /* ---------- league URL slugs (Part 2, overnight follow-up task) ----------
