@@ -35,12 +35,18 @@
  * I18N_RECAP dict already uses elsewhere in this app (e.g.
  * "Emails successfully sent to {count} players!").
  */
+// Voice pass (design system Part 6): tutoiement throughout, matching
+// every rebuilt page's own copy -- this dict is embedded only on the
+// new product's pages (signup, login, dashboard, roster, schedule,
+// event status, RSVP, public page), never on SMBHL's own /rsvp (see
+// this file's own class comment above, and the dedicated isolation
+// test that proves it).
 export const ERROR_I18N = {
-  INVALID_EMAIL: { fr: 'Veuillez entrer un courriel valide.', en: 'Please enter a valid email address.' },
-  WEAK_PASSWORD: { fr: 'Le mot de passe doit contenir au moins 8 caractères.', en: 'Password must be at least 8 characters.' },
-  RATE_LIMITED_SIGNUP: { fr: 'Trop de tentatives de création de compte depuis ce réseau. Veuillez réessayer plus tard.', en: 'Too many signup attempts from this network. Please try again later.' },
-  RATE_LIMITED_LOGIN: { fr: 'Trop de tentatives de connexion depuis ce réseau. Veuillez réessayer plus tard.', en: 'Too many login attempts from this network. Please try again later.' },
-  RATE_LIMITED_RESET: { fr: 'Trop de tentatives de réinitialisation depuis ce réseau. Veuillez réessayer plus tard.', en: 'Too many reset attempts from this network. Please try again later.' },
+  INVALID_EMAIL: { fr: 'Entre un courriel valide.', en: 'Please enter a valid email address.' },
+  WEAK_PASSWORD: { fr: 'Ton mot de passe doit contenir au moins 8 caractères.', en: 'Password must be at least 8 characters.' },
+  RATE_LIMITED_SIGNUP: { fr: 'Trop de tentatives de création de compte depuis ce réseau. Réessaie plus tard.', en: 'Too many signup attempts from this network. Please try again later.' },
+  RATE_LIMITED_LOGIN: { fr: 'Trop de tentatives de connexion depuis ce réseau. Réessaie plus tard.', en: 'Too many login attempts from this network. Please try again later.' },
+  RATE_LIMITED_RESET: { fr: 'Trop de tentatives de réinitialisation depuis ce réseau. Réessaie plus tard.', en: 'Too many reset attempts from this network. Please try again later.' },
   EMAIL_EXISTS: { fr: 'Un compte avec ce courriel existe déjà.', en: 'An account with this email already exists.' },
   INVALID_CREDENTIALS: { fr: 'Courriel ou mot de passe invalide.', en: 'Invalid email or password.' },
   MISSING_TOKEN: { fr: 'Jeton manquant.', en: 'Missing token' },
@@ -52,7 +58,7 @@ export const ERROR_I18N = {
   LINK_INVALID: { fr: 'Ce lien est invalide.', en: 'This link is invalid.' },
 
   LEAGUE_DEACTIVATED: { fr: 'Cette ligue a été désactivée.', en: 'This league has been deactivated.' },
-  LEAGUE_NO_ACCESS: { fr: "Vous n'avez pas accès à cette ligue.", en: 'You do not have access to this league.' },
+  LEAGUE_NO_ACCESS: { fr: "Tu n'as pas accès à cette ligue.", en: 'You do not have access to this league.' },
   NO_LEAGUE_FOUND: { fr: 'Aucune ligue trouvée pour ce compte.', en: 'No league found for this account.' },
   // Deliberately generic here (never names SMBHL), even though the raw
   // server `error` field still does (unchanged, for logs/API
@@ -65,13 +71,13 @@ export const ERROR_I18N = {
   FULL_NAME_REQUIRED: { fr: 'Le nom complet (prénom et nom) est requis.', en: 'Full name (first and last) is required.' },
   NAME_TOO_LONG: { fr: 'Le nom est trop long.', en: 'Name is too long.' },
   INVALID_ROLE: { fr: 'Le rôle doit être régulier, sub joueur ou sub gardien.', en: 'role must be roster, sub_skater, or sub_goalie.' },
-  CONTACT_EMAIL_EXISTS: { fr: 'Un contact avec ce courriel existe déjà dans votre ligue.', en: 'A contact with this email already exists in your league.' },
+  CONTACT_EMAIL_EXISTS: { fr: 'Un contact avec ce courriel existe déjà dans ta ligue.', en: 'A contact with this email already exists in your league.' },
   ROUTE_BLOCKED_EVENTS: { fr: 'Cette route ne peut pas créer de matchs pour cette ligue.', en: 'This route cannot create events for this league.' },
   DATE_REQUIRED: { fr: 'La date est requise, au format AAAA-MM-JJ.', en: 'date is required, in YYYY-MM-DD format.' },
   START_TIME_FORMAT: { fr: "L'heure de début doit être au format HH:MM.", en: 'start_time must be in HH:MM format.' },
   END_TIME_FORMAT: { fr: "L'heure de fin doit être au format HH:MM.", en: 'end_time must be in HH:MM format.' },
-  SEASON_REQUIRED: { fr: "Une saison est requise (publiez d'abord une saison via /league/season/publish, ou spécifiez-en une).", en: 'season is required (publish a season first via /league/season/publish, or pass one explicitly).' },
-  EVENT_DATE_EXISTS: { fr: 'Un match existe déjà à cette date dans votre ligue.', en: 'An event already exists for this date in your league.' },
+  SEASON_REQUIRED: { fr: "Une saison est requise (publie d'abord une saison via /league/season/publish, ou spécifies-en une).", en: 'season is required (publish a season first via /league/season/publish, or pass one explicitly).' },
+  EVENT_DATE_EXISTS: { fr: 'Un match existe déjà à cette date dans ta ligue.', en: 'An event already exists for this date in your league.' },
   SEASON_NAME_REQUIRED: { fr: 'Le nom de la saison est requis.', en: 'season_name is required.' },
   ROUTE_BLOCKED_PUBLISH: { fr: 'Cette route ne peut pas publier dans les données de cette ligue.', en: "This route cannot publish to this league's data." },
   NO_TEAM_NAMES: { fr: "Cette ligue n'a pas encore de noms d'équipe enregistrés.", en: 'This league has no team names on file yet.' },
@@ -80,11 +86,11 @@ export const ERROR_I18N = {
   LEAGUE_NOT_FOUND: { fr: 'Ligue introuvable.', en: 'League not found.' },
   ALREADY_ADMIN: { fr: 'Cette personne est déjà administratrice de cette ligue.', en: 'This person is already an admin of this league.' },
   LEAGUE_GONE: { fr: "Cette ligue n'existe plus.", en: 'League no longer exists.' },
-  LOGIN_AS_EMAIL: { fr: 'Veuillez vous connecter en tant que {email} pour accepter cette invitation.', en: 'Please log in as {email} to accept this invite.' },
+  LOGIN_AS_EMAIL: { fr: 'Connecte-toi en tant que {email} pour accepter cette invitation.', en: 'Please log in as {email} to accept this invite.' },
   CONFIRM_NAME_MISMATCH: { fr: 'Le texte de confirmation ne correspond pas au nom de la ligue.', en: 'Confirmation text does not match the league name.' },
   SLUG_INVALID_FORMAT: { fr: "L'adresse doit contenir seulement des lettres minuscules, des chiffres et des traits d'union.", en: 'The URL must contain only lowercase letters, numbers, and hyphens.' },
   SLUG_TAKEN: { fr: 'Cette adresse est déjà utilisée par une autre ligue.', en: 'This URL is already used by another league.' },
-  SLUG_RESERVED: { fr: 'Cette adresse est réservée. Veuillez en choisir une autre.', en: 'This URL is reserved. Please choose another one.' },
+  SLUG_RESERVED: { fr: 'Cette adresse est réservée. Choisis-en une autre.', en: 'This URL is reserved. Please choose another one.' },
   INVALID_LANGUAGE_MODE: { fr: "La langue doit être 'les deux', 'français' ou 'anglais'.", en: "Language must be 'both', 'fr', or 'en'." },
 
   // Client-side-only validation keys (no server round trip needed for
@@ -92,11 +98,11 @@ export const ERROR_I18N = {
   // kept in this same shared dictionary so there's exactly one source
   // of truth, not a second one-off translation system for these).
   EMAIL_REQUIRED_CLIENT: { fr: 'Le courriel est requis.', en: 'Email is required.' },
-  EMAIL_PASSWORD_REQUIRED_CLIENT: { fr: 'Veuillez entrer votre courriel et mot de passe.', en: 'Please enter your email and password.' },
+  EMAIL_PASSWORD_REQUIRED_CLIENT: { fr: 'Entre ton courriel et ton mot de passe.', en: 'Please enter your email and password.' },
   LEAGUE_NAME_REQUIRED_CLIENT: { fr: 'Le nom de la ligue est requis.', en: 'League name is required.' },
-  MIN_TEAM_NAMES_CLIENT: { fr: "Veuillez entrer au moins 2 noms d'équipe.", en: 'Please enter at least 2 team names.' },
+  MIN_TEAM_NAMES_CLIENT: { fr: "Entre au moins 2 noms d'équipe.", en: 'Please enter at least 2 team names.' },
   NAME_REQUIRED_CLIENT: { fr: 'Le nom est requis.', en: 'Name is required.' },
   DATE_REQUIRED_CLIENT: { fr: 'La date est requise.', en: 'Date is required.' },
   SEASON_NAME_REQUIRED_CLIENT: { fr: 'Le nom de la saison est requis.', en: 'Season name is required.' },
-  NETWORK_ERROR: { fr: 'Erreur réseau. Veuillez réessayer.', en: 'Network error. Please try again.' }
+  NETWORK_ERROR: { fr: 'Erreur réseau. Réessaie.', en: 'Network error. Please try again.' }
 };

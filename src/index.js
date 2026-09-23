@@ -9810,7 +9810,7 @@ async function leagueRsvpGet(req, env, url) {
       poweredBy: 'Propulsé par Notre Ligue'
     } : {
       question: `${firstName}, are you playing${dayLabel ? ' ' + dayLabel.toLowerCase() : ''}?`,
-      btnIn: "I'm in", btnOut: "I can't",
+      btnIn: "I'm in", btnOut: "Can't make it",
       lockedMsg: 'This event is no longer accepting responses.',
       doneInTitle: "Got it, you're in.",
       doneInBody: `See you ${dayLabel || 'then'}${ev.start_time ? ' at ' + ev.start_time : ''}${ev.venue ? ' at ' + ev.venue : ''}.`,

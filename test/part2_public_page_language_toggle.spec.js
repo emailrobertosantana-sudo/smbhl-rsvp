@@ -129,7 +129,7 @@ describe('Part 2: real FR/EN toggle on every public-facing page', () => {
 
     const res = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`);
     const html = await res.text();
-    assertRealToggleNl(html, ['are you playing', "I'm in", "I can't"]);
+    assertRealToggleNl(html, ['are you playing', "I'm in", "Can't make it"]);
   });
 
   it('the /league/public page has a real, working toggle with genuine English content', async () => {
