@@ -2158,14 +2158,21 @@ async function submitContact() {
   });
 }
 
-// UI DECISION (Part T/U): the per-event "invite subs" button lives ONLY on
-// the detail page (handleLeagueEventDetailPage below), not duplicated here
-// in the list. The list page's "view status" link is enough to get there;
-// showing the invite button here too would mean either an N+1 status call
-// per row just to know which teams/needs are short, or a bare "invite
-// subs" button with no team/need context to act on. The detail page
-// already has that per-team breakdown, so it's the one place an admin can
-// make an informed choice about which team/need to invite for.
+// Design system Part 3: schedule + event status, matching
+// components/ScreenSchedule/preview.html and
+// components/ScreenEventStatus/preview.html.
+//
+// ScreenSchedule's own reference shows two-team "vs" fixtures with a
+// home/away picker -- a different game model (scheduled matchups
+// between two teams) than this app actually has (one shared pickup
+// game per Sunday, with a roster split across N teams for that single
+// game). Rather than force a fixture UI onto data that has no concept
+// of "home team" / "away team", this keeps the real per-Sunday event
+// list -- day-grouped nl-card rows, a real state Badge -- and moves
+// the per-team "vs"-style breakdown (confirmed/open/short, SpotMeter,
+// invite-subs) to the event status/detail page below, which is where
+// ScreenEventStatus's own reference genuinely does match this app's
+// real data model (per-team shortage, not fixtures).
 async function handleLeagueSchedulePage(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
@@ -2175,115 +2182,126 @@ async function handleLeagueSchedulePage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
+  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
   const events = (await env.DB.prepare(
     'SELECT id, season, week, date, venue, state, start_time, end_time FROM events WHERE league_id = ? ORDER BY date DESC, week DESC'
   ).bind(leagueId).all()).results || [];
-  // Part 2 fix: see handleDashboardPage's comment for the full story.
-  const leagueCfg = (await getLeagueSeasonConfig(env, leagueId)).league;
-
-  const STATE_LABEL = { open: 'Ouvert', closed: 'Fermé', cancelled: 'Annulé' };
-  const STATE_KEY = { open: 'stateOpen', closed: 'stateClosed', cancelled: 'stateCancelled' };
-  const scheduleHtml = events.length
-    ? `<table>${events.map(ev => `<tr><td>${esc(ev.date)}${ev.venue ? `<span class="by">${esc(ev.venue)}</span>` : ''}${ev.start_time ? `<span class="by">${esc(ev.start_time)}</span>` : ''}</td><td class="s"><a href="/league/events/detail?e=${encodeURIComponent(ev.id)}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc(STATE_LABEL[ev.state] || ev.state)}</a></td></tr>`).join('')}</table>`
-    : `<p class="state" style="margin:0;" data-i18n="noEvents">Aucun match pour l'instant.</p>`;
 
   const I18N_SCHEDULE = {
     fr: {
-      title: 'Calendrier', backLink: '&larr; Tableau de bord', createEvent: 'Créer un match',
-      date: 'Date', startOpt: 'Heure de début <i>(optionnel)</i>', endOpt: 'Heure de fin <i>(optionnel)</i>',
-      venueOpt: 'Lieu <i>(optionnel)</i>', createBtn: 'CRÉER', events: 'Matchs', noEvents: "Aucun match pour l'instant.",
+      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', logout: 'Se déconnecter',
+      title: 'Horaire', createEvent: 'Créer un match',
+      date: 'Date', startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
+      venueOpt: 'Lieu (optionnel)', createBtn: 'Créer le match', cancel: 'Annuler',
+      noEvents: "Aucun match pour l'instant.",
       stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé'
     },
     en: {
-      title: 'Schedule', backLink: '&larr; Dashboard', createEvent: 'Create an event',
-      date: 'Date', startOpt: 'Start time <i>(optional)</i>', endOpt: 'End time <i>(optional)</i>',
-      venueOpt: 'Venue <i>(optional)</i>', createBtn: 'CREATE', events: 'Events', noEvents: 'No events yet.',
+      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
+      title: 'Schedule', createEvent: 'Create an event',
+      date: 'Date', startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
+      venueOpt: 'Venue (optional)', createBtn: 'Create the event', cancel: 'Cancel',
+      noEvents: 'No events yet.',
       stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled'
     }
   };
 
-  return new Response(page('Calendrier', `
-  <h1 data-i18n="title">Calendrier</h1>
-  <p class="state" style="margin:0 0 16px;"><a href="/dashboard" data-i18n="backLink">&larr; Tableau de bord</a></p>
+  const STATE_KEY = { open: 'stateOpen', closed: 'stateClosed', cancelled: 'stateCancelled' };
+  const STATE_BADGE_TONE = { open: 'pending', closed: 'sub', cancelled: 'out' };
 
-  <div class="card">
-    <h2 data-i18n="createEvent">Créer un match</h2>
-    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="date">Date</span>
-      <input type="date" id="e_date" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="startOpt">Heure de début <i>(optionnel)</i></span>
-      <input type="time" id="e_start" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="endOpt">Heure de fin <i>(optionnel)</i></span>
-      <input type="time" id="e_end" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <label style="display:block;margin-bottom:16px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="venueOpt">Lieu <i>(optionnel)</i></span>
-      <input type="text" id="e_venue" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <div class="btns">
-      <button type="button" class="btn" id="e_submit" data-i18n="createBtn" onclick="submitEvent()">CRÉER</button>
-    </div>
+  const { header, tabbar } = dashChrome(leagueRow.name, 'schedule');
+
+  const rowsHtml = events.length
+    ? events.map(ev => `<a class="nl-card sc-game" href="/league/events/detail?e=${encodeURIComponent(ev.id)}">
+      <div class="sc-when"><b>${esc(ev.date)}</b>${ev.start_time ? `<span>${esc(ev.start_time)}</span>` : ''}</div>
+      <div class="sc-venue">${ev.venue ? esc(ev.venue) : ''}</div>
+      <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
+      <span class="sc-chevron">&rsaquo;</span>
+    </a>`).join('')
+    : `<p class="nl-help" data-i18n="noEvents">Aucun match pour l'instant.</p>`;
+
+  const bodyHtml = `${dashStyles()}<style>
+  .sc-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+  .sc-top { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--space-3); flex-wrap: wrap; }
+  .sc-top h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; }
+  .sc-list { display: flex; flex-direction: column; gap: var(--space-2); }
+  .sc-game { display: grid; grid-template-columns: 96px 1fr auto auto; align-items: center; gap: var(--space-4); min-height: 64px; text-decoration: none; color: inherit; padding: var(--space-3) var(--space-4); }
+  .sc-when b { display: block; font: 700 18px/22px var(--font-display); font-stretch: 118%; }
+  .sc-when span { font-size: 13px; color: var(--ink-muted); }
+  .sc-venue { font-size: 14px; color: var(--ink-muted); }
+  .sc-chevron { color: var(--ink-muted); font-size: 20px; }
+  .sc-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); max-width: 420px; }
+  .sc-panel.open { display: flex; }
+  .sc-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
+  .sc-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+  @media (min-width: 900px) { .sc-panel { display: flex; } }
+  @media (max-width: 640px) { .sc-game { grid-template-columns: 72px 1fr auto; } .sc-game .sc-chevron { display: none; } }
+</style>${header}
+<main class="dash-main sc-main">
+  <div class="sc-top">
+    <h1 data-i18n="title">Horaire</h1>
+    <button type="button" class="nl-btn nl-btn--primary" onclick="toggleSchedulePanel()" data-i18n="createEvent">Créer un match</button>
   </div>
-
-  <div class="card">
-    <h2 data-i18n="events">Matchs</h2>
-    <div id="scheduleList">${scheduleHtml}</div>
+  <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);">
+    <div class="sc-list" id="scheduleList">${rowsHtml}</div>
+    <aside class="sc-panel" id="sc_panel" aria-label="Créer un match">
+      <h2 data-i18n="createEvent">Créer un match</h2>
+      <div id="formErr" class="nl-error" style="display:none"></div>
+      <div class="nl-field">
+        <label class="nl-label" for="e_date" data-i18n="date">Date</label>
+        <input class="nl-input" id="e_date" type="date" required>
+      </div>
+      <div class="sc-two">
+        <div class="nl-field">
+          <label class="nl-label" for="e_start" data-i18n="startOpt">Heure de début (optionnel)</label>
+          <input class="nl-input" id="e_start" type="time">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="e_end" data-i18n="endOpt">Heure de fin (optionnel)</label>
+          <input class="nl-input" id="e_end" type="time">
+        </div>
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="e_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
+        <input class="nl-input" id="e_venue" type="text">
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="e_submit" data-i18n="createBtn" onclick="submitEvent()">Créer le match</button>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleSchedulePanel()">Annuler</button>
+      </div>
+    </aside>
   </div>
-<script>
-window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
-var I18N_SCHEDULE = ${JSON.stringify(I18N_SCHEDULE)};
-function applyLanguage(lang) {
-  var dict = I18N_SCHEDULE[lang] || I18N_SCHEDULE.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (k && dict[k] != null) el.innerHTML = dict[k];
-  });
-}
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+</main>
+${tabbar}`;
 
-function showErr(msg) {
-  const el = document.getElementById('formErr');
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-
+  const script = `
+${nlAuthScript(I18N_SCHEDULE)}
+function toggleSchedulePanel() { document.getElementById('sc_panel').classList.toggle('open'); }
+function showErr(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 async function submitEvent() {
   document.getElementById('formErr').style.display = 'none';
-  const date = document.getElementById('e_date').value;
-  const start_time = document.getElementById('e_start').value;
-  const end_time = document.getElementById('e_end').value;
-  const venue = document.getElementById('e_venue').value.trim();
-  if (!date) {
-    showErr(window.__errorText('DATE_REQUIRED_CLIENT'));
-    return;
-  }
-  const btn = document.getElementById('e_submit');
+  var date = document.getElementById('e_date').value;
+  var start_time = document.getElementById('e_start').value;
+  var end_time = document.getElementById('e_end').value;
+  var venue = document.getElementById('e_venue').value.trim();
+  if (!date) { showErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
+  var btn = document.getElementById('e_submit');
   btn.disabled = true;
   try {
-    const res = await fetch('/league/events', {
+    var res = await fetch('/league/events', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venue || undefined })
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
-      showErr(window.__errorText(data.errorKey, data.error));
-      btn.disabled = false;
-      return;
-    }
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
     window.location.reload();
   } catch (e) {
-    showErr(window.__errorText('NETWORK_ERROR'));
-    btn.disabled = false;
+    showErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
   }
-}
-</script>`, '', leagueCfg), {
+}`;
+
+  return new Response(nlDocument({ title: `Horaire — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -2296,6 +2314,15 @@ async function submitEvent() {
 // admin-initiated trigger — distinct from the automatic self-out trigger
 // a player's own OUT can cause (Part R of the backend task), same
 // POST /league/events/invite-subs route either way.
+//
+// This is the one screen where ScreenEventStatus/preview.html's own
+// reference genuinely matches this app's real data model (per-team
+// shortage on a single shared game, not two-team fixtures) -- rebuilt
+// close to it: real Badge for short/complete, a real SpotMeter, and the
+// same roster-with-IN/OUT-override list, now with per-need invite
+// buttons (the backend distinguishes skater vs goalie shortage; the
+// reference's one combined button doesn't, so both are kept, shown only
+// when that specific need is actually open).
 async function handleLeagueEventDetailPage(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
@@ -2305,49 +2332,72 @@ async function handleLeagueEventDetailPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
+  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
   const eventId = url.searchParams.get('e');
   const ev = eventId ? await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
     .bind(eventId, leagueId).first() : null;
+
+  const { header, tabbar } = dashChrome(leagueRow.name, 'schedule');
+
   if (!ev) {
-    // Part 2 fix: see handleDashboardPage's comment for the full story.
-    const notFoundLeagueCfg = (await getLeagueSeasonConfig(env, leagueId)).league;
-    return new Response(page('Match introuvable', `
-      <h1 data-i18n="notFound">Match introuvable</h1>
-      <p class="state"><a href="/league/schedule" data-i18n="backToSchedule">&larr; Calendrier</a></p>
-<script>
-var I18N_DETAIL_404 = { fr: { notFound: 'Match introuvable', backToSchedule: '&larr; Calendrier' }, en: { notFound: 'Event not found', backToSchedule: '&larr; Schedule' } };
-function applyLanguage(lang) {
-  var dict = I18N_DETAIL_404[lang] || I18N_DETAIL_404.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (k && dict[k] != null) el.innerHTML = dict[k];
-  });
-}
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-</script>
-    `, '', notFoundLeagueCfg), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    const I18N_404 = {
+      fr: { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', logout: 'Se déconnecter', notFound: 'Match introuvable', backToSchedule: 'Horaire' },
+      en: { navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out', notFound: 'Event not found', backToSchedule: 'Schedule' }
+    };
+    const bodyHtml404 = `${dashStyles()}${header}
+<main class="dash-main">
+  <p class="nl-help"><a href="/league/schedule" data-i18n="backToSchedule">&lsaquo; Horaire</a></p>
+  <h1 data-i18n="notFound">Match introuvable</h1>
+</main>
+${tabbar}`;
+    return new Response(nlDocument({ title: `Match introuvable — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml404 + `<script>${nlAuthScript(I18N_404)}</script>` }), {
+      status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+    });
   }
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  const teamNames = getTeamNames(cfg);
+  const totalTarget = (cfg.skatersPerTeam || 0) + (cfg.goaliesPerTeam || 0);
+
+  const I18N_DETAIL = {
+    fr: {
+      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', logout: 'Se déconnecter',
+      backToSchedule: 'Horaire', short: 'Manque', complete: 'Complet',
+      confirmed: 'confirmés', openSpots: 'places libres', noReply: 'sans réponse',
+      inviteGoalie: 'Inviter un gardien', inviteSkater: 'Inviter des joueurs',
+      noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.',
+      statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu',
+      setIn: 'IN', setOut: 'OUT'
+    },
+    en: {
+      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
+      backToSchedule: 'Schedule', short: 'Short', complete: 'Full',
+      confirmed: 'confirmed', openSpots: 'open spots', noReply: 'no reply',
+      inviteGoalie: 'Invite a goalie', inviteSkater: 'Invite players',
+      noPlayersOnTeam: 'No players assigned to this team.',
+      statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply',
+      setIn: 'IN', setOut: 'OUT'
+    }
+  };
+  const BADGE_ICON_CHECK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 10.5l4 4 8-9"/></svg>';
+  const BADGE_ICON_ALERT = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 3l8 14H2z"/><path d="M10 8v4M10 14.5v.5"/></svg>';
+  const BADGE_ICON_MINUS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 10h10"/></svg>';
+  const BADGE_ICON_CLOCK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg>';
+  const STATUS_BADGE = {
+    in: `<span class="nl-badge nl-badge--in">${BADGE_ICON_CHECK}<span data-i18n="statusIn">Je joue</span></span>`,
+    out: `<span class="nl-badge nl-badge--out">${BADGE_ICON_MINUS}<span data-i18n="statusOut">Absent</span></span>`,
+    pending: `<span class="nl-badge nl-badge--pending">${BADGE_ICON_CLOCK}<span data-i18n="statusPending">Pas répondu</span></span>`
+  };
+
   const teamCards = [];
-  for (const team of getTeamNames(cfg)) {
+  for (let i = 0; i < teamNames.length; i++) {
+    const team = teamNames[i];
     const st = await teamState(env.DB, ev.id, team, cfg);
     const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
     const openSkaters = await openSpots(env.DB, ev.id, team, 'skater', cfg);
-    const inviteButtons = [];
-    if (openGoalies > 0) inviteButtons.push(`<button type="button" class="mini" data-i18n="inviteGoalie" onclick="inviteSubs('${esc(team)}','goalie',this)">INVITER GARDIEN</button>`);
-    if (openSkaters > 0) inviteButtons.push(`<button type="button" class="mini" data-i18n="inviteSkater" onclick="inviteSubs('${esc(team)}','skater',this)">INVITER JOUEUR</button>`);
+    const confirmed = st.skaters + st.goalies;
+    const meterSpots = Math.min(14, Math.max(totalTarget, confirmed));
 
-    // Part 3: every contact rostered to this team (preferred_team = team),
-    // LEFT JOINed against this event's own rsvp row -- so a player who
-    // hasn't answered yet still shows up as "no response" (COALESCE to
-    // 'pending', the same default status a real rsvp row would have), not
-    // silently omitted. The admin can click IN/OUT for any of them, which
-    // calls the existing session-gated POST /league/rsvp/admin route
-    // (already wired to writeLeagueRsvpStatus + the same
-    // maybeInviteSubsForShortage shortage/duplicate-guard logic the
-    // player-self-out path uses -- no separate logic here).
     const rosterRows = (await env.DB.prepare(
       `SELECT c.player_id, c.name, COALESCE(r.status, 'pending') AS status
          FROM contacts c
@@ -2355,117 +2405,122 @@ window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.deta
         WHERE c.league_id = ? AND c.preferred_team = ?
         ORDER BY c.name`
     ).bind(ev.id, leagueId, team).all()).results || [];
+    const pendingCount = rosterRows.filter(p => p.status === 'pending').length;
+
+    const inviteButtons = [];
+    if (openGoalies > 0) inviteButtons.push(`<button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="inviteGoalie" onclick="inviteSubs('${esc(team)}','goalie',this)">Inviter un gardien</button>`);
+    if (openSkaters > 0) inviteButtons.push(`<button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="inviteSkater" onclick="inviteSubs('${esc(team)}','skater',this)">Inviter des joueurs</button>`);
+
     const rosterListHtml = rosterRows.length
-      ? `<table style="margin-top:12px;">${rosterRows.map(p => `<tr><td>${esc(p.name)}</td><td class="s">
-          <span class="${p.status === 'in' ? 'in' : p.status === 'out' ? 'out' : 'pend'}" style="margin-right:8px;">${p.status === 'in' ? 'IN' : p.status === 'out' ? 'OUT' : 'EN ATTENTE / PENDING'}</span>
-          <button type="button" class="mini in ${p.status === 'in' ? 'on' : ''}" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
-          <button type="button" class="mini out ${p.status === 'out' ? 'on' : ''}" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
-        </td></tr>`).join('')}</table>`
-      : `<p class="state" style="margin:12px 0 0;" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
+      ? rosterRows.map(p => `<div class="ev-p">
+          <span>${esc(p.name)}</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            ${STATUS_BADGE[p.status] || STATUS_BADGE.pending}
+            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
+            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
+          </div>
+        </div>`).join('')
+      : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
 
     teamCards.push(`
-    <div class="card">
-      <h2>${esc(team)}${st.short ? ` <span class="short" data-i18n="shortBadge">— court</span>` : ''}</h2>
-      <ul class="counts">
-        <li><b>${st.skaters}</b><span data-i18n="skatersConfirmed">Joueurs confirmés</span></li>
-        <li><b>${st.goalies}</b><span data-i18n="goaliesConfirmed">Gardiens confirmés</span></li>
-        <li><b>${openSkaters}</b><span data-i18n="openSkaterSpots">Places joueurs ouvertes</span></li>
-        <li><b>${openGoalies}</b><span data-i18n="openGoalieSpots">Places gardien ouvertes</span></li>
-      </ul>
-      ${inviteButtons.length ? `<div class="btns" style="margin-top:12px;">${inviteButtons.join('')}</div>` : ''}
-      <p class="inviteMsg state" style="display:none;margin-top:8px;"></p>
-      ${rosterListHtml}
-    </div>`);
+    <section class="nl-card nl-card--pad-lg${st.short ? ' nl-card--short' : ''} ev-team">
+      <div class="ev-th">
+        <h2><span class="nl-dot" style="background:${ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length]}"></span>${esc(team)}</h2>
+        ${st.short
+          ? `<span class="nl-badge nl-badge--short">${BADGE_ICON_ALERT}<span data-i18n="short">Manque</span> ${Math.max(openGoalies, 0) + Math.max(openSkaters, 0)}</span>`
+          : `<span class="nl-badge nl-badge--in">${BADGE_ICON_CHECK}<span data-i18n="complete">Complet</span></span>`}
+      </div>
+      <div class="ev-nums">
+        <div><span class="stat tnum">${confirmed}</span><span data-i18n="confirmed">confirmés</span></div>
+        <div><span class="stat tnum">${openSkaters + openGoalies}</span><span data-i18n="openSpots">places libres</span></div>
+        <div><span class="stat tnum">${pendingCount}</span><span data-i18n="noReply">sans réponse</span></div>
+      </div>
+      <div class="nl-meter">${Array.from({ length: meterSpots }, (_, s) => `<i class="${s < confirmed ? 'in' : 'open'}"></i>`).join('')}</div>
+      ${inviteButtons.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${inviteButtons.join('')}</div>` : ''}
+      <p class="inviteMsg nl-help" style="display:none;"></p>
+      <div class="ev-ppl">${rosterListHtml}</div>
+    </section>`);
   }
 
-  const I18N_DETAIL = {
-    fr: {
-      backToSchedule: '&larr; Calendrier', inviteGoalie: 'INVITER GARDIEN', inviteSkater: 'INVITER JOUEUR',
-      noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.', shortBadge: '— court',
-      skatersConfirmed: 'Joueurs confirmés', goaliesConfirmed: 'Gardiens confirmés',
-      openSkaterSpots: 'Places joueurs ouvertes', openGoalieSpots: 'Places gardien ouvertes'
-    },
-    en: {
-      backToSchedule: '&larr; Schedule', inviteGoalie: 'INVITE GOALIE', inviteSkater: 'INVITE SKATER',
-      noPlayersOnTeam: 'No players assigned to this team.', shortBadge: '— short',
-      skatersConfirmed: 'Skaters confirmed', goaliesConfirmed: 'Goalies confirmed',
-      openSkaterSpots: 'Open skater spots', openGoalieSpots: 'Open goalie spots'
-    }
-  };
+  const bodyHtml = `${dashStyles()}<style>
+  .ev-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+  .ev-main h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; margin-top: 4px; }
+  .ev-teams { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); }
+  .ev-team { display: flex; flex-direction: column; gap: var(--space-3); }
+  .ev-th { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-3); }
+  .ev-th h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; display: flex; align-items: center; gap: 10px; }
+  .ev-nums { display: flex; gap: var(--space-5); }
+  .ev-nums div { display: flex; flex-direction: column; }
+  .ev-nums span:not(.stat) { font-size: 13px; color: var(--ink-muted); }
+  .ev-ppl { display: flex; flex-direction: column; }
+  .ev-p { display: flex; align-items: center; justify-content: space-between; min-height: 44px; border-top: 1px solid var(--line); font-size: 15px; gap: 8px; flex-wrap: wrap; padding: 6px 0; }
+  @media (max-width: 900px) { .ev-teams { grid-template-columns: 1fr; } }
+</style>${header}
+<main class="dash-main ev-main">
+  <div>
+    <p class="nl-help" style="margin:0"><a href="/league/schedule" data-i18n="backToSchedule">&lsaquo; Horaire</a></p>
+    <h1>${esc(ev.date)}${ev.start_time ? ' · ' + esc(ev.start_time) : ''}</h1>
+    <p class="nl-help" style="margin-top:4px">${ev.venue ? esc(ev.venue) : ''}</p>
+  </div>
+  <div class="ev-teams">${teamCards.join('')}</div>
+</main>
+${tabbar}`;
 
-  return new Response(page('Statut du match', `
-  <h1>${esc(ev.date)}<span class="en"></span></h1>
-  <p class="when">${ev.venue ? esc(ev.venue) : ''}${ev.start_time ? ' · ' + esc(ev.start_time) : ''} · ${esc(ev.state)}</p>
-  <p class="state" style="margin:0 0 16px;"><a href="/league/schedule" data-i18n="backToSchedule">&larr; Calendrier</a></p>
-  ${teamCards.join('')}
-<script>
-var I18N_DETAIL = ${JSON.stringify(I18N_DETAIL)};
-function applyLanguage(lang) {
-  var dict = I18N_DETAIL[lang] || I18N_DETAIL.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (k && dict[k] != null) el.innerHTML = dict[k];
-  });
-}
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-
+  const script = `
+${nlAuthScript(I18N_DETAIL)}
 async function inviteSubs(team, need, btn) {
-  const card = btn.closest('.card');
-  const msg = card.querySelector('.inviteMsg');
+  var card = btn.closest('.ev-team');
+  var msg = card.querySelector('.inviteMsg');
   btn.disabled = true;
   try {
-    const res = await fetch('/league/events/invite-subs', {
+    var res = await fetch('/league/events/invite-subs', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, team: team, need: need })
     });
-    const data = await res.json().catch(() => ({}));
+    var data = await res.json().catch(function() { return {}; });
+    var isFr = (window.__currentLang || 'fr') === 'fr';
     if (!res.ok || !data.ok) {
-      msg.style.color = 'var(--red)';
-      msg.textContent = data.error || "Échec de l'invitation. / Failed to invite.";
+      msg.textContent = window.__errorText(data.errorKey, data.error);
     } else {
-      msg.style.color = 'var(--soft)';
       msg.textContent = data.invited > 0
-        ? (data.invited + ' substitut(s) invité(s). / ' + data.invited + ' sub(s) invited.')
-        : "Aucun substitut disponible pour l'instant. / No subs available right now.";
+        ? (isFr ? (data.invited + ' remplaçant(s) invité(s).') : (data.invited + ' sub(s) invited.'))
+        : (isFr ? "Aucun remplaçant disponible pour l'instant." : 'No subs available right now.');
     }
   } catch (e) {
-    msg.style.color = 'var(--red)';
-    msg.textContent = 'Erreur réseau. / Network error.';
+    msg.textContent = window.__errorText('NETWORK_ERROR');
   }
   msg.style.display = 'block';
   btn.disabled = false;
 }
-
 async function setPlayerStatus(playerId, status, btn) {
   btn.disabled = true;
   try {
-    const res = await fetch('/league/rsvp/admin', {
+    var res = await fetch('/league/rsvp/admin', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, player_id: playerId, status: status })
     });
-    const data = await res.json().catch(() => ({}));
+    var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {
-      alert(data.error || "Échec de la mise à jour du statut. / Failed to update status.");
+      alert(window.__errorText(data.errorKey, data.error));
       btn.disabled = false;
       return;
     }
-    // Server-rendered counts/roster list are the source of truth -- reload
-    // so both the per-player status and the aggregate shortage counts
-    // (which a status change can affect) stay in sync.
+    // Server-rendered counts/roster list are the source of truth --
+    // reload so both the per-player status and the aggregate shortage
+    // counts (which a status change can affect) stay in sync.
     window.location.reload();
   } catch (e) {
-    alert('Erreur réseau. / Network error.');
+    alert(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
   }
-}
-</script>`, '', cfg.league), {
+}`;
+
+  return new Response(nlDocument({ title: `${ev.date} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
-
 /* ---------- data helpers ---------- */
 
 async function getEvent(db, id) {

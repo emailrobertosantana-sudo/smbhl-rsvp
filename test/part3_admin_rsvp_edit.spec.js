@@ -94,7 +94,7 @@ describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
     const html = await res.text();
     expect(html).toContain('Otters Player A');
     expect(html).toContain('Otters Player B');
-    expect(html).toContain('EN ATTENTE / PENDING');
+    expect(html).toContain('Pas répondu');
     expect(html).toContain("setPlayerStatus('" + playerAId + "','in',this)");
     expect(html).toContain("setPlayerStatus('" + playerAId + "','out',this)");
   });

@@ -109,7 +109,7 @@ describe('UI task Part U: GET /league/events/detail', () => {
     expect(html).toContain('Falcons');
     expect(html).toContain('short'); // shortage indicator class/text
     expect(html).toContain('inviteSubs(');
-    expect(html).toContain('INVITER JOUEUR');
+    expect(html).toContain('Inviter des joueurs');
   });
 
   it('the invite button calls the real POST /league/events/invite-subs route, scoped to League A only', async () => {

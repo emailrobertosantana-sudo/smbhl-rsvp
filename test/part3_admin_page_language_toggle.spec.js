@@ -92,13 +92,13 @@ describe('Part 3: real FR/EN toggle on every session-authenticated admin page', 
     assertRealToggleNl(html, ['Add a player', 'Full name', 'Unassigned', 'No players yet.']);
   });
 
-  it('the schedule page has a real, working toggle with genuine English content', async () => {
+  it('the schedule page has a real, working toggle with genuine English content (design system, ScreenSchedule)', async () => {
     const res = await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } });
     const html = await res.text();
-    assertRealToggle(html, ['Create an event', 'No events yet.']);
+    assertRealToggleNl(html, ['Create an event', 'No events yet.']);
   });
 
-  it('the event-detail (status) page has a real, working toggle with genuine English content', async () => {
+  it('the event-detail (status) page has a real, working toggle with genuine English content (design system, ScreenEventStatus)', async () => {
     const contactRes = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Part 3 Player One', team: 'Otters' })
@@ -112,11 +112,7 @@ describe('Part 3: real FR/EN toggle on every session-authenticated admin page', 
 
     const res = await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } });
     const html = await res.text();
-    assertRealToggle(html, ['Skaters confirmed', 'Goalies confirmed', 'Open skater spots']);
-    // The existing, already-tested exact combined status string is
-    // deliberately preserved unchanged (see this task's own commit
-    // message for why), not converted to the toggle.
-    expect(html).toContain('EN ATTENTE / PENDING');
+    assertRealToggleNl(html, ['confirmed', 'open spots', 'no reply']);
   });
 
   it("SMBHL's own legacy ADMIN_KEY-gated admin page shell still renders correctly, untouched by this task (a separate, older system with its own pre-existing data-i18n mechanism)", async () => {

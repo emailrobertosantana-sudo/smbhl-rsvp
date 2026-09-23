@@ -95,14 +95,17 @@ describe('Part 2: league branding on session-based pages', () => {
   it('GET /league/schedule shows the real league name, not SMBHL', async () => {
     const res = await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } });
     const html = await res.text();
-    expect(html).toContain(`<title>Calendrier — ${LEAGUE_NAME}</title>`);
+    // Design system Part 3: "Calendrier" -> "Horaire" (the same term
+    // the nav/tabbar already use).
+    expect(html).toContain(`<title>Horaire — ${LEAGUE_NAME}</title>`);
     expect(html).not.toContain('SMBHL');
   });
 
   it('GET /league/events/detail shows the real league name, not SMBHL', async () => {
     const res = await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } });
     const html = await res.text();
-    expect(html).toContain(`<title>Statut du match — ${LEAGUE_NAME}</title>`);
+    // Design system Part 3: the event's own date, not a generic label.
+    expect(html).toContain(`<title>2026-12-13 — ${LEAGUE_NAME}</title>`);
     expect(html).not.toContain('SMBHL');
   });
 

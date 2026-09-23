@@ -238,7 +238,7 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       // player's (the goalie's) status to OUT directly from that page.
       const detailHtml = await (await SELF.fetch(`${BASE}/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
       expect(detailHtml).toContain('Canadiens Goalie One');
-      expect(detailHtml).toContain('EN ATTENTE / PENDING');
+      expect(detailHtml).toContain('Pas répondu');
 
       const { sentMails: adminMails, result: adminSetRes } = await withMailMock(async () =>
         SELF.fetch(`${BASE}/league/rsvp/admin`, {
