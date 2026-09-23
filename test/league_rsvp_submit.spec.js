@@ -16,6 +16,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -24,15 +32,16 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 async function computeToken(secret, message) {
@@ -43,7 +52,7 @@ async function computeToken(secret, message) {
 }
 
 describe('Part N: POST /league/rsvp', () => {
-  let leagueA, leagueB, cookieA, cookieB;
+  let leagueA, leagueB, cookieA, cookieB, csrfTokenA, csrfTokenB;
   let playerA, playerASalt, eventA;
   let playerB, eventB;
   let smbhlRsvpSnapshot;
@@ -64,29 +73,31 @@ describe('Part N: POST /league/rsvp', () => {
     leagueA = a.leagueId;
     leagueB = b.leagueId;
     cookieA = a.cookie;
+    csrfTokenA = a.csrfToken;
     cookieB = b.cookie;
+    csrfTokenB = b.csrfToken;
 
     const contactRes = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Player Alpha Two', email: 'alpha2@leaguea.com' })
     });
     playerA = (await contactRes.json()).contact.player_id;
     playerASalt = (await env.DB.prepare('SELECT token_salt FROM contacts WHERE player_id = ?').bind(playerA).first()).token_salt;
 
     const contactBRes = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ name: 'Player Beta Two' })
     });
     playerB = (await contactBRes.json()).contact.player_id;
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ date: '2026-12-13', season: 'League A Season 1' })
     });
     eventA = (await eventRes.json()).event.id;
 
     const eventBRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ date: '2026-12-13', season: 'League B Season 1' })
     });
     eventB = (await eventBRes.json()).event.id;
@@ -158,7 +169,7 @@ describe('Part N: POST /league/rsvp', () => {
 
   it('a locked (non-open) event rejects submissions', async () => {
     const lockedEventRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ date: '2026-12-20', season: 'League A Season 1' })
     });
     const lockedEventId = (await lockedEventRes.json()).event.id;

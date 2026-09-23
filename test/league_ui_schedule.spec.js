@@ -15,6 +15,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -23,19 +31,20 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 describe('UI task Part T: GET /league/schedule', () => {
-  let leagueA, leagueB, cookieA, cookieB, eventA;
+  let leagueA, leagueB, cookieA, cookieB, csrfTokenA, csrfTokenB, eventA;
 
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
@@ -47,25 +56,27 @@ describe('UI task Part T: GET /league/schedule', () => {
     leagueA = a.leagueId;
     leagueB = b.leagueId;
     cookieA = a.cookie;
+    csrfTokenA = a.csrfToken;
     cookieB = b.cookie;
+    csrfTokenB = b.csrfToken;
 
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ season_name: 'UI Schedule Season A' })
     });
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ season_name: 'UI Schedule Season B' })
     });
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ date: '2026-12-06', venue: 'Schedule Page Rink' })
     });
     eventA = (await eventRes.json()).event.id;
 
     await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ date: '2026-12-07', venue: 'League B Only Rink' })
     });
   });
@@ -95,7 +106,7 @@ describe('UI task Part T: GET /league/schedule', () => {
 
   it('an event created via the real POST /league/events route is reflected on the next page load', async () => {
     const createRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ date: '2026-12-13', venue: 'Freshly Created Venue' })
     });
     expect(createRes.status).toBe(200);
@@ -107,7 +118,7 @@ describe('UI task Part T: GET /league/schedule', () => {
 
   it('a duplicate-date rejection from the API is a real, surfaceable error', async () => {
     const res = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ date: '2026-12-06' }) // already used above
     });
     expect(res.status).toBe(409);

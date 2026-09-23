@@ -9,6 +9,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0]; // "user_session=<value>"
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signup(email, password, ip) {
   return SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -71,10 +79,11 @@ describe('Frontend pages: /signup, /login, /dashboard', () => {
       const signupJson = await signupRes.json();
       expect(signupJson.ok).toBe(true);
       const cookieHeader = extractCookie(signupRes);
+      const csrfToken = extractCsrfToken(signupRes);
 
       const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', cookie: cookieHeader },
+        headers: { 'content-type': 'application/json', cookie: cookieHeader, 'x-csrf-token': csrfToken },
         body: JSON.stringify({
           name: 'Sunday Ball Hockey Dashboard League',
           teamNames: ['Falcons', 'Otters', 'Comets'],
@@ -103,10 +112,11 @@ describe('Frontend pages: /signup, /login, /dashboard', () => {
     it('a freshly-signed-up (unverified) user sees the unverified-email notice on the dashboard', async () => {
       const signupRes = await signup('unverified.dashboard@example.com', 'a-strong-password-1', '203.0.113.41');
       const cookieHeader = extractCookie(signupRes);
+      const csrfToken = extractCsrfToken(signupRes);
 
       await SELF.fetch('http://example.com/leagues/create', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', cookie: cookieHeader },
+        headers: { 'content-type': 'application/json', cookie: cookieHeader, 'x-csrf-token': csrfToken },
         body: JSON.stringify({ name: 'Unverified League', teamNames: ['A', 'B'], tracksStats: true })
       });
 
@@ -123,10 +133,11 @@ describe('Frontend pages: /signup, /login, /dashboard', () => {
       const signupRes = await signup('verified.dashboard@example.com', 'a-strong-password-1', '203.0.113.42');
       const { verification } = await signupRes.json();
       const cookieHeader = extractCookie(signupRes);
+      const csrfToken = extractCsrfToken(signupRes);
 
       await SELF.fetch('http://example.com/leagues/create', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', cookie: cookieHeader },
+        headers: { 'content-type': 'application/json', cookie: cookieHeader, 'x-csrf-token': csrfToken },
         body: JSON.stringify({ name: 'Verified League', teamNames: ['A', 'B'], tracksStats: true })
       });
       await SELF.fetch(`http://example.com/auth/verify?token=${encodeURIComponent(verification.token)}`);

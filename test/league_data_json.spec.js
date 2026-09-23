@@ -26,6 +26,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -34,15 +42,16 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 const SMBHL_REAL_DATA_JSON = {

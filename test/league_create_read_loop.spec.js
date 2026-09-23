@@ -14,6 +14,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -22,19 +30,20 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 describe('Part L: the full create -> read loop', () => {
-  let leagueA, leagueB, cookieA, cookieB;
+  let leagueA, leagueB, cookieA, cookieB, csrfTokenA, csrfTokenB;
 
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
@@ -47,6 +56,8 @@ describe('Part L: the full create -> read loop', () => {
     leagueB = b.leagueId;
     cookieA = a.cookie;
     cookieB = b.cookie;
+    csrfTokenA = a.csrfToken;
+    csrfTokenB = b.csrfToken;
   });
 
   describe('Contacts: POST /league/contacts -> GET /league/contacts', () => {
@@ -59,7 +70,7 @@ describe('Part L: the full create -> read loop', () => {
     it('a contact created via the write route is reflected in the read route', async () => {
       const createRes = await SELF.fetch('http://example.com/league/contacts', {
         method: 'POST',
-        headers: { cookie: cookieA, 'content-type': 'application/json' },
+        headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
         body: JSON.stringify({ name: 'Loop Test Player', email: 'loop@leaguea.com', role: 'roster' })
       });
       expect(createRes.status).toBe(200);
@@ -92,7 +103,7 @@ describe('Part L: the full create -> read loop', () => {
     it('an event created via the write route is reflected in the read route', async () => {
       const createRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST',
-        headers: { cookie: cookieA, 'content-type': 'application/json' },
+        headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
         body: JSON.stringify({ date: '2026-11-15', season: 'League A Season 1', venue: 'Loop Rink', start_time: '19:00', end_time: '21:00' })
       });
       expect(createRes.status).toBe(200);
@@ -109,7 +120,7 @@ describe('Part L: the full create -> read loop', () => {
     it("League B's read shows none of League A's events, and vice versa after League B creates its own", async () => {
       await SELF.fetch('http://example.com/league/events', {
         method: 'POST',
-        headers: { cookie: cookieB, 'content-type': 'application/json' },
+        headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
         body: JSON.stringify({ date: '2026-11-22', season: 'League B Season 1', venue: 'League B Rink' })
       });
 

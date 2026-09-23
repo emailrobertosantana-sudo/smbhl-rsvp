@@ -17,6 +17,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -25,15 +33,16 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 async function computeToken(secret, message) {
@@ -61,7 +70,7 @@ async function withMailMock(fn) {
 }
 
 describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
-  let leagueA, leagueB, cookieA, cookieB;
+  let leagueA, leagueB, cookieA, cookieB, csrfTokenA, csrfTokenB;
   let smbhlContactsSnapshot, smbhlEventsSnapshot, smbhlRsvpSnapshot;
 
   beforeAll(async () => {
@@ -82,20 +91,22 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
     leagueB = b.leagueId;
     cookieA = a.cookie;
     cookieB = b.cookie;
+    csrfTokenA = a.csrfToken;
+    csrfTokenB = b.csrfToken;
 
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ season_name: 'League A Season 1', goalies_per_team: 1, skaters_per_team: 1, min_skaters: 1 })
     });
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ season_name: 'League B Season 1', goalies_per_team: 1, skaters_per_team: 1, min_skaters: 1 })
     });
 
     // League B has its own eligible sub, so we can prove it's never
     // touched by League A's shortages.
     await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ name: 'League B Sub', email: 'bsub@leagueb.com', role: 'sub_skater' })
     });
 
@@ -105,9 +116,9 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
   });
 
   let nextEventDayOffset = 5;
-  async function setupPlayerAndEvent(cookie, leagueId, suffix) {
+  async function setupPlayerAndEvent(cookie, leagueId, suffix, csrfToken) {
     const playerRes = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: `Player ${suffix}`, role: 'roster' })
     });
     const playerId = (await playerRes.json()).contact.player_id;
@@ -116,7 +127,7 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
 
     const futureDate = new Date(Date.now() + (nextEventDayOffset++) * 24 * 3600 * 1000).toISOString().slice(0, 10);
     const eventRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       // No explicit season -- defaults to this league's own current_season
       // (published in beforeAll for both League A and League B).
       body: JSON.stringify({ date: futureDate })
@@ -130,10 +141,10 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
   it("a player's own out-mark that creates a shortage triggers an immediate invite, sent under League A's own identity", async () => {
     // A sub must exist for League A first.
     await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'League A Sub One', email: 'asub1@leaguea.com', role: 'sub_skater' })
     });
-    const { playerId, salt, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'Shortage One');
+    const { playerId, salt, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'Shortage One', csrfTokenA);
     const token = await computeToken(RSVP_SECRET, `lr:${leagueA}:${eventId}:${playerId}:${salt}`);
 
     const { sentMails, result: res } = await withMailMock(() =>
@@ -156,11 +167,11 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
   });
 
   it("a player's own out-mark that does NOT create a shortage triggers nothing", async () => {
-    const { playerId, salt, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'No Shortage');
+    const { playerId, salt, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'No Shortage', csrfTokenA);
     // Add a second roster player on the same team so skaters_per_team:1
     // is still met after the first one leaves.
     const secondRes = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Player Backup Skater', role: 'roster' })
     });
     const secondId = (await secondRes.json()).contact.player_id;
@@ -185,7 +196,7 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
 
   describe('POST /league/rsvp/admin — the admin-only "mark another player" path', () => {
     it('is unreachable via a player token -- a valid RSVP token in the body/query is not a substitute for a session', async () => {
-      const { playerId, salt, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'Admin Path Auth');
+      const { playerId, salt, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'Admin Path Auth', csrfTokenA);
       const token = await computeToken(RSVP_SECRET, `lr:${leagueA}:${eventId}:${playerId}:${salt}`);
 
       const res = await SELF.fetch(`http://example.com/league/rsvp/admin?t=${token}`, {
@@ -201,15 +212,15 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
 
     it('a session-authenticated admin can mark a player out on their behalf, and it triggers the same immediate-invite logic', async () => {
       await SELF.fetch('http://example.com/league/contacts', {
-        method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+        method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
         body: JSON.stringify({ name: 'League A Sub Two', email: 'asub2@leaguea.com', role: 'sub_skater' })
       });
-      const { playerId, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'Admin Marked');
+      const { playerId, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'Admin Marked', csrfTokenA);
 
       const { sentMails, result: res } = await withMailMock(() =>
         SELF.fetch('http://example.com/league/rsvp/admin', {
           method: 'POST',
-          headers: { cookie: cookieA, 'content-type': 'application/json' },
+          headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
           body: JSON.stringify({ event_id: eventId, player_id: playerId, status: 'out' })
         })
       );
@@ -229,10 +240,10 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
     });
 
     it("an admin cannot mark a player who isn't in their own league (404)", async () => {
-      const { playerId: bPlayerId, eventId: bEventId } = await setupPlayerAndEvent(cookieB, leagueB, 'League B Target');
+      const { playerId: bPlayerId, eventId: bEventId } = await setupPlayerAndEvent(cookieB, leagueB, 'League B Target', csrfTokenB);
       const res = await SELF.fetch('http://example.com/league/rsvp/admin', {
         method: 'POST',
-        headers: { cookie: cookieA, 'content-type': 'application/json' },
+        headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
         body: JSON.stringify({ event_id: bEventId, player_id: bPlayerId, status: 'out' })
       });
       expect(res.status).toBe(404);
@@ -241,10 +252,10 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
 
   it('the duplicate guard prevents re-inviting within the window: flipping OUT -> IN -> OUT again quickly sends only one invite', async () => {
     await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'League A Sub Three', email: 'asub3@leaguea.com', role: 'sub_skater' })
     });
-    const { playerId, salt, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'Flapping');
+    const { playerId, salt, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'Flapping', csrfTokenA);
     const token = await computeToken(RSVP_SECRET, `lr:${leagueA}:${eventId}:${playerId}:${salt}`);
 
     // By this point in the file, several League A subs have accumulated

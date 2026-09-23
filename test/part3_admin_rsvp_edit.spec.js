@@ -19,6 +19,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -27,19 +35,20 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
-  let leagueId, cookie, eventId, playerAId, playerBId;
+  let leagueId, cookie, csrfToken, eventId, playerAId, playerBId;
 
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
@@ -49,30 +58,31 @@ describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
     const a = await signupAndCreateLeague('part3.rsvpedit@example.com', '203.0.113.421', 'Part 3 RSVP Edit League', ['Otters', 'Falcons']);
     leagueId = a.leagueId;
     cookie = a.cookie;
+    csrfToken = a.csrfToken;
 
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ season_name: 'Part 3 Season', goalies_per_team: 1, skaters_per_team: 3, min_skaters: 1 })
     });
 
     const pA = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Otters Player A', team: 'Otters' })
     });
     playerAId = (await pA.json()).contact.player_id;
     const pB = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Otters Player B', team: 'Otters' })
     });
     playerBId = (await pB.json()).contact.player_id;
     // A sub who can be invited once player A is corrected to OUT.
     await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Otters Sub One', email: 'sub1@part3.com', role: 'sub_skater' })
     });
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ date: '2026-12-20', season: 'Part 3 Season' })
     });
     eventId = (await eventRes.json()).event.id;
@@ -91,7 +101,7 @@ describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
 
   it('the admin can mark a rostered player IN directly from this page (via POST /league/rsvp/admin)', async () => {
     const res = await SELF.fetch('http://example.com/league/rsvp/admin', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ event_id: eventId, player_id: playerAId, status: 'in' })
     });
     expect(res.status).toBe(200);
@@ -112,7 +122,7 @@ describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
     // which should trigger maybeInviteSubsForShortage exactly like a
     // player's own self-out does.
     const res = await SELF.fetch('http://example.com/league/rsvp/admin', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ event_id: eventId, player_id: playerAId, status: 'out' })
     });
     expect(res.status).toBe(200);
@@ -125,11 +135,11 @@ describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
     // second sub_call row within the duplicate-guard window (same as the
     // self-out path's existing dedup behavior).
     await SELF.fetch('http://example.com/league/rsvp/admin', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ event_id: eventId, player_id: playerAId, status: 'in' })
     });
     await SELF.fetch('http://example.com/league/rsvp/admin', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ event_id: eventId, player_id: playerAId, status: 'out' })
     });
     const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM outbox WHERE event_id = ? AND kind = 'sub_call'`).bind(eventId).first();

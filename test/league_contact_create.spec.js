@@ -17,6 +17,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -25,19 +33,20 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 describe('Part J: POST /league/contacts', () => {
-  let leagueA, leagueB, cookieA, cookieB;
+  let leagueA, leagueB, cookieA, cookieB, csrfTokenA, csrfTokenB;
   let smbhlContactsSnapshot;
 
   beforeAll(async () => {
@@ -56,6 +65,8 @@ describe('Part J: POST /league/contacts', () => {
     leagueB = b.leagueId;
     cookieA = a.cookie;
     cookieB = b.cookie;
+    csrfTokenA = a.csrfToken;
+    csrfTokenB = b.csrfToken;
 
     smbhlContactsSnapshot = (await env.DB.prepare(
       `SELECT player_id, name, email, role FROM contacts WHERE league_id = 'smbhl' ORDER BY player_id`
@@ -83,7 +94,7 @@ describe('Part J: POST /league/contacts', () => {
   it('a session-authenticated league admin can add a contact to their own league', async () => {
     const res = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'First Player', email: 'first@leaguea.com', role: 'roster' })
     });
     expect(res.status).toBe(200);
@@ -101,7 +112,7 @@ describe('Part J: POST /league/contacts', () => {
   it('the new contact\'s id is numbered independently per league (League B starts its own counter at P0001 too)', async () => {
     const res = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieB, 'content-type': 'application/json' },
+      headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ name: 'League B Player', role: 'roster' })
     });
     const json = await res.json();
@@ -118,7 +129,7 @@ describe('Part J: POST /league/contacts', () => {
   it('rejects a request with no name', async () => {
     const res = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ email: 'noname@example.com' })
     });
     expect(res.status).toBe(400);
@@ -127,7 +138,7 @@ describe('Part J: POST /league/contacts', () => {
   it('rejects a single-word name (first+last required)', async () => {
     const res = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Madonna' })
     });
     expect(res.status).toBe(400);
@@ -136,7 +147,7 @@ describe('Part J: POST /league/contacts', () => {
   it('rejects an invalid role', async () => {
     const res = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Bad Role', role: 'coach' })
     });
     expect(res.status).toBe(400);
@@ -145,12 +156,12 @@ describe('Part J: POST /league/contacts', () => {
   it('rejects a duplicate email WITHIN the same league (case-insensitive exact match)', async () => {
     await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Dupe Original', email: 'DUPE@leaguea.com' })
     });
     const res = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Dupe Second', email: 'dupe@leaguea.com' })
     });
     expect(res.status).toBe(409);
@@ -159,12 +170,12 @@ describe('Part J: POST /league/contacts', () => {
   it('the SAME email is allowed across DIFFERENT leagues (dedup is scoped to league_id)', async () => {
     await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Shared Email A', email: 'shared@example.com' })
     });
     const res = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieB, 'content-type': 'application/json' },
+      headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ name: 'Shared Email B', email: 'shared@example.com' })
     });
     expect(res.status).toBe(200);
@@ -173,12 +184,12 @@ describe('Part J: POST /league/contacts', () => {
   it('two contacts with no email on file are never treated as duplicates of each other', async () => {
     await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'No Email One' })
     });
     const res = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'No Email Two' })
     });
     expect(res.status).toBe(200);

@@ -17,6 +17,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function withMailMock(fn) {
   const originalFetch = globalThis.fetch;
   const sentMails = [];
@@ -48,8 +56,9 @@ describe('Part 5: resend-verification-email flow, real end to end', () => {
       body: JSON.stringify({ email: 'part5.unverified@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
+    const csrfToken = extractCsrfToken(signupRes);
     await SELF.fetch('http://example.com/leagues/create', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Part 5 League', teamNames: ['Red', 'Blue'], tracksStats: true })
     });
 
@@ -66,11 +75,12 @@ describe('Part 5: resend-verification-email flow, real end to end', () => {
       body: JSON.stringify({ email: 'part5.fullflow@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
+    const csrfToken = extractCsrfToken(signupRes);
 
     // A real, working session hitting the real HTTP route (not calling
     // handleResendVerification directly), with the real sendMail wiring.
     const { sentMails, result: resendRes } = await withMailMock(async () =>
-      SELF.fetch('http://example.com/auth/resend-verification', { method: 'POST', headers: { cookie } })
+      SELF.fetch('http://example.com/auth/resend-verification', { method: 'POST', headers: { cookie, 'x-csrf-token': csrfToken } })
     );
     expect(resendRes.status).toBe(200);
     const resendJson = await resendRes.json();
@@ -103,12 +113,13 @@ describe('Part 5: resend-verification-email flow, real end to end', () => {
       body: JSON.stringify({ email: 'part5.alreadyverified@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
+    const csrfToken = extractCsrfToken(signupRes);
 
     await env.DB.prepare('UPDATE users SET email_verified_at = ? WHERE email = ?')
       .bind(new Date().toISOString(), 'part5.alreadyverified@example.com').run();
 
     const { sentMails, result: res } = await withMailMock(async () =>
-      SELF.fetch('http://example.com/auth/resend-verification', { method: 'POST', headers: { cookie } })
+      SELF.fetch('http://example.com/auth/resend-verification', { method: 'POST', headers: { cookie, 'x-csrf-token': csrfToken } })
     );
     const json = await res.json();
     expect(json.ok).toBe(true);

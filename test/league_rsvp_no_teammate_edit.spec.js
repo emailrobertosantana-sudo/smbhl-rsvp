@@ -18,6 +18,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -26,15 +34,16 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 async function computeToken(secret, message) {
@@ -45,7 +54,7 @@ async function computeToken(secret, message) {
 }
 
 describe('Part R: no teammate-marks-teammate capability for a second league', () => {
-  let leagueA, cookieA, playerA1, playerA1Salt, playerA2, eventA;
+  let leagueA, cookieA, csrfTokenA, playerA1, playerA1Salt, playerA2, eventA;
 
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
@@ -56,22 +65,23 @@ describe('Part R: no teammate-marks-teammate capability for a second league', ()
     const a = await signupAndCreateLeague('noteammate.a@example.com', '203.0.113.331', 'No Teammate League A', ['Otters', 'Falcons']);
     leagueA = a.leagueId;
     cookieA = a.cookie;
+    csrfTokenA = a.csrfToken;
 
     const p1Res = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Player A One' })
     });
     playerA1 = (await p1Res.json()).contact.player_id;
     playerA1Salt = (await env.DB.prepare('SELECT token_salt FROM contacts WHERE player_id = ?').bind(playerA1).first()).token_salt;
 
     const p2Res = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Player A Two' })
     });
     playerA2 = (await p2Res.json()).contact.player_id;
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ date: '2026-12-06', season: 'League A Season 1' })
     });
     eventA = (await eventRes.json()).event.id;

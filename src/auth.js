@@ -153,7 +153,7 @@ export async function checkUserSession(req, env) {
     const row = await env.DB.prepare('SELECT session_epoch FROM users WHERE id = ?').bind(userId).first();
     if (!row || Number(row.session_epoch) !== epoch) return null;
 
-    return { userId };
+    return { userId, epoch };
   } catch (_) {
     return null;
   }
@@ -164,6 +164,80 @@ export async function checkUserSession(req, env) {
 // POST /auth/logout.
 export async function invalidateAllSessions(env, userId) {
   await env.DB.prepare('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?').bind(userId).run();
+}
+
+/* ---------- CSRF protection (Part 8) ----------
+ * Double-submit-cookie pattern: a `csrf_token` cookie, deliberately NOT
+ * HttpOnly (client JS must be able to read it), set on the same response as
+ * every session cookie (login/signup/reset-password). Every session-
+ * authenticated state-changing POST route this session built must echo that
+ * value back as an X-CSRF-Token request header; checkCsrfToken compares it
+ * against a value derived from the session's own (userId, epoch) under
+ * env.AUTH_SECRET. A cross-site attacker's page can trigger a request that
+ * carries the cookie (browsers do that automatically), but has no way to
+ * read this origin's cookie value to also put it in a header -- that's the
+ * whole defense.
+ *
+ * The token is deterministic from (userId, epoch) rather than a separately
+ * stored random value -- no new table/column, and it gets a free, useful
+ * side effect: bumping session_epoch (logout, password reset) invalidates
+ * every outstanding CSRF token right along with every session, with zero
+ * extra code.
+ *
+ * SameSite=Lax on the session cookie already blocks the classic cross-site
+ * form-POST CSRF vector in modern browsers on its own; this is deliberate
+ * defense in depth on top of that, not a replacement for it, per the task.
+ */
+
+const CSRF_COOKIE = 'csrf_token';
+const CSRF_HEADER = 'x-csrf-token';
+
+const csrfMsg = (userId, epoch) => `csrf:${userId}:${epoch}`;
+
+async function csrfTokenFor(env, userId, epoch) {
+  return hmac(env.AUTH_SECRET, csrfMsg(userId, epoch));
+}
+
+// Set on the same response as every session cookie (see createSessionCookie
+// call sites). Same Path/SameSite/Secure as the session cookie, minus
+// HttpOnly -- client JS needs to read it to attach the header.
+export async function createCsrfCookie(env, userId, epoch) {
+  const token = await csrfTokenFor(env, userId, epoch);
+  return `${CSRF_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}; SameSite=Lax; Secure`;
+}
+
+export function clearCsrfCookie() {
+  return `${CSRF_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax; Secure`;
+}
+
+// Builds the response headers for every route that issues a fresh session
+// (login, signup, reset-password): JSON content-type plus BOTH cookies. A
+// plain object literal can't hold two 'set-cookie' entries (object keys are
+// unique) and Set-Cookie values must never be comma-joined onto one header
+// line (a value can itself legally contain a comma, e.g. in an Expires
+// date) -- a Headers object with two real .append() calls is the only
+// correct way to send two cookies in one response.
+export async function sessionResponseHeaders(env, userId, epoch) {
+  const headers = new Headers({ 'content-type': 'application/json' });
+  headers.append('set-cookie', await createSessionCookie(env, userId, epoch));
+  headers.append('set-cookie', await createCsrfCookie(env, userId, epoch));
+  return headers;
+}
+
+// Verifies the X-CSRF-Token request header against `session` (the object
+// checkUserSession already returned for this same request -- never re-derives
+// it from the cookie, so a request can't pass CSRF by presenting a header
+// that merely matches its OWN cookie; it must match the session actually
+// validated for this request). Returns true/false, never throws.
+export async function checkCsrfToken(req, env, session) {
+  try {
+    const header = req.headers.get(CSRF_HEADER);
+    if (!header) return false;
+    const want = await csrfTokenFor(env, session.userId, session.epoch);
+    return same(want, header);
+  } catch (_) {
+    return false;
+  }
 }
 
 /* ---------- email verification ----------
@@ -435,11 +509,10 @@ export async function handleResetPassword(req, env) {
   await invalidateAllSessions(env, result.userId);
 
   const user = await env.DB.prepare('SELECT session_epoch FROM users WHERE id = ?').bind(result.userId).first();
-  const cookie = await createSessionCookie(env, result.userId, user.session_epoch);
 
   return new Response(JSON.stringify({ ok: true }), {
     status: 200,
-    headers: { 'content-type': 'application/json', 'set-cookie': cookie }
+    headers: await sessionResponseHeaders(env, result.userId, user.session_epoch)
   });
 }
 
@@ -599,7 +672,6 @@ export async function handleSignup(req, env, sendMailFunc = null) {
 
     const { token, exp, verificationLink } = await sendVerificationEmail(env, sendMailFunc, email, userId);
 
-    const cookie = await createSessionCookie(env, userId, 0);
     return new Response(JSON.stringify({
       ok: true,
       userId,
@@ -607,7 +679,7 @@ export async function handleSignup(req, env, sendMailFunc = null) {
       verification: { token, exp, link: verificationLink }
     }), {
       status: 200,
-      headers: { 'content-type': 'application/json', 'set-cookie': cookie }
+      headers: await sessionResponseHeaders(env, userId, 0)
     });
   } catch (err) {
     return Response.json({ ok: false, error: 'Signup failed: ' + err.message }, { status: 500 });
@@ -637,10 +709,9 @@ export async function handleLogin(req, env) {
 
     await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(new Date().toISOString(), user.id).run();
 
-    const cookie = await createSessionCookie(env, user.id, user.session_epoch);
     return new Response(JSON.stringify({ ok: true, userId: user.id }), {
       status: 200,
-      headers: { 'content-type': 'application/json', 'set-cookie': cookie }
+      headers: await sessionResponseHeaders(env, user.id, user.session_epoch)
     });
   } catch (err) {
     return Response.json({ ok: false, error: 'Login failed: ' + err.message }, { status: 500 });
@@ -652,10 +723,10 @@ export async function handleLogout(req, env) {
   if (session) {
     await invalidateAllSessions(env, session.userId);
   }
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: { 'content-type': 'application/json', 'set-cookie': clearSessionCookie() }
-  });
+  const headers = new Headers({ 'content-type': 'application/json' });
+  headers.append('set-cookie', clearSessionCookie());
+  headers.append('set-cookie', clearCsrfCookie());
+  return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
 }
 
 export async function handleVerifyEmail(req, env, url) {
@@ -680,6 +751,9 @@ export async function handleResendVerification(req, env, sendMailFunc = null) {
   const session = await checkUserSession(req, env);
   if (!session) {
     return Response.json({ ok: false, error: 'Authentication required.' }, { status: 401 });
+  }
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
   }
 
   const user = await env.DB.prepare('SELECT email, email_verified_at FROM users WHERE id = ?').bind(session.userId).first();

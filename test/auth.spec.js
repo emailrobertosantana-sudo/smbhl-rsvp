@@ -17,6 +17,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0]; // "user_session=<value>"
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signup(email, password, ip = '203.0.113.10') {
   return SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -192,10 +200,11 @@ describe('Part A/B/C: user accounts, sessions, leagues, and email verification',
       const signupRes = await signup('league.creator@example.com', 'a-strong-password-1', '203.0.113.20');
       const { userId } = await signupRes.json();
       const cookieHeader = extractCookie(signupRes);
+      const csrfToken = extractCsrfToken(signupRes);
 
       const res = await SELF.fetch('http://example.com/leagues/create', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', cookie: cookieHeader },
+        headers: { 'content-type': 'application/json', cookie: cookieHeader, 'x-csrf-token': csrfToken },
         body: JSON.stringify({
           name: 'Tuesday Night Beer League',
           teamNames: ['Ice Wolves', 'Rink Rats', 'Puck Hogs', 'Slap Shots'],
@@ -285,10 +294,11 @@ describe('Part A/B/C: user accounts, sessions, leagues, and email verification',
       const signupRes = await signup('league.email.verify@example.com', 'a-strong-password-1', '203.0.113.32');
       const { userId, verification } = await signupRes.json();
       const cookieHeader = extractCookie(signupRes);
+      const csrfToken = extractCsrfToken(signupRes);
 
       const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', cookie: cookieHeader },
+        headers: { 'content-type': 'application/json', cookie: cookieHeader, 'x-csrf-token': csrfToken },
         body: JSON.stringify({ name: 'Email Gate League', teamNames: ['A', 'B'], tracksStats: true })
       });
       const { league } = await leagueRes.json();

@@ -19,6 +19,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames, tracksStats = true) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -27,19 +35,20 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames, tracksSta
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 describe('Part 4: GET /league/public (unauthenticated public page)', () => {
-  let leagueA, leagueB, cookieA, cookieB;
+  let leagueA, leagueB, cookieA, cookieB, csrfTokenA, csrfTokenB;
   const LEAGUE_A_NAME = 'Public Page League A';
 
   beforeAll(async () => {
@@ -51,29 +60,31 @@ describe('Part 4: GET /league/public (unauthenticated public page)', () => {
     leagueA = a.leagueId;
     leagueB = b.leagueId;
     cookieA = a.cookie;
+    csrfTokenA = a.csrfToken;
     cookieB = b.cookie;
+    csrfTokenB = b.csrfToken;
 
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ season_name: 'Part 4 Season A' })
     });
     await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ date: '2099-01-11', venue: 'Public Page Rink', season: 'Part 4 Season A' })
     });
 
     // A player with real, private contact info -- must never appear here.
     await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Private Contact Player', email: 'private.email@leaguea.com', phone: '514-555-1234', team: 'Otters' })
     });
 
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ season_name: 'Part 4 Season B' })
     });
     await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ date: '2099-02-22', venue: 'League B Only Rink', season: 'Part 4 Season B' })
     });
   });

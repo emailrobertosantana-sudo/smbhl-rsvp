@@ -16,6 +16,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -24,19 +32,20 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 describe('UI task Part S: GET /league/roster', () => {
-  let leagueA, leagueB, cookieA, cookieB;
+  let leagueA, leagueB, cookieA, cookieB, csrfTokenA, csrfTokenB;
 
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
@@ -48,14 +57,16 @@ describe('UI task Part S: GET /league/roster', () => {
     leagueA = a.leagueId;
     leagueB = b.leagueId;
     cookieA = a.cookie;
+    csrfTokenA = a.csrfToken;
     cookieB = b.cookie;
+    csrfTokenB = b.csrfToken;
 
     await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Roster Page Player One', email: 'rp1@leaguea.com', role: 'roster' })
     });
     await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ name: 'League B Only Player', email: 'bonly@leagueb.com', role: 'roster' })
     });
   });
@@ -84,7 +95,7 @@ describe('UI task Part S: GET /league/roster', () => {
 
   it("a contact added via the real POST /league/contacts route (what the form's JS calls) is reflected on the next page load", async () => {
     const createRes = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Freshly Added Player', role: 'sub_skater' })
     });
     expect(createRes.status).toBe(200);
@@ -97,7 +108,7 @@ describe('UI task Part S: GET /league/roster', () => {
 
   it("a duplicate-email rejection from the API is a real, surfaceable error (not silently swallowed by the page)", async () => {
     const res = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Duplicate Email Attempt', email: 'rp1@leaguea.com' })
     });
     expect(res.status).toBe(409);

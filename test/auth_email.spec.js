@@ -88,7 +88,12 @@ describe('Part E: verification email sending', () => {
       const res = await handleSignup(req, env, null); // no send on signup itself, for a clean slate
       const json = await res.json();
       const cookieHeader = (res.headers.get('set-cookie') || '').split(';')[0];
-      return { json, cookieHeader };
+      const cookies = typeof res.headers.getSetCookie === 'function'
+        ? res.headers.getSetCookie()
+        : (res.headers.get('set-cookie') || '').split(', ');
+      const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+      const csrfToken = csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+      return { json, cookieHeader, csrfToken };
     }
 
     it('requires an authenticated session', async () => {
@@ -98,12 +103,12 @@ describe('Part E: verification email sending', () => {
     });
 
     it('sends a fresh verification email to the logged-in user\'s own address', async () => {
-      const { cookieHeader } = await signupDirect('resend.me@example.com', '203.0.113.94');
+      const { cookieHeader, csrfToken } = await signupDirect('resend.me@example.com', '203.0.113.94');
       const { fn, sent } = mockSendMail();
 
       const req = new Request('http://example.com/auth/resend-verification', {
         method: 'POST',
-        headers: { cookie: cookieHeader }
+        headers: { cookie: cookieHeader, 'x-csrf-token': csrfToken }
       });
       const res = await handleResendVerification(req, env, fn);
       expect(res.status).toBe(200);
@@ -116,14 +121,14 @@ describe('Part E: verification email sending', () => {
     });
 
     it('reports alreadyVerified and does not send again once the address is verified', async () => {
-      const { cookieHeader } = await signupDirect('already.verified@example.com', '203.0.113.95');
+      const { cookieHeader, csrfToken } = await signupDirect('already.verified@example.com', '203.0.113.95');
       await env.DB.prepare('UPDATE users SET email_verified_at = ? WHERE email = ?')
         .bind(new Date().toISOString(), 'already.verified@example.com').run();
 
       const { fn, sent } = mockSendMail();
       const req = new Request('http://example.com/auth/resend-verification', {
         method: 'POST',
-        headers: { cookie: cookieHeader }
+        headers: { cookie: cookieHeader, 'x-csrf-token': csrfToken }
       });
       const res = await handleResendVerification(req, env, fn);
       const json = await res.json();

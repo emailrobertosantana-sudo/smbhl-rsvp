@@ -17,6 +17,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -25,19 +33,20 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 describe('Part O: GET /league/events/status', () => {
-  let leagueA, leagueB, cookieA, cookieB, eventA;
+  let leagueA, leagueB, cookieA, cookieB, csrfTokenA, csrfTokenB, eventA;
 
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
@@ -49,17 +58,19 @@ describe('Part O: GET /league/events/status', () => {
     leagueA = a.leagueId;
     leagueB = b.leagueId;
     cookieA = a.cookie;
+    csrfTokenA = a.csrfToken;
     cookieB = b.cookie;
+    csrfTokenB = b.csrfToken;
 
     // A tight, custom roster-size config -- deliberately NOT
     // DEFAULT_SEASON_CONFIG's 1 goalie / 8 skaters / 5-skater minimum.
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ season_name: 'League A Season 1', goalies_per_team: 1, skaters_per_team: 3, min_skaters: 2 })
     });
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ date: '2026-12-27', season: 'League A Season 1' })
     });
     eventA = (await eventRes.json()).event.id;
@@ -67,11 +78,11 @@ describe('Part O: GET /league/events/status', () => {
     // Two skaters and one goalie confirmed IN for Otters -- meets the
     // custom min_skaters:2 but this league's target is skaters_per_team:3.
     const p1 = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Skater One' })
     });
     const p2 = await SELF.fetch('http://example.com/league/contacts', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ name: 'Skater Two' })
     });
     const p1Id = (await p1.json()).contact.player_id;
@@ -123,11 +134,11 @@ describe('Part O: GET /league/events/status', () => {
 
   it("a league with NO custom roster config falls back to the generic default (not crashing, not SMBHL's live data)", async () => {
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ season_name: 'League B Season 1' }) // no roster config given
     });
     const eventRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ date: '2026-12-28', season: 'League B Season 1' })
     });
     const eventBId = (await eventRes.json()).event.id;

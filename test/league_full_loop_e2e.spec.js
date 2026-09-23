@@ -20,6 +20,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function computeToken(secret, message) {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -75,11 +83,12 @@ describe('Part Q: full second-league loop, end to end', () => {
     });
     expect(loginRes.status).toBe(200);
     const cookie = extractCookie(loginRes);
+    const csrfToken = extractCsrfToken(loginRes);
 
     // 3. Create the league.
     const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Full Loop League', teamNames: ['Comets', 'Meteors'], tracksStats: true })
     });
     expect(leagueRes.status).toBe(200);
@@ -89,7 +98,7 @@ describe('Part Q: full second-league loop, end to end', () => {
     // one player OUT genuinely creates a shortage below).
     const publishRes = await SELF.fetch('http://example.com/league/season/publish', {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ season_name: 'Full Loop Season 1', goalies_per_team: 1, skaters_per_team: 1, min_skaters: 1 })
     });
     expect(publishRes.status).toBe(200);
@@ -97,7 +106,7 @@ describe('Part Q: full second-league loop, end to end', () => {
     // 5. Add the roster player who will RSVP.
     const playerRes = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Loop Roster Player', email: 'player@fullloop.com', role: 'roster' })
     });
     expect(playerRes.status).toBe(200);
@@ -109,7 +118,7 @@ describe('Part Q: full second-league loop, end to end', () => {
     // real to invite.
     const subRes = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Loop Sub Player', email: 'sub@fullloop.com', role: 'sub_skater' })
     });
     expect(subRes.status).toBe(200);
@@ -118,7 +127,7 @@ describe('Part Q: full second-league loop, end to end', () => {
     const futureDate = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ date: futureDate, season: 'Full Loop Season 1', venue: 'Full Loop Rink' })
     });
     expect(eventRes.status).toBe(200);
@@ -180,7 +189,7 @@ describe('Part Q: full second-league loop, end to end', () => {
     // rather than re-spamming the same sub a second time.
     const inviteRes = await SELF.fetch('http://example.com/league/events/invite-subs', {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ event_id: eventId, team: 'Comets', need: 'skater' })
     });
     expect(inviteRes.status).toBe(200);

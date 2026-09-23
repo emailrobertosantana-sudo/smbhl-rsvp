@@ -3,7 +3,7 @@ import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
-import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword } from './auth.js';
+import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig } from './leagues.js';
 import {
   cleanupOldReviews,
@@ -217,6 +217,16 @@ function page(title, body, logoTooltip = '', leagueCfg = null) {
     window.dispatchEvent(new CustomEvent('admin_lang_changed', { detail: { lang: l } }));
   };
 })();
+// Part 8: CSRF double-submit-cookie header. Every session-authenticated
+// POST route this session built requires this header; the cookie itself
+// is set alongside the session cookie on login/signup/reset-password (see
+// auth.js's sessionResponseHeaders), and isn't HttpOnly specifically so
+// this can read it. Pages that call one of those routes spread
+// window.__csrfHeader() into their fetch's headers.
+window.__csrfHeader = function() {
+  var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return m ? { 'X-CSRF-Token': decodeURIComponent(m[1]) } : {};
+};
 </script>
 <style>
  :root{--ink:#16181d;--soft:#5d636e;--faint:#8b919b;--paper:#eef0f3;--card:#fff;
@@ -446,7 +456,7 @@ async function submitSignup() {
 
     const leagueRes = await fetch('/leagues/create', {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ name: leagueName, teamNames, tracksStats, divisionLabel: division || null })
     });
     const leagueData = await leagueRes.json().catch(() => ({}));
@@ -761,7 +771,7 @@ async function resendVerification() {
   const msg = document.getElementById('resendMsg');
   btn.disabled = true;
   try {
-    const res = await fetch('/auth/resend-verification', { method: 'POST', credentials: 'same-origin' });
+    const res = await fetch('/auth/resend-verification', { method: 'POST', credentials: 'same-origin', headers: window.__csrfHeader() });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ok) {
       msg.textContent = "Courriel de vérification envoyé (si ce n'est pas déjà fait). Vérifiez vos pourriels si vous ne le voyez pas. / Verification email sent (if not already). Check spam if you don't see it.";
@@ -788,7 +798,7 @@ async function submitSeason() {
   try {
     const res = await fetch('/league/season/publish', {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ season_name: name })
     });
     const data = await res.json().catch(() => ({}));
@@ -995,7 +1005,7 @@ async function submitContact() {
   try {
     const res = await fetch('/league/contacts', {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: role, team: team || undefined })
     });
     const data = await res.json().catch(() => ({}));
@@ -1099,7 +1109,7 @@ async function submitEvent() {
   try {
     const res = await fetch('/league/events', {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venue || undefined })
     });
     const data = await res.json().catch(() => ({}));
@@ -1210,7 +1220,7 @@ async function inviteSubs(team, need, btn) {
   try {
     const res = await fetch('/league/events/invite-subs', {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, team: team, need: need })
     });
     const data = await res.json().catch(() => ({}));
@@ -1236,7 +1246,7 @@ async function setPlayerStatus(playerId, status, btn) {
   try {
     const res = await fetch('/league/rsvp/admin', {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, player_id: playerId, status: status })
     });
     const data = await res.json().catch(() => ({}));
@@ -8439,6 +8449,9 @@ async function leagueRsvpPost(req, env, url) {
 async function handleLeagueAdminSetRsvp(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+  }
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
@@ -8530,6 +8543,9 @@ async function handleLeagueEventStatus(req, env, url) {
 async function handleLeagueInviteSubs(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+  }
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {

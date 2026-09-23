@@ -20,6 +20,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -28,19 +36,20 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 describe('Part P: POST /league/events/invite-subs', () => {
-  let leagueA, leagueB, cookieA, cookieB, eventA, eventB;
+  let leagueA, leagueB, cookieA, cookieB, csrfTokenA, csrfTokenB, eventA, eventB;
 
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
@@ -53,26 +62,28 @@ describe('Part P: POST /league/events/invite-subs', () => {
     leagueA = a.leagueId;
     leagueB = b.leagueId;
     cookieA = a.cookie;
+    csrfTokenA = a.csrfToken;
     cookieB = b.cookie;
+    csrfTokenB = b.csrfToken;
 
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ season_name: 'League A Season 1' })
     });
     await SELF.fetch('http://example.com/league/season/publish', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ season_name: 'League B Season 1' })
     });
 
     // An event far enough out to clear callSubs' CUTOFF_HOURS gate.
     const futureDate = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     const eventARes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ date: futureDate, season: 'League A Season 1' })
     });
     eventA = (await eventARes.json()).event.id;
     const eventBRes = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json' },
+      method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
       body: JSON.stringify({ date: futureDate, season: 'League B Season 1' })
     });
     eventB = (await eventBRes.json()).event.id;
@@ -109,7 +120,7 @@ describe('Part P: POST /league/events/invite-subs', () => {
   it("a league admin triggers a sub invite for their own event, and the pool is scoped to ONLY their league's subs", async () => {
     const res = await SELF.fetch('http://example.com/league/events/invite-subs', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ event_id: eventA, team: 'Otters', need: 'skater' })
     });
     expect(res.status).toBe(200);
@@ -165,7 +176,7 @@ describe('Part P: POST /league/events/invite-subs', () => {
   it("League A's admin cannot invite subs for League B's event (404, not another league's event)", async () => {
     const res = await SELF.fetch('http://example.com/league/events/invite-subs', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ event_id: eventB, team: 'Narwhals', need: 'skater' })
     });
     expect(res.status).toBe(404);
@@ -174,7 +185,7 @@ describe('Part P: POST /league/events/invite-subs', () => {
   it('an unknown team for the league is rejected', async () => {
     const res = await SELF.fetch('http://example.com/league/events/invite-subs', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ event_id: eventA, team: 'Not A Real Team', need: 'skater' })
     });
     expect(res.status).toBe(400);
@@ -183,7 +194,7 @@ describe('Part P: POST /league/events/invite-subs', () => {
   it('an invalid need value is rejected', async () => {
     const res = await SELF.fetch('http://example.com/league/events/invite-subs', {
       method: 'POST',
-      headers: { cookie: cookieA, 'content-type': 'application/json' },
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
       body: JSON.stringify({ event_id: eventA, team: 'Otters', need: 'defenseman' })
     });
     expect(res.status).toBe(400);

@@ -16,7 +16,7 @@
 // migration to this pattern is ongoing — see the task reports for exactly
 // which routes have been migrated so far and which remain.
 
-import { checkUserSession } from './auth.js';
+import { checkUserSession, checkCsrfToken } from './auth.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames } from './season_config.js';
@@ -280,6 +280,9 @@ export async function handleLeagueEvents(req, env, url) {
 export async function handleLeagueContactCreate(req, env) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+  }
 
   const url = new URL(req.url);
   const body = await req.json().catch(() => ({}));
@@ -414,6 +417,9 @@ export async function handleLeagueContactCreate(req, env) {
 export async function handleLeagueEventCreate(req, env) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+  }
 
   const url = new URL(req.url);
   const body = await req.json().catch(() => ({}));
@@ -507,6 +513,9 @@ export async function handleLeagueEventCreate(req, env) {
 export async function handleLeagueSeasonPublish(req, env) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+  }
 
   const url = new URL(req.url);
   const body = await req.json().catch(() => ({}));
@@ -589,6 +598,9 @@ export async function handleLeagueCreate(req, env) {
     const session = await checkUserSession(req, env);
     if (!session) {
       return Response.json({ ok: false, error: 'Authentication required.' }, { status: 401 });
+    }
+    if (!(await checkCsrfToken(req, env, session))) {
+      return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
     }
 
     const body = await req.json().catch(() => ({}));

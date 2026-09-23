@@ -15,6 +15,14 @@ function extractCookie(res) {
   return setCookie.split(';')[0];
 }
 
+function extractCsrfToken(res) {
+  const cookies = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') || '').split(', ');
+  const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+  return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -23,15 +31,16 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
+  const csrfToken = extractCsrfToken(signupRes);
 
   const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
+    headers: { 'content-type': 'application/json', cookie, 'x-csrf-token': csrfToken },
     body: JSON.stringify({ name: leagueName, teamNames, tracksStats: true })
   });
   const leagueJson = await leagueRes.json();
 
-  return { userId: signupJson.userId, cookie, leagueId: leagueJson.league.id };
+  return { userId: signupJson.userId, cookie, csrfToken, leagueId: leagueJson.league.id };
 }
 
 describe('Onboarding: dashboard "start your season" prompt', () => {
@@ -55,12 +64,12 @@ describe('Onboarding: dashboard "start your season" prompt', () => {
   });
 
   it("submitting the form publishes a season via the real route, and the admin can then immediately create an event without the old 'season is required' error", async () => {
-    const { cookie } = await signupAndCreateLeague('onboard.submit@example.com', '203.0.113.392', 'Onboarding Submit League', ['Comets', 'Meteors']);
+    const { cookie, csrfToken } = await signupAndCreateLeague('onboard.submit@example.com', '203.0.113.392', 'Onboarding Submit League', ['Comets', 'Meteors']);
 
     // What the dashboard's own submitSeason() JS calls.
     const publishRes = await SELF.fetch('http://example.com/league/season/publish', {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ season_name: 'Onboarding Test Season' })
     });
     expect(publishRes.status).toBe(200);
@@ -70,7 +79,7 @@ describe('Onboarding: dashboard "start your season" prompt', () => {
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ date: '2026-12-13', venue: 'Onboarding Rink' })
     });
     expect(eventRes.status).toBe(200);
@@ -79,10 +88,10 @@ describe('Onboarding: dashboard "start your season" prompt', () => {
   });
 
   it('once a season exists, the dashboard shows it plainly and does NOT show the start-season prompt again', async () => {
-    const { cookie } = await signupAndCreateLeague('onboard.existing@example.com', '203.0.113.393', 'Onboarding Existing League', ['Sharks', 'Wolves']);
+    const { cookie, csrfToken } = await signupAndCreateLeague('onboard.existing@example.com', '203.0.113.393', 'Onboarding Existing League', ['Sharks', 'Wolves']);
     await SELF.fetch('http://example.com/league/season/publish', {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ season_name: 'Already Started Season' })
     });
 
@@ -96,10 +105,10 @@ describe('Onboarding: dashboard "start your season" prompt', () => {
   });
 
   it('the form surfaces a real API error (e.g. missing team names) rather than a generic failure -- exercised directly against the route the dashboard\'s JS calls', async () => {
-    const { cookie } = await signupAndCreateLeague('onboard.error@example.com', '203.0.113.394', 'Onboarding Error League', ['Team X', 'Team Y']);
+    const { cookie, csrfToken } = await signupAndCreateLeague('onboard.error@example.com', '203.0.113.394', 'Onboarding Error League', ['Team X', 'Team Y']);
     const res = await SELF.fetch('http://example.com/league/season/publish', {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({}) // no season_name
     });
     expect(res.status).toBe(400);
