@@ -575,7 +575,7 @@ export async function handleLeagueSeasonPublish(req, env) {
     return Response.json({ ok: false, error: 'This route cannot publish to SMBHL\'s data.' }, { status: 403 });
   }
 
-  const leagueRow = await env.DB.prepare('SELECT team_names FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT team_names, team_structure FROM leagues WHERE id = ?').bind(leagueId).first();
   let teamNames = [];
   if (leagueRow && leagueRow.team_names) {
     try {
@@ -583,7 +583,11 @@ export async function handleLeagueSeasonPublish(req, env) {
       if (Array.isArray(parsed)) teamNames = parsed.filter(Boolean);
     } catch (_) {}
   }
-  if (teamNames.length < 2) {
+  // A 'headcount' league only ever stores exactly one team name (the
+  // HEADCOUNT_TEAM_NAME sentinel -- see league_ids.js): that's correct
+  // and expected for that mode, not a sign teams are missing.
+  const minTeamNames = (leagueRow && leagueRow.team_structure === 'headcount') ? 1 : 2;
+  if (teamNames.length < minTeamNames) {
     return Response.json({ ok: false, error: 'This league has no team names on file yet.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
   }
 

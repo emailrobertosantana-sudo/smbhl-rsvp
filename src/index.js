@@ -2604,6 +2604,18 @@ ${tabbar}`;
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
   const teamNames = getTeamNames(cfg);
   const totalTarget = (cfg.skatersPerTeam || 0) + (cfg.goaliesPerTeam || 0);
+  // Team-structure task, Part 3: 'headcount' has exactly one real team
+  // under the hood (HEADCOUNT_TEAM_NAME) -- the loop below already
+  // produces exactly one card for it; isHeadcount just tells that card
+  // to render as a pool-wide summary (no team name/dot) instead of a
+  // named team. 'weekly_draw' has real named teams but rsvp.team is
+  // null until an admin assigns it per event (see
+  // handleLeagueAssignEventTeam's own comment) -- confirmed players
+  // with no team yet form a separate "unassigned" pool, shown above
+  // the (real, unmodified) per-team cards.
+  const teamStructure = cfg.teamStructure || 'fixed';
+  const isHeadcount = teamStructure === 'headcount';
+  const isWeeklyDraw = teamStructure === 'weekly_draw';
 
   const I18N_DETAIL = {
     fr: {
@@ -2615,7 +2627,11 @@ ${tabbar}`;
       statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu',
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Envoyer un rappel maintenant',
-      remindSentOne: 'Rappel envoyé à 1 joueur.', remindSentMany: 'Rappel envoyé à {n} joueurs.', remindSentNone: "Tout le monde a déjà répondu, rien à envoyer."
+      remindSentOne: 'Rappel envoyé à 1 joueur.', remindSentMany: 'Rappel envoyé à {n} joueurs.', remindSentNone: "Tout le monde a déjà répondu, rien à envoyer.",
+      poolTitle: 'Joueurs',
+      unassignedTitle: 'Confirmés, pas encore assignés', unassignedDesc: 'Assigne chaque joueur confirmé à une équipe pour ce match.',
+      noUnassigned: 'Tous les joueurs confirmés sont assignés.',
+      assignTo: 'Assigner à…', assign: 'Assigner'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
@@ -2626,7 +2642,11 @@ ${tabbar}`;
       statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply',
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Send a reminder now',
-      remindSentOne: 'Reminder sent to 1 player.', remindSentMany: 'Reminder sent to {n} players.', remindSentNone: 'Everyone has already answered, nothing to send.'
+      remindSentOne: 'Reminder sent to 1 player.', remindSentMany: 'Reminder sent to {n} players.', remindSentNone: 'Everyone has already answered, nothing to send.',
+      poolTitle: 'Players',
+      unassignedTitle: 'Confirmed, not yet assigned', unassignedDesc: 'Assign each confirmed player to a team for this game.',
+      noUnassigned: 'Every confirmed player is assigned.',
+      assignTo: 'Assign to…', assign: 'Assign'
     }
   };
   const BADGE_ICON_CHECK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 10.5l4 4 8-9"/></svg>';
@@ -2648,13 +2668,37 @@ ${tabbar}`;
     const confirmed = st.skaters + st.goalies;
     const meterSpots = Math.min(14, Math.max(totalTarget, confirmed));
 
-    const rosterRows = (await env.DB.prepare(
-      `SELECT c.player_id, c.name, COALESCE(r.status, 'pending') AS status
-         FROM contacts c
-         LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-        WHERE c.league_id = ? AND c.preferred_team = ?
-        ORDER BY c.name`
-    ).bind(ev.id, leagueId, team).all()).results || [];
+    // Team-structure task, Part 3: this card's own roster listing was
+    // originally keyed off contacts.preferred_team (a permanent, per-
+    // player assignment) -- correct for 'fixed' mode, but ALWAYS empty
+    // for 'headcount'/'weekly_draw' since roster.js never sets
+    // preferred_team for those modes (see Part 2). 'headcount' has one
+    // implicit pool (every roster-role contact); 'weekly_draw' teams are
+    // assigned per event (rsvp.team), not per contact, so membership
+    // here must come from THIS event's own rsvp row, not the contact.
+    const rosterRows = isHeadcount
+      ? (await env.DB.prepare(
+          `SELECT c.player_id, c.name, COALESCE(r.status, 'pending') AS status
+             FROM contacts c
+             LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+            WHERE c.league_id = ? AND c.role = 'roster'
+            ORDER BY c.name`
+        ).bind(ev.id, leagueId).all()).results || []
+      : isWeeklyDraw
+      ? (await env.DB.prepare(
+          `SELECT c.player_id, c.name, r.status AS status
+             FROM contacts c
+             JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+            WHERE c.league_id = ? AND r.team = ?
+            ORDER BY c.name`
+        ).bind(ev.id, leagueId, team).all()).results || []
+      : (await env.DB.prepare(
+          `SELECT c.player_id, c.name, COALESCE(r.status, 'pending') AS status
+             FROM contacts c
+             LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+            WHERE c.league_id = ? AND c.preferred_team = ?
+            ORDER BY c.name`
+        ).bind(ev.id, leagueId, team).all()).results || [];
     const pendingCount = rosterRows.filter(p => p.status === 'pending').length;
 
     const inviteButtons = [];
@@ -2673,9 +2717,9 @@ ${tabbar}`;
       : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
 
     teamCards.push(`
-    <section class="nl-card nl-card--pad-lg${st.short ? ' nl-card--short' : ''} ev-team">
+    <section class="nl-card nl-card--pad-lg${st.short ? ' nl-card--short' : ''} ev-team"${isHeadcount ? ' style="grid-column:1/-1"' : ''}>
       <div class="ev-th">
-        <h2><span class="nl-dot" style="background:${ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length]}"></span>${esc(team)}</h2>
+        <h2>${isHeadcount ? `<span data-i18n="poolTitle">Joueurs</span>` : `<span class="nl-dot" style="background:${ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length]}"></span>${esc(team)}`}</h2>
         ${st.short
           ? `<span class="nl-badge nl-badge--short">${BADGE_ICON_ALERT}<span data-i18n="short">Manque</span> ${Math.max(openGoalies, 0) + Math.max(openSkaters, 0)}</span>`
           : `<span class="nl-badge nl-badge--in">${BADGE_ICON_CHECK}<span data-i18n="complete">Complet</span></span>`}
@@ -2690,6 +2734,41 @@ ${tabbar}`;
       <p class="inviteMsg nl-help" style="display:none;"></p>
       <div class="ev-ppl">${rosterListHtml}</div>
     </section>`);
+  }
+
+  // Team-structure task, Part 3: weekly_draw's own "confirmed, not yet
+  // assigned" pool -- real query (rsvp.team IS NULL means "no admin
+  // assignment yet", not "no rsvp row"; only status='in' rows can even
+  // reach that state, since writeLeagueRsvpStatus only sets team=null
+  // for weekly_draw in the first place).
+  let unassignedHtml = '';
+  if (isWeeklyDraw) {
+    const unassignedRows = (await env.DB.prepare(
+      `SELECT c.player_id, c.name
+         FROM contacts c
+         JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+        WHERE c.league_id = ? AND r.status = 'in' AND r.team IS NULL
+        ORDER BY c.name`
+    ).bind(ev.id, leagueId).all()).results || [];
+    const teamOptions = teamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    unassignedHtml = `
+    <section class="nl-card nl-card--pad-lg">
+      <div class="h3" data-i18n="unassignedTitle">Confirmés, pas encore assignés</div>
+      <p class="nl-help" data-i18n="unassignedDesc">Assigne chaque joueur confirmé à une équipe pour ce match.</p>
+      <div class="ev-ppl" id="ev_unassigned_list">
+        ${unassignedRows.length ? unassignedRows.map(p => `<div class="ev-p" data-player-row="${esc(p.player_id)}">
+            <span>${esc(p.name)}</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <select class="nl-select" id="assign_team_${esc(p.player_id)}">
+                <option value="" data-i18n="assignTo">Assigner à…</option>
+                ${teamOptions}
+              </select>
+              <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="assign" onclick="assignTeam('${esc(p.player_id)}',this)">Assigner</button>
+            </div>
+          </div>`).join('') : `<p class="nl-help" data-i18n="noUnassigned">Tous les joueurs confirmés sont assignés.</p>`}
+      </div>
+      <p class="assignMsg nl-help" style="display:none;"></p>
+    </section>`;
   }
 
   const bodyHtml = `${dashStyles()}<style>
@@ -2716,12 +2795,40 @@ ${tabbar}`;
     <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="remind_now_btn" data-i18n="remindNow" onclick="sendReminderNow(this)">Envoyer un rappel maintenant</button>
     <p id="remindNowMsg" class="nl-help" style="display:none;margin-top:8px;"></p>
   </div>
+  ${unassignedHtml}
   <div class="ev-teams">${teamCards.join('')}</div>
 </main>
 ${tabbar}`;
 
   const script = `
 ${nlAuthScript(I18N_DETAIL)}
+async function assignTeam(playerId, btn) {
+  var msg = document.querySelector('.assignMsg');
+  var select = document.getElementById('assign_team_' + playerId);
+  var team = select.value;
+  if (!team) { return; }
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/events/assign-team', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, player_id: playerId, team: team })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) {
+      if (msg) { msg.textContent = window.__errorText(data.errorKey, data.error); msg.style.display = 'block'; }
+      btn.disabled = false;
+      return;
+    }
+    // The now-current per-team cards (teamState, unchanged) reflect
+    // this player once reloaded -- same server-rendered-is-truth
+    // pattern every other write on this page already uses.
+    window.location.reload();
+  } catch (e) {
+    if (msg) { msg.textContent = window.__errorText('NETWORK_ERROR'); msg.style.display = 'block'; }
+    btn.disabled = false;
+  }
+}
 async function sendReminderNow(btn) {
   var msg = document.getElementById('remindNowMsg');
   btn.disabled = true;
@@ -9880,7 +9987,21 @@ async function getLeagueTeamStructure(env, leagueId) {
 const IMMEDIATE_INVITE_DEDUP_WINDOW_MIN = 10;
 
 async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
-  const team = contact?.preferred_team || null;
+  // Team-structure task: reads the team from the rsvp row itself
+  // (what writeLeagueRsvpStatus just wrote a moment before every real
+  // caller of this function) rather than contact.preferred_team
+  // directly -- correct for all 3 modes without this function needing
+  // to know team_structure itself: 'fixed' rows already carry
+  // preferred_team there; 'headcount' rows carry HEADCOUNT_TEAM_NAME
+  // (contact.preferred_team is always null for headcount contacts,
+  // which silently broke automatic sub-invites for every headcount
+  // league before this fix -- no team-on-file, no shortage ever
+  // detected); 'weekly_draw' rows carry whatever an admin already
+  // assigned for this event, or null if not yet assigned (in which
+  // case there's genuinely no team to detect a shortage for yet, same
+  // graceful no-op as before).
+  const rsvpRow = await env.DB.prepare('SELECT team FROM rsvp WHERE event_id = ? AND player_id = ?').bind(ev.id, contact.player_id).first();
+  const team = (rsvpRow && rsvpRow.team) || null;
   if (!team) return { invited: 0, reason: 'no-team-on-file' };
 
   const need = (contact.is_goalie === 1 || contact.role === 'sub_goalie') ? 'goalie' : 'skater';
@@ -10116,15 +10237,35 @@ function reminderDayLabel(dateStr, lang) {
   }
 }
 
-// Non-responders: rostered to a real team, no rsvp row yet or an
-// explicit 'pending' one (same COALESCE(r.status,'pending') default
-// every other page in this app already uses), opted in, has an email.
+// Non-responders: a real roster player (not a sub, who's only ever
+// contacted when a shortage actually calls for one), no rsvp row yet
+// or an explicit 'pending' one (same COALESCE(r.status,'pending')
+// default every other page in this app already uses), opted in, has
+// an email.
+//
+// Team-structure task fix: this used to gate on c.preferred_team IS
+// NOT NULL as its "is this a real roster player" signal -- correct
+// for 'fixed' (a roster player always gets a team name, even if left
+// "unassigned"... except that's also not quite true, see below), but
+// headcount/weekly_draw contacts NEVER have preferred_team set at all
+// (roster hides that field for both -- see the roster page's own
+// comment), so EVERY headcount/weekly_draw league's players were
+// silently excluded from the automatic 72h/24h reminders entirely,
+// with no error, just zero recipients every time. c.role = 'roster'
+// is the real signal that was actually intended ("a regular player,
+// not a sub"), and doesn't depend on team assignment at all -- kept
+// PER-MODE rather than switched for everyone, since a 'fixed' league
+// with a roster player who was left team-unassigned is a real (if
+// narrow) existing-behavior case, and "fixed mode provably unaffected"
+// is this task's own paramount constraint.
 async function getNonResponders(env, leagueId, eventId) {
+  const teamStructure = await getLeagueTeamStructure(env, leagueId);
+  const rosterCondition = teamStructure === 'fixed' ? 'c.preferred_team IS NOT NULL' : "c.role = 'roster'";
   return (await env.DB.prepare(
     `SELECT c.player_id, c.name, c.email, c.token_salt, c.preferred_team
        FROM contacts c
        LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-      WHERE c.league_id = ? AND c.preferred_team IS NOT NULL
+      WHERE c.league_id = ? AND ${rosterCondition}
         AND c.opted_out = 0 AND c.email IS NOT NULL
         AND (r.status IS NULL OR r.status = 'pending')`
   ).bind(eventId, leagueId).all()).results || [];
@@ -10279,6 +10420,64 @@ async function handleLeagueSendReminderNow(req, env, url) {
   const cfg = await getLeagueSeasonConfig(env, leagueId);
   const sent = await sendLeagueReminderKind(env, leagueRow, cfg, ev, 'reminder_72h', { writeLog: false });
   return Response.json({ ok: true, league_id: leagueId, event_id: ev.id, sent });
+}
+
+/* ---------- team-structure task, Part 3: per-event team assignment (weekly_draw) ----------
+ * 'weekly_draw' leagues have real named teams, but writeLeagueRsvpStatus
+ * writes rsvp.team = null at RSVP time (see its own comment) -- a
+ * confirmed player sits in an "unassigned" pool until an admin puts
+ * them on a team FOR THIS EVENT specifically, via this route. Once
+ * assigned, teamState/openSpots/expected (fixed mode's own shortage
+ * machinery, completely unmodified) picks them up automatically on the
+ * next page load, since they all just query rsvp.team -- no separate
+ * per-event-team read path needed at all.
+ *
+ * Session+CSRF+checkLeagueAccess-gated, same discipline as every other
+ * league-admin write route. Deliberately manual assignment only (the
+ * task's own actual requirement) -- no random-draw button; see the
+ * final report's "what's left" list.
+ */
+async function handleLeagueAssignEventTeam(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const leagueRow = await env.DB.prepare('SELECT team_structure FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow || leagueRow.team_structure !== 'weekly_draw') {
+    return Response.json({ ok: false, error: 'This league does not assign teams per event.', errorKey: 'NOT_WEEKLY_DRAW' }, { status: 400 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const eventId = String(body.event_id || '').trim();
+  const playerId = String(body.player_id || '').trim();
+  const team = String(body.team || '').trim();
+  if (!eventId || !playerId || !team) {
+    return Response.json({ ok: false, error: 'event_id, player_id, and team are required.', errorKey: 'ASSIGN_TEAM_FIELDS_REQUIRED' }, { status: 400 });
+  }
+
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  if (!getTeamNames(cfg).includes(team)) {
+    return Response.json({ ok: false, error: 'Unknown team for this league.', errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
+  }
+
+  // Only a CONFIRMED player can be assigned -- a pending/out player has
+  // no reason to be on a team for this event at all.
+  const rsvpRow = await env.DB.prepare('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
+  if (!rsvpRow || rsvpRow.status !== 'in') {
+    return Response.json({ ok: false, error: 'Only a confirmed player can be assigned to a team.', errorKey: 'ASSIGN_TEAM_NOT_CONFIRMED' }, { status: 409 });
+  }
+
+  await env.DB.prepare('UPDATE rsvp SET team = ? WHERE event_id = ? AND player_id = ?').bind(team, eventId, playerId).run();
+  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, team });
 }
 
 
@@ -18560,6 +18759,10 @@ async function handleFetch(req, env, ctx) {
       // windows. See handleLeagueSendReminderNow's own comment.
       if (url.pathname === '/league/events/send-reminder' && req.method === 'POST')
         return await handleLeagueSendReminderNow(req, env, url);
+      // Team-structure task, Part 3: 'weekly_draw' per-event team
+      // assignment.
+      if (url.pathname === '/league/events/assign-team' && req.method === 'POST')
+        return await handleLeagueAssignEventTeam(req, env, url);
       // League provisioning (leagues.js) — requires a valid user session.
       // Rows in the shared DB, scoped by league_id; see leagues.js's header
       // comment for the architecture decision behind that.
