@@ -19,7 +19,7 @@
 import { checkUserSession, checkCsrfToken, hashPassword, sessionResponseHeaders } from './auth.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS } from './league_ids.js';
-import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames } from './season_config.js';
+import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor } from './design_system.js';
 
@@ -420,16 +420,24 @@ export async function handleLeagueContactCreate(req, env) {
       return Response.json({ ok: false, error: `team must be one of: ${validTeams.join(', ')}`, errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
     }
   }
-  // Part 5: for a headcount+hockey league, Regular/Sub (role) and
-  // Goalie/Player (is_goalie) are two INDEPENDENT axes -- role alone
-  // (roster/sub_skater, never sub_goalie for this mode -- see the
-  // roster page's own 2-option picker) can no longer imply is_goalie,
-  // so an explicit body.is_goalie boolean is accepted instead,
-  // defaulting to false (a regular player, not a goalie) when omitted.
-  // Fixed/weekly_draw leagues are completely unaffected -- they keep
-  // deriving is_goalie from role/position exactly as before, since
-  // this block only runs for headcount+hockey.
-  if (cfg.teamStructure === 'headcount' && cfg.sportType === 'hockey') {
+  // Part 5: for a headcount league whose sport has a goalie role,
+  // Regular/Sub (role) and Goalie/Player (is_goalie) are two
+  // INDEPENDENT axes -- role alone (roster/sub_skater, never
+  // sub_goalie for this mode -- see the roster page's own 2-option
+  // picker) can no longer imply is_goalie, so an explicit
+  // body.is_goalie boolean is accepted instead.
+  //
+  // Live-testing task, Part 5 follow-up: generalized from
+  // headcount-only to any team structure whose sport has the goalie
+  // capability (sportHasGoalie, not a hardcoded team_structure/sport
+  // name check) -- the roster page now also renders this control for
+  // 'fixed'/'weekly_draw' regulars (see its own comment on
+  // goalieAxisRoleGated), and only sends an explicit body.is_goalie
+  // when that control is actually visible. When it's omitted (every
+  // pre-existing caller, and fixed/weekly_draw subs whose goalie-ness
+  // is already the role choice itself), isGoalie keeps its
+  // role/position-derived default from above, completely unchanged.
+  if (sportHasGoalie(cfg.sportType) && body.is_goalie !== undefined) {
     isGoalie = body.is_goalie === true ? 1 : 0;
   }
 

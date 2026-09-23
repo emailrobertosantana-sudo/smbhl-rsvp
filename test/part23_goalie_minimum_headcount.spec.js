@@ -104,16 +104,19 @@ describe('Live-testing Part 5: headcount goalie minimum, independent Goalie/Play
       expect(publicHtml).not.toContain('data-i18n="poolGoalies"');
     });
 
-    it('the roster page never shows the Goalie/Player axis when sport_type is not hockey -- N/A today, but the flag itself is gated correctly regardless', async () => {
-      // sport_type is always 'hockey' today (Part 4), so this proves
-      // the OTHER half of the gate: a fixed-mode league (not headcount)
-      // never shows the goalie axis either, even though sport_type IS
-      // hockey.
-      const { cookie, csrfToken } = await signup('goalie.fixed.noaxis@example.com', '203.0.126.004');
-      await createLeague(cookie, csrfToken, { name: 'Goalie Fixed No Axis League', teamNames: ['A', 'B'], tracksStats: true });
+    // Superseded by a later live-testing task (Part 5 follow-up, see
+    // part28_sport_capability_goalie_flag.spec.js): the goalie axis is
+    // now available for 'fixed'/'weekly_draw' too, driven by the
+    // sport's own capability rather than team_structure -- a fixed-mode
+    // hockey league DOES show it now (for role 'roster'; a sub's
+    // goalie-ness is still the existing sub_goalie/sub_skater role
+    // choice). This test now confirms that positive case instead.
+    it('the roster page shows the Goalie/Player axis for a fixed-mode hockey league too (sport capability, not team_structure)', async () => {
+      const { cookie, csrfToken } = await signup('goalie.fixed.axis@example.com', '203.0.126.004');
+      await createLeague(cookie, csrfToken, { name: 'Goalie Fixed Axis League', teamNames: ['A', 'B'], tracksStats: true });
       const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
-      expect(html).not.toContain('id="r_goalie_radio"');
-      expect(html).not.toContain('data-i18n="goalieAxis"');
+      expect(html).toContain('id="r_goalie_radio"');
+      expect(html).toContain('data-i18n="goalieAxis"');
     });
   });
 

@@ -55,7 +55,8 @@ import {
   normalizeTeamWithConfig,
   getLeagueConfig,
   tracksStats,
-  getTeamColour
+  getTeamColour,
+  sportHasGoalie
 } from './season_config.js';
 
 /* SMBHL attendance
@@ -2495,12 +2496,31 @@ async function handleLeagueRosterPage(req, env, url) {
   // page; only 'fixed' shows them, unchanged from before this task.
   const teamStructure = seasonCfg.teamStructure || 'fixed';
   const showTeams = teamStructure === 'fixed';
-  // Part 5: headcount+hockey gets a SECOND, independent Goalie/Player
-  // axis alongside the existing Regular/Sub one -- gated on sport_type
-  // so this stays inert (and invisible) the moment a non-hockey sport
-  // exists, without this page needing to know anything else about that
-  // future sport.
-  const showGoalieAxis = teamStructure === 'headcount' && seasonCfg.sportType === 'hockey';
+  // Part 5 (headcount): an independent Goalie/Player axis alongside the
+  // existing Regular/Sub one -- gated on the sport's own capability
+  // (sportHasGoalie), not a hardcoded team_structure/sport name check,
+  // so this stays inert the moment a non-goalie sport exists, without
+  // this page needing to know anything else about that future sport.
+  //
+  // Live-testing task, Part 5 follow-up: this same capability also
+  // applies to 'fixed' and 'weekly_draw' now, not just 'headcount' --
+  // teamState() (fixed-mode shortage detection, index.js) and
+  // handleLeagueRandomAssignEventTeams (weekly_draw's auto-draw) both
+  // already read contacts.is_goalie today, for every team structure,
+  // but until now the roster page never rendered any control to set it
+  // outside headcount mode -- every non-headcount league's goalie
+  // shortage detection has been silently inert since this became a
+  // multi-tenant product (SMBHL sets is_goalie through its own
+  // separate season_hub tooling, not this page). For 'fixed'/
+  // 'weekly_draw' specifically, the axis is only shown for role
+  // 'roster' -- a sub's goalie-ness is already asked via the existing
+  // 3-value role radio (sub_skater vs sub_goalie), so showing a SECOND
+  // independent control for the same thing on a sub would be
+  // redundant and invite the two to disagree; 'headcount' has no
+  // sub_goalie role value at all, so it keeps showing the axis
+  // regardless of role, as before.
+  const showGoalieAxis = sportHasGoalie(seasonCfg.sportType);
+  const goalieAxisRoleGated = teamStructure !== 'headcount';
 
   const subCount = contacts.filter(c => c.role !== 'roster').length;
   const unassignedCount = contacts.filter(c => c.role === 'roster' && !c.preferred_team).length;
@@ -2620,7 +2640,7 @@ async function handleLeagueRosterPage(req, env, url) {
           <label data-value="sub_goalie"><span data-i18n="roleSubGoalie">Remplaçant — gardien</span></label>`}
         </div>
       </div>
-      ${showGoalieAxis ? `<div class="nl-field">
+      ${showGoalieAxis ? `<div class="nl-field" id="r_goalie_field">
         <span class="nl-label" data-i18n="goalieAxis">Gardien ou joueur?</span>
         <div class="ro-radio" id="r_goalie_radio" style="grid-template-columns:1fr 1fr">
           <label data-value="player" class="on"><span data-i18n="axisPlayer">Joueur</span></label>
@@ -2646,12 +2666,36 @@ ${tabbar}`;
 
   const script = `
 ${nlAuthScript(I18N_ROSTER)}
+// Part 5 follow-up: for 'fixed'/'weekly_draw', the goalie axis only
+// applies to role 'roster' -- a sub's goalie-ness is already the
+// sub_goalie/sub_skater role choice itself (see this page's own
+// server-side comment on goalieAxisRoleGated). Toggling role hides the
+// axis and resets it back to "player" so a forgotten-checked "Gardien"
+// from an earlier role never gets silently submitted for a sub.
+var GOALIE_AXIS_ROLE_GATED = ${goalieAxisRoleGated};
+function goalieAxisVisible() {
+  var field = document.getElementById('r_goalie_field');
+  if (!field) return false;
+  return !GOALIE_AXIS_ROLE_GATED || r_role === 'roster';
+}
+function updateGoalieAxisVisibility() {
+  var field = document.getElementById('r_goalie_field');
+  if (!field) return;
+  if (goalieAxisVisible()) {
+    field.style.display = '';
+  } else {
+    field.style.display = 'none';
+    r_goalie = false;
+    document.querySelectorAll('#r_goalie_radio label').forEach(function(x) { x.classList.toggle('on', x.getAttribute('data-value') === 'player'); });
+  }
+}
 var r_role = 'roster';
 document.querySelectorAll('#r_role_radio label').forEach(function(l) {
   l.addEventListener('click', function() {
     document.querySelectorAll('#r_role_radio label').forEach(function(x) { x.classList.remove('on'); });
     l.classList.add('on');
     r_role = l.getAttribute('data-value');
+    updateGoalieAxisVisibility();
   });
 });
 var r_goalie = false;
@@ -2662,6 +2706,7 @@ document.querySelectorAll('#r_goalie_radio label').forEach(function(l) {
     r_goalie = l.getAttribute('data-value') === 'goalie';
   });
 });
+updateGoalieAxisVisibility();
 function toggleRosterPanel() {
   document.getElementById('ro_panel').classList.toggle('open');
 }
@@ -2690,7 +2735,7 @@ async function submitContact() {
     var res = await fetch('/league/contacts', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined, is_goalie: ${showGoalieAxis ? 'r_goalie' : 'undefined'} })
+      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined, is_goalie: ${showGoalieAxis ? '(goalieAxisVisible() ? r_goalie : undefined)' : 'undefined'} })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }

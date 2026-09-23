@@ -56,6 +56,24 @@ export const DEFAULT_SEASON_CONFIG = {
   sportType: 'hockey'
 };
 
+// Live-testing task, Part 5: which characteristics a given sport_type
+// has, so callers (the roster page's goalie flag today, anything else
+// sport-specific tomorrow) can ask "does this league's sport have a
+// goalie role?" instead of hardcoding a list of sport names to check
+// against. Only 'hockey' exists today (see migrate-028.sql -- every
+// league defaults to it silently, no sport-selection UI exists yet),
+// so this starts as a single entry, but adding a second sport later
+// means adding one entry here, not hunting down every place that used
+// to compare against 'hockey' by name.
+const SPORT_CAPABILITIES = {
+  hockey: { hasGoalie: true }
+};
+
+export function sportHasGoalie(sportType) {
+  const caps = SPORT_CAPABILITIES[sportType];
+  return !!(caps && caps.hasGoalie);
+}
+
 /**
  * Normalizes a raw config object ensuring all fields conform to schema.
  */
