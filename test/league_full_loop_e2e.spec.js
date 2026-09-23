@@ -170,8 +170,15 @@ describe('Part Q: full second-league loop, end to end', () => {
     // connects end to end with zero admin action.
     expect(sentMails.length).toBe(1);
     expect(sentMails[0].to).toEqual(['sub@fullloop.com']);
-    expect(sentMails[0].from).toContain('fullloop.admin@example.com');
+    // Bug 1 fix (live-testing): the league's own From is now its slug
+    // under the verified mail.notreligue.ca domain, not the admin's raw
+    // signup email (which Resend rejects, 403, since it's never a
+    // verified sending domain) -- the admin's real email is still the
+    // Reply-To.
+    expect(sentMails[0].from).toContain('mail.notreligue.ca');
+    expect(sentMails[0].from).not.toContain('fullloop.admin@example.com');
     expect(sentMails[0].from).not.toContain('smbhl.com');
+    expect(sentMails[0].reply_to).toBe('fullloop.admin@example.com');
 
     // 9. Admin views the event's shortage status -- still short, since no
     // one has answered the automatic invite yet.

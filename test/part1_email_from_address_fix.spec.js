@@ -162,11 +162,16 @@ describe('Part 1: verification/reset email FROM address is domain-aware, and a m
       })
     );
     expect(sentMails.length).toBe(1);
-    // The league's own real fromEmail is "<league name> <creating admin's email>"
-    // (getLeagueSeasonConfig, leagues.js) -- proof this uses the league's
-    // OWN identity, not the generic non-SMBHL fallback.
-    expect(sentMails[0].from).toContain('part1.inviter@example.com');
-    expect(sentMails[0].from).not.toContain('mail.notreligue.ca');
+    // Bug 1 fix (live-testing): a league's real fromEmail is now
+    // "<league name> <slug@mail.notreligue.ca>" (getLeagueSeasonConfig,
+    // leagues.js) -- the admin's own raw signup email is never a domain
+    // verified in the Resend account, so using it as From caused every
+    // league's email to be rejected with a 403 in production. The
+    // admin's real email is still the Reply-To, so a player's reply
+    // reaches them directly.
+    expect(sentMails[0].from).toContain('mail.notreligue.ca');
+    expect(sentMails[0].from).not.toContain('part1.inviter@example.com');
+    expect(sentMails[0].reply_to).toBe('part1.inviter@example.com');
   });
 
   it('a missing RESEND_API_KEY is surfaced loudly (a specific, greppable console.error), never silently discarded without a trace -- this is what let the live bug be diagnosed via wrangler tail', async () => {

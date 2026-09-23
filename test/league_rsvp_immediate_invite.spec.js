@@ -158,8 +158,14 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
     expect(res.status).toBe(200);
     expect(sentMails.length).toBe(1);
     expect(sentMails[0].to).toEqual(['asub1@leaguea.com']);
-    expect(sentMails[0].from).toContain('immediateinvite.a@example.com');
+    // Bug 1 fix (live-testing): From is now the league's own slug under
+    // the verified mail.notreligue.ca domain, not the admin's raw
+    // signup email -- Reply-To (unchanged) is still the real admin
+    // email.
+    expect(sentMails[0].from).toContain('mail.notreligue.ca');
+    expect(sentMails[0].from).not.toContain('immediateinvite.a@example.com');
     expect(sentMails[0].from).not.toContain('smbhl.com');
+    expect(sentMails[0].reply_to).toBe('immediateinvite.a@example.com');
 
     const outboxRow = await env.DB.prepare(`SELECT * FROM outbox WHERE event_id = ? AND kind = 'sub_call'`).bind(eventId).first();
     expect(outboxRow.league_id).toBe(leagueA);
@@ -236,7 +242,11 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
       // inclusion of the new sub rather than an exact recipient count.
       expect(sentMails.length).toBeGreaterThanOrEqual(1);
       expect(sentMails.some(m => m.to.includes('asub2@leaguea.com'))).toBe(true);
-      expect(sentMails.every(m => m.from.includes('immediateinvite.a@example.com'))).toBe(true);
+      // Bug 1 fix (live-testing): From is now the league's own slug
+      // under mail.notreligue.ca -- Reply-To (unchanged) is the real
+      // admin email.
+      expect(sentMails.every(m => m.from.includes('mail.notreligue.ca'))).toBe(true);
+      expect(sentMails.every(m => m.reply_to === 'immediateinvite.a@example.com')).toBe(true);
     });
 
     it("an admin cannot mark a player who isn't in their own league (404)", async () => {

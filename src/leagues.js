@@ -185,7 +185,7 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
   let leagueRosterLimits = null;
   let leagueTeamStructure = null;
   const leagueRow = await env.DB.prepare(
-    `SELECT l.name, l.team_names, l.language_mode, l.color, l.team_structure, l.min_players, l.max_players, u.email AS admin_email
+    `SELECT l.id, l.name, l.slug, l.team_names, l.language_mode, l.color, l.team_structure, l.min_players, l.max_players, u.email AS admin_email
        FROM leagues l JOIN users u ON u.id = l.created_by
       WHERE l.id = ?`
   ).bind(leagueId).first();
@@ -197,9 +197,26 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
       } catch (_) {}
     }
     if (leagueRow.admin_email) {
+      // Bug 1 fix (live-testing): every league used to send FROM the
+      // admin's own raw signup email ("{name} <{admin_email}>") --
+      // Resend rejects that outright (403) since it's never a domain
+      // verified in this account, so EVERY league's email (reminders,
+      // sub-invites, logistics, co-admin invites) silently failed to
+      // send for every league except SMBHL. Now sends from the
+      // league's own slug under mail.notreligue.ca -- the domain
+      // already verified in this Resend account (see
+      // DEFAULT_FROM_NON_SMBHL's own pre-existing identity, which
+      // already relied on this same verified domain as a fallback that
+      // was never actually reached, since fromEmail was always set
+      // before this fix). Reply-To stays the admin's own real email
+      // (unchanged) so a player's reply still reaches the admin
+      // directly -- Reply-To doesn't require the From address's domain
+      // to be a real receiving mailbox, so this needs no new domain
+      // verification or wildcard mail routing.
+      const leagueSlug = await getOrCreateLeagueSlug(env, leagueRow);
       leagueBranding = {
         name: leagueRow.name,
-        fromEmail: `${leagueRow.name} <${leagueRow.admin_email}>`,
+        fromEmail: `${leagueRow.name} <${leagueSlug}@mail.notreligue.ca>`,
         replyToEmail: leagueRow.admin_email,
         siteUrl: env.PUBLIC_URL || DEFAULT_SEASON_CONFIG.league.siteUrl,
         // Part 4 foundation: no UI to set this away from 'both' yet --

@@ -229,8 +229,13 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       expect(skaterInviteRow.league_id).toBe(leagueId); // queued under THIS league, never SMBHL's
       if (rsvpMails.length > 0) { // sent synchronously (i.e. not currently quiet hours)
         expect(rsvpMails[0].to).toEqual(['skatersub@part11.com']);
-        expect(rsvpMails[0].from).toContain('part11.admin@example.com');
+        // Bug 1 fix (live-testing): From is now the league's own slug
+        // under mail.notreligue.ca -- Reply-To (unchanged) is the real
+        // admin email.
+        expect(rsvpMails[0].from).toContain('mail.notreligue.ca');
+        expect(rsvpMails[0].from).not.toContain('part11.admin@example.com');
         expect(rsvpMails[0].from).not.toContain('smbhl.com');
+        expect(rsvpMails[0].reply_to).toBe('part11.admin@example.com');
       }
 
       // ---- Step 6 (Part 3): the admin views the event-detail page,
@@ -265,7 +270,10 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       expect(goalieInviteRow.league_id).toBe(leagueId);
       if (adminMails.length > 0) {
         expect(adminMails[0].to).toEqual(['goaliesub@part11.com']);
-        expect(adminMails[0].from).toContain('part11.admin@example.com');
+        // Bug 1 fix (live-testing): From is now the league's own slug
+        // under mail.notreligue.ca; Reply-To is the real admin email.
+        expect(adminMails[0].from).toContain('mail.notreligue.ca');
+        expect(adminMails[0].reply_to).toBe('part11.admin@example.com');
       }
 
       const statusPageRes = await SELF.fetch(`${BASE}/league/events/status?e=${encodeURIComponent(eventId)}`, { headers: { cookie } });

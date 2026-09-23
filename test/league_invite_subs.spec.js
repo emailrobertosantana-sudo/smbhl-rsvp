@@ -169,7 +169,12 @@ describe('Part P: POST /league/events/invite-subs', () => {
     expect(sentMails[0].to).toEqual(['suba@leaguea.com']);
     expect(sentMails[0].from).not.toContain('joueur@smbhl.com');
     expect(sentMails[0].from).not.toContain('SMBHL');
-    expect(sentMails[0].from).toContain('invitesubs.a@example.com');
+    // Bug 1 fix (live-testing): From is now the league's own slug under
+    // the verified mail.notreligue.ca domain, not the admin's raw
+    // signup email -- Reply-To (unchanged) is still the real admin
+    // email.
+    expect(sentMails[0].from).toContain('mail.notreligue.ca');
+    expect(sentMails[0].from).not.toContain('invitesubs.a@example.com');
     expect(sentMails[0].reply_to).toBe('invitesubs.a@example.com');
   });
 

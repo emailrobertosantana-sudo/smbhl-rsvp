@@ -2816,6 +2816,8 @@ ${tabbar}`;
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Envoyer un rappel maintenant',
       remindSentOne: 'Rappel envoyé à 1 joueur.', remindSentMany: 'Rappel envoyé à {n} joueurs.', remindSentNone: "Tout le monde a déjà répondu, rien à envoyer.",
+      remindSendFailed: "Échec de l'envoi à {n} joueur(s). Réessaie plus tard ou contacte le soutien si le problème persiste.",
+      remindSentPartial: 'Rappel envoyé à {sent} joueur(s), mais {failed} envoi(s) ont échoué.',
       poolTitle: 'Joueurs',
       unassignedTitle: 'Confirmés, pas encore assignés', unassignedDesc: 'Assigne chaque joueur confirmé à une équipe pour ce match.',
       noUnassigned: 'Tous les joueurs confirmés sont assignés.',
@@ -2831,6 +2833,8 @@ ${tabbar}`;
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Send a reminder now',
       remindSentOne: 'Reminder sent to 1 player.', remindSentMany: 'Reminder sent to {n} players.', remindSentNone: 'Everyone has already answered, nothing to send.',
+      remindSendFailed: 'Failed to send to {n} player(s). Try again later, or contact support if this keeps happening.',
+      remindSentPartial: 'Reminder sent to {sent} player(s), but {failed} send(s) failed.',
       poolTitle: 'Players',
       unassignedTitle: 'Confirmed, not yet assigned', unassignedDesc: 'Assign each confirmed player to a team for this game.',
       noUnassigned: 'Every confirmed player is assigned.',
@@ -3060,17 +3064,35 @@ async function sendReminderNow(btn) {
     });
     var data = await res.json().catch(function() { return {}; });
     var dict = window.__pageDict();
+    // Bug 2 fix (live-testing): "genuinely nothing to send" (eligible
+    // === 0) used to be indistinguishable from "there were real
+    // recipients but every send failed" (eligible > 0, sent === 0) --
+    // both just showed "sent: 0" as a success-shaped message, hiding
+    // real send failures (e.g. Bug 1's from-address rejection) from
+    // the admin entirely. msg switches to nl-error styling for a real
+    // failure, same convention as every other error on this page.
     if (!res.ok || !data.ok) {
+      msg.className = 'nl-error';
       msg.textContent = window.__errorText(data.errorKey, data.error);
+    } else if (data.sent === 0 && data.eligible > 0) {
+      msg.className = 'nl-error';
+      msg.textContent = dict.remindSendFailed.split('{n}').join(String(data.failed));
+    } else if (data.failed > 0) {
+      msg.className = 'nl-error';
+      msg.textContent = dict.remindSentPartial.split('{sent}').join(String(data.sent)).split('{failed}').join(String(data.failed));
     } else if (data.sent === 0) {
+      msg.className = 'nl-help';
       msg.textContent = dict.remindSentNone;
     } else if (data.sent === 1) {
+      msg.className = 'nl-help';
       msg.textContent = dict.remindSentOne;
     } else {
+      msg.className = 'nl-help';
       msg.textContent = dict.remindSentMany.split('{n}').join(String(data.sent));
     }
     msg.style.display = 'block';
   } catch (e) {
+    msg.className = 'nl-error';
     msg.textContent = window.__errorText('NETWORK_ERROR');
     msg.style.display = 'block';
   }
@@ -10556,7 +10578,12 @@ async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil) {
     if (!leagueRow[kindToColumn[kind]]) { results[kind] = 0; continue; }
     const already = await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(ev.id, kind).first();
     if (already) { results[kind] = 0; continue; }
-    results[kind] = await sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog: true });
+    // The automated cron wave only ever logs a summary count -- no
+    // admin is watching a live message for it, so only .sent (not the
+    // eligible/failed breakdown Bug 2 added for the manual trigger) is
+    // needed here; this keeps runLeagueReminders' own summing logic
+    // unchanged.
+    results[kind] = (await sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog: true })).sent;
   }
   return results;
 }
@@ -10564,6 +10591,14 @@ async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil) {
 // writeLog: false for the manual "send now" trigger below -- see its
 // own comment for why a manual send must never suppress the automatic
 // 72h/24h waves for the same event.
+// Bug 2 fix (live-testing): returns { sent, eligible, failed } instead
+// of a bare sent count -- eligible (the real non-responder/confirmed-
+// player pool size, computed BEFORE any send is attempted) is what
+// lets a caller tell "genuinely nothing to send" (eligible === 0) apart
+// from "there were real recipients but every send failed" (eligible >
+// 0, sent === 0), which used to be indistinguishable and, combined
+// with Bug 1's from-address rejection, made every league's reminders
+// silently fail while the admin saw a success-shaped message.
 async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false } = {}) {
   const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
   const recipients = kind === 'logistics_12h'
@@ -10571,6 +10606,7 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
     : await getNonResponders(env, leagueRow.id, ev.id, ev.season);
 
   let sent = 0;
+  let failed = 0;
   for (const contact of recipients) {
     try {
       const dayLabel = reminderDayLabel(ev.date, forcedLang || 'fr');
@@ -10582,6 +10618,7 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
       await sendMail(env, contact.email, mail.subject, mail.text, mail.html, null, cfg.league);
       sent++;
     } catch (err) {
+      failed++;
       console.error(`[league-reminders] failed to send ${kind} to ${contact.player_id}: ${err.message}`);
     }
   }
@@ -10591,7 +10628,7 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
        ON CONFLICT(event_id, kind) DO NOTHING`
     ).bind(ev.id, kind, leagueRow.id, new Date().toISOString(), sent).run();
   }
-  return sent;
+  return { sent, eligible: recipients.length, failed };
 }
 
 // The cron entry point (scheduled(), below the export default). Scans
@@ -10666,8 +10703,14 @@ async function handleLeagueSendReminderNow(req, env, url) {
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
-  const sent = await sendLeagueReminderKind(env, leagueRow, cfg, ev, 'reminder_72h', { writeLog: false });
-  return Response.json({ ok: true, league_id: leagueId, event_id: ev.id, sent });
+  const { sent, eligible, failed } = await sendLeagueReminderKind(env, leagueRow, cfg, ev, 'reminder_72h', { writeLog: false });
+  // Bug 2 fix (live-testing): eligible/failed let the client tell
+  // "genuinely nothing to send" (eligible === 0) apart from "there were
+  // real recipients but every send failed" (eligible > 0, sent === 0)
+  // -- these used to be indistinguishable (both just "sent: 0"), so a
+  // real send failure (e.g. Bug 1's from-address rejection) looked
+  // exactly like ordinary success to the admin.
+  return Response.json({ ok: true, league_id: leagueId, event_id: ev.id, sent, eligible, failed });
 }
 
 /* ---------- team-structure task, Part 3: per-event team assignment (weekly_draw) ----------
