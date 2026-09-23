@@ -539,6 +539,18 @@ async function handleDashboardPage(req, env, url) {
   ).bind(session.userId).first();
   const verified = await isUserEmailVerified(env, session.userId);
 
+  // Part 2 fix: every session-based league page (dashboard, roster,
+  // schedule, event status/detail) was passing no leagueCfg to page(),
+  // so it silently fell back to SMBHL's own branding (DEFAULT_SEASON_CONFIG
+  // .league) for every league, not just SMBHL's real admin pages. page()
+  // already fully supports a leagueCfg 4th argument (title, favicon, logo
+  // alt text, footer, site link all already branch on it) -- getLeagueRsvpGet
+  // (Part M) already used it correctly; this was simply never wired up for
+  // any of the other league pages built in Parts R-V. getLeagueSeasonConfig
+  // resolves it the same way everywhere else (signup team names/no season
+  // yet, or the published season's own branding).
+  const leagueCfg = leagueRow ? (await getLeagueSeasonConfig(env, leagueRow.id)).league : null;
+
   // Onboarding fix: POST /league/season/publish (Part I) had zero UI, so a
   // brand-new admin who tried to create their first event hit a confusing
   // "season is required" error with no path forward. Check the league's
@@ -668,7 +680,7 @@ async function submitSeason() {
     btn.disabled = false;
   }
 }
-</script>`), {
+</script>`, '', leagueCfg), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -714,7 +726,11 @@ async function handleLeagueRosterPage(req, env, url) {
   // add-player form can offer real choices instead of no team field at
   // all -- the root cause of every team always showing 0 confirmed on
   // the shortage page regardless of actual roster size.
-  const teamNames = getTeamNames(await getLeagueSeasonConfig(env, leagueId));
+  const seasonCfg = await getLeagueSeasonConfig(env, leagueId);
+  const teamNames = getTeamNames(seasonCfg);
+  // Part 2 fix: this page's branding was silently falling back to
+  // SMBHL's own (see handleDashboardPage's comment for the full story).
+  const leagueCfg = seasonCfg.league;
 
   const rosterHtml = contacts.length
     ? `<table>${contacts.map(c => `<tr><td>${esc(c.name)}${c.email ? `<span class="by">${esc(c.email)}</span>` : ''}</td><td class="s">${esc(ROLE_LABEL_FR_EN[c.role] || c.role)}</td><td class="s">${c.preferred_team ? esc(c.preferred_team) : '<span style="color:var(--faint);">Non assigné<span class="en" style="display:block;">Unassigned</span></span>'}</td></tr>`).join('')}</table>`
@@ -803,7 +819,7 @@ async function submitContact() {
     btn.disabled = false;
   }
 }
-</script>`), {
+</script>`, '', leagueCfg), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -828,6 +844,8 @@ async function handleLeagueSchedulePage(req, env, url) {
   const events = (await env.DB.prepare(
     'SELECT id, season, week, date, venue, state, start_time, end_time FROM events WHERE league_id = ? ORDER BY date DESC, week DESC'
   ).bind(leagueId).all()).results || [];
+  // Part 2 fix: see handleDashboardPage's comment for the full story.
+  const leagueCfg = (await getLeagueSeasonConfig(env, leagueId)).league;
 
   const STATE_LABEL = { open: 'Ouvert / Open', closed: 'Fermé / Closed', cancelled: 'Annulé / Cancelled' };
   const scheduleHtml = events.length
@@ -903,7 +921,7 @@ async function submitEvent() {
     btn.disabled = false;
   }
 }
-</script>`), {
+</script>`, '', leagueCfg), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -929,10 +947,12 @@ async function handleLeagueEventDetailPage(req, env, url) {
   const ev = eventId ? await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
     .bind(eventId, leagueId).first() : null;
   if (!ev) {
+    // Part 2 fix: see handleDashboardPage's comment for the full story.
+    const notFoundLeagueCfg = (await getLeagueSeasonConfig(env, leagueId)).league;
     return new Response(page('Match introuvable', `
       <h1>Match introuvable<span class="en">Event not found</span></h1>
       <p class="state"><a href="/league/schedule">&larr; Calendrier<span class="en" style="display:inline;"> / Schedule</span></a></p>
-    `), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    `, '', notFoundLeagueCfg), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
@@ -992,7 +1012,7 @@ async function inviteSubs(team, need, btn) {
   msg.style.display = 'block';
   btn.disabled = false;
 }
-</script>`), {
+</script>`, '', cfg.league), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
