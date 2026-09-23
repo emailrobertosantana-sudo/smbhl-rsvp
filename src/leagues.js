@@ -592,7 +592,7 @@ export async function handleLeagueSeasonPublish(req, env) {
     return Response.json({ ok: false, error: 'This route cannot publish to SMBHL\'s data.' }, { status: 403 });
   }
 
-  const leagueRow = await env.DB.prepare('SELECT team_names, team_structure FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT team_names, team_structure, min_players, max_players FROM leagues WHERE id = ?').bind(leagueId).first();
   let teamNames = [];
   if (leagueRow && leagueRow.team_names) {
     try {
@@ -663,31 +663,64 @@ export async function handleLeagueSeasonPublish(req, env) {
     if (Number.isFinite(n) && n > 0) config[cfgKey] = n;
   }
 
-  // Season-level min/max (headcount only): required whenever THIS
-  // publish call is explicitly turning a season's OWN structure to
-  // 'headcount' (there's no other source to fall back to -- same
-  // requirement handleLeagueCreate already has for a headcount league
-  // at signup). When the season instead just inherits an already-
-  // headcount league's default (no explicit team_structure override in
-  // this request at all -- the pre-existing shape of this call), this
-  // branch is intentionally NOT reached, so a plain re-publish with
-  // only {season_name} keeps behaving exactly as it did before this
-  // task (see this function's own top comment).
-  if (seasonTeamStructure === 'headcount') {
-    const minP = Number(body.min_players);
-    const maxP = Number(body.max_players);
-    if (!Number.isFinite(minP) || !Number.isFinite(maxP) || minP < 1) {
-      return Response.json({ ok: false, error: 'A minimum and maximum player count are required.', errorKey: 'HEADCOUNT_LIMITS_REQUIRED' }, { status: 400 });
-    }
-    if (maxP < minP) {
-      return Response.json({ ok: false, error: 'The maximum must be at least the minimum.', errorKey: 'HEADCOUNT_MAX_TOO_LOW' }, { status: 400 });
+  // Season-level min/max (headcount only). Bug 3 fix (live-testing):
+  // this used to only run when THIS call explicitly overrode
+  // team_structure to 'headcount', so the far more common case -- a
+  // headcount-DEFAULT league's plain first-season-publish, sending only
+  // {season_name} -- never attached skatersPerTeam/minSkaters to the
+  // season's own config at all. Once any real season config exists,
+  // season_config.js's own resolution never falls back to the league's
+  // leagues.min_players/max_players again (that fallback is only for
+  // "no season published yet" -- see fallbackSeasonConfig's own
+  // comment), so shortage math and the public page's "X/Y" figure
+  // silently used SMBHL's generic defaults (8/5) instead of the
+  // league's real signup-chosen numbers, for every headcount league
+  // that never explicitly re-published with an override. Confirmed
+  // live: a real league's public page showed "2/8" instead of the
+  // correct "2/10".
+  //
+  // Fix: whenever THIS season's effective structure is headcount --
+  // whether via an explicit override (seasonTeamStructure === headcount,
+  // which still requires real values in the body, same as before) or
+  // simply inherited from an already-headcount league's own default
+  // (no override in this request at all) -- min/max is resolved as
+  // body.min_players/max_players if explicitly given, else the
+  // league's own real leagues.min_players/max_players (always set for
+  // a headcount league at signup). Every pre-existing NON-headcount
+  // call (SMBHL, every 'fixed'/'weekly_draw' league) is completely
+  // unaffected -- this block still only runs when effectiveStructure
+  // is 'headcount', exactly as narrowly scoped as before.
+  //
+  // Not backfilled: an already-published season from before this fix
+  // (config.skatersPerTeam/minSkaters missing) is NOT retroactively
+  // rewritten here -- this route only ever touches data when actually
+  // called. A league already affected self-heals the next time its
+  // admin re-publishes (edits) its current season, e.g. via the
+  // dashboard's own "Saisons" section -- see this task's final report
+  // for the explicit decision not to perform a live KV backfill.
+  if (effectiveStructure === 'headcount') {
+    const minP = body.min_players !== undefined ? Number(body.min_players) : (leagueRow && leagueRow.min_players);
+    const maxP = body.max_players !== undefined ? Number(body.max_players) : (leagueRow && leagueRow.max_players);
+    if (seasonTeamStructure === 'headcount') {
+      // An explicit override TO headcount has no league-level default
+      // to silently fall back to if the body omits min/max (a
+      // fixed/weekly_draw-default league has no min_players/max_players
+      // of its own at all) -- still required, same as before.
+      if (!Number.isFinite(minP) || !Number.isFinite(maxP) || minP < 1) {
+        return Response.json({ ok: false, error: 'A minimum and maximum player count are required.', errorKey: 'HEADCOUNT_LIMITS_REQUIRED' }, { status: 400 });
+      }
+      if (maxP < minP) {
+        return Response.json({ ok: false, error: 'The maximum must be at least the minimum.', errorKey: 'HEADCOUNT_MAX_TOO_LOW' }, { status: 400 });
+      }
     }
     // Deliberately no goaliesPerTeam override here -- same reasoning as
     // fallbackSeasonConfig's own comment in season_config.js (headcount
     // rosters never expose is_goalie, so it's never consulted for this
     // mode regardless of its value).
-    config.skatersPerTeam = maxP;
-    config.minSkaters = minP;
+    if (Number.isFinite(minP) && Number.isFinite(maxP)) {
+      config.skatersPerTeam = maxP;
+      config.minSkaters = minP;
+    }
   }
 
   if (seasonTeamStructure) {
