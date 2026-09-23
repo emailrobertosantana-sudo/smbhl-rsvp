@@ -965,6 +965,30 @@ async function handleLeagueEventDetailPage(req, env, url) {
     if (openGoalies > 0) inviteButtons.push(`<button type="button" class="mini" onclick="inviteSubs('${esc(team)}','goalie',this)">INVITER GARDIEN<span class="en" style="display:block;">INVITE GOALIE</span></button>`);
     if (openSkaters > 0) inviteButtons.push(`<button type="button" class="mini" onclick="inviteSubs('${esc(team)}','skater',this)">INVITER JOUEUR<span class="en" style="display:block;">INVITE SKATER</span></button>`);
 
+    // Part 3: every contact rostered to this team (preferred_team = team),
+    // LEFT JOINed against this event's own rsvp row -- so a player who
+    // hasn't answered yet still shows up as "no response" (COALESCE to
+    // 'pending', the same default status a real rsvp row would have), not
+    // silently omitted. The admin can click IN/OUT for any of them, which
+    // calls the existing session-gated POST /league/rsvp/admin route
+    // (already wired to writeLeagueRsvpStatus + the same
+    // maybeInviteSubsForShortage shortage/duplicate-guard logic the
+    // player-self-out path uses -- no separate logic here).
+    const rosterRows = (await env.DB.prepare(
+      `SELECT c.player_id, c.name, COALESCE(r.status, 'pending') AS status
+         FROM contacts c
+         LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+        WHERE c.league_id = ? AND c.preferred_team = ?
+        ORDER BY c.name`
+    ).bind(ev.id, leagueId, team).all()).results || [];
+    const rosterListHtml = rosterRows.length
+      ? `<table style="margin-top:12px;">${rosterRows.map(p => `<tr><td>${esc(p.name)}</td><td class="s">
+          <span class="${p.status === 'in' ? 'in' : p.status === 'out' ? 'out' : 'pend'}" style="margin-right:8px;">${p.status === 'in' ? 'IN' : p.status === 'out' ? 'OUT' : 'EN ATTENTE / PENDING'}</span>
+          <button type="button" class="mini in ${p.status === 'in' ? 'on' : ''}" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
+          <button type="button" class="mini out ${p.status === 'out' ? 'on' : ''}" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
+        </td></tr>`).join('')}</table>`
+      : `<p class="state" style="margin:12px 0 0;">Aucun joueur assigné à cette équipe.<span class="en" style="display:block;">No players assigned to this team.</span></p>`;
+
     teamCards.push(`
     <div class="card">
       <h2>${esc(team)}${st.short ? ` <span class="short">— court / short</span>` : ''}</h2>
@@ -976,6 +1000,7 @@ async function handleLeagueEventDetailPage(req, env, url) {
       </ul>
       ${inviteButtons.length ? `<div class="btns" style="margin-top:12px;">${inviteButtons.join('')}</div>` : ''}
       <p class="inviteMsg state" style="display:none;margin-top:8px;"></p>
+      ${rosterListHtml}
     </div>`);
   }
 
@@ -1011,6 +1036,30 @@ async function inviteSubs(team, need, btn) {
   }
   msg.style.display = 'block';
   btn.disabled = false;
+}
+
+async function setPlayerStatus(playerId, status, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch('/league/rsvp/admin', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, player_id: playerId, status: status })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      alert(data.error || "Échec de la mise à jour du statut. / Failed to update status.");
+      btn.disabled = false;
+      return;
+    }
+    // Server-rendered counts/roster list are the source of truth -- reload
+    // so both the per-player status and the aggregate shortage counts
+    // (which a status change can affect) stay in sync.
+    window.location.reload();
+  } catch (e) {
+    alert('Erreur réseau. / Network error.');
+    btn.disabled = false;
+  }
 }
 </script>`, '', cfg.league), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
