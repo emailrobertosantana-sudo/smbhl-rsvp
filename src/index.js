@@ -706,11 +706,18 @@ async function handleLeagueRosterPage(req, env, url) {
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
   const contacts = (await env.DB.prepare(
-    'SELECT player_id, name, email, phone, role FROM contacts WHERE league_id = ? ORDER BY name'
+    'SELECT player_id, name, email, phone, role, preferred_team FROM contacts WHERE league_id = ? ORDER BY name'
   ).bind(leagueId).all()).results || [];
 
+  // Part 1 fix: real team names (signup-provided before a season is
+  // published, the published season's own config after), so the
+  // add-player form can offer real choices instead of no team field at
+  // all -- the root cause of every team always showing 0 confirmed on
+  // the shortage page regardless of actual roster size.
+  const teamNames = getTeamNames(await getLeagueSeasonConfig(env, leagueId));
+
   const rosterHtml = contacts.length
-    ? `<table>${contacts.map(c => `<tr><td>${esc(c.name)}${c.email ? `<span class="by">${esc(c.email)}</span>` : ''}</td><td class="s">${esc(ROLE_LABEL_FR_EN[c.role] || c.role)}</td></tr>`).join('')}</table>`
+    ? `<table>${contacts.map(c => `<tr><td>${esc(c.name)}${c.email ? `<span class="by">${esc(c.email)}</span>` : ''}</td><td class="s">${esc(ROLE_LABEL_FR_EN[c.role] || c.role)}</td><td class="s">${c.preferred_team ? esc(c.preferred_team) : '<span style="color:var(--faint);">Non assigné<span class="en" style="display:block;">Unassigned</span></span>'}</td></tr>`).join('')}</table>`
     : `<p class="state" style="margin:0;">Aucun joueur pour l'instant.<span class="en" style="display:block;">No players yet.</span></p>`;
 
   return new Response(page('Effectif', `
@@ -732,12 +739,19 @@ async function handleLeagueRosterPage(req, env, url) {
       <span style="display:block;font-weight:600;margin-bottom:4px;">Téléphone <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Phone <i>(optional)</i></span></span>
       <input type="tel" id="r_phone" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
-    <label style="display:block;margin-bottom:16px;">
+    <label style="display:block;margin-bottom:12px;">
       <span style="display:block;font-weight:600;margin-bottom:4px;">Rôle<span class="en" style="display:block;font-weight:400;">Role</span></span>
       <select id="r_role" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
         <option value="roster">Régulier / Roster</option>
         <option value="sub_skater">Sub — joueur / skater</option>
         <option value="sub_goalie">Sub — gardien / goalie</option>
+      </select>
+    </label>
+    <label style="display:block;margin-bottom:16px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Équipe <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Team <i>(optional)</i></span></span>
+      <select id="r_team" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+        <option value="">Non assigné / Unassigned</option>
+        ${teamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
       </select>
     </label>
     <div class="btns">
@@ -762,6 +776,7 @@ async function submitContact() {
   const email = document.getElementById('r_email').value.trim();
   const phone = document.getElementById('r_phone').value.trim();
   const role = document.getElementById('r_role').value;
+  const team = document.getElementById('r_team').value;
   if (!name) {
     showErr('Le nom est requis. / Name is required.');
     return;
@@ -772,7 +787,7 @@ async function submitContact() {
     const res = await fetch('/league/contacts', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: role })
+      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: role, team: team || undefined })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {

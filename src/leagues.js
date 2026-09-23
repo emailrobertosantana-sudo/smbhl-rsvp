@@ -19,7 +19,7 @@
 import { checkUserSession } from './auth.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
-import { getSeasonConfig, DEFAULT_SEASON_CONFIG } from './season_config.js';
+import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames } from './season_config.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -335,6 +335,24 @@ export async function handleLeagueContactCreate(req, env) {
   const position = String(body.position || '').toUpperCase().trim() || null;
   const isGoalie = (role === 'sub_goalie' || position === 'G') ? 1 : 0;
 
+  // Part 1 fix: the roster had no team assignment at all, so shortage
+  // detection could never see real per-team roster sizes. `team` is
+  // optional (an admin may add a player before deciding their team, or a
+  // sub genuinely has no fixed team) but when given, it must be one of
+  // this league's own real team names -- validated the same way
+  // getLeagueSeasonConfig already resolves a league's teams everywhere
+  // else (signup-provided names before a season is published, the
+  // published season's own config after), so this works identically
+  // whether or not a season has been published yet.
+  let team = String(body.team || '').trim() || null;
+  if (team) {
+    const cfg = await getLeagueSeasonConfig(env, leagueId);
+    const validTeams = getTeamNames(cfg);
+    if (!validTeams.includes(team)) {
+      return Response.json({ ok: false, error: `team must be one of: ${validTeams.join(', ')}` }, { status: 400 });
+    }
+  }
+
   const maxP = await env.DB.prepare(
     'SELECT player_id FROM contacts WHERE player_id LIKE ? ORDER BY player_id DESC LIMIT 1'
   ).bind(contactIdLikePattern(leagueId, 'P')).first();
@@ -347,14 +365,14 @@ export async function handleLeagueContactCreate(req, env) {
   const salt = crypto.randomUUID().replace(/-/g, '');
 
   await env.DB.prepare(
-    `INSERT INTO contacts (player_id, name, email, phone, role, is_goalie, position, token_salt, league_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(playerId, name, email, phone, role, isGoalie, position, salt, leagueId).run();
+    `INSERT INTO contacts (player_id, name, email, phone, role, is_goalie, position, preferred_team, token_salt, league_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(playerId, name, email, phone, role, isGoalie, position, team, salt, leagueId).run();
 
   return Response.json({
     ok: true,
     league_id: leagueId,
-    contact: { player_id: playerId, name, email, phone, role, is_goalie: isGoalie, position }
+    contact: { player_id: playerId, name, email, phone, role, is_goalie: isGoalie, position, team }
   });
 }
 
