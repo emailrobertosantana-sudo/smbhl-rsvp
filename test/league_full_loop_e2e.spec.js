@@ -1,0 +1,216 @@
+// Part Q: the single most important test in this task. Walks the ENTIRE
+// second-league product loop in sequence, using real routes throughout
+// (no fixtures/shortcuts for the steps under test):
+//   signup -> login -> publish season -> add contact (player + sub) ->
+//   create event -> mint the player's magic link -> player submits RSVP
+//   via the link -> admin views shortage status -> admin triggers a
+//   sub-invite -> confirm SMBHL's data_json and events/contacts are
+//   byte-for-byte unaffected by all of the above.
+import { env, SELF } from 'cloudflare:test';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { drain } from '../src';
+import { dataJsonKeyFor } from '../src/league_ids.js';
+
+const AUTH_SECRET = 'test-full-loop-e2e-secret';
+const RSVP_SECRET = 'test-full-loop-e2e-rsvp-secret';
+
+function extractCookie(res) {
+  const setCookie = res.headers.get('set-cookie') || '';
+  return setCookie.split(';')[0];
+}
+
+async function computeToken(secret, message) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+}
+
+const SMBHL_REAL_DATA_JSON = {
+  current_season: 'Fall 2026',
+  seasons: [{
+    name: 'Fall 2026',
+    config: { teams: ['Red', 'Blue', 'White', 'Black'] },
+    standings: [{ team: 'Red', w: 3, l: 1 }]
+  }],
+  players: [{ id: 'P0001', name: 'Real SMBHL Player', seasons: { 'Fall 2026': { team: 'Red' } } }]
+};
+
+describe('Part Q: full second-league loop, end to end', () => {
+  let smbhlContactsSnapshot, smbhlEventsSnapshot, smbhlRsvpSnapshot, smbhlDataJsonSnapshot;
+
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    env.RSVP_SECRET = RSVP_SECRET;
+
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL, email_verified_at TEXT, last_login_at TEXT, session_epoch INTEGER NOT NULL DEFAULT 0)`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS signup_attempts (ip TEXT PRIMARY KEY, window_start TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0)`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS leagues (id TEXT PRIMARY KEY, name TEXT NOT NULL, division_label TEXT, tracks_stats INTEGER NOT NULL DEFAULT 1, team_count INTEGER NOT NULL, team_names TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL)`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS league_admins (user_id TEXT NOT NULL, league_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', created_at TEXT NOT NULL, PRIMARY KEY (user_id, league_id))`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, role TEXT NOT NULL DEFAULT 'roster', is_goalie INT DEFAULT 0, is_backup_goalie INT DEFAULT 0, opted_out INT DEFAULT 0, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, last_played TEXT, last_asked TEXT, asked_streak INT DEFAULT 0, preferred_team TEXT, position TEXT, token_salt TEXT NOT NULL DEFAULT '', league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INTEGER, date TEXT, venue TEXT, state TEXT NOT NULL DEFAULT 'open', start_time TEXT, end_time TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, guest_name TEXT, team TEXT, status TEXT NOT NULL DEFAULT 'pending', role TEXT NOT NULL DEFAULT 'roster', status_by TEXT NOT NULL DEFAULT 'auto', updated_at TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl', PRIMARY KEY (event_id, player_id))`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS availability (event_id TEXT, player_id TEXT, need TEXT, status TEXT, answered_at TEXT, PRIMARY KEY (event_id, player_id, need))`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS jobs (event_id TEXT, job TEXT, ran_at TEXT, PRIMARY KEY (event_id, job))`).run();
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`).run();
+
+    // SMBHL's real, existing data across every surface this loop touches.
+    await env.SHEETS_KV.put('data_json', JSON.stringify(SMBHL_REAL_DATA_JSON));
+    await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, role, token_salt) VALUES ('P0001', 'Real SMBHL Player', 'real@smbhl.com', 'roster', 'realsalt1')`).run();
+    await env.DB.prepare(`INSERT INTO events (id, season, week, date, venue, state, start_time) VALUES ('2026-09-20', 'Fall 2026', 3, '2026-09-20', 'College Jean-de-Brebeuf', 'open', '10:30')`).run();
+    await env.DB.prepare(`INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at) VALUES ('2026-09-20', 'P0001', 'Red', 'in', 'roster', 'self', ?)`).bind(new Date().toISOString()).run();
+
+    smbhlContactsSnapshot = (await env.DB.prepare(`SELECT * FROM contacts WHERE league_id = 'smbhl' ORDER BY player_id`).all()).results;
+    smbhlEventsSnapshot = (await env.DB.prepare(`SELECT * FROM events WHERE league_id = 'smbhl' ORDER BY id`).all()).results;
+    smbhlRsvpSnapshot = (await env.DB.prepare(`SELECT * FROM rsvp WHERE league_id = 'smbhl' ORDER BY event_id, player_id`).all()).results;
+    smbhlDataJsonSnapshot = JSON.parse(await env.SHEETS_KV.get('data_json'));
+  });
+
+  it('walks the full second-league loop end to end, then confirms SMBHL is provably untouched', async () => {
+    // 1. Sign up.
+    const signupRes = await SELF.fetch('http://example.com/auth/signup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.42' },
+      body: JSON.stringify({ email: 'fullloop.admin@example.com', password: 'a-strong-password-1' })
+    });
+    expect(signupRes.status).toBe(200);
+
+    // 2. Log in (a separate, explicit login call on the account just created).
+    const loginRes = await SELF.fetch('http://example.com/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'fullloop.admin@example.com', password: 'a-strong-password-1' })
+    });
+    expect(loginRes.status).toBe(200);
+    const cookie = extractCookie(loginRes);
+
+    // 3. Create the league.
+    const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Full Loop League', teamNames: ['Comets', 'Meteors'], tracksStats: true })
+    });
+    expect(leagueRes.status).toBe(200);
+    const leagueId = (await leagueRes.json()).league.id;
+
+    // 4. Publish a season with a tight custom roster config (so marking
+    // one player OUT genuinely creates a shortage below).
+    const publishRes = await SELF.fetch('http://example.com/league/season/publish', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ season_name: 'Full Loop Season 1', goalies_per_team: 1, skaters_per_team: 1, min_skaters: 1 })
+    });
+    expect(publishRes.status).toBe(200);
+
+    // 5. Add the roster player who will RSVP.
+    const playerRes = await SELF.fetch('http://example.com/league/contacts', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Loop Roster Player', email: 'player@fullloop.com', role: 'roster' })
+    });
+    expect(playerRes.status).toBe(200);
+    const { player_id: playerId } = (await playerRes.json()).contact;
+    await env.DB.prepare(`UPDATE contacts SET preferred_team = 'Comets' WHERE player_id = ?`).bind(playerId).run();
+    const playerSalt = (await env.DB.prepare('SELECT token_salt FROM contacts WHERE player_id = ?').bind(playerId).first()).token_salt;
+
+    // Also add an eligible sub, so the later invite-subs step has someone
+    // real to invite.
+    const subRes = await SELF.fetch('http://example.com/league/contacts', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Loop Sub Player', email: 'sub@fullloop.com', role: 'sub_skater' })
+    });
+    expect(subRes.status).toBe(200);
+
+    // 6. Create the event, far enough out to clear callSubs' cutoff/rush windows.
+    const futureDate = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    const eventRes = await SELF.fetch('http://example.com/league/events', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ date: futureDate, season: 'Full Loop Season 1', venue: 'Full Loop Rink' })
+    });
+    expect(eventRes.status).toBe(200);
+    const eventId = (await eventRes.json()).event.id;
+
+    // 7. Mint the player's magic link (the way an invite email would).
+    const token = await computeToken(RSVP_SECRET, `lr:${leagueId}:${eventId}:${playerId}:${playerSalt}`);
+
+    // 8. Player submits RSVP via the link: marks OUT, creating a shortage
+    // (skaters_per_team: 1, and now 0 confirmed).
+    const rsvpRes = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'out' })
+    });
+    expect(rsvpRes.status).toBe(200);
+    expect((await rsvpRes.json()).status).toBe('out');
+
+    // 9. Admin views the event's shortage status.
+    const statusRes = await SELF.fetch(`http://example.com/league/events/status?e=${encodeURIComponent(eventId)}`, {
+      headers: { cookie }
+    });
+    expect(statusRes.status).toBe(200);
+    const statusJson = await statusRes.json();
+    const comets = statusJson.teams.find(t => t.team === 'Comets');
+    expect(comets.short).toBe(true);
+    expect(comets.openSkaters).toBeGreaterThan(0);
+
+    // 10. Admin triggers a sub-invite for the shorted team.
+    const inviteRes = await SELF.fetch('http://example.com/league/events/invite-subs', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ event_id: eventId, team: 'Comets', need: 'skater' })
+    });
+    expect(inviteRes.status).toBe(200);
+    const inviteJson = await inviteRes.json();
+    expect(inviteJson.invited).toBe(1);
+
+    // Drain the outbox and confirm the sub-invite email went out under
+    // THIS league's own identity, matching Part P's requirement, as the
+    // final visible proof the whole chain (write -> queue -> send)
+    // actually connects end to end.
+    const originalFetch = globalThis.fetch;
+    const sentMails = [];
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes('api.resend.com')) {
+        sentMails.push(JSON.parse(opts.body));
+        return new Response(JSON.stringify({ id: 'mock_resend_id' }), { status: 200 });
+      }
+      return originalFetch(url, opts);
+    };
+    try {
+      env.RESEND_API_KEY = 're_test_key_full_loop';
+      await drain(env);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(sentMails.length).toBe(1);
+    expect(sentMails[0].to).toEqual(['sub@fullloop.com']);
+    expect(sentMails[0].from).toContain('fullloop.admin@example.com');
+    expect(sentMails[0].from).not.toContain('smbhl.com');
+
+    // 11. This league published its own real data_json entry, under its
+    // own scoped key -- never SMBHL's.
+    const leagueDataJson = JSON.parse(await env.SHEETS_KV.get(dataJsonKeyFor(leagueId)));
+    expect(leagueDataJson.current_season).toBe('Full Loop Season 1');
+
+    // ---- THE critical proof: SMBHL is provably unaffected by ALL of the
+    // above -- every table and the KV blob, re-verified byte-for-byte
+    // against the snapshots taken before this test ever touched anything.
+    const contactsAfter = (await env.DB.prepare(`SELECT * FROM contacts WHERE league_id = 'smbhl' ORDER BY player_id`).all()).results;
+    expect(contactsAfter).toEqual(smbhlContactsSnapshot);
+
+    const eventsAfter = (await env.DB.prepare(`SELECT * FROM events WHERE league_id = 'smbhl' ORDER BY id`).all()).results;
+    expect(eventsAfter).toEqual(smbhlEventsSnapshot);
+
+    const rsvpAfter = (await env.DB.prepare(`SELECT * FROM rsvp WHERE league_id = 'smbhl' ORDER BY event_id, player_id`).all()).results;
+    expect(rsvpAfter).toEqual(smbhlRsvpSnapshot);
+
+    const dataJsonAfter = JSON.parse(await env.SHEETS_KV.get('data_json'));
+    expect(dataJsonAfter).toEqual(smbhlDataJsonSnapshot);
+
+    const smbhlOutboxRows = (await env.DB.prepare(`SELECT * FROM outbox WHERE league_id = 'smbhl'`).all()).results;
+    expect(smbhlOutboxRows.length).toBe(0); // nothing was ever queued for SMBHL by any of this
+  });
+});
