@@ -52,6 +52,10 @@
         {
           "pattern": "rsvp.notreligue.ca",
           "custom_domain": true
+        },
+        {
+          "pattern": "notreligue.ca",
+          "custom_domain": true
         }
       ]
     }
