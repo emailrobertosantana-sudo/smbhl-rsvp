@@ -2004,6 +2004,15 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const teamNames = getTeamNames(cfg);
   const forcedLang = cfg.league.languageMode && cfg.league.languageMode !== 'both' ? cfg.league.languageMode : null;
   const fillColor = leagueFillColor(cfg.league.color || '#b3122e');
+  // Team-structure task, Part 4: 'headcount' has no team concept to show
+  // in a team-name grid at all -- that section is suppressed, replaced
+  // with a single pool-wide "X confirmed" aggregate figure for the next
+  // game (no per-team breakdown, since there's no per-team anything).
+  // 'weekly_draw' still has real named teams (just not permanently
+  // assigned to players) so its team grid is unaffected. 'fixed' is
+  // unchanged.
+  const teamStructure = cfg.teamStructure || 'fixed';
+  const isHeadcount = teamStructure === 'headcount';
 
   const today = new Date().toISOString().slice(0, 10);
   const events = (await env.DB.prepare(
@@ -2013,19 +2022,34 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   ).bind(leagueId, today).all()).results || [];
   const nextEvent = events[0] || null;
 
+  // Team-structure task, Part 4: standings are inherently team-vs-team
+  // -- meaningless (and a real leak of the internal HEADCOUNT_TEAM_NAME
+  // sentinel, the league's only "team") for a headcount league, so this
+  // section never renders for one, even when the season's own
+  // standings array has the usual single-fake-team entry.
   let standings = [];
-  if (leagueRow.tracks_stats) {
+  if (leagueRow.tracks_stats && !isHeadcount) {
     const leagueData = await getLeagueDataJson(env, leagueId);
     const season = (leagueData.seasons || []).find(s => s.name === leagueData.current_season);
     standings = season && Array.isArray(season.standings) ? season.standings : [];
   }
 
-  // Scoped to whether standings actually render (real player/league
-  // data, not static markup) -- a league that doesn't track stats
-  // must never carry the word "Classement"/"Standings" anywhere in the
-  // shipped page, even inertly inside the embedded JS dict (the same
-  // leaked-string class of bug this session already found and fixed
-  // once for the dashboard's own scoped I18N dict).
+  let poolConfirmed = 0, poolMin = 0, poolMax = 0;
+  if (isHeadcount && nextEvent) {
+    const nextEventId = makeEventId(leagueId, nextEvent.date);
+    const st = await teamState(env.DB, nextEventId, HEADCOUNT_TEAM_NAME, cfg);
+    poolConfirmed = st.skaters + st.goalies;
+    poolMin = cfg.minSkaters || 0;
+    poolMax = cfg.skatersPerTeam || 0;
+  }
+
+  // Scoped to whether standings/the headcount pool figure actually
+  // render (real player/league data, not static markup) -- a league
+  // that doesn't track stats or isn't headcount must never carry these
+  // words anywhere in the shipped page, even inertly inside the
+  // embedded JS dict (the same leaked-string class of bug this session
+  // already found and fixed once for the dashboard's own scoped I18N
+  // dict).
   function buildDict(lang) {
     const base = lang === 'fr' ? {
       nextGame: 'Prochain match', teams: 'Équipes', upcoming: 'Prochains matchs',
@@ -2039,6 +2063,9 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
         ? { standings: 'Classement', played: 'PJ', wins: 'V', losses: 'D', pts: 'PTS' }
         : { standings: 'Standings', played: 'GP', wins: 'W', losses: 'L', pts: 'PTS' });
     }
+    if (isHeadcount) {
+      Object.assign(base, lang === 'fr' ? { poolConfirmed: 'confirmés' } : { poolConfirmed: 'confirmed' });
+    }
     return base;
   }
   const I18N_PUBLIC = { fr: buildDict('fr'), en: buildDict('en') };
@@ -2050,6 +2077,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const heroHtml = nextEvent ? `<div class="pb-hero" style="background:${esc(fillColor)}">
     <div class="overline" style="color:rgba(255,255,255,.65)" data-i18n="nextGame">${esc(t.nextGame)}</div>
     <div class="pb-hero-when">${esc(nextEvent.date)}${nextEvent.start_time ? ' · ' + esc(nextEvent.start_time) : ''}</div>
+    ${isHeadcount ? `<div class="pb-hero-pool"><span class="tnum">${poolConfirmed}</span>${poolMax ? `<span>/${poolMax}</span>` : ''} <span data-i18n="poolConfirmed">${esc(t.poolConfirmed)}</span></div>` : ''}
     ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}</div>` : ''}
   </div>` : '';
 
@@ -2071,7 +2099,10 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
       <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}</div>
     </div>`).join('')}</div>` : `<p class="nl-help" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
 
-  const teamsHtml = `
+  // 'headcount' has no team names to show at all (just the internal,
+  // never-shown HEADCOUNT_TEAM_NAME sentinel) -- this whole section is
+  // suppressed for it, not rendered with 1 tile.
+  const teamsHtml = isHeadcount ? '' : `
   <h2 data-i18n="teams">${esc(t.teams)}</h2>
   <div class="pb-tg">${teamNames.map((tm, i) => `<div style="background:${esc(leagueFillColor(teamDot(i)))}">${esc(tm)}</div>`).join('')}</div>`;
 
@@ -2081,6 +2112,8 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   .pb-hero { margin: var(--space-4) 0; padding: var(--space-5); background: var(--primary); border-radius: var(--radius-lg); }
   .pb-hero-when { font: 800 28px/32px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #fff; margin-top: 6px; }
   .pb-hero-venue { font-size: 14px; color: rgba(255,255,255,.75); margin-top: 4px; }
+  .pb-hero-pool { font: 500 15px/20px var(--font-sans); color: rgba(255,255,255,.9); margin-top: 10px; }
+  .pb-hero-pool .tnum { font: 800 20px/24px var(--font-display); font-stretch: 118%; color: #fff; }
   .pb-main h2 { font: 800 13px/16px var(--font-display); font-stretch: 118%; letter-spacing: .1em; text-transform: uppercase; color: #a3a6ad; margin: var(--space-5) 0 var(--space-2); }
   .pb-table { width: 100%; border-collapse: collapse; font: 500 15px/20px var(--font-sans); }
   .pb-table th { font: 600 11px/16px var(--font-sans); color: #a3a6ad; border-bottom: 1px solid #2a2e36; padding: 8px 6px; text-align: center; }
@@ -10555,7 +10588,18 @@ async function leagueRsvpGet(req, env, url) {
   const locked = ev.state !== 'open';
   const forcedLang = leagueCfg.languageMode && leagueCfg.languageMode !== 'both' ? leagueCfg.languageMode : null;
 
-  const team = contact.preferred_team || null;
+  // Team-structure task, Part 4: 'headcount' has no team concept at all
+  // (contact.preferred_team is never set for it anyway, so this stays
+  // null either way -- explicit here for clarity). 'weekly_draw' has no
+  // PERMANENT team -- contact.preferred_team is likewise never set --
+  // but once an admin assigns this player to a team for THIS event
+  // (handleLeagueAssignEventTeam), that shows up as row.team; a
+  // pending/unassigned weekly_draw player correctly sees no team yet.
+  // 'fixed' is unchanged.
+  const teamStructure = cfg.teamStructure || 'fixed';
+  const team = teamStructure === 'weekly_draw' ? ((row && row.team) || null)
+    : teamStructure === 'headcount' ? null
+    : (contact.preferred_team || null);
   let confirmed = 0, target = 0;
   if (team) {
     const st = await teamState(env.DB, ev.id, team, cfg);
