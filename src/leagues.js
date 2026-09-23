@@ -19,7 +19,7 @@
 import { checkUserSession } from './auth.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
-import { getSeasonConfig } from './season_config.js';
+import { getSeasonConfig, DEFAULT_SEASON_CONFIG } from './season_config.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -134,32 +134,62 @@ export async function putLeagueDataJson(env, leagueId, dataJson) {
 
 // Resolves the effective season config for leagueId: its own data_json-
 // equivalent (getLeagueDataJson) run through season_config.js's
-// getSeasonConfig, with one addition — if that league has no season
+// getSeasonConfig, with two additions when that league has no season
 // config anywhere (the common case for a brand new league that hasn't
-// published a season yet), the fallback is THAT league's own signup-
-// provided team names (leagues.team_names in D1), not
-// DEFAULT_SEASON_CONFIG's SMBHL-specific Red/Blue/White/Black. SMBHL
-// itself never reaches that fallback (it already has real season
+// published a season yet) — the fallback uses THAT league's own:
+//   - signup-provided team names (leagues.team_names in D1), not
+//     DEFAULT_SEASON_CONFIG's SMBHL-specific Red/Blue/White/Black.
+//   - branding/email identity: name (leagues.name) and a from/reply-to
+//     address built from the signup admin's own real, already-verified-
+//     or-not account email (users.email via leagues.created_by) — NOT
+//     DEFAULT_SEASON_CONFIG's "SMBHL - Hockey <joueur@smbhl.com>". This
+//     is what keeps a second league's RSVP pages and outbound emails
+//     (Part P's sub-invites) from presenting as SMBHL by accident. There
+//     is no per-league custom domain/sender in this app, so the admin's
+//     own account address is the only real, owned-by-that-league address
+//     available — a deliberate, honest choice over inventing one.
+//   - siteUrl uses env.PUBLIC_URL (this Worker deployment's own real
+//     public URL, serving every league under it) instead of
+//     DEFAULT_SEASON_CONFIG's hardcoded 'https://smbhl.com'. tagline/
+//     faviconUrl are left to fall through to the generic default — purely
+//     cosmetic footer text, not an identity/safety concern the way
+//     fromEmail or siteUrl are.
+// SMBHL itself never reaches this fallback (it already has real season
 // configs), so this is a no-op for SMBHL either way.
 //
-// Edge case, documented per the task: if leagueId's own `leagues` row is
-// missing or its team_names can't be parsed, leagueTeamNames stays null
-// and this legitimately falls all the way through to DEFAULT_SEASON_CONFIG
-// — the same last-resort default as before this fix, for a case this
-// function genuinely has nothing better to offer for.
+// Edge case, documented per the task: if leagueId's own `leagues` row (or
+// its creator's `users` row) is missing, leagueTeamNames/leagueBranding
+// stay null and this legitimately falls all the way through to
+// DEFAULT_SEASON_CONFIG — the same last-resort default as before this
+// fix, for a case this function genuinely has nothing better to offer for.
 export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
   const leagueData = await getLeagueDataJson(env, leagueId);
 
   let leagueTeamNames = null;
-  const leagueRow = await env.DB.prepare('SELECT team_names FROM leagues WHERE id = ?').bind(leagueId).first();
-  if (leagueRow && leagueRow.team_names) {
-    try {
-      const parsed = JSON.parse(leagueRow.team_names);
-      if (Array.isArray(parsed) && parsed.length > 0) leagueTeamNames = parsed;
-    } catch (_) {}
+  let leagueBranding = null;
+  const leagueRow = await env.DB.prepare(
+    `SELECT l.name, l.team_names, u.email AS admin_email
+       FROM leagues l JOIN users u ON u.id = l.created_by
+      WHERE l.id = ?`
+  ).bind(leagueId).first();
+  if (leagueRow) {
+    if (leagueRow.team_names) {
+      try {
+        const parsed = JSON.parse(leagueRow.team_names);
+        if (Array.isArray(parsed) && parsed.length > 0) leagueTeamNames = parsed;
+      } catch (_) {}
+    }
+    if (leagueRow.admin_email) {
+      leagueBranding = {
+        name: leagueRow.name,
+        fromEmail: `${leagueRow.name} <${leagueRow.admin_email}>`,
+        replyToEmail: leagueRow.admin_email,
+        siteUrl: env.PUBLIC_URL || DEFAULT_SEASON_CONFIG.league.siteUrl
+      };
+    }
   }
 
-  return getSeasonConfig(leagueData, seasonName, leagueTeamNames);
+  return getSeasonConfig(leagueData, seasonName, leagueTeamNames, leagueBranding);
 }
 
 /* ---------- proof of concept: GET /league/contacts ----------

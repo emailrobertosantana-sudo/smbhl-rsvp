@@ -86,14 +86,23 @@ export function normalizeSeasonConfig(rawConfig) {
 // signup-provided team names (leagues.team_names in D1), NOT part of
 // data.json/season shape at all — lets a league with no season config yet
 // fall back to ITS OWN team names instead of DEFAULT_SEASON_CONFIG's
-// SMBHL-specific Red/Blue/White/Black. Omitted (as every existing call
-// site still does — this is purely additive), it's the exact same
-// DEFAULT_SEASON_CONFIG fallback as before: SMBHL already has real season
-// configs, so this path doesn't trigger for it either way, and every other
-// existing caller's behavior is completely unchanged.
-function fallbackSeasonConfig(leagueTeamNames) {
-  if (Array.isArray(leagueTeamNames) && leagueTeamNames.length > 0) {
-    return normalizeSeasonConfig({ teams: leagueTeamNames });
+// SMBHL-specific Red/Blue/White/Black. `leagueBranding` is the same idea
+// for the .league identity block (name/fromEmail/replyToEmail/siteUrl) —
+// critical so a second league's RSVP pages and outbound emails don't
+// present as SMBHL's ("SMBHL - Hockey <joueur@smbhl.com>") by accident.
+// Both omitted (as every existing call site still does — this is purely
+// additive), it's the exact same DEFAULT_SEASON_CONFIG fallback as before:
+// SMBHL already has real season configs, so this path doesn't trigger for
+// it either way, and every other existing caller's behavior is completely
+// unchanged.
+function fallbackSeasonConfig(leagueTeamNames, leagueBranding) {
+  const hasTeams = Array.isArray(leagueTeamNames) && leagueTeamNames.length > 0;
+  const hasBranding = leagueBranding && typeof leagueBranding === 'object';
+  if (hasTeams || hasBranding) {
+    return normalizeSeasonConfig({
+      ...(hasTeams ? { teams: leagueTeamNames } : {}),
+      ...(hasBranding ? { league: leagueBranding } : {})
+    });
   }
   return { ...DEFAULT_SEASON_CONFIG };
 }
@@ -111,11 +120,14 @@ function fallbackSeasonConfig(leagueTeamNames) {
  * @param {string} [targetSeasonName] - Optional season name to resolve
  * @param {string[]} [leagueTeamNames] - A league's own team names, used only
  *   when no real season config is found anywhere else (step 4 above)
+ * @param {Object} [leagueBranding] - A league's own .league identity block
+ *   (name/fromEmail/replyToEmail/siteUrl/...), used the same way as
+ *   leagueTeamNames — only when no real season config is found
  * @returns {Object} Normalized season config
  */
-export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTeamNames = null) {
+export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTeamNames = null, leagueBranding = null) {
   if (!seasonOrData || typeof seasonOrData !== 'object') {
-    return fallbackSeasonConfig(leagueTeamNames);
+    return fallbackSeasonConfig(leagueTeamNames, leagueBranding);
   }
 
   // Case 1: Direct season object carrying .config
@@ -152,7 +164,7 @@ export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTea
     }
   }
 
-  return fallbackSeasonConfig(leagueTeamNames);
+  return fallbackSeasonConfig(leagueTeamNames, leagueBranding);
 }
 
 /**

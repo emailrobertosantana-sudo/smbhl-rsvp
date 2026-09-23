@@ -4,7 +4,7 @@ import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -74,6 +74,14 @@ const STATS_DISABLED_MSG = 'Cette ligue ne suit pas de statistiques pour cette s
 const playerMsg = (eventId, playerId, salt) => `p:${eventId}:${playerId}:${salt}`;
 const teamMsg   = (season, team, salt)     => `t:${season}:${team}:${salt}`;
 const pollMsg   = (pollId, playerId, salt) => `poll:${pollId}:${playerId}:${salt}`;
+// League-scoped RSVP token (Part M). A distinct message shape from playerMsg
+// above — not just eventId/playerId/salt, but leagueId explicitly too — so
+// a token can never be replayed across the legacy /rsvp route or against a
+// different league, even in principle. eventId/playerId are already
+// league-prefixed (league_ids.js's makeEventId/makeContactId), so this is
+// defense in depth on top of that, not the only thing preventing a
+// cross-league collision.
+const leagueRsvpMsg = (leagueId, eventId, playerId, salt) => `lr:${leagueId}:${eventId}:${playerId}:${salt}`;
 
 // checkAdminAuth/adminAuthResponse/adminPageHeaders live in ./admin_auth.js so
 // review.js's /admin/review/* routes authenticate through the exact same
@@ -7485,6 +7493,114 @@ async function rsvpPost(req, env, url) {
     }
   }
   return new Response('ok');
+}
+
+/* ---------- league-scoped player RSVP (Parts M/N) ----------
+ * Second-league equivalent of rsvpGet/rsvpPost above, for a league's own
+ * event/contact rows (created via /league/events and /league/contacts).
+ * Deliberately simpler than the legacy /rsvp page — no team-mate roster
+ * view, no schedule/fixture enrichment. Crucially, marking OUT here does
+ * NOT automatically trigger callSubs the way rsvpGet/rsvpPost do for
+ * SMBHL — for a second league, sub-inviting is exclusively the manual,
+ * admin-triggered action built in Part P (see that section and the task
+ * report's cron/automation design note for why).
+ */
+
+// Verifies a league RSVP token against its DB-backed contact/event rows.
+// Returns { ok: true, contact, ev } or { ok: false, error }. Checks
+// league_id explicitly at both lookups (contact, event) AND as part of the
+// signed message itself (leagueRsvpMsg) — defense in depth on top of
+// eventId/playerId already being league-prefixed by construction
+// (league_ids.js), not the only thing preventing a cross-league mixup.
+async function verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token) {
+  if (!leagueId || !eventId || !playerId || !token) {
+    return { ok: false, error: { fr: 'Lien incomplet', en: 'Incomplete link' } };
+  }
+  const contact = await env.DB.prepare('SELECT * FROM contacts WHERE player_id = ? AND league_id = ?')
+    .bind(playerId, leagueId).first();
+  if (!contact) return { ok: false, error: { fr: 'Joueur inconnu', en: 'Unknown player' } };
+
+  const want = await hmac(env.RSVP_SECRET, leagueRsvpMsg(leagueId, eventId, playerId, contact.token_salt));
+  if (!same(want, token)) return { ok: false, error: { fr: 'Lien invalide ou expiré', en: 'Invalid or expired link' } };
+
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
+    .bind(eventId, leagueId).first();
+  if (!ev) return { ok: false, error: { fr: 'Match introuvable', en: 'Game not found' } };
+
+  return { ok: true, contact, ev };
+}
+
+// Shared write path for both the GET one-click (?v=in/out) and POST forms
+// below. team comes from the contact's own preferred_team (there is no
+// roster-to-team assignment flow for a second league yet — see the report
+// — so this is the only team signal available); role mirrors the
+// roster/sub split contacts.role already uses.
+async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status) {
+  const now = new Date().toISOString();
+  const team = contact?.preferred_team || null;
+  const role = contact?.role === 'roster' ? 'roster' : 'sub';
+  await env.DB.prepare(
+    `INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at, league_id)
+     VALUES (?, ?, ?, ?, ?, 'self', ?, ?)
+     ON CONFLICT(event_id, player_id) DO UPDATE SET
+       status = excluded.status, status_by = 'self', updated_at = excluded.updated_at`
+  ).bind(eventId, playerId, team, status, role, now, leagueId).run();
+}
+
+async function leagueRsvpGet(req, env, url) {
+  const leagueId = url.searchParams.get('league');
+  const eventId = url.searchParams.get('e');
+  const playerId = url.searchParams.get('p');
+  const token = url.searchParams.get('t');
+
+  const result = await verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token);
+  if (!result.ok) return notice(result.error.fr, result.error.en);
+  const { contact, ev } = result;
+
+  let row = await env.DB.prepare('SELECT * FROM rsvp WHERE event_id = ? AND player_id = ?')
+    .bind(eventId, playerId).first();
+  let status = row ? row.status : 'pending';
+
+  const autoVal = url.searchParams.get('v');
+  if (['in', 'out'].includes(autoVal) && ev.state === 'open' && status !== autoVal) {
+    await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, autoVal);
+    status = autoVal;
+  }
+
+  const leagueCfg = (await getLeagueSeasonConfig(env, leagueId, ev.season)).league;
+  const locked = ev.state !== 'open';
+  const label = { in: 'PRÉSENT / IN', out: 'ABSENT / OUT', pending: 'EN ATTENTE / PENDING' };
+
+  const body = `
+    <h1>${esc(contact.name)}<span class="en"></span></h1>
+    <p class="when">${esc(ev.date)}${ev.venue ? ' · ' + esc(ev.venue) : ''}${ev.start_time ? ' · ' + esc(ev.start_time) : ''}</p>
+    <div class="card">
+      <p class="state">Statut actuel / Current status : <b>${label[status] || status}</b></p>
+      ${locked ? `<p class="state">Cet événement n'accepte plus de réponses.<span class="en" style="display:block;">This event is no longer accepting responses.</span></p>` : `
+      <div class="btns">
+        <a class="btn in${status === 'in' ? ' on' : ''}" href="?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}&v=in">JE JOUE<span class="en" style="display:block;">I'M IN</span></a>
+        <a class="btn out${status === 'out' ? ' on' : ''}" href="?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}&v=out">JE NE JOUE PAS<span class="en" style="display:block;">I'M OUT</span></a>
+      </div>`}
+    </div>`;
+
+  return page(leagueCfg.name, body, '', leagueCfg);
+}
+
+async function leagueRsvpPost(req, env, url) {
+  const leagueId = url.searchParams.get('league');
+  const eventId = url.searchParams.get('e');
+  const playerId = url.searchParams.get('p');
+  const token = url.searchParams.get('t');
+  const { status } = await req.json().catch(() => ({}));
+  if (!['in', 'out'].includes(status)) return new Response('bad status', { status: 400 });
+
+  const result = await verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token);
+  if (!result.ok) return new Response('bad token', { status: 403 });
+  const { contact, ev } = result;
+  if (ev.state !== 'open') return new Response('locked', { status: 409 });
+
+  await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status);
+  return Response.json({ ok: true, league_id: leagueId, status });
 }
 
 async function linksRoute(req, env, url) {
@@ -15196,6 +15312,15 @@ async function handleFetch(req, env, ctx) {
           { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if (url.pathname === '/rsvp' && req.method === 'POST')
         return await rsvpPost(req, env, url);
+      // League-scoped player RSVP (Parts M/N — see the task report). No
+      // session/ADMIN_KEY involved at all — this is the token-only, "a
+      // player clicked an emailed link" path, matching /rsvp's own
+      // unauthenticated shape exactly, just league-scoped.
+      if (url.pathname === '/league/rsvp' && req.method === 'GET')
+        return new Response(await leagueRsvpGet(req, env, url),
+          { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if (url.pathname === '/league/rsvp' && req.method === 'POST')
+        return await leagueRsvpPost(req, env, url);
       if (url.pathname === '/rsvp/absences' && req.method === 'POST')
         return await rsvpAbsencesPost(req, env, url);
       if (url.pathname === '/team-rsvp' && req.method === 'GET')
