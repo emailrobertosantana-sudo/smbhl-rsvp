@@ -37,6 +37,18 @@
 --     date). Resolving that is a prerequisite for step 2, not something this
 --     migration attempts.
 
+-- leagues.created_by REFERENCES users(id) (migrate-019.sql), so the
+-- bootstrap leagues row below needs a real users row to point at first --
+-- otherwise the leagues INSERT fails with FOREIGN KEY constraint failed.
+-- This 'system' user is inert by construction: password_hash is not a
+-- well-formed 'pbkdf2$...' string, so verifyPassword() (src/auth.js)
+-- rejects any login attempt against it before it ever runs a comparison,
+-- and the sentinel email can never collide with a real signup (signups
+-- go through /auth/signup, which never produces this exact address).
+INSERT INTO users (id, email, password_hash, created_at)
+SELECT 'system', 'system@smbhl-rsvp.internal.invalid', 'not-a-valid-hash:system-bootstrap-user-no-login', '2026-01-01T00:00:00.000Z'
+WHERE NOT EXISTS (SELECT 1 FROM users WHERE id = 'system');
+
 INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at)
 SELECT 'smbhl', 'SMBHL', NULL, 1, 0, '[]', 'system', '2026-01-01T00:00:00.000Z'
 WHERE NOT EXISTS (SELECT 1 FROM leagues WHERE id = 'smbhl');
