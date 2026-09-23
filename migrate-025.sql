@@ -1,0 +1,25 @@
+-- Migration 025: per-league brand color (design system, "Tableau").
+-- Purely additive -- a nullable-with-default column, no existing row's
+-- data touched.
+--
+-- Apply with:
+--   npx wrangler d1 execute smbhl-rsvp --remote --file=./migrate-025.sql
+--
+-- WHAT THIS DOES: adds `color TEXT` to `leagues`, defaulting to the
+-- design system's own sample league color (#b3122e) so every existing
+-- league (and every league created before an admin ever picks their
+-- own) renders correctly rather than falling back to some other
+-- placeholder. Per notre-ligue-design-system/README.md's color rules,
+-- this is the ONLY color used on player-facing surfaces (the RSVP
+-- page, the public league page, emails) -- Notre Ligue's own
+-- near-black/yellow palette never appears there. SMBHL is not part of
+-- this system at all and never reads this column.
+--
+-- NOTE: this task's brief described this field as "already stored
+-- per-league from signup" -- that was not accurate; no such column
+-- existed before this migration. No signup step currently lets an
+-- admin choose their own color (the 3-step signup flow in
+-- guidelines/10-screens.md doesn't include one); every league gets
+-- the sample default until a future task adds that editor.
+
+ALTER TABLE leagues ADD COLUMN color TEXT DEFAULT '#b3122e';

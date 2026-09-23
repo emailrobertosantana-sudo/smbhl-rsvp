@@ -34,7 +34,13 @@ export const DEFAULT_SEASON_CONFIG = {
     // exactly as it already works; 'fr'/'en' would hide it and pin
     // that one language on public/player-facing pages -- see
     // migrate-023.sql. SMBHL's own default is 'both', unchanged.
-    languageMode: 'both'
+    languageMode: 'both',
+    // Design system (migrate-025.sql): never actually read for SMBHL's
+    // own rendering (SMBHL is explicitly out of scope for the design
+    // system), kept only so this object always has every league.*
+    // field defined, matching the same defensive pattern as the rest
+    // of this block.
+    color: '#b3122e'
   },
   // When false, standings/playoffs/awards/OCR/season-recap are disabled for this
   // season; only the attendance/RSVP/shortage/sub-invite operational core runs.
@@ -77,7 +83,10 @@ export function normalizeSeasonConfig(rawConfig) {
     // any field not named here (found while wiring languageMode
     // through -- leagueBranding.languageMode was being silently
     // stripped for any league that had already published a season).
-    languageMode: rawLeague.languageMode || DEFAULT_SEASON_CONFIG.league.languageMode
+    languageMode: rawLeague.languageMode || DEFAULT_SEASON_CONFIG.league.languageMode,
+    // Design system (migrate-025.sql): same explicit-field-list trap --
+    // added here proactively this time, before it became a live bug.
+    color: rawLeague.color || DEFAULT_SEASON_CONFIG.league.color
   };
 
   return {

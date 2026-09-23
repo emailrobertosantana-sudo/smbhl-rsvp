@@ -844,7 +844,8 @@ describe('Multi-team season config (6-team season, Parts 3 & 4)', () => {
         replyToEmail: 'info@smbhl.com',
         siteUrl: 'https://smbhl.com',
         faviconUrl: 'https://smbhl.com/img/favicon-32.svg',
-        languageMode: 'both'
+        languageMode: 'both',
+        color: '#b3122e'
       },
       tracksStats: true
     });

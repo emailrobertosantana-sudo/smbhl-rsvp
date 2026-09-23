@@ -182,7 +182,7 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
   let leagueTeamNames = null;
   let leagueBranding = null;
   const leagueRow = await env.DB.prepare(
-    `SELECT l.name, l.team_names, l.language_mode, u.email AS admin_email
+    `SELECT l.name, l.team_names, l.language_mode, l.color, u.email AS admin_email
        FROM leagues l JOIN users u ON u.id = l.created_by
       WHERE l.id = ?`
   ).bind(leagueId).first();
@@ -201,7 +201,11 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
         siteUrl: env.PUBLIC_URL || DEFAULT_SEASON_CONFIG.league.siteUrl,
         // Part 4 foundation: no UI to set this away from 'both' yet --
         // see migrate-023.sql. Every league today reads 'both' here.
-        languageMode: leagueRow.language_mode || 'both'
+        languageMode: leagueRow.language_mode || 'both',
+        // Design system (migrate-025.sql): no signup step lets an admin
+        // pick their own color yet -- every league reads the sample
+        // default until a future task adds that editor.
+        color: leagueRow.color || '#b3122e'
       };
     }
   }

@@ -2,6 +2,7 @@ import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
+import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor } from './design_system.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
@@ -179,6 +180,38 @@ async function getStandingsTooltip(env) {
   } catch (e) {
     return '';
   }
+}
+
+/* ---------- nlDocument: the real Notre Ligue design system shell ----------
+ * (overnight follow-up task, "apply the design system"). A SEPARATE
+ * document wrapper from page() below, deliberately -- page() is
+ * SMBHL's own shell (and every legacy ADMIN_KEY page's), explicitly
+ * out of scope for the design system per the task's own safety
+ * constraint. nlDocument() is used ONLY by the Notre Ligue product
+ * pages being migrated onto the real design system: the marketing
+ * homepage, signup, login, forgot/reset-password, dashboard, roster,
+ * schedule, event status, the player RSVP page, and the public league
+ * page. Callers build their own <header class="nl-header"> markup
+ * (product wordmark vs. league-branded vs. admin nav differ too much
+ * per screen to abstract away) -- this just provides the document
+ * shell: fonts, design tokens, the bundle.css component styles, and
+ * bundle.js's vanilla DOM helpers (window.NotreLigue), all inlined
+ * (matching this app's own established convention of inlining every
+ * page's CSS/JS rather than serving separate static assets).
+ */
+function nlDocument({ title, description = '', bodyHtml, lang = 'fr' }) {
+  return `<!DOCTYPE html><html lang="${lang === 'en' ? 'en-CA' : 'fr-CA'}"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)}</title>
+${description ? `<meta name="description" content="${esc(description)}">` : ''}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<style>${TOKENS_CSS}${BUNDLE_CSS}</style>
+</head><body class="nl">
+${bodyHtml}
+<script>${BUNDLE_JS}</script>
+</body></html>`;
 }
 
 // hideLangSwitch: Part 4 foundation -- a league whose language_mode is
