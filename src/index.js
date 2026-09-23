@@ -539,6 +539,16 @@ async function handleDashboardPage(req, env, url) {
   ).bind(session.userId).first();
   const verified = await isUserEmailVerified(env, session.userId);
 
+  // Onboarding fix: POST /league/season/publish (Part I) had zero UI, so a
+  // brand-new admin who tried to create their first event hit a confusing
+  // "season is required" error with no path forward. Check the league's
+  // real current_season (getLeagueDataJson — the same source
+  // /league/events already defaults to) BEFORE rendering, so this prompt
+  // shows exactly once, only when actually needed, never as a confusing
+  // re-prompt once a season exists.
+  const leagueData = leagueRow ? await getLeagueDataJson(env, leagueRow.id) : null;
+  const currentSeason = leagueData ? leagueData.current_season : null;
+
   // Nav to the league-admin pages built in the UI task (Parts R-V). Every
   // link here (roster, schedule) is operational, never stats/OCR-related,
   // so nothing is conditionally hidden today. If a stats-related page is
@@ -553,9 +563,28 @@ async function handleDashboardPage(req, env, url) {
     </div>
   ` : '';
 
+  // The team names are already known from signup (leagues.team_names) —
+  // POST /league/season/publish reads them server-side on its own, so this
+  // form only ever asks for the one new thing: a season name.
+  const startSeasonHtml = !currentSeason ? `
+    <div class="card" style="border-left:4px solid var(--blue);">
+      <h2>Démarrer votre saison<span class="en">Start your season</span></h2>
+      <p class="state" style="margin-top:0;">Il vous faut une saison active avant de pouvoir créer des matchs.<span class="en" style="display:block;">You need an active season before you can create events.</span></p>
+      <div id="seasonErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+      <label style="display:block;margin:12px 0;">
+        <span style="display:block;font-weight:600;margin-bottom:4px;">Nom de la saison<span class="en" style="display:block;font-weight:400;">Season name</span></span>
+        <input type="text" id="season_name" placeholder="Ex. Saison Hiver 2026" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+      </label>
+      <div class="btns">
+        <button type="button" class="btn" id="season_submit" onclick="submitSeason()">DÉMARRER<span class="en" style="display:block;font-size:13px;font-weight:600;">START</span></button>
+      </div>
+    </div>
+  ` : '';
+
   const body = leagueRow ? `
     <h1>${esc(leagueRow.name)}</h1>
     ${leagueRow.division_label ? `<p class="when">${esc(leagueRow.division_label)}</p>` : ''}
+    ${currentSeason ? `<p class="state" style="margin:0 0 4px;">Saison actuelle : <b>${esc(currentSeason)}</b><span class="en" style="display:block;">Current season: <b>${esc(currentSeason)}</b></span></p>` : ''}
     ${!verified ? `
       <div class="card" style="border-left:4px solid var(--orange);">
         <p class="state" style="margin:0;">⚠️ Votre courriel n'est pas encore vérifié.<span class="en" style="display:block;">Your email is not yet verified.</span></p>
@@ -565,6 +594,7 @@ async function handleDashboardPage(req, env, url) {
         </div>
       </div>
     ` : ''}
+    ${startSeasonHtml}
     ${nav}
     <div class="card">
       <h2>Équipes<span class="en">Teams</span></h2>
@@ -606,6 +636,37 @@ async function resendVerification() {
   }
   msg.style.display = 'block';
   btn.disabled = false;
+}
+async function submitSeason() {
+  const el = document.getElementById('seasonErr');
+  el.style.display = 'none';
+  const name = document.getElementById('season_name').value.trim();
+  if (!name) {
+    el.textContent = 'Le nom de la saison est requis. / Season name is required.';
+    el.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('season_submit');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/league/season/publish', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ season_name: name })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      el.textContent = data.error || "Échec du démarrage de la saison. / Failed to start season.";
+      el.style.display = 'block';
+      btn.disabled = false;
+      return;
+    }
+    window.location.reload();
+  } catch (e) {
+    el.textContent = 'Erreur réseau. / Network error.';
+    el.style.display = 'block';
+    btn.disabled = false;
+  }
 }
 </script>`), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
