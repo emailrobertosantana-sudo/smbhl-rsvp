@@ -43,12 +43,12 @@ describe('Part 0: domain-aware GET /', () => {
     expect(html).not.toContain('smbhl.com');
   });
 
-  it("the homepage's Get Started button links to /signup", async () => {
+  it("the homepage's primary CTA links to /signup (design system: ScreenHomepage's real copy, \"Créer ma ligue\")", async () => {
     const res = await SELF.fetch('http://notreligue.ca/');
     const html = await res.text();
     expect(html).toContain('href="/signup"');
-    expect(html).toContain('Get Started');
-    expect(html).toContain("S'inscrire"); // French-default copy
+    expect(html).toContain('Create my league'); // real EN translation, shipped in the toggle dict
+    expect(html).toContain('Créer ma ligue'); // French-default copy
   });
 
   it("rsvp.notreligue.ca hitting root also shows the marketing homepage, not smbhl.com", async () => {
@@ -88,7 +88,9 @@ describe('Part 0: domain-aware GET /', () => {
     const res = await SELF.fetch('http://example.com/signup');
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('Créer votre ligue');
+    // Design system Part 2: signup is now the real 3-step wizard
+    // (ScreenSignup's own copy), starting at step 1 -- account.
+    expect(html).toContain('Créons ton compte');
     expect(html).toContain('Créer un compte');
   });
 });

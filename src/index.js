@@ -402,89 +402,173 @@ if (window.__currentLang) {
 const notice = (fr, en, logoTooltip = '') => page(fr, `<h1>${esc(fr)}<span class="en">${esc(en)}</span></h1>`, logoTooltip);
 
 /* ---------- root marketing homepage (non-SMBHL hostnames) ----------
- * Content ported from the standalone notreligue-marketing Worker
- * (C:\Projects\notreligue-site — a real, already-written FR/EN
- * marketing site: hero, feature highlights, "how it works", contact)
- * now that its own domain routes here directly and the direct-to-
- * /signup redirect (Part 0) turned out to skip introducing the product
- * at all. Deliberately NOT built by calling page() (that shell's
- * default league branding is SMBHL's own name/logo/tagline — wrong for
- * a page whose entire purpose is introducing a DIFFERENT product to a
- * prospect who has never heard of SMBHL) — but it DOES reuse this
- * app's own established conventions rather than the marketing site's:
- * bilingual FR-primary text with an always-visible `.en` sub-line
- * (same technique as every signup/login/dashboard page in this file),
- * not the marketing site's separate JS language-toggle. Its own color
- * palette (purple/pink/yellow, Space Grotesk headings) is carried over
- * from the marketing site's real, already-designed branding.
+ * Design system Part 2 (overnight follow-up task): rebuilt to match
+ * notre-ligue-design-system/components/ScreenHomepage/preview.html
+ * precisely -- real markup, real FR copy (tutoiement, verb buttons, no
+ * exclamation marks) transcribed from that file, not paraphrased.
+ * Built on nlDocument() (design_system.js), never page() -- page() is
+ * SMBHL's own shell, out of scope. Two deliberate deviations from the
+ * literal preview, both because this app has no real content to back
+ * them: the "Prix" (pricing) nav item is dropped (no pricing page
+ * exists), and the hero's second "Voir un exemple" button is dropped
+ * (no canonical demo league exists to link it to) -- the design
+ * system's own "one primary action, everything else secondary" rule
+ * is still satisfied with just the one primary CTA. Footer's
+ * "Confidentialité · Conditions" are rendered as plain text (no real
+ * pages behind them yet); "Contact" is the real mailto: address.
  */
-// Bilingual copy for the marketing homepage, tagged via data-i18n and
-// swapped by applyLanguage() below -- the SAME mechanism SMBHL's own
-// real admin pages already use (see e.g. the season-recap page's
-// I18N_RECAP dict + applyLanguage()/admin_lang_changed pattern), not a
-// new one invented for this page. Static FR text is what's server-
-// rendered (FR-default, works with no JS at all); the toggle swaps
-// .innerHTML for the tagged elements.
 const I18N_HOME = {
   fr: {
-    cta: "S'inscrire",
-    tagline: 'Profitez de votre ligue. On s\'occupe du reste.',
-    featuresHeading: "Tout ce qu'une ligue amateur doit gérer",
-    f1Title: 'Qui vient dimanche?',
-    f1Body: "Les joueurs confirment en un clic. Vous savez toujours qui est là, qui est absent, et qui n'a pas répondu.",
-    f2Title: 'Une équipe est courte? C\'est déjà réglé.',
-    f2Body: "Dès qu'un joueur se désiste, le système invite des remplaçants automatiquement, dans l'ordre, jusqu'à ce que l'équipe soit complète.",
-    f3Title: "Les équipes, envoyées d'avance",
-    f3Body: "Chaque joueur reçoit son assignation d'équipe avant la partie. Personne n'arrive en se demandant où il joue.",
-    f4Title: 'Pour les ligues qui gardent les statistiques',
-    f4Body: "Classement, pointage, séries éliminatoires — si votre ligue les suit, on les affiche. Sinon, ce n'est pas nécessaire.",
-    howHeading: 'Comment ça marche',
-    s1Title: 'On configure votre ligue',
-    s1Body: 'Équipes, horaire, format. Quinze minutes.',
-    s2Title: 'Vos joueurs confirment leur présence',
-    s2Body: 'Chaque semaine, sans y penser.',
-    s3Title: 'Vous gérez votre ligue, pas des courriels',
-    s3Body: 'On s\'occupe des rappels et des remplaçants.',
-    contactHeading: 'Une question? Une ligue à démarrer?',
-    contactLine: 'Écrivez-nous à <a class="contact-email" href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a>'
+    navFeatures: 'Fonctionnalités', navHow: 'Comment ça marche', login: 'Se connecter',
+    heroTitle: 'Ta ligue du dimanche, sans la <u>paperasse</u>.',
+    heroBody: "Notre Ligue texte tes joueurs, compte les présences et trouve des remplaçants quand une équipe manque de monde. Toi, tu joues.",
+    cta: 'Créer ma ligue', proof: 'Prêt en 5 minutes. En français et en anglais.',
+    eyebrow1: 'Ce qu\'on fait pour toi', heading1: 'Le travail plate de la ligue, fait automatiquement.',
+    f1Title: 'Présences en un tap', f1Body: "Chaque semaine, les joueurs reçoivent un texto. Un tap pour dire oui ou non. Pas d'appli à installer.",
+    f2Title: 'Remplaçants automatiques', f2Body: 'Une équipe manque de joueurs? On invite ta liste de remplaçants, premier arrivé, premier servi.',
+    f3Title: 'Équipes et alignements', f3Body: 'Place chaque joueur dans une équipe, change en un clic, garde les gardiens en rotation.',
+    f4Title: 'Une page pour ta ligue', f4Body: 'Horaire, équipes et classement sur une page publique à partager dans le groupe.',
+    eyebrow2: 'Comment ça marche', heading2: 'Trois étapes, une fois. Ensuite ça roule tout seul.',
+    s1Title: 'Crée ta ligue', s1Body: 'Nom, équipes, adresse de ta page. Cinq minutes.',
+    s2Title: 'Ajoute tes joueurs', s2Body: "Un nom et un numéro de cellulaire ou un courriel. Importe une liste si tu en as une.",
+    s3Title: 'On s\'occupe du reste', s3Body: 'Invitations, rappels, remplaçants. Tu reçois une alerte seulement si quelque chose coince.',
+    finalTitle: 'Ta prochaine saison commence ici.',
+    footerBrand: 'Notre Ligue · Fait au Québec', footerLinks: 'Confidentialité · Conditions · <a href="mailto:bonjour@notreligue.ca">Contact</a>'
   },
   en: {
-    cta: 'Get Started',
-    tagline: "Enjoy your league. We'll handle the rest.",
-    featuresHeading: 'Everything a rec league has to manage',
-    f1Title: "Who's showing up?",
-    f1Body: "Players confirm with one click. You always know who's in, who's out, and who hasn't answered yet.",
-    f2Title: "A team's short? Already handled.",
-    f2Body: 'The moment someone drops out, the system invites substitutes automatically, in order, until the team is full.',
-    f3Title: 'Team assignments, sent ahead of time',
-    f3Body: 'Every player knows their team before game day. No one shows up wondering where they\'re playing.',
-    f4Title: 'For leagues that keep stats',
-    f4Body: "Standings, scoring, playoffs — if your league tracks them, we display them. If not, it's not required.",
-    howHeading: 'How it works',
-    s1Title: 'We set up your league',
-    s1Body: 'Teams, schedule, format. Fifteen minutes.',
-    s2Title: 'Your players confirm attendance',
-    s2Body: 'Every week, without thinking about it.',
-    s3Title: 'You run your league, not your inbox',
-    s3Body: 'Reminders and substitutes are handled for you.',
-    contactHeading: 'A question? A league to start?',
-    contactLine: 'Write to us at <a class="contact-email" href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a>'
+    navFeatures: 'Features', navHow: 'How it works', login: 'Log in',
+    heroTitle: 'Your Sunday league, without the <u>paperwork</u>.',
+    heroBody: "Notre Ligue texts your players, counts who's in and finds subs when a team is short. You just play.",
+    cta: 'Create my league', proof: 'Ready in 5 minutes. In French and English.',
+    eyebrow1: 'What we handle for you', heading1: 'The boring league work, done automatically.',
+    f1Title: 'Attendance in one tap', f1Body: "Every week, players get a text. One tap to say yes or no. No app to install.",
+    f2Title: 'Automatic subs', f2Body: 'A team short on players? We invite your sub list, first come first served.',
+    f3Title: 'Teams and lineups', f3Body: 'Put each player on a team, change it in one click, keep goalies in rotation.',
+    f4Title: 'A page for your league', f4Body: 'Schedule, teams and standings on a public page you can share in the group chat.',
+    eyebrow2: 'How it works', heading2: 'Three steps, once. Then it runs itself.',
+    s1Title: 'Create your league', s1Body: 'Name, teams, your page address. Five minutes.',
+    s2Title: 'Add your players', s2Body: "A name and a cell number or email. Import a list if you have one.",
+    s3Title: 'We handle the rest', s3Body: "Invites, reminders, subs. You get an alert only if something's stuck.",
+    finalTitle: 'Your next season starts here.',
+    footerBrand: 'Notre Ligue · Made in Quebec', footerLinks: 'Privacy · Terms · <a href="mailto:bonjour@notreligue.ca">Contact</a>'
   }
 };
-
 function renderMarketingHomepage() {
-  return `<!DOCTYPE html><html lang="fr-CA"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Notre Ligue — Gestion de ligue sportive récréative</title>
-<meta name="description" content="Notre Ligue simplifie la gestion de votre ligue récréative : présences, remplaçants et assignations d'équipes, automatiquement.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%92%3C/text%3E%3C/svg%3E">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  const bodyHtml = `
+<style>
+  .nl-hero .nl-header { background: transparent; border-bottom-color: #2a2e36; max-width: var(--content-wide); margin: 0 auto; padding: 0 var(--space-6); }
+  .nl-hero .nl-nav a { color: #a3a6ad; }
+  .home-in { max-width: var(--content-wide); margin: 0 auto; padding: 0 var(--space-6); }
+  .home-hero { display: grid; grid-template-columns: 1.15fr .85fr; gap: var(--space-7); align-items: center; padding: 72px var(--space-6) var(--space-9); max-width: var(--content-wide); margin: 0 auto; }
+  .home-hero h1 { font: 800 52px/56px var(--font-display); font-stretch: 118%; letter-spacing: -.02em; color: var(--ink-inverse); }
+  .home-hero h1 u { text-decoration: none; box-shadow: inset 0 -12px 0 var(--yellow); color: var(--ink-inverse); }
+  .home-hero p { font-size: 20px; line-height: 30px; color: #c9cbd1; margin-top: 20px; max-width: 520px; }
+  .home-cta { display: flex; gap: var(--space-3); margin-top: var(--space-6); }
+  .home-hero .nl-btn--primary { background: var(--yellow); color: var(--on-yellow) !important; }
+  .home-proof { margin-top: 20px; font-size: 14px; color: #a3a6ad; }
+  .home-mock { position: relative; height: 420px; }
+  .home-mock .card { position: absolute; background: #ffffff; color: #16181d; border-radius: 6px; padding: 20px; width: 300px; box-shadow: var(--shadow-sheet); }
+  .home-mock .a { left: 0; top: 0; } .home-mock .b { right: 0; bottom: 0; width: 280px; }
+  .home-mock .blk1 { position: absolute; right: 24px; top: 24px; width: 120px; height: 120px; background: var(--yellow); border-radius: 3px; }
+  .home-mock .blk2 { position: absolute; left: 48px; bottom: 24px; width: 96px; height: 96px; background: var(--league); border-radius: 3px; }
+  .home-mock h3 { font: 800 21px/25px var(--font-display); font-stretch: 118%; color: #16181d; }
+  .home-mock .ov { font: 700 11px/16px var(--font-sans); letter-spacing: .08em; text-transform: uppercase; color: #55585f; margin-bottom: 8px; }
+  .home-mock .btn { display: flex; align-items: center; justify-content: center; height: 44px; border-radius: 4px; font: 600 15px/1 var(--font-sans); margin-top: 10px; }
+  .home-mock .p { background: var(--league); color: #fff; }
+  .home-mock .lg { border-left: 4px solid var(--league); padding-left: 8px; }
+  .home-mock .s { border: 1.5px solid #8a8d94; }
+  .home-mock .row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid #e3e3e0; font-size: 14px; }
+  .home-mock .row:first-of-type { border-top: 0; }
+  .home-band { padding: var(--space-9) 0; }
+  .home-eyebrow { font: 700 12px/16px var(--font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+  .home-sec-h { font: 700 36px/42px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; margin: 8px 0 var(--space-7); max-width: 640px; }
+  .home-feats { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-5); }
+  .home-ico { width: 40px; height: 40px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; }
+  .home-ico svg { width: 22px; height: 22px; }
+  .home-i1, .home-i3 { background: var(--primary); color: var(--yellow); }
+  .home-i2, .home-i4 { background: var(--yellow); color: var(--on-yellow); }
+  .home-feat { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+  .home-feat h3 { font: 600 18px/24px var(--font-display); font-stretch: 118%; }
+  .home-feat p { color: var(--ink-muted); font-size: 15px; line-height: 23px; }
+  .home-how { background: var(--surface-sunken); }
+  .home-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-6); }
+  .home-num { font: 800 64px/1 var(--font-display); font-stretch: 118%; color: var(--ink); box-shadow: inset 0 -14px 0 var(--yellow); align-self: flex-start; padding: 0 4px; letter-spacing: -.02em; }
+  .home-step h3 { font: 600 20px/26px var(--font-display); font-stretch: 118%; }
+  .home-step p { color: var(--ink-muted); }
+  .home-step { display: flex; flex-direction: column; gap: 10px; }
+  .home-final { background: #16181d; color: #f4f4f2; padding: 80px 0; }
+  .home-final .home-in { display: flex; justify-content: space-between; align-items: center; gap: var(--space-6); flex-wrap: wrap; }
+  .home-final h2 { font: 800 38px/44px var(--font-display); font-stretch: 118%; color: #f4f4f2; max-width: 620px; }
+  .home-final .nl-btn--primary { background: var(--yellow); color: var(--on-yellow) !important; }
+  .home-footer { padding: var(--space-5) 0; font-size: 13px; color: var(--ink-muted); border-top: 1px solid var(--line); }
+  .home-footer .home-in { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
+  @media (max-width: 900px) { .home-hero { grid-template-columns: 1fr; } .home-mock { display: none; } .home-feats { grid-template-columns: 1fr 1fr; } .home-steps { grid-template-columns: 1fr; } }
+  @media (max-width: 560px) { .home-feats { grid-template-columns: 1fr; } .home-hero h1 { font-size: 34px; line-height: 36px; } }
+</style>
+<div class="nl-hero">
+  <header class="nl-header">
+    <span class="nl-brand nl-brand--product"><i></i>Notre Ligue</span>
+    <nav class="nl-nav" style="margin-left:var(--space-6)">
+      <a href="#fonctionnalites" data-i18n="navFeatures">Fonctionnalités</a>
+      <a href="#comment-ca-marche" data-i18n="navHow">Comment ça marche</a>
+    </nav>
+    <div class="spacer"></div>
+    <a class="nl-btn nl-btn--ghost nl-btn--sm" href="/login" style="color:#f4f4f2" data-i18n="login">Se connecter</a>
+    <div class="nl-lang" role="group" aria-label="Langue / Language">
+      <button type="button" id="btn-lang-fr" aria-pressed="true" onclick="window.__setLang('fr')">FR</button>
+      <button type="button" id="btn-lang-en" aria-pressed="false" onclick="window.__setLang('en')">EN</button>
+    </div>
+  </header>
+  <div class="home-hero">
+    <div>
+      <h1 data-i18n="heroTitle">Ta ligue du dimanche, sans la <u>paperasse</u>.</h1>
+      <p data-i18n="heroBody">Notre Ligue texte tes joueurs, compte les présences et trouve des remplaçants quand une équipe manque de monde. Toi, tu joues.</p>
+      <div class="home-cta"><a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">Créer ma ligue</a></div>
+      <div class="home-proof" data-i18n="proof">Prêt en 5 minutes. En français et en anglais.</div>
+    </div>
+    <div class="home-mock" aria-hidden="true">
+      <div class="blk1"></div><div class="blk2"></div>
+      <div class="card a"><div class="ov lg">Ligue du dimanche matin</div><div class="ov">Dimanche · 9 h</div><h3>Marc, tu joues dimanche?</h3><div class="btn p">✓ Je joue</div><div class="btn s">Je ne peux pas</div></div>
+      <div class="card b"><div class="ov">Dimanche · 9 h</div>
+        <div class="row"><b>Les Castors</b><span style="color:#0e7a4f;font-weight:600">✓ 10/10</span></div>
+        <div class="row"><b>Les Aurores</b><span style="background:#ffd23f;padding:2px 6px;border-radius:3px;font-weight:700">Manque 2</span></div>
+        <div class="row"><span style="color:#55585f">3 remplaçants invités</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section class="home-band" id="fonctionnalites"><div class="home-in">
+  <div class="home-eyebrow" data-i18n="eyebrow1">Ce qu'on fait pour toi</div>
+  <h2 class="home-sec-h" data-i18n="heading1">Le travail plate de la ligue, fait automatiquement.</h2>
+  <div class="home-feats">
+    <div class="home-feat"><div class="home-ico home-i1"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 10.5l4 4 8-9"/></svg></div><h3 data-i18n="f1Title">Présences en un tap</h3><p data-i18n="f1Body">Chaque semaine, les joueurs reçoivent un texto. Un tap pour dire oui ou non. Pas d'appli à installer.</p></div>
+    <div class="home-feat"><div class="home-ico home-i2"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 3l8 14H2z"/><path d="M10 8v4M10 14.5v.5"/></svg></div><h3 data-i18n="f2Title">Remplaçants automatiques</h3><p data-i18n="f2Body">Une équipe manque de joueurs? On invite ta liste de remplaçants, premier arrivé, premier servi.</p></div>
+    <div class="home-feat"><div class="home-ico home-i3"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="3"/><circle cx="14" cy="9" r="2.5"/><path d="M2 17c0-3 2.5-5 5-5s5 2 5 5M12 17c0-2 1-4 3-4s3 1.5 3 4"/></svg></div><h3 data-i18n="f3Title">Équipes et alignements</h3><p data-i18n="f3Body">Place chaque joueur dans une équipe, change en un clic, garde les gardiens en rotation.</p></div>
+    <div class="home-feat"><div class="home-ico home-i4"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="14" height="13" rx="1"/><path d="M3 8h14M7 2v4M13 2v4"/></svg></div><h3 data-i18n="f4Title">Une page pour ta ligue</h3><p data-i18n="f4Body">Horaire, équipes et classement sur une page publique à partager dans le groupe.</p></div>
+  </div>
+</div></section>
+
+<section class="home-band home-how" id="comment-ca-marche"><div class="home-in">
+  <div class="home-eyebrow" data-i18n="eyebrow2">Comment ça marche</div>
+  <h2 class="home-sec-h" data-i18n="heading2">Trois étapes, une fois. Ensuite ça roule tout seul.</h2>
+  <div class="home-steps">
+    <div class="home-step"><div class="home-num">1</div><h3 data-i18n="s1Title">Crée ta ligue</h3><p data-i18n="s1Body">Nom, équipes, adresse de ta page. Cinq minutes.</p></div>
+    <div class="home-step"><div class="home-num">2</div><h3 data-i18n="s2Title">Ajoute tes joueurs</h3><p data-i18n="s2Body">Un nom et un numéro de cellulaire ou un courriel. Importe une liste si tu en as une.</p></div>
+    <div class="home-step"><div class="home-num">3</div><h3 data-i18n="s3Title">On s'occupe du reste</h3><p data-i18n="s3Body">Invitations, rappels, remplaçants. Tu reçois une alerte seulement si quelque chose coince.</p></div>
+  </div>
+</div></section>
+
+<section class="home-final"><div class="home-in">
+  <h2 data-i18n="finalTitle">Ta prochaine saison commence ici.</h2>
+  <a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">Créer ma ligue</a>
+</div></section>
+<footer class="home-footer"><div class="home-in">
+  <span data-i18n="footerBrand">Notre Ligue · Fait au Québec</span>
+  <span data-i18n="footerLinks">Confidentialité · Conditions · <a href="mailto:bonjour@notreligue.ca">Contact</a></span>
+</div></footer>
 <script>
-// Same shared toggle infrastructure as page()'s own script (SMBHL's
-// real mechanism: window.__setLang/__currentLang, localStorage,
-// admin_lang_changed) -- duplicated here rather than imported since
-// this page deliberately never calls page() (see comment above). Fully
-// self-contained; touches nothing SMBHL's own pages rely on.
+var I18N_HOME = ${JSON.stringify(I18N_HOME)};
 (function() {
   var lang = 'fr';
   try {
@@ -497,146 +581,25 @@ function renderMarketingHomepage() {
     if (l !== 'fr' && l !== 'en') return;
     window.__currentLang = l;
     try { localStorage.setItem('smbhl_admin_lang', l); } catch(e) {}
-    document.querySelectorAll('.langbtn').forEach(function(b) { b.classList.toggle('on', b.dataset.l === l); });
-    window.dispatchEvent(new CustomEvent('admin_lang_changed', { detail: { lang: l } }));
+    applyLanguage(l);
   };
+  function applyLanguage(l) {
+    var dict = I18N_HOME[l] || I18N_HOME.fr;
+    document.querySelectorAll('[data-i18n]').forEach(function(el) {
+      var k = el.getAttribute('data-i18n');
+      if (dict[k] != null) el.innerHTML = dict[k];
+    });
+    document.getElementById('btn-lang-fr').setAttribute('aria-pressed', String(l === 'fr'));
+    document.getElementById('btn-lang-en').setAttribute('aria-pressed', String(l === 'en'));
+  }
+  applyLanguage(lang);
 })();
-</script>
-<style>
- :root{--primary:#5B2EFF;--primary-dark:#3D1FBF;--pink:#FF3D81;--yellow:#FFD23F;
-   --ink:#1A1533;--ink-soft:#4A4363;--bg:#fff;--border:#E6DFFF}
- *{box-sizing:border-box}
- body{margin:0;font-family:'Inter',-apple-system,'Segoe UI',sans-serif;color:var(--ink);
-   background:var(--bg);line-height:1.5}
- .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
- h1,h2,h3{font-family:'Space Grotesk',sans-serif}
- .langswitch{display:flex;gap:4px;align-items:center}
- .langbtn{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px;padding:4px 10px;
-   border-radius:4px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer}
- .langbtn.on{background:var(--ink);border-color:var(--ink);color:#fff}
- .how .langbtn{border-color:#fff;color:#fff}
- .how .langbtn.on{background:#fff;color:var(--ink)}
- .btn{display:inline-flex;align-items:center;gap:8px;font-family:'Space Grotesk',sans-serif;
-   font-weight:600;font-size:1rem;text-decoration:none;border-radius:6px;padding:14px 28px;
-   border:3px solid transparent;cursor:pointer;color:#fff;background:var(--primary);
-   box-shadow:0 6px 0 var(--primary-dark);transition:transform .15s ease}
- .btn:hover{transform:translateY(-2px)}
- header.top{padding:16px 0;border-bottom:1px solid var(--border)}
- header.top .wrap{display:flex;align-items:center;justify-content:space-between}
- .wordmark{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.4rem;
-   background:linear-gradient(100deg,#5B2EFF,#8A2EFF,#FF3D81);-webkit-background-clip:text;
-   background-clip:text;color:transparent;text-decoration:none}
- .hero{text-align:center;padding:64px 0 72px;background:var(--ink)}
- .hero .wordmark{font-size:clamp(2.2rem,9vw,4rem)}
- .hero-tagline{font-family:'Space Grotesk',sans-serif;font-weight:600;
-   font-size:clamp(1.15rem,4vw,1.6rem);color:rgba(255,255,255,.8);margin:24px auto 32px;max-width:32ch}
- .hero-tagline .en{color:rgba(255,255,255,.55)}
- section{padding:56px 0}
- .section-heading{font-weight:700;font-size:clamp(1.4rem,4vw,2rem);text-align:center;margin:0 0 40px}
- .features-grid{display:grid;grid-template-columns:1fr;gap:20px}
- @media(min-width:640px){.features-grid{grid-template-columns:1fr 1fr}}
- @media(min-width:960px){.features-grid{grid-template-columns:repeat(4,1fr)}}
- .feature-card{background:#fff;border:2px solid var(--border);border-radius:10px;padding:24px 20px}
- .feature-icon{width:48px;height:48px;border-radius:8px;display:flex;align-items:center;
-   justify-content:center;margin-bottom:16px;font-size:22px}
- .feature-card h3{font-size:1.05rem;margin:0 0 8px}
- .feature-card p{margin:0;color:var(--ink-soft);font-size:.92rem}
- .how{background:var(--ink);color:#fff}
- .how .section-heading{color:#fff}
- .steps{display:grid;grid-template-columns:1fr;gap:20px}
- @media(min-width:760px){.steps{grid-template-columns:repeat(3,1fr)}}
- .step{padding:22px 18px;background:rgba(255,255,255,.06);border-radius:10px;border:1px solid rgba(255,255,255,.12)}
- .step-number{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.3rem;width:36px;height:36px;
-   border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--ink);
-   background:var(--yellow);margin-bottom:12px}
- .step h3{margin:0 0 6px;font-size:1.02rem}
- .step p{margin:0;color:#C9C1F5;font-size:.92rem}
- .contact{text-align:center}
- .contact-email{font-weight:700;color:var(--primary);text-decoration:none;border-bottom:3px solid var(--yellow)}
- footer.bottom{border-top:1px solid var(--border);padding:24px 0;text-align:center;color:var(--ink-soft);font-size:.85rem}
-</style></head><body>
-<header class="top"><div class="wrap">
-  <span class="wordmark">Notre Ligue</span>
-  <div style="display:flex;align-items:center;gap:14px;">
-    <a class="btn" data-i18n="cta" style="padding:8px 18px;font-size:.85rem;box-shadow:none;" href="/signup">S'inscrire</a>
-    <div class="langswitch" role="group" aria-label="Choix de la langue / Language choice">
-      <button type="button" class="langbtn on" data-l="fr" id="btn-lang-fr" onclick="window.__setLang &amp;&amp; window.__setLang('fr')">FR</button>
-      <button type="button" class="langbtn" data-l="en" id="btn-lang-en" onclick="window.__setLang &amp;&amp; window.__setLang('en')">EN</button>
-    </div>
-  </div>
-</div></header>
-<section class="hero"><div class="wrap">
-  <span class="wordmark">Notre Ligue</span>
-  <p class="hero-tagline" data-i18n="tagline">Profitez de votre ligue. On s'occupe du reste.</p>
-  <a class="btn" id="hero_cta" data-i18n="cta" href="/signup">S'inscrire</a>
-</div></section>
-<section><div class="wrap">
-  <h2 class="section-heading" data-i18n="featuresHeading">Tout ce qu'une ligue amateur doit gérer</h2>
-  <div class="features-grid">
-    <div class="feature-card">
-      <div class="feature-icon" style="background:var(--primary);color:#fff;">✅</div>
-      <h3 data-i18n="f1Title">Qui vient dimanche?</h3>
-      <p data-i18n="f1Body">Les joueurs confirment en un clic. Vous savez toujours qui est là, qui est absent, et qui n'a pas répondu.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon" style="background:var(--pink);color:#fff;">🔄</div>
-      <h3 data-i18n="f2Title">Une équipe est courte? C'est déjà réglé.</h3>
-      <p data-i18n="f2Body">Dès qu'un joueur se désiste, le système invite des remplaçants automatiquement, dans l'ordre, jusqu'à ce que l'équipe soit complète.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon" style="background:#17B37A;color:#fff;">📋</div>
-      <h3 data-i18n="f3Title">Les équipes, envoyées d'avance</h3>
-      <p data-i18n="f3Body">Chaque joueur reçoit son assignation d'équipe avant la partie. Personne n'arrive en se demandant où il joue.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon" style="background:#FF9F1C;color:#fff;">📊</div>
-      <h3 data-i18n="f4Title">Pour les ligues qui gardent les statistiques</h3>
-      <p data-i18n="f4Body">Classement, pointage, séries éliminatoires — si votre ligue les suit, on les affiche. Sinon, ce n'est pas nécessaire.</p>
-    </div>
-  </div>
-</div></section>
-<section class="how"><div class="wrap">
-  <h2 class="section-heading" data-i18n="howHeading">Comment ça marche</h2>
-  <div class="steps">
-    <div class="step">
-      <div class="step-number">1</div>
-      <h3 data-i18n="s1Title">On configure votre ligue</h3>
-      <p data-i18n="s1Body">Équipes, horaire, format. Quinze minutes.</p>
-    </div>
-    <div class="step">
-      <div class="step-number">2</div>
-      <h3 data-i18n="s2Title">Vos joueurs confirment leur présence</h3>
-      <p data-i18n="s2Body">Chaque semaine, sans y penser.</p>
-    </div>
-    <div class="step">
-      <div class="step-number">3</div>
-      <h3 data-i18n="s3Title">Vous gérez votre ligue, pas des courriels</h3>
-      <p data-i18n="s3Body">On s'occupe des rappels et des remplaçants.</p>
-    </div>
-  </div>
-</div></section>
-<section class="contact"><div class="wrap">
-  <h2 class="section-heading" data-i18n="contactHeading">Une question? Une ligue à démarrer?</h2>
-  <p data-i18n="contactLine">Écrivez-nous à <a class="contact-email" href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a></p>
-</div></section>
-<footer class="bottom">© 2026 Notre Ligue</footer>
-<script>
-var I18N_HOME = ${JSON.stringify(I18N_HOME)};
-function applyLanguage(lang) {
-  var dict = I18N_HOME[lang] || I18N_HOME.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (dict[k] != null) el.innerHTML = dict[k];
+</script>`;
+  return nlDocument({
+    title: 'Notre Ligue',
+    description: "Ta ligue du dimanche, sans la paperasse. Présences, remplaçants et équipes, automatiquement.",
+    bodyHtml
   });
-}
-if (window.__currentLang) {
-  document.getElementById('btn-lang-fr').classList.toggle('on', window.__currentLang === 'fr');
-  document.getElementById('btn-lang-en').classList.toggle('on', window.__currentLang === 'en');
-  applyLanguage(window.__currentLang);
-}
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-</script>
-</body></html>`;
 }
 
 /* ---------- user-account pages (signup / login / dashboard) ----------
@@ -646,309 +609,502 @@ window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.deta
  * rather than introducing a separate visual system for these new pages.
  */
 
+/* ---------- signup: real 3-step wizard (design system Part 2) ----------
+ * Matches notre-ligue-design-system/components/ScreenSignup/preview.html
+ * precisely: one screen per step, same URL with a ?step= param,
+ * Stepper pinned above the title, primary button toward the bottom.
+ * One deliberate simplification from the literal preview: the primary
+ * button sits at the end of normal document flow (not CSS position:
+ * fixed to the viewport) -- avoids iOS Safari's well-known fixed-
+ * positioning-under-the-keyboard problems for a first-run form, and
+ * still ends up visually at the bottom for these short (2-3 field)
+ * steps. Documented rather than silently deviating.
+ *
+ * State across steps: step 1 completing creates the real account
+ * (POST /auth/signup, exactly as before) and gets a real session
+ * immediately -- so step 2's "Continuer" and step 3's league creation
+ * are already-authenticated, CSRF-protected requests, same as every
+ * other session-gated write in this app. Step 2's own field values
+ * (name, slug, tracksStats) are held in sessionStorage between the
+ * step-2 and step-3 page loads (a real page navigation, not a SPA);
+ * nothing sensitive lives there. Steps 2/3/done redirect to step 1 if
+ * loaded without a session (e.g. a stale bookmark).
+ */
 const I18N_SIGNUP = {
   fr: {
-    h1: 'Créer votre ligue',
-    sub: 'Un seul compte pour gérer votre ligue de hockey balle.',
-    lblEmail: 'Courriel',
-    lblPassword: 'Mot de passe (8 caractères min.)',
-    lblLeagueName: 'Nom de la ligue',
-    lblSlug: 'Adresse de votre ligue', slugHint: 'Suggérée automatiquement à partir du nom -- modifiable.',
-    lblDivision: "Division / groupe d'âge <i>(optionnel)</i>",
-    lblTeamCount: "Nombre d'équipes",
-    lblTracksStats: 'Cette ligue suit les statistiques (buts, passes, classement)',
-    submit: 'CRÉER MON COMPTE',
-    footer: 'Déjà un compte? <a href="/login">Se connecter</a>',
-    teamNamesLabel: 'Noms des équipes',
-    teamPlaceholder: 'Équipe '
+    step1: 'Étape 1 sur 3', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.',
+    lblEmail: 'Courriel', lblPassword: 'Mot de passe', showPw: 'Afficher', hidePw: 'Cacher',
+    pwHelp: '8 caractères minimum.', continueBtn: 'Continuer', alreadySignedUp: 'Déjà inscrit?', login: 'Se connecter',
+    step2: 'Étape 2 sur 3', title2: 'Parle-nous de ta ligue',
+    lblLeagueName: 'Nom de la ligue', lblSlug: 'Adresse de ta page',
+    slugHelp: 'Créée à partir du nom. Tu peux la changer.',
+    lblStats: 'Suivre les statistiques?', statsHelp: "Buts, passes, gardiens. Tu pourras l'activer plus tard.",
+    back: 'Retour',
+    step3: 'Étape 3 sur 3', title3: "Combien d'équipes?",
+    teamNamesLabel: 'Noms des équipes', teamPlaceholder: 'Équipe ', teamHelp: 'Pas encore décidé? Garde « Équipe 1, 2… ».',
+    createLeague: 'Créer la ligue',
+    doneBadge: 'Ligue créée', doneTitle: 'Ta ligue est prête.',
+    doneBody: 'Ta page publique est déjà en ligne. Partage-la dans le groupe de la ligue.',
+    copyLink: 'Copier le lien', copied: 'Copié !', addPlayers: 'Ajouter mes joueurs',
+    already: 'Déjà inscrit?'
   },
   en: {
-    h1: 'Create your league',
-    sub: 'One account to manage your ball hockey league.',
-    lblEmail: 'Email',
-    lblPassword: 'Password (min. 8 characters)',
-    lblLeagueName: 'League name',
-    lblSlug: 'Your league\'s web address', slugHint: 'Auto-suggested from the name -- editable.',
-    lblDivision: 'Division / age group <i>(optional)</i>',
-    lblTeamCount: 'Number of teams',
-    lblTracksStats: 'This league tracks stats (goals, assists, standings)',
-    submit: 'CREATE MY ACCOUNT',
-    footer: 'Already have an account? <a href="/login">Log in</a>',
-    teamNamesLabel: 'Team names',
-    teamPlaceholder: 'Team '
+    step1: 'Step 1 of 3', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.',
+    lblEmail: 'Email', lblPassword: 'Password', showPw: 'Show', hidePw: 'Hide',
+    pwHelp: '8 characters minimum.', continueBtn: 'Continue', alreadySignedUp: 'Already signed up?', login: 'Log in',
+    step2: 'Step 2 of 3', title2: 'Tell us about your league',
+    lblLeagueName: 'League name', lblSlug: 'Your page address',
+    slugHelp: 'Created from the name. You can change it.',
+    lblStats: 'Track stats?', statsHelp: 'Goals, assists, goalies. You can turn this on later.',
+    back: 'Back',
+    step3: 'Step 3 of 3', title3: 'How many teams?',
+    teamNamesLabel: 'Team names', teamPlaceholder: 'Team ', teamHelp: 'Not decided yet? Keep "Team 1, 2...".',
+    createLeague: 'Create the league',
+    doneBadge: 'League created', doneTitle: 'Your league is ready.',
+    doneBody: 'Your public page is already live. Share it in the league group chat.',
+    copyLink: 'Copy link', copied: 'Copied!', addPlayers: 'Add my players',
+    already: 'Already signed up?'
   }
 };
 
-function renderSignupPage() {
-  return page('Créer un compte', `
-  <h1 data-i18n="h1">Créer votre ligue</h1>
-  <p class="when" data-i18n="sub">Un seul compte pour gérer votre ligue de hockey balle.</p>
-  <div class="card">
-    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblEmail">Courriel</span>
-      <input type="email" id="su_email" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblPassword">Mot de passe (8 caractères min.)</span>
-      <input type="password" id="su_password" required minlength="8" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <hr style="border:none;border-top:1px solid var(--rule);margin:20px 0;">
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblLeagueName">Nom de la ligue</span>
-      <input type="text" id="su_league_name" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblSlug">Adresse de votre ligue</span>
-      <div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap;">
-        <span id="su_slug_prefix" style="color:var(--soft);font-size:14px;white-space:nowrap;"></span>
-        <input type="text" id="su_slug" style="flex:1;min-width:120px;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-      </div>
-      <span id="su_slug_hint" class="state" style="display:block;margin-top:4px;font-size:13px;" data-i18n="slugHint">Suggérée automatiquement à partir du nom -- modifiable.</span>
-    </label>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblDivision">Division / groupe d'âge <i>(optionnel)</i></span>
-      <input type="text" id="su_division" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblTeamCount">Nombre d'équipes</span>
-      <input type="number" id="su_team_count" min="2" max="16" value="4" style="width:100px;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <div id="teamNamesContainer" style="margin-bottom:14px;"></div>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:20px;">
-      <input type="checkbox" id="su_tracks_stats" checked style="width:18px;height:18px;">
-      <span data-i18n="lblTracksStats">Cette ligue suit les statistiques (buts, passes, classement)</span>
-    </label>
-    <div class="btns">
-      <button type="button" class="btn" id="su_submit" data-i18n="submit" onclick="submitSignup()">CRÉER MON COMPTE</button>
-    </div>
+// Shared style block every signup screen (steps 1-3 and the done
+// screen) embeds, plus a header builder -- steps 1-3 show the Notre
+// Ligue product brand (no session/league yet); the done screen shows
+// the league's own name instead (ScreenSignup/preview.html's own done
+// screen: <span class="nl-brand">Ligue du dimanche matin</span>, no
+// product mark), so the two are built separately.
+function signupStyles() {
+  return `<style>
+  .nl { display: flex; flex-direction: column; min-height: 100vh; }
+  .su-body { flex: 1; max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+  .su-prog { display: flex; flex-direction: column; gap: var(--space-2); }
+  .su-title { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-2); }
+  .su-title h1 { font: 700 28px/34px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; }
+  .su-bottom { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); border-top: 1px solid var(--line); }
+  .su-center { text-align: center; font-size: 14px; color: var(--ink-muted); }
+  .su-pw { position: relative; }
+  .su-pw .nl-input { padding-right: 88px; }
+  .su-pw button { position: absolute; right: 4px; top: 4px; height: 40px; }
+  .su-count { display: flex; align-items: center; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); height: var(--control-md); overflow: hidden; width: 160px; }
+  .su-count button { width: 56px; height: 100%; border: 0; background: var(--surface-sunken); color: var(--ink); font: 600 22px/1 var(--font-sans); cursor: pointer; }
+  .su-count output { flex: 1; text-align: center; font: 700 20px/1 var(--font-display); font-stretch: 118%; }
+  .su-teams { display: flex; flex-direction: column; gap: var(--space-2); }
+  .su-team-in { display: flex; align-items: center; gap: var(--space-2); }
+  .su-team-in .n { width: 24px; font: 600 14px/1 var(--font-display); font-stretch: 118%; color: var(--ink-muted); text-align: right; flex: none; }
+  .su-done { display: flex; flex-direction: column; gap: var(--space-4); }
+  .su-url { background: var(--primary-tint); border-radius: var(--radius-md); padding: var(--space-3); font: 600 15px/22px var(--font-sans); color: var(--primary); word-break: break-all; }
+  .nl-error { color: var(--danger, #b3122e); font-weight: 600; font-size: 14px; }
+  @media (min-width: 640px) { .su-body { padding-top: var(--space-7); } }
+</style>`;
+}
+function signupHeader(brandLabel) {
+  return `<header class="nl-header">
+  <span class="nl-brand${brandLabel ? '' : ' nl-brand--product'}">${brandLabel ? '' : '<i></i>'}${esc(brandLabel || 'Notre Ligue')}</span>
+  <div class="spacer"></div>
+  <div class="nl-lang" role="group" aria-label="Langue / Language">
+    <button type="button" id="btn-lang-fr" aria-pressed="true" onclick="window.__setLang('fr')">FR</button>
+    <button type="button" id="btn-lang-en" aria-pressed="false" onclick="window.__setLang('en')">EN</button>
   </div>
-  <p class="state" data-i18n="footer">Déjà un compte? <a href="/login">Se connecter</a></p>
-<script>
+</header>`;
+}
+
+// Generic per-page script every nlDocument-based auth screen (signup
+// wizard, login, forgot/reset password) embeds: language toggle +
+// persistence (same localStorage key/event convention as page()'s own
+// shared shell, so the choice carries across both old and new pages),
+// plus window.__csrfHeader/__errorText -- nlDocument doesn't carry
+// page()'s shared shell script (a deliberate separation, see
+// nlDocument's own comment), so these two small helpers are duplicated
+// here verbatim from page()'s script. window.__pageDict() exposes the
+// current page's own dict to page-local scripts (team-name placeholder
+// text, "copied" button label, etc).
+function nlAuthScript(i18nDict) {
+  return `
+var __I18N = ${JSON.stringify(i18nDict)};
 window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
-var I18N_SIGNUP = ${JSON.stringify(I18N_SIGNUP)};
-function signupDict() { return I18N_SIGNUP[window.__currentLang || 'fr'] || I18N_SIGNUP.fr; }
-function teamNamesEl() { return document.getElementById('teamNamesContainer'); }
-function renderTeamInputs() {
-  const count = Math.max(2, Math.min(16, Number(document.getElementById('su_team_count').value) || 2));
-  const container = teamNamesEl();
-  const existing = Array.from(container.querySelectorAll('input')).map(i => i.value);
-  container.innerHTML = '';
-  const label = document.createElement('div');
-  label.style.cssText = 'font-weight:600;margin-bottom:4px;';
-  label.textContent = signupDict().teamNamesLabel;
-  container.appendChild(label);
-  for (let i = 0; i < count; i++) {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = signupDict().teamPlaceholder + (i + 1);
-    input.value = existing[i] || '';
-    input.style.cssText = 'width:100%;font:inherit;padding:9px;border:1px solid var(--rule2);border-radius:3px;margin-bottom:6px;display:block;';
-    container.appendChild(input);
+window.__csrfHeader = function() {
+  var m = document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);
+  return m ? { 'X-CSRF-Token': decodeURIComponent(m[1]) } : {};
+};
+window.__errorText = function(errorKey, fallback, vars) {
+  var lang = window.__currentLang || 'fr';
+  var src = window.__ERROR_I18N || {};
+  var dict = src[lang] || src.fr || {};
+  var text = (errorKey && dict[errorKey]) || fallback || (lang === 'fr' ? 'Une erreur est survenue.' : 'An error occurred.');
+  if (vars) { Object.keys(vars).forEach(function(k) { text = text.split('{' + k + '}').join(vars[k]); }); }
+  return text;
+};
+(function() {
+  var lang = 'fr';
+  try {
+    var saved = localStorage.getItem('smbhl_admin_lang');
+    if (saved === 'fr' || saved === 'en') lang = saved;
+    else if (/^en/i.test(navigator.language || '')) lang = 'en';
+  } catch(e) {}
+  window.__currentLang = lang;
+  window.__setLang = function(l) {
+    if (l !== 'fr' && l !== 'en') return;
+    window.__currentLang = l;
+    try { localStorage.setItem('smbhl_admin_lang', l); } catch(e) {}
+    applyLanguage(l);
+  };
+  window.__pageDict = function() { return __I18N[window.__currentLang] || __I18N.fr; };
+  function applyLanguage(l) {
+    var dict = __I18N[l] || __I18N.fr;
+    document.querySelectorAll('[data-i18n]').forEach(function(el) {
+      var k = el.getAttribute('data-i18n');
+      if (dict[k] != null) el.innerHTML = dict[k];
+    });
+    var frBtn = document.getElementById('btn-lang-fr'), enBtn = document.getElementById('btn-lang-en');
+    if (frBtn) frBtn.setAttribute('aria-pressed', String(l === 'fr'));
+    if (enBtn) enBtn.setAttribute('aria-pressed', String(l === 'en'));
+    if (window.__onLangApplied) window.__onLangApplied(l);
   }
+  applyLanguage(lang);
+})();`;
 }
-document.getElementById('su_team_count').addEventListener('input', renderTeamInputs);
-renderTeamInputs();
+function signupLangScript() { return nlAuthScript(I18N_SIGNUP); }
 
-// Part 2: short, human-readable public URL, auto-suggested from the
-// league name (live, as the admin types) but fully editable -- the
-// SAME slugify rule as the server's own validation (leagues.js /
-// league_ids.js), duplicated here since a browser can't import a
-// Worker module. Once the admin touches the slug field directly,
-// auto-suggestion stops (their own choice always wins).
-function clientSlugify(input) {
-  return String(input || '')
-    .toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40)
-    .replace(/-+$/g, '');
-}
-document.getElementById('su_slug_prefix').textContent = location.origin + '/';
-var slugTouched = false;
-document.getElementById('su_slug').addEventListener('input', function() {
-  slugTouched = true;
-  this.value = clientSlugify(this.value);
-});
-document.getElementById('su_league_name').addEventListener('input', function() {
-  if (!slugTouched) document.getElementById('su_slug').value = clientSlugify(this.value);
-});
-
-function applyLanguage(lang) {
-  var dict = I18N_SIGNUP[lang] || I18N_SIGNUP.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (dict[k] != null) el.innerHTML = dict[k];
-  });
-  renderTeamInputs();
-}
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-
-function showError(msg) {
-  const el = document.getElementById('formErr');
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-function clearError() {
-  document.getElementById('formErr').style.display = 'none';
+function signupStepper(current) {
+  const dots = [1, 2, 3].map(i => `<i class="${i < current ? 'done' : i === current ? 'on' : ''}"></i>`).join('');
+  return `<div class="nl-steps" role="progressbar" aria-valuemin="1" aria-valuemax="3" aria-valuenow="${current}">${dots}</div>`;
 }
 
-async function submitSignup() {
+function renderSignupStep1() {
+  const bodyHtml = `${signupStyles()}${signupHeader()}
+<main class="su-body">
+  <div class="su-prog">
+    <div class="overline" data-i18n="step1">Étape 1 sur 3</div>
+    ${signupStepper(1)}
+  </div>
+  <div class="su-title">
+    <h1 data-i18n="title1">Créons ton compte</h1>
+    <p class="nl-help" data-i18n="sub1">Deux minutes, promis.</p>
+  </div>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div class="nl-field">
+    <label class="nl-label" for="su_email" data-i18n="lblEmail">Courriel</label>
+    <input class="nl-input" id="su_email" type="email" inputmode="email" autocomplete="email" required>
+  </div>
+  <div class="nl-field">
+    <label class="nl-label" for="su_password" data-i18n="lblPassword">Mot de passe</label>
+    <div class="su-pw">
+      <input class="nl-input" id="su_password" type="password" autocomplete="new-password" minlength="8" required>
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" id="su_pw_toggle" data-i18n="showPw" onclick="togglePw()">Afficher</button>
+    </div>
+    <p class="nl-help" data-i18n="pwHelp">8 caractères minimum.</p>
+  </div>
+</main>
+<div class="su-bottom">
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="continueBtn" onclick="submitStep1()">Continuer</button>
+  <p class="su-center"><span data-i18n="alreadySignedUp">Déjà inscrit?</span> <a href="/login" data-i18n="login">Se connecter</a></p>
+</div>
+<script>
+${signupLangScript()}
+function togglePw() {
+  var input = document.getElementById('su_password');
+  var btn = document.getElementById('su_pw_toggle');
+  var dict = window.__pageDict();
+  if (input.type === 'password') { input.type = 'text'; btn.textContent = dict.hidePw; }
+  else { input.type = 'password'; btn.textContent = dict.showPw; }
+}
+function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
+function clearError() { document.getElementById('formErr').style.display = 'none'; }
+async function submitStep1() {
   clearError();
-  const email = document.getElementById('su_email').value.trim();
-  const password = document.getElementById('su_password').value;
-  const leagueName = document.getElementById('su_league_name').value.trim();
-  const division = document.getElementById('su_division').value.trim();
-  const tracksStats = document.getElementById('su_tracks_stats').checked;
-  const teamNames = Array.from(teamNamesEl().querySelectorAll('input')).map(i => i.value.trim()).filter(Boolean);
-
-  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
-    showError(window.__errorText('INVALID_EMAIL'));
-    return;
-  }
-  if (password.length < 8) {
-    showError(window.__errorText('WEAK_PASSWORD'));
-    return;
-  }
-  if (!leagueName) {
-    showError(window.__errorText('LEAGUE_NAME_REQUIRED_CLIENT'));
-    return;
-  }
-  if (teamNames.length < 2) {
-    showError(window.__errorText('MIN_TEAM_NAMES_CLIENT'));
-    return;
-  }
-
-  const btn = document.getElementById('su_submit');
+  var email = document.getElementById('su_email').value.trim();
+  var password = document.getElementById('su_password').value;
+  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) { showError(window.__errorText('INVALID_EMAIL')); return; }
+  if (password.length < 8) { showError(window.__errorText('WEAK_PASSWORD')); return; }
+  var btn = document.getElementById('su_submit');
   btn.disabled = true;
   try {
-    const signupRes = await fetch('/auth/signup', {
+    var res = await fetch('/auth/signup', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email: email, password: password })
     });
-    const signupData = await signupRes.json().catch(() => ({}));
-    if (!signupRes.ok || !signupData.ok) {
-      if (signupRes.status === 429) {
-        showError(window.__errorText('RATE_LIMITED_SIGNUP'));
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) {
+      showError(res.status === 429 ? window.__errorText('RATE_LIMITED_SIGNUP') : window.__errorText(data.errorKey, data.error));
+      btn.disabled = false;
+      return;
+    }
+    window.location.href = '/signup?step=2';
+  } catch (e) {
+    showError(window.__errorText('NETWORK_ERROR'));
+    btn.disabled = false;
+  }
+}
+</script>`;
+  return nlDocument({ title: 'Créer un compte', description: 'Ta ligue du dimanche, sans la paperasse.', bodyHtml });
+}
+
+function renderSignupStep2() {
+  const bodyHtml = `${signupStyles()}${signupHeader()}
+<main class="su-body">
+  <div class="su-prog">
+    <div class="overline" data-i18n="step2">Étape 2 sur 3</div>
+    ${signupStepper(2)}
+  </div>
+  <div class="su-title"><h1 data-i18n="title2">Parle-nous de ta ligue</h1></div>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div class="nl-field">
+    <label class="nl-label" for="su_league_name" data-i18n="lblLeagueName">Nom de la ligue</label>
+    <input class="nl-input" id="su_league_name" type="text" required>
+  </div>
+  <div class="nl-field">
+    <label class="nl-label" for="su_slug" data-i18n="lblSlug">Adresse de ta page</label>
+    <div class="nl-prefix"><span>notreligue.ca/</span><input class="nl-input" id="su_slug"></div>
+    <p class="nl-help" data-i18n="slugHelp">Créée à partir du nom. Tu peux la changer.</p>
+  </div>
+  <div class="nl-toggle">
+    <div><div class="nl-label" data-i18n="lblStats">Suivre les statistiques?</div><div class="nl-help" data-i18n="statsHelp">Buts, passes, gardiens. Tu pourras l'activer plus tard.</div></div>
+    <button type="button" class="nl-switch" role="switch" aria-checked="true" id="su_stats_switch" onclick="toggleStats()"></button>
+  </div>
+</main>
+<div class="su-bottom">
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="continueBtn" onclick="submitStep2()">Continuer</button>
+  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="location.href='/signup?step=1'">Retour</button>
+</div>
+<script>
+${signupLangScript()}
+function toggleStats() {
+  var b = document.getElementById('su_stats_switch');
+  b.setAttribute('aria-checked', String(b.getAttribute('aria-checked') !== 'true'));
+}
+function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
+function clearError() { document.getElementById('formErr').style.display = 'none'; }
+var slugTouched = false;
+document.getElementById('su_slug').addEventListener('input', function() { slugTouched = true; this.value = window.NotreLigue.slugify(this.value); });
+document.getElementById('su_league_name').addEventListener('input', function() {
+  if (!slugTouched) document.getElementById('su_slug').value = window.NotreLigue.slugify(this.value);
+});
+function submitStep2() {
+  clearError();
+  var name = document.getElementById('su_league_name').value.trim();
+  var slug = document.getElementById('su_slug').value.trim();
+  var tracksStats = document.getElementById('su_stats_switch').getAttribute('aria-checked') === 'true';
+  if (!name) { showError(window.__errorText('LEAGUE_NAME_REQUIRED_CLIENT')); return; }
+  if (slug && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) { showError(window.__errorText('SLUG_INVALID_FORMAT')); return; }
+  try { sessionStorage.setItem('nl_signup_league', JSON.stringify({ name: name, slug: slug, tracksStats: tracksStats })); } catch (e) {}
+  window.location.href = '/signup?step=3';
+}
+</script>`;
+  return nlDocument({ title: 'Créer un compte', description: 'Ta ligue du dimanche, sans la paperasse.', bodyHtml });
+}
+
+function renderSignupStep3() {
+  const bodyHtml = `${signupStyles()}${signupHeader()}
+<main class="su-body">
+  <div class="su-prog">
+    <div class="overline" data-i18n="step3">Étape 3 sur 3</div>
+    ${signupStepper(3)}
+  </div>
+  <div class="su-title"><h1 data-i18n="title3">Combien d'équipes?</h1></div>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div class="su-count" role="group" aria-label="Nombre d'équipes">
+    <button type="button" aria-label="Moins" onclick="changeCount(-1)">−</button>
+    <output id="su_team_count_out">4</output>
+    <button type="button" aria-label="Plus" onclick="changeCount(1)">+</button>
+  </div>
+  <div class="nl-field">
+    <span class="nl-label" data-i18n="teamNamesLabel">Noms des équipes</span>
+    <div class="su-teams" id="su_teams"></div>
+    <p class="nl-help" data-i18n="teamHelp">Pas encore décidé? Garde « Équipe 1, 2… ».</p>
+  </div>
+</main>
+<div class="su-bottom">
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="createLeague" onclick="submitStep3()">Créer la ligue</button>
+  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="location.href='/signup?step=2'">Retour</button>
+</div>
+<script>
+${signupLangScript()}
+var leagueDraft = null;
+try { leagueDraft = JSON.parse(sessionStorage.getItem('nl_signup_league') || 'null'); } catch (e) {}
+if (!leagueDraft || !leagueDraft.name) { window.location.href = '/signup?step=2'; }
+var teamCount = 4;
+function teamsEl() { return document.getElementById('su_teams'); }
+function renderTeams() {
+  var container = teamsEl();
+  var existing = Array.prototype.map.call(container.querySelectorAll('input'), function(i) { return i.value; });
+  container.innerHTML = '';
+  var dict = window.__pageDict();
+  for (var i = 0; i < teamCount; i++) {
+    var row = document.createElement('div'); row.className = 'su-team-in';
+    var n = document.createElement('span'); n.className = 'n'; n.textContent = String(i + 1);
+    var input = document.createElement('input'); input.className = 'nl-input';
+    input.placeholder = dict.teamPlaceholder + (i + 1);
+    input.value = existing[i] || '';
+    row.appendChild(n); row.appendChild(input);
+    container.appendChild(row);
+  }
+}
+function changeCount(delta) {
+  teamCount = Math.max(2, Math.min(16, teamCount + delta));
+  document.getElementById('su_team_count_out').textContent = String(teamCount);
+  renderTeams();
+}
+window.__onLangApplied = function() { renderTeams(); };
+renderTeams();
+function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
+function clearError() { document.getElementById('formErr').style.display = 'none'; }
+async function submitStep3() {
+  clearError();
+  if (!leagueDraft) { window.location.href = '/signup?step=2'; return; }
+  var teamNames = Array.prototype.map.call(teamsEl().querySelectorAll('input'), function(i) { return i.value.trim(); }).filter(Boolean);
+  var btn = document.getElementById('su_submit');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/leagues/create', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ name: leagueDraft.name, teamNames: teamNames, tracksStats: leagueDraft.tracksStats, slug: leagueDraft.slug || undefined })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) {
+      if (data.errorKey === 'SLUG_TAKEN' || data.errorKey === 'SLUG_INVALID_FORMAT' || data.errorKey === 'SLUG_RESERVED') {
+        var isFr = (window.__currentLang || 'fr') === 'fr';
+        showError(window.__errorText(data.errorKey, data.error) + (isFr ? ' Modifie l\\'adresse à l\\'étape précédente.' : ' Change the address on the previous step.'));
       } else {
-        showError(window.__errorText(signupData.errorKey, signupData.error));
+        showError(window.__errorText(data.errorKey, data.error));
       }
       btn.disabled = false;
       return;
     }
-
-    const slug = document.getElementById('su_slug').value.trim();
-    const leagueRes = await fetch('/leagues/create', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ name: leagueName, teamNames, tracksStats, divisionLabel: division || null, slug: slug || undefined })
-    });
-    const leagueData = await leagueRes.json().catch(() => ({}));
-    if (!leagueRes.ok || !leagueData.ok) {
-      var isFr = (window.__currentLang || 'fr') === 'fr';
-      var detail = window.__errorText(leagueData.errorKey, leagueData.error);
-      showError(isFr
-        ? 'Votre compte a été créé, mais la création de la ligue a échoué : ' + detail + '. Rafraîchissez la page et réessayez, ou connectez-vous.'
-        : 'Your account was created, but league setup failed: ' + detail + '. Refresh and try again, or log in.');
-      btn.disabled = false;
-      return;
-    }
-
-    window.location.href = '/dashboard';
+    try {
+      sessionStorage.setItem('nl_signup_done', JSON.stringify({ slug: data.league.slug, name: data.league.name }));
+      sessionStorage.removeItem('nl_signup_league');
+    } catch (e) {}
+    window.location.href = '/signup?step=done';
   } catch (e) {
     showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
   }
 }
-</script>`);
+</script>`;
+  return nlDocument({ title: 'Créer un compte', description: 'Ta ligue du dimanche, sans la paperasse.', bodyHtml });
 }
 
+function renderSignupDone(league) {
+  const bodyHtml = `${signupStyles()}${signupHeader(league.name)}
+<main class="su-body">
+  <div class="su-done">
+    <span class="nl-badge nl-badge--in" data-i18n="doneBadge">Ligue créée</span>
+    <h1 data-i18n="doneTitle">Ta ligue est prête.</h1>
+    <p class="nl-help" data-i18n="doneBody">Ta page publique est déjà en ligne. Partage-la dans le groupe de la ligue.</p>
+    <div class="su-url" id="su_public_url">notreligue.ca/${esc(league.slug)}</div>
+    <button type="button" class="nl-btn nl-btn--secondary nl-btn--block" id="su_copy" data-i18n="copyLink" onclick="copyLink()">Copier le lien</button>
+  </div>
+</main>
+<div class="su-bottom">
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="addPlayers" onclick="location.href='/dashboard'">Ajouter mes joueurs</button>
+</div>
+<script>
+${signupLangScript()}
+function copyLink() {
+  var el = document.getElementById('su_public_url');
+  var full = location.origin + '/' + el.textContent.replace(/^notreligue\\.ca\\//, '');
+  var dict = window.__pageDict();
+  var btn = document.getElementById('su_copy');
+  var restore = function() { setTimeout(function() { btn.textContent = dict.copyLink; }, 2000); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(full).then(function() { btn.textContent = dict.copied; restore(); }).catch(function() {});
+  }
+}
+</script>`;
+  return nlDocument({ title: 'Ligue créée · Notre Ligue', bodyHtml });
+}
+
+// Session-aware dispatcher: step 1 (account creation) needs no
+// session; steps 2/3/done all need the real session step 1 created,
+// so a stale bookmark or a skipped step redirects back to step 1
+// rather than rendering a broken form.
+async function renderSignupPage(req, env, url) {
+  const step = url.searchParams.get('step');
+  if (step === '2' || step === '3' || step === 'done') {
+    const session = await checkUserSession(req, env);
+    if (!session) return Response.redirect(url.origin + '/signup?step=1', 302);
+    if (step === 'done') {
+      const league = await env.DB.prepare(
+        `SELECT l.name, l.slug FROM leagues l
+          JOIN league_admins a ON a.league_id = l.id
+         WHERE a.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
+      ).bind(session.userId).first();
+      if (!league) return Response.redirect(url.origin + '/signup?step=2', 302);
+      return new Response(renderSignupDone(league), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    }
+    if (step === '3') return new Response(renderSignupStep3(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    return new Response(renderSignupStep2(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+  return new Response(renderSignupStep1(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+}
+
+// Login / forgot-password / reset-password (design system Part 2).
+// No dedicated Screen* reference exists for these three in
+// notre-ligue-design-system/ (only ScreenSignup and ScreenHomepage do)
+// -- built self-consistently on the same nl- components, chrome and
+// voice ScreenSignup itself establishes: sentence-case verb buttons
+// (not the old ALL-CAPS "SE CONNECTER"/"LOG IN"), tutoiement in
+// French, no exclamation marks except a friendly close.
 const I18N_LOGIN = {
   fr: {
-    h1: 'Connexion',
-    lblEmail: 'Courriel',
-    lblPassword: 'Mot de passe',
-    submit: 'SE CONNECTER',
-    footerSignup: 'Pas de compte? <a href="/signup">Créer un compte</a>',
-    footerForgot: '<a href="/forgot-password">Mot de passe oublié?</a>'
+    title: 'Content de te revoir', sub: 'Connecte-toi pour gérer ta ligue.',
+    lblEmail: 'Courriel', lblPassword: 'Mot de passe', submit: 'Se connecter',
+    noAccount: 'Pas de compte?', signup: 'Créer une ligue', forgot: 'Mot de passe oublié?'
   },
   en: {
-    h1: 'Log in',
-    lblEmail: 'Email',
-    lblPassword: 'Password',
-    submit: 'LOG IN',
-    footerSignup: 'No account? <a href="/signup">Sign up</a>',
-    footerForgot: '<a href="/forgot-password">Forgot password?</a>'
+    title: 'Good to see you', sub: 'Log in to manage your league.',
+    lblEmail: 'Email', lblPassword: 'Password', submit: 'Log in',
+    noAccount: 'No account?', signup: 'Create a league', forgot: 'Forgot password?'
   }
 };
 
 function renderLoginPage() {
-  return page('Connexion', `
-  <h1 data-i18n="h1">Connexion</h1>
-  <div class="card">
-    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblEmail">Courriel</span>
-      <input type="email" id="li_email" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <label style="display:block;margin-bottom:18px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblPassword">Mot de passe</span>
-      <input type="password" id="li_password" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <div class="btns">
-      <button type="button" class="btn" id="li_submit" data-i18n="submit" onclick="submitLogin()">SE CONNECTER</button>
-    </div>
+  const bodyHtml = `${signupStyles()}${signupHeader()}
+<main class="su-body">
+  <div class="su-title">
+    <h1 data-i18n="title">Content de te revoir</h1>
+    <p class="nl-help" data-i18n="sub">Connecte-toi pour gérer ta ligue.</p>
   </div>
-  <p class="state" data-i18n="footerSignup">Pas de compte? <a href="/signup">Créer un compte</a></p>
-  <p class="state" data-i18n="footerForgot"><a href="/forgot-password">Mot de passe oublié?</a></p>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div class="nl-field">
+    <label class="nl-label" for="li_email" data-i18n="lblEmail">Courriel</label>
+    <input class="nl-input" id="li_email" type="email" inputmode="email" autocomplete="email" required>
+  </div>
+  <div class="nl-field">
+    <label class="nl-label" for="li_password" data-i18n="lblPassword">Mot de passe</label>
+    <input class="nl-input" id="li_password" type="password" autocomplete="current-password" required>
+  </div>
+</main>
+<div class="su-bottom">
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="li_submit" data-i18n="submit" onclick="submitLogin()">Se connecter</button>
+  <p class="su-center"><span data-i18n="noAccount">Pas de compte?</span> <a href="/signup" data-i18n="signup">Créer une ligue</a></p>
+  <p class="su-center"><a href="/forgot-password" data-i18n="forgot">Mot de passe oublié?</a></p>
+</div>
 <script>
-window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
-var I18N_LOGIN = ${JSON.stringify(I18N_LOGIN)};
-function applyLanguage(lang) {
-  var dict = I18N_LOGIN[lang] || I18N_LOGIN.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (dict[k] != null) el.innerHTML = dict[k];
-  });
-}
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-
-function showError(msg) {
-  const el = document.getElementById('formErr');
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-function clearError() {
-  document.getElementById('formErr').style.display = 'none';
-}
-
+${nlAuthScript(I18N_LOGIN)}
+function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
+function clearError() { document.getElementById('formErr').style.display = 'none'; }
 async function submitLogin() {
   clearError();
-  const email = document.getElementById('li_email').value.trim();
-  const password = document.getElementById('li_password').value;
-  if (!email || !password) {
-    showError(window.__errorText('EMAIL_PASSWORD_REQUIRED_CLIENT'));
-    return;
-  }
-  const btn = document.getElementById('li_submit');
+  var email = document.getElementById('li_email').value.trim();
+  var password = document.getElementById('li_password').value;
+  if (!email || !password) { showError(window.__errorText('EMAIL_PASSWORD_REQUIRED_CLIENT')); return; }
+  var btn = document.getElementById('li_submit');
   btn.disabled = true;
   try {
-    const res = await fetch('/auth/login', {
+    var res = await fetch('/auth/login', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email: email, password: password })
     });
-    const data = await res.json().catch(() => ({}));
+    var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {
-      // Deliberately the exact SAME message regardless of whether the
-      // email exists or not (Part A's login route already returns the
-      // same generic error either way) -- errorKey-resolved so it's
-      // still translated, this page must not narrow the generic error
-      // back down to something more specific.
+      // Deliberately the same message regardless of whether the email
+      // exists or not (the /auth/login route itself already returns
+      // the same generic error either way) -- errorKey-resolved so
+      // it's still translated, never narrowed to something specific.
       showError(window.__errorText(data.errorKey, data.error));
       btn.disabled = false;
       return;
@@ -959,83 +1115,68 @@ async function submitLogin() {
     btn.disabled = false;
   }
 }
-</script>`);
+</script>`;
+  return nlDocument({ title: 'Se connecter', description: 'Connecte-toi pour gérer ta ligue.', bodyHtml });
 }
 
-// Part 6: request a password reset (step 1 of 2). Always shows the same
-// generic confirmation after submitting, whether or not that email has a
-// real account -- matches handleRequestPasswordReset's own anti-enumeration
-// design (a real difference in UI text here would leak exactly what the
-// route itself deliberately avoids leaking).
+// Always shows the same generic confirmation after submitting, whether
+// or not that email has a real account -- matches
+// handleRequestPasswordReset's own anti-enumeration design (a real
+// difference in UI text here would leak exactly what the route itself
+// deliberately avoids leaking).
 const I18N_FORGOT = {
   fr: {
-    h1: 'Mot de passe oublié',
-    ok: 'Si un compte existe avec ce courriel, un lien de réinitialisation a été envoyé.',
-    lblEmail: 'Courriel', submit: 'ENVOYER', back: '&larr; Se connecter'
+    title: 'Mot de passe oublié', sub: 'On t’envoie un lien pour le réinitialiser.',
+    ok: 'Si un compte existe avec ce courriel, un lien vient d’être envoyé.',
+    lblEmail: 'Courriel', submit: 'Envoyer', back: 'Retour à la connexion'
   },
   en: {
-    h1: 'Forgot password',
-    ok: 'If an account exists with this email, a reset link has been sent.',
-    lblEmail: 'Email', submit: 'SEND', back: '&larr; Log in'
+    title: 'Forgot password', sub: 'We’ll send you a link to reset it.',
+    ok: 'If an account exists with this email, a link has just been sent.',
+    lblEmail: 'Email', submit: 'Send', back: 'Back to log in'
   }
 };
 
 function renderForgotPasswordPage() {
-  return page('Mot de passe oublié', `
-  <h1 data-i18n="h1">Mot de passe oublié</h1>
-  <div class="card">
-    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-    <div id="formOk" class="state" style="display:none;" data-i18n="ok">Si un compte existe avec ce courriel, un lien de réinitialisation a été envoyé.</div>
-    <label style="display:block;margin-bottom:12px;" id="emailLabel">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblEmail">Courriel</span>
-      <input type="email" id="fp_email" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <div class="btns" id="submitBtns">
-      <button type="button" class="btn" id="fp_submit" data-i18n="submit" onclick="submitForgot()">ENVOYER</button>
-    </div>
+  const bodyHtml = `${signupStyles()}${signupHeader()}
+<main class="su-body">
+  <div class="su-title">
+    <h1 data-i18n="title">Mot de passe oublié</h1>
+    <p class="nl-help" data-i18n="sub">On t’envoie un lien pour le réinitialiser.</p>
   </div>
-  <p class="state"><a href="/login" data-i18n="back">&larr; Se connecter</a></p>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div id="formOk" class="nl-help" style="display:none" data-i18n="ok">Si un compte existe avec ce courriel, un lien vient d’être envoyé.</div>
+  <div class="nl-field" id="emailField">
+    <label class="nl-label" for="fp_email" data-i18n="lblEmail">Courriel</label>
+    <input class="nl-input" id="fp_email" type="email" inputmode="email" autocomplete="email" required>
+  </div>
+</main>
+<div class="su-bottom" id="submitBtns">
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="fp_submit" data-i18n="submit" onclick="submitForgot()">Envoyer</button>
+  <p class="su-center"><a href="/login" data-i18n="back">Retour à la connexion</a></p>
+</div>
 <script>
-window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
-var I18N_FORGOT = ${JSON.stringify(I18N_FORGOT)};
-function applyLanguage(lang) {
-  var dict = I18N_FORGOT[lang] || I18N_FORGOT.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (dict[k] != null) el.innerHTML = dict[k];
-  });
-}
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-
-function showError(msg) {
-  const el = document.getElementById('formErr');
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-
+${nlAuthScript(I18N_FORGOT)}
+function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 async function submitForgot() {
   document.getElementById('formErr').style.display = 'none';
-  const email = document.getElementById('fp_email').value.trim();
-  if (!email) {
-    showError(window.__errorText('EMAIL_REQUIRED_CLIENT'));
-    return;
-  }
-  const btn = document.getElementById('fp_submit');
+  var email = document.getElementById('fp_email').value.trim();
+  if (!email) { showError(window.__errorText('EMAIL_REQUIRED_CLIENT')); return; }
+  var btn = document.getElementById('fp_submit');
   btn.disabled = true;
   try {
-    const res = await fetch('/auth/request-password-reset', {
+    var res = await fetch('/auth/request-password-reset', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ email: email })
     });
-    const data = await res.json().catch(() => ({}));
+    var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {
       showError(window.__errorText(data.errorKey, data.error));
       btn.disabled = false;
       return;
     }
-    document.getElementById('emailLabel').style.display = 'none';
+    document.getElementById('emailField').style.display = 'none';
     document.getElementById('submitBtns').style.display = 'none';
     document.getElementById('formOk').style.display = 'block';
   } catch (e) {
@@ -1043,65 +1184,48 @@ async function submitForgot() {
     btn.disabled = false;
   }
 }
-</script>`);
+</script>`;
+  return nlDocument({ title: 'Mot de passe oublié', description: '', bodyHtml });
 }
 
-// Part 6: set a new password (step 2 of 2), reached via the emailed
-// reset link's ?token=. The token itself is opaque to this page -- it's
-// just forwarded verbatim to POST /auth/reset-password, which does the
-// real verification (this page never decodes or trusts it client-side).
+// Reached via the emailed reset link's ?token=. The token itself is
+// opaque to this page -- it's just forwarded verbatim to POST
+// /auth/reset-password, which does the real verification (never
+// decoded or trusted client-side here).
 function renderResetPasswordPage(token) {
   const I18N_RESET = {
-    fr: { h1: 'Nouveau mot de passe', lblPassword: 'Nouveau mot de passe (8 caractères min.)', submit: 'RÉINITIALISER' },
-    en: { h1: 'New password', lblPassword: 'New password (min. 8 characters)', submit: 'RESET' }
+    fr: { title: 'Nouveau mot de passe', lblPassword: 'Nouveau mot de passe', pwHelp: '8 caractères minimum.', submit: 'Réinitialiser' },
+    en: { title: 'New password', lblPassword: 'New password', pwHelp: '8 characters minimum.', submit: 'Reset' }
   };
-  return page('Réinitialiser le mot de passe', `
-  <h1 data-i18n="h1">Nouveau mot de passe</h1>
-  <div class="card">
-    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-    <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblPassword">Nouveau mot de passe (8 caractères min.)</span>
-      <input type="password" id="rp_password" required minlength="8" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-    </label>
-    <div class="btns">
-      <button type="button" class="btn" id="rp_submit" data-i18n="submit" onclick="submitReset()">RÉINITIALISER</button>
-    </div>
+  const bodyHtml = `${signupStyles()}${signupHeader()}
+<main class="su-body">
+  <div class="su-title"><h1 data-i18n="title">Nouveau mot de passe</h1></div>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div class="nl-field">
+    <label class="nl-label" for="rp_password" data-i18n="lblPassword">Nouveau mot de passe</label>
+    <input class="nl-input" id="rp_password" type="password" autocomplete="new-password" minlength="8" required>
+    <p class="nl-help" data-i18n="pwHelp">8 caractères minimum.</p>
   </div>
+</main>
+<div class="su-bottom">
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="rp_submit" data-i18n="submit" onclick="submitReset()">Réinitialiser</button>
+</div>
 <script>
-window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
-var I18N_RESET = ${JSON.stringify(I18N_RESET)};
-function applyLanguage(lang) {
-  var dict = I18N_RESET[lang] || I18N_RESET.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (dict[k] != null) el.innerHTML = dict[k];
-  });
-}
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-
-function showError(msg) {
-  const el = document.getElementById('formErr');
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-
+${nlAuthScript(I18N_RESET)}
+function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 async function submitReset() {
   document.getElementById('formErr').style.display = 'none';
-  const password = document.getElementById('rp_password').value;
-  if (password.length < 8) {
-    showError(window.__errorText('WEAK_PASSWORD'));
-    return;
-  }
-  const btn = document.getElementById('rp_submit');
+  var password = document.getElementById('rp_password').value;
+  if (password.length < 8) { showError(window.__errorText('WEAK_PASSWORD')); return; }
+  var btn = document.getElementById('rp_submit');
   btn.disabled = true;
   try {
-    const res = await fetch('/auth/reset-password', {
+    var res = await fetch('/auth/reset-password', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: ${JSON.stringify(token || '')}, password })
+      body: JSON.stringify({ token: ${JSON.stringify(token || '')}, password: password })
     });
-    const data = await res.json().catch(() => ({}));
+    var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {
       showError(window.__errorText(data.errorKey, data.error));
       btn.disabled = false;
@@ -1113,7 +1237,8 @@ async function submitReset() {
     btn.disabled = false;
   }
 }
-</script>`);
+</script>`;
+  return nlDocument({ title: 'Nouveau mot de passe', description: '', bodyHtml });
 }
 
 // Scoped to exactly which dashboard state is rendering (state: 'none' |
@@ -17497,7 +17622,7 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueSeasonPublish(req, env);
       // Signup/login/dashboard pages — pure UI on top of the routes above.
       if ((url.pathname === '/signup' || url.pathname === '/signup/') && req.method === 'GET')
-        return new Response(renderSignupPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+        return await renderSignupPage(req, env, url);
       if ((url.pathname === '/login' || url.pathname === '/login/') && req.method === 'GET')
         return new Response(renderLoginPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/forgot-password' || url.pathname === '/forgot-password/') && req.method === 'GET')

@@ -92,20 +92,20 @@ describe('Part 1: server error responses carry a translation key, resolved clien
     expect(dashHtml).toContain('window.__errorText(data.errorKey, data.error)');
   });
 
-  it('the forgot-password page now has a real, working toggle (it had none at all before this task)', async () => {
+  it('the forgot-password page now has a real, working toggle (design system, migrated in Part 2)', async () => {
     const res = await SELF.fetch('http://example.com/forgot-password');
     const html = await res.text();
-    expect(html).toContain('langswitch');
+    expect(html).toContain('nl-lang');
     expect(html).toContain('id="btn-lang-en"');
     expect(html).toContain('data-i18n');
     expect(html).toContain('Forgot password'); // real English translation present
     expect(html).toContain('window.__ERROR_I18N');
   });
 
-  it('the reset-password page now has a real, working toggle (it had none at all before this task)', async () => {
+  it('the reset-password page now has a real, working toggle (design system, migrated in Part 2)', async () => {
     const res = await SELF.fetch('http://example.com/reset-password?token=whatever');
     const html = await res.text();
-    expect(html).toContain('langswitch');
+    expect(html).toContain('nl-lang');
     expect(html).toContain('id="btn-lang-en"');
     expect(html).toContain('data-i18n');
     expect(html).toContain('New password');

@@ -32,17 +32,45 @@ describe('Frontend pages: /signup, /login, /dashboard', () => {
   });
 
   describe('GET /signup and GET /login render', () => {
-    it('GET /signup returns the signup form with the expected fields', async () => {
+    // Design system Part 2: signup is now a real 3-step wizard (one
+    // subject per step -- account, league, teams -- matching
+    // notre-ligue-design-system/components/ScreenSignup/preview.html),
+    // not a single long form. Step 1 needs no session; steps 2/3 do
+    // (created by step 1's own POST /auth/signup), so they're exercised
+    // via the full flow, same as the dashboard-flow test below. The
+    // wizard's real reference markup has no division/age-group field --
+    // dropped from signup (still settable elsewhere; just never part of
+    // ScreenSignup's real 3 steps) rather than invented.
+    it('GET /signup?step=1 returns the account step with the expected fields', async () => {
       const res = await SELF.fetch('http://example.com/signup');
       expect(res.status).toBe(200);
       const html = await res.text();
       expect(html).toContain('id="su_email"');
       expect(html).toContain('id="su_password"');
-      expect(html).toContain('id="su_league_name"');
-      expect(html).toContain('id="su_team_count"');
-      expect(html).toContain('id="su_tracks_stats"');
-      expect(html).toContain('id="su_division"');
-      expect(html).toContain('optional');
+    });
+
+    it('GET /signup?step=2 and ?step=3 render the league and team steps once a session exists', async () => {
+      const signupRes = await signup('wizard.steps@example.com', 'a-strong-password-1', '203.0.113.45');
+      const cookieHeader = extractCookie(signupRes);
+
+      const step2Res = await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie: cookieHeader } });
+      expect(step2Res.status).toBe(200);
+      const step2Html = await step2Res.text();
+      expect(step2Html).toContain('id="su_league_name"');
+      expect(step2Html).toContain('id="su_slug"');
+      expect(step2Html).toContain('id="su_stats_switch"');
+
+      const step3Res = await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie: cookieHeader } });
+      expect(step3Res.status).toBe(200);
+      const step3Html = await step3Res.text();
+      expect(step3Html).toContain('id="su_team_count_out"');
+      expect(step3Html).toContain('id="su_teams"');
+    });
+
+    it('GET /signup?step=2 without a session redirects back to step 1, not a broken form', async () => {
+      const res = await SELF.fetch('http://example.com/signup?step=2', { redirect: 'manual' });
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location') || '').toContain('/signup?step=1');
     });
 
     it('GET /login returns the login form with the expected fields', async () => {

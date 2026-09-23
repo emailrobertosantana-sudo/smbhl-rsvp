@@ -59,6 +59,19 @@ function assertRealToggle(html, sampleEnStrings) {
   for (const s of sampleEnStrings) expect(html).toContain(s);
 }
 
+// The marketing homepage was migrated to the real design system
+// (notre-ligue-design-system/, overnight follow-up task) -- its
+// toggle is now the real nl-lang component (ScreenHomepage's own
+// reference markup), not the ad hoc .langswitch/.langbtn pattern the
+// other, not-yet-migrated pages here still use.
+function assertRealToggleNl(html, sampleEnStrings) {
+  expect(html).toContain('nl-lang');
+  expect(html).toContain('__setLang');
+  expect(html).toContain('localStorage');
+  expect(html).toContain('data-i18n');
+  for (const s of sampleEnStrings) expect(html).toContain(s);
+}
+
 describe('Part 2: real FR/EN toggle on every public-facing page', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
@@ -66,22 +79,22 @@ describe('Part 2: real FR/EN toggle on every public-facing page', () => {
     await applyRealSchema(env);
   });
 
-  it('the marketing homepage has a real, working toggle with genuine English content', async () => {
+  it('the marketing homepage has a real, working toggle with genuine English content (design system, ScreenHomepage)', async () => {
     const res = await SELF.fetch('http://notreligue.ca/');
     const html = await res.text();
-    assertRealToggle(html, ["Get Started", "Enjoy your league", "Who's showing up?"]);
+    assertRealToggleNl(html, ["Create my league", "Log in", "Attendance in one tap", "How it works"]);
   });
 
-  it('the signup page has a real, working toggle with genuine English content', async () => {
+  it('the signup page has a real, working toggle with genuine English content (design system, ScreenSignup)', async () => {
     const res = await SELF.fetch('http://example.com/signup');
     const html = await res.text();
-    assertRealToggle(html, ['Create your league', 'League name', 'CREATE MY ACCOUNT']);
+    assertRealToggleNl(html, ["Let's create your account", 'Email', 'Continue']);
   });
 
   it('the login page has a real, working toggle with genuine English content', async () => {
     const res = await SELF.fetch('http://example.com/login');
     const html = await res.text();
-    assertRealToggle(html, ['Log in', 'LOG IN', 'Forgot password?']);
+    assertRealToggleNl(html, ['Good to see you', 'Log in', 'Forgot password?']);
   });
 
   it('the /league/rsvp player page has a real, working toggle with genuine English content', async () => {
@@ -139,7 +152,11 @@ describe('Part 2: real FR/EN toggle on every public-facing page', () => {
   });
 
   it("SMBHL's own shared toggle plumbing (page()'s window.__setLang) is byte-for-byte unaffected", async () => {
-    const res = await SELF.fetch('http://example.com/signup');
+    // /signup itself moved onto nlDocument in Part 2 (design system
+    // task) -- this now checks a still-page()-based route instead (an
+    // invite-accept page, untouched by that task) so the assertion
+    // keeps meaning what it says.
+    const res = await SELF.fetch('http://example.com/league/admins/accept?token=bogus-token-value');
     const html = await res.text();
     // page()'s own original script, verbatim, predates this task and is
     // shared by every page (including SMBHL's own legacy ones) that

@@ -134,8 +134,10 @@ describe('Part 4: per-league language_mode foundation', () => {
     // SMBHL's own real pages never pass a leagueId-derived leagueCfg
     // with a language_mode override -- DEFAULT_SEASON_CONFIG.league
     // .languageMode is 'both', so its own toggle keeps working exactly
-    // as it always has.
-    const res = await SELF.fetch('http://example.com/signup');
+    // as it always has. /signup itself moved onto nlDocument in Part 2
+    // (design system task) -- checked here via a still-page()-based
+    // route instead (an invite-accept page, untouched by that task).
+    const res = await SELF.fetch('http://example.com/league/admins/accept?token=bogus-token-value');
     const html = await res.text();
     expect(html).toContain('langswitch');
     expect(html).toContain('id="btn-lang-en"');

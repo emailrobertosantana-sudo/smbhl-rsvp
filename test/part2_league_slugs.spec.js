@@ -144,7 +144,7 @@ describe('Part 2: league URL slugs', () => {
     // them has already failed to match).
     const res = await SELF.fetch('http://example.com/login');
     const html = await res.text();
-    expect(html).toContain('Connexion'); // the real login page, not a 404 or a league page
+    expect(html).toContain('id="li_email"'); // the real login page, not a 404 or a league page
   });
 
   it("a deactivated league's slug URL returns 410, consistent with the ?league=<uuid> form", async () => {

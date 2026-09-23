@@ -82,7 +82,11 @@ describe('Part 1 (design system): foundation', () => {
   });
 
   it("SMBHL's own real pages are completely unaffected -- no Archivo font, no design-system tokens, page() unchanged", async () => {
-    const res = await SELF.fetch('http://example.com/signup'); // still page(), not nlDocument, until Part 2 migrates it
+    // /signup itself moved onto nlDocument in Part 2 -- this now checks
+    // a still-page()-based route instead (an invite-accept page, which
+    // this task never touches) so the assertion keeps meaning what it
+    // says: page()'s own shared shell is untouched by this task.
+    const res = await SELF.fetch('http://example.com/league/admins/accept?token=bogus-token-value');
     const html = await res.text();
     expect(html).not.toContain('Archivo');
     expect(html).not.toContain('--surface:#ffffff');
