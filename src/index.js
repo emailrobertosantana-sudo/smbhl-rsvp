@@ -350,6 +350,60 @@ const notice = (fr, en, logoTooltip = '') => page(fr, `<h1>${esc(fr)}<span class
  * palette (purple/pink/yellow, Space Grotesk headings) is carried over
  * from the marketing site's real, already-designed branding.
  */
+// Bilingual copy for the marketing homepage, tagged via data-i18n and
+// swapped by applyLanguage() below -- the SAME mechanism SMBHL's own
+// real admin pages already use (see e.g. the season-recap page's
+// I18N_RECAP dict + applyLanguage()/admin_lang_changed pattern), not a
+// new one invented for this page. Static FR text is what's server-
+// rendered (FR-default, works with no JS at all); the toggle swaps
+// .innerHTML for the tagged elements.
+const I18N_HOME = {
+  fr: {
+    cta: "S'inscrire",
+    tagline: 'Profitez de votre ligue. On s\'occupe du reste.',
+    featuresHeading: "Tout ce qu'une ligue amateur doit gérer",
+    f1Title: 'Qui vient dimanche?',
+    f1Body: "Les joueurs confirment en un clic. Vous savez toujours qui est là, qui est absent, et qui n'a pas répondu.",
+    f2Title: 'Une équipe est courte? C\'est déjà réglé.',
+    f2Body: "Dès qu'un joueur se désiste, le système invite des remplaçants automatiquement, dans l'ordre, jusqu'à ce que l'équipe soit complète.",
+    f3Title: "Les équipes, envoyées d'avance",
+    f3Body: "Chaque joueur reçoit son assignation d'équipe avant la partie. Personne n'arrive en se demandant où il joue.",
+    f4Title: 'Pour les ligues qui gardent les statistiques',
+    f4Body: "Classement, pointage, séries éliminatoires — si votre ligue les suit, on les affiche. Sinon, ce n'est pas nécessaire.",
+    howHeading: 'Comment ça marche',
+    s1Title: 'On configure votre ligue',
+    s1Body: 'Équipes, horaire, format. Quinze minutes.',
+    s2Title: 'Vos joueurs confirment leur présence',
+    s2Body: 'Chaque semaine, sans y penser.',
+    s3Title: 'Vous gérez votre ligue, pas des courriels',
+    s3Body: 'On s\'occupe des rappels et des remplaçants.',
+    contactHeading: 'Une question? Une ligue à démarrer?',
+    contactLine: 'Écrivez-nous à <a class="contact-email" href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a>'
+  },
+  en: {
+    cta: 'Get Started',
+    tagline: "Enjoy your league. We'll handle the rest.",
+    featuresHeading: 'Everything a rec league has to manage',
+    f1Title: "Who's showing up?",
+    f1Body: "Players confirm with one click. You always know who's in, who's out, and who hasn't answered yet.",
+    f2Title: "A team's short? Already handled.",
+    f2Body: 'The moment someone drops out, the system invites substitutes automatically, in order, until the team is full.',
+    f3Title: 'Team assignments, sent ahead of time',
+    f3Body: 'Every player knows their team before game day. No one shows up wondering where they\'re playing.',
+    f4Title: 'For leagues that keep stats',
+    f4Body: "Standings, scoring, playoffs — if your league tracks them, we display them. If not, it's not required.",
+    howHeading: 'How it works',
+    s1Title: 'We set up your league',
+    s1Body: 'Teams, schedule, format. Fifteen minutes.',
+    s2Title: 'Your players confirm attendance',
+    s2Body: 'Every week, without thinking about it.',
+    s3Title: 'You run your league, not your inbox',
+    s3Body: 'Reminders and substitutes are handled for you.',
+    contactHeading: 'A question? A league to start?',
+    contactLine: 'Write to us at <a class="contact-email" href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a>'
+  }
+};
+
 function renderMarketingHomepage() {
   return `<!DOCTYPE html><html lang="fr-CA"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -357,6 +411,29 @@ function renderMarketingHomepage() {
 <meta name="description" content="Notre Ligue simplifie la gestion de votre ligue récréative : présences, remplaçants et assignations d'équipes, automatiquement.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%92%3C/text%3E%3C/svg%3E">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+// Same shared toggle infrastructure as page()'s own script (SMBHL's
+// real mechanism: window.__setLang/__currentLang, localStorage,
+// admin_lang_changed) -- duplicated here rather than imported since
+// this page deliberately never calls page() (see comment above). Fully
+// self-contained; touches nothing SMBHL's own pages rely on.
+(function() {
+  var lang = 'fr';
+  try {
+    var saved = localStorage.getItem('smbhl_admin_lang');
+    if (saved === 'fr' || saved === 'en') lang = saved;
+    else if (/^en/i.test(navigator.language || '')) lang = 'en';
+  } catch(e) {}
+  window.__currentLang = lang;
+  window.__setLang = function(l) {
+    if (l !== 'fr' && l !== 'en') return;
+    window.__currentLang = l;
+    try { localStorage.setItem('smbhl_admin_lang', l); } catch(e) {}
+    document.querySelectorAll('.langbtn').forEach(function(b) { b.classList.toggle('on', b.dataset.l === l); });
+    window.dispatchEvent(new CustomEvent('admin_lang_changed', { detail: { lang: l } }));
+  };
+})();
+</script>
 <style>
  :root{--primary:#5B2EFF;--primary-dark:#3D1FBF;--pink:#FF3D81;--yellow:#FFD23F;
    --ink:#1A1533;--ink-soft:#4A4363;--bg:#fff;--border:#E6DFFF}
@@ -364,8 +441,13 @@ function renderMarketingHomepage() {
  body{margin:0;font-family:'Inter',-apple-system,'Segoe UI',sans-serif;color:var(--ink);
    background:var(--bg);line-height:1.5}
  .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
- .en{color:var(--ink-soft);font-size:.85em;display:block;font-weight:400}
  h1,h2,h3{font-family:'Space Grotesk',sans-serif}
+ .langswitch{display:flex;gap:4px;align-items:center}
+ .langbtn{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px;padding:4px 10px;
+   border-radius:4px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer}
+ .langbtn.on{background:var(--ink);border-color:var(--ink);color:#fff}
+ .how .langbtn{border-color:#fff;color:#fff}
+ .how .langbtn.on{background:#fff;color:var(--ink)}
  .btn{display:inline-flex;align-items:center;gap:8px;font-family:'Space Grotesk',sans-serif;
    font-weight:600;font-size:1rem;text-decoration:none;border-radius:6px;padding:14px 28px;
    border:3px solid transparent;cursor:pointer;color:#fff;background:var(--primary);
@@ -407,63 +489,85 @@ function renderMarketingHomepage() {
 </style></head><body>
 <header class="top"><div class="wrap">
   <span class="wordmark">Notre Ligue</span>
-  <a class="btn" style="padding:8px 18px;font-size:.85rem;box-shadow:none;" href="/signup">S'inscrire<span class="en" style="display:inline;">Get Started</span></a>
+  <div style="display:flex;align-items:center;gap:14px;">
+    <a class="btn" data-i18n="cta" style="padding:8px 18px;font-size:.85rem;box-shadow:none;" href="/signup">S'inscrire</a>
+    <div class="langswitch" role="group" aria-label="Choix de la langue / Language choice">
+      <button type="button" class="langbtn on" data-l="fr" id="btn-lang-fr" onclick="window.__setLang &amp;&amp; window.__setLang('fr')">FR</button>
+      <button type="button" class="langbtn" data-l="en" id="btn-lang-en" onclick="window.__setLang &amp;&amp; window.__setLang('en')">EN</button>
+    </div>
+  </div>
 </div></header>
 <section class="hero"><div class="wrap">
   <span class="wordmark">Notre Ligue</span>
-  <p class="hero-tagline">Profitez de votre ligue. On s'occupe du reste.<span class="en">Enjoy your league. We'll handle the rest.</span></p>
-  <a class="btn" id="hero_cta" href="/signup">S'inscrire<span class="en" style="display:inline;">Get Started</span></a>
+  <p class="hero-tagline" data-i18n="tagline">Profitez de votre ligue. On s'occupe du reste.</p>
+  <a class="btn" id="hero_cta" data-i18n="cta" href="/signup">S'inscrire</a>
 </div></section>
 <section><div class="wrap">
-  <h2 class="section-heading">Tout ce qu'une ligue amateur doit gérer<span class="en">Everything a rec league has to manage</span></h2>
+  <h2 class="section-heading" data-i18n="featuresHeading">Tout ce qu'une ligue amateur doit gérer</h2>
   <div class="features-grid">
     <div class="feature-card">
       <div class="feature-icon" style="background:var(--primary);color:#fff;">✅</div>
-      <h3>Qui vient dimanche?<span class="en" style="font-weight:400;font-size:.85rem;">Who's showing up?</span></h3>
-      <p>Les joueurs confirment en un clic. Vous savez toujours qui est là, qui est absent, et qui n'a pas répondu.<span class="en">Players confirm with one click. You always know who's in, who's out, and who hasn't answered yet.</span></p>
+      <h3 data-i18n="f1Title">Qui vient dimanche?</h3>
+      <p data-i18n="f1Body">Les joueurs confirment en un clic. Vous savez toujours qui est là, qui est absent, et qui n'a pas répondu.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon" style="background:var(--pink);color:#fff;">🔄</div>
-      <h3>Une équipe est courte? C'est déjà réglé.<span class="en" style="font-weight:400;font-size:.85rem;">A team's short? Already handled.</span></h3>
-      <p>Dès qu'un joueur se désiste, le système invite des remplaçants automatiquement, dans l'ordre, jusqu'à ce que l'équipe soit complète.<span class="en">The moment someone drops out, the system invites substitutes automatically, in order, until the team is full.</span></p>
+      <h3 data-i18n="f2Title">Une équipe est courte? C'est déjà réglé.</h3>
+      <p data-i18n="f2Body">Dès qu'un joueur se désiste, le système invite des remplaçants automatiquement, dans l'ordre, jusqu'à ce que l'équipe soit complète.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon" style="background:#17B37A;color:#fff;">📋</div>
-      <h3>Les équipes, envoyées d'avance<span class="en" style="font-weight:400;font-size:.85rem;">Team assignments, sent ahead of time</span></h3>
-      <p>Chaque joueur reçoit son assignation d'équipe avant la partie. Personne n'arrive en se demandant où il joue.<span class="en">Every player knows their team before game day. No one shows up wondering where they're playing.</span></p>
+      <h3 data-i18n="f3Title">Les équipes, envoyées d'avance</h3>
+      <p data-i18n="f3Body">Chaque joueur reçoit son assignation d'équipe avant la partie. Personne n'arrive en se demandant où il joue.</p>
     </div>
     <div class="feature-card">
       <div class="feature-icon" style="background:#FF9F1C;color:#fff;">📊</div>
-      <h3>Pour les ligues qui gardent les statistiques<span class="en" style="font-weight:400;font-size:.85rem;">For leagues that keep stats</span></h3>
-      <p>Classement, pointage, séries éliminatoires — si votre ligue les suit, on les affiche. Sinon, ce n'est pas nécessaire.<span class="en">Standings, scoring, playoffs — if your league tracks them, we display them. If not, it's not required.</span></p>
+      <h3 data-i18n="f4Title">Pour les ligues qui gardent les statistiques</h3>
+      <p data-i18n="f4Body">Classement, pointage, séries éliminatoires — si votre ligue les suit, on les affiche. Sinon, ce n'est pas nécessaire.</p>
     </div>
   </div>
 </div></section>
 <section class="how"><div class="wrap">
-  <h2 class="section-heading">Comment ça marche<span class="en">How it works</span></h2>
+  <h2 class="section-heading" data-i18n="howHeading">Comment ça marche</h2>
   <div class="steps">
     <div class="step">
       <div class="step-number">1</div>
-      <h3>On configure votre ligue<span class="en" style="color:#C9C1F5;font-weight:400;font-size:.85rem;">We set up your league</span></h3>
-      <p>Équipes, horaire, format. Quinze minutes.<span class="en">Teams, schedule, format. Fifteen minutes.</span></p>
+      <h3 data-i18n="s1Title">On configure votre ligue</h3>
+      <p data-i18n="s1Body">Équipes, horaire, format. Quinze minutes.</p>
     </div>
     <div class="step">
       <div class="step-number">2</div>
-      <h3>Vos joueurs confirment leur présence<span class="en" style="color:#C9C1F5;font-weight:400;font-size:.85rem;">Your players confirm attendance</span></h3>
-      <p>Chaque semaine, sans y penser.<span class="en">Every week, without thinking about it.</span></p>
+      <h3 data-i18n="s2Title">Vos joueurs confirment leur présence</h3>
+      <p data-i18n="s2Body">Chaque semaine, sans y penser.</p>
     </div>
     <div class="step">
       <div class="step-number">3</div>
-      <h3>Vous gérez votre ligue, pas des courriels<span class="en" style="color:#C9C1F5;font-weight:400;font-size:.85rem;">You run your league, not your inbox</span></h3>
-      <p>On s'occupe des rappels et des remplaçants.<span class="en">Reminders and substitutes are handled for you.</span></p>
+      <h3 data-i18n="s3Title">Vous gérez votre ligue, pas des courriels</h3>
+      <p data-i18n="s3Body">On s'occupe des rappels et des remplaçants.</p>
     </div>
   </div>
 </div></section>
 <section class="contact"><div class="wrap">
-  <h2 class="section-heading">Une question? Une ligue à démarrer?<span class="en">A question? A league to start?</span></h2>
-  <p>Écrivez-nous à <a class="contact-email" href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a><span class="en" style="display:block;">Write to us at <a class="contact-email" href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a></span></p>
+  <h2 class="section-heading" data-i18n="contactHeading">Une question? Une ligue à démarrer?</h2>
+  <p data-i18n="contactLine">Écrivez-nous à <a class="contact-email" href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a></p>
 </div></section>
 <footer class="bottom">© 2026 Notre Ligue</footer>
+<script>
+var I18N_HOME = ${JSON.stringify(I18N_HOME)};
+function applyLanguage(lang) {
+  var dict = I18N_HOME[lang] || I18N_HOME.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+if (window.__currentLang) {
+  document.getElementById('btn-lang-fr').classList.toggle('on', window.__currentLang === 'fr');
+  document.getElementById('btn-lang-en').classList.toggle('on', window.__currentLang === 'en');
+  applyLanguage(window.__currentLang);
+}
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+</script>
 </body></html>`;
 }
 
@@ -474,44 +578,77 @@ function renderMarketingHomepage() {
  * rather than introducing a separate visual system for these new pages.
  */
 
+const I18N_SIGNUP = {
+  fr: {
+    h1: 'Créer votre ligue',
+    sub: 'Un seul compte pour gérer votre ligue de hockey balle.',
+    lblEmail: 'Courriel',
+    lblPassword: 'Mot de passe (8 caractères min.)',
+    lblLeagueName: 'Nom de la ligue',
+    lblDivision: "Division / groupe d'âge <i>(optionnel)</i>",
+    lblTeamCount: "Nombre d'équipes",
+    lblTracksStats: 'Cette ligue suit les statistiques (buts, passes, classement)',
+    submit: 'CRÉER MON COMPTE',
+    footer: 'Déjà un compte? <a href="/login">Se connecter</a>',
+    teamNamesLabel: 'Noms des équipes',
+    teamPlaceholder: 'Équipe '
+  },
+  en: {
+    h1: 'Create your league',
+    sub: 'One account to manage your ball hockey league.',
+    lblEmail: 'Email',
+    lblPassword: 'Password (min. 8 characters)',
+    lblLeagueName: 'League name',
+    lblDivision: 'Division / age group <i>(optional)</i>',
+    lblTeamCount: 'Number of teams',
+    lblTracksStats: 'This league tracks stats (goals, assists, standings)',
+    submit: 'CREATE MY ACCOUNT',
+    footer: 'Already have an account? <a href="/login">Log in</a>',
+    teamNamesLabel: 'Team names',
+    teamPlaceholder: 'Team '
+  }
+};
+
 function renderSignupPage() {
   return page('Créer un compte', `
-  <h1>Créer votre ligue<span class="en">Create your league</span></h1>
-  <p class="when">Un seul compte pour gérer votre ligue de hockey balle.<span class="en">One account to manage your ball hockey league.</span></p>
+  <h1 data-i18n="h1">Créer votre ligue</h1>
+  <p class="when" data-i18n="sub">Un seul compte pour gérer votre ligue de hockey balle.</p>
   <div class="card">
     <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Courriel<span class="en" style="display:block;font-weight:400;">Email</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblEmail">Courriel</span>
       <input type="email" id="su_email" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Mot de passe (8 caractères min.)<span class="en" style="display:block;font-weight:400;">Password (min. 8 characters)</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblPassword">Mot de passe (8 caractères min.)</span>
       <input type="password" id="su_password" required minlength="8" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <hr style="border:none;border-top:1px solid var(--rule);margin:20px 0;">
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Nom de la ligue<span class="en" style="display:block;font-weight:400;">League name</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblLeagueName">Nom de la ligue</span>
       <input type="text" id="su_league_name" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Division / groupe d'âge <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Division / age group <i>(optional)</i></span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblDivision">Division / groupe d'âge <i>(optionnel)</i></span>
       <input type="text" id="su_division" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Nombre d'équipes<span class="en" style="display:block;font-weight:400;">Number of teams</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblTeamCount">Nombre d'équipes</span>
       <input type="number" id="su_team_count" min="2" max="16" value="4" style="width:100px;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <div id="teamNamesContainer" style="margin-bottom:14px;"></div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:20px;">
       <input type="checkbox" id="su_tracks_stats" checked style="width:18px;height:18px;">
-      <span>Cette ligue suit les statistiques (buts, passes, classement)<span class="en" style="display:block;font-weight:400;">This league tracks stats (goals, assists, standings)</span></span>
+      <span data-i18n="lblTracksStats">Cette ligue suit les statistiques (buts, passes, classement)</span>
     </label>
     <div class="btns">
-      <button type="button" class="btn" id="su_submit" onclick="submitSignup()">CRÉER MON COMPTE<span class="en" style="display:block;font-size:13px;font-weight:600;">CREATE MY ACCOUNT</span></button>
+      <button type="button" class="btn" id="su_submit" data-i18n="submit" onclick="submitSignup()">CRÉER MON COMPTE</button>
     </div>
   </div>
-  <p class="state">Déjà un compte? <a href="/login">Se connecter</a><span class="en"> · Already have an account? <a href="/login">Log in</a></span></p>
+  <p class="state" data-i18n="footer">Déjà un compte? <a href="/login">Se connecter</a></p>
 <script>
+var I18N_SIGNUP = ${JSON.stringify(I18N_SIGNUP)};
+function signupDict() { return I18N_SIGNUP[window.__currentLang || 'fr'] || I18N_SIGNUP.fr; }
 function teamNamesEl() { return document.getElementById('teamNamesContainer'); }
 function renderTeamInputs() {
   const count = Math.max(2, Math.min(16, Number(document.getElementById('su_team_count').value) || 2));
@@ -520,12 +657,12 @@ function renderTeamInputs() {
   container.innerHTML = '';
   const label = document.createElement('div');
   label.style.cssText = 'font-weight:600;margin-bottom:4px;';
-  label.textContent = "Noms des équipes";
+  label.textContent = signupDict().teamNamesLabel;
   container.appendChild(label);
   for (let i = 0; i < count; i++) {
     const input = document.createElement('input');
     input.type = 'text';
-    input.placeholder = 'Équipe ' + (i + 1);
+    input.placeholder = signupDict().teamPlaceholder + (i + 1);
     input.value = existing[i] || '';
     input.style.cssText = 'width:100%;font:inherit;padding:9px;border:1px solid var(--rule2);border-radius:3px;margin-bottom:6px;display:block;';
     container.appendChild(input);
@@ -533,6 +670,16 @@ function renderTeamInputs() {
 }
 document.getElementById('su_team_count').addEventListener('input', renderTeamInputs);
 renderTeamInputs();
+function applyLanguage(lang) {
+  var dict = I18N_SIGNUP[lang] || I18N_SIGNUP.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (dict[k] != null) el.innerHTML = dict[k];
+  });
+  renderTeamInputs();
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
 
 function showError(msg) {
   const el = document.getElementById('formErr');
@@ -609,26 +756,56 @@ async function submitSignup() {
 </script>`);
 }
 
+const I18N_LOGIN = {
+  fr: {
+    h1: 'Connexion',
+    lblEmail: 'Courriel',
+    lblPassword: 'Mot de passe',
+    submit: 'SE CONNECTER',
+    footerSignup: 'Pas de compte? <a href="/signup">Créer un compte</a>',
+    footerForgot: '<a href="/forgot-password">Mot de passe oublié?</a>'
+  },
+  en: {
+    h1: 'Log in',
+    lblEmail: 'Email',
+    lblPassword: 'Password',
+    submit: 'LOG IN',
+    footerSignup: 'No account? <a href="/signup">Sign up</a>',
+    footerForgot: '<a href="/forgot-password">Forgot password?</a>'
+  }
+};
+
 function renderLoginPage() {
   return page('Connexion', `
-  <h1>Connexion<span class="en">Log in</span></h1>
+  <h1 data-i18n="h1">Connexion</h1>
   <div class="card">
     <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Courriel<span class="en" style="display:block;font-weight:400;">Email</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblEmail">Courriel</span>
       <input type="email" id="li_email" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <label style="display:block;margin-bottom:18px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Mot de passe<span class="en" style="display:block;font-weight:400;">Password</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblPassword">Mot de passe</span>
       <input type="password" id="li_password" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <div class="btns">
-      <button type="button" class="btn" id="li_submit" onclick="submitLogin()">SE CONNECTER<span class="en" style="display:block;font-size:13px;font-weight:600;">LOG IN</span></button>
+      <button type="button" class="btn" id="li_submit" data-i18n="submit" onclick="submitLogin()">SE CONNECTER</button>
     </div>
   </div>
-  <p class="state">Pas de compte? <a href="/signup">Créer un compte</a><span class="en"> · No account? <a href="/signup">Sign up</a></span></p>
-  <p class="state"><a href="/forgot-password">Mot de passe oublié?</a><span class="en" style="display:block;"><a href="/forgot-password">Forgot password?</a></span></p>
+  <p class="state" data-i18n="footerSignup">Pas de compte? <a href="/signup">Créer un compte</a></p>
+  <p class="state" data-i18n="footerForgot"><a href="/forgot-password">Mot de passe oublié?</a></p>
 <script>
+var I18N_LOGIN = ${JSON.stringify(I18N_LOGIN)};
+function applyLanguage(lang) {
+  var dict = I18N_LOGIN[lang] || I18N_LOGIN.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+
 function showError(msg) {
   const el = document.getElementById('formErr');
   el.textContent = msg;
@@ -1258,7 +1435,7 @@ async function handleLeaguePublicPage(req, env, url) {
   ).bind(leagueId, today).all()).results || [];
   const scheduleHtml = events.length
     ? `<table>${events.map(ev => `<tr><td>${esc(ev.date)}${ev.venue ? `<span class="by">${esc(ev.venue)}</span>` : ''}${ev.start_time ? `<span class="by">${esc(ev.start_time)}</span>` : ''}</td></tr>`).join('')}</table>`
-    : `<p class="state" style="margin:0;">Aucun match à venir pour l'instant.<span class="en" style="display:block;">No upcoming events yet.</span></p>`;
+    : `<p class="state" style="margin:0;" data-i18n="noEvents">Aucun match à venir pour l'instant.</p>`;
 
   let standingsHtml = '';
   if (leagueRow.tracks_stats) {
@@ -1268,18 +1445,25 @@ async function handleLeaguePublicPage(req, env, url) {
     if (standings.length) {
       standingsHtml = `
       <div class="card">
-        <h2>Classement<span class="en">Standings</span></h2>
+        <h2 data-i18n="standings">Classement</h2>
         <table>${standings.map(s => `<tr><td>${esc(s.team)}</td><td class="s">${Number(s.w) || 0}-${Number(s.l) || 0}</td></tr>`).join('')}</table>
       </div>`;
     }
   }
 
+  // Real FR/EN toggle (this task): page()'s own shared .langswitch
+  // buttons/window.__setLang infrastructure already renders on this
+  // page (cfg.league passed to page()); this script hooks into it the
+  // same way every other new public page does. The 'standings' i18n
+  // key is included in the shipped dict below ONLY when standingsHtml
+  // is non-empty -- a no-stats league's page must never mention
+  // "Classement"/"Standings" vocabulary anywhere, including inert JS.
   return new Response(page(leagueRow.name, `
   <h1>${esc(leagueRow.name)}<span class="en"></span></h1>
   ${leagueRow.division_label ? `<p class="when">${esc(leagueRow.division_label)}</p>` : ''}
 
   <div class="card">
-    <h2>Équipes<span class="en">Teams</span></h2>
+    <h2 data-i18n="teams">Équipes</h2>
     <ul style="margin:0;padding-left:20px;">
       ${teamNames.map(t => `<li>${esc(t)}</li>`).join('')}
     </ul>
@@ -1288,9 +1472,24 @@ async function handleLeaguePublicPage(req, env, url) {
   ${standingsHtml}
 
   <div class="card">
-    <h2>Prochains matchs<span class="en">Upcoming events</span></h2>
+    <h2 data-i18n="upcoming">Prochains matchs</h2>
     ${scheduleHtml}
   </div>
+<script>
+var I18N_PUBLIC = {
+  fr: { teams: 'Équipes', upcoming: 'Prochains matchs', noEvents: "Aucun match à venir pour l'instant."${standingsHtml ? `, standings: 'Classement'` : ''} },
+  en: { teams: 'Teams', upcoming: 'Upcoming events', noEvents: 'No upcoming events yet.'${standingsHtml ? `, standings: 'Standings'` : ''} }
+};
+function applyLanguage(lang) {
+  var dict = I18N_PUBLIC[lang] || I18N_PUBLIC.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+</script>
   `, '', cfg.league), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
@@ -8792,22 +8991,45 @@ async function leagueRsvpGet(req, env, url) {
   // loading/success message, not plain <a href> full-page-reload links —
   // rather than a parallel, less polished interaction style. ?v=in/out
   // (the one-click emailed-link path) still works unchanged for GET.
+  // Real FR/EN toggle (this task): status label/badge and button text
+  // are re-rendered client-side from RSVP_I18N on admin_lang_changed,
+  // same data-i18n + dict mechanism as every other new public page.
   const body = `
     <h1>${esc(contact.name)}<span class="en"></span></h1>
     <p class="when">${esc(ev.date)}${ev.venue ? ' · ' + esc(ev.venue) : ''}${ev.start_time ? ' · ' + esc(ev.start_time) : ''}</p>
     <div class="card">
-      <h2>Tu joues ?<span class="en">Are you playing?</span></h2>
-      <p class="state" style="margin-top:0;">Statut actuel / Current status :
-        <b class="${status === 'in' ? 'in' : status === 'out' ? 'out' : 'pend'}">${status === 'in' ? 'PRÉSENT / IN' : status === 'out' ? 'ABSENT / OUT' : 'EN ATTENTE / PENDING'}</b>
+      <h2 data-i18n="playing">Tu joues ?</h2>
+      <p class="state" style="margin-top:0;"><span data-i18n="statusLabel">Statut actuel :</span>
+        <b id="statusBadge" data-status="${status}" class="${status === 'in' ? 'in' : status === 'out' ? 'out' : 'pend'}">${status === 'in' ? 'PRÉSENT' : status === 'out' ? 'ABSENT' : 'EN ATTENTE'}</b>
       </p>
-      ${locked ? `<p class="state">Cet événement n'accepte plus de réponses.<span class="en" style="display:block;">This event is no longer accepting responses.</span></p>` : `
+      ${locked ? `<p class="state" data-i18n="locked">Cet événement n'accepte plus de réponses.</p>` : `
       <div class="btns">
-        <button class="btn in${status === 'in' ? ' on' : ''}" data-v="in">JE JOUE<span class="en" style="display:block;">I'M IN</span></button>
-        <button class="btn out${status === 'out' ? ' on' : ''}" data-v="out">JE NE JOUE PAS<span class="en" style="display:block;">I'M OUT</span></button>
+        <button class="btn in${status === 'in' ? ' on' : ''}" data-v="in" data-i18n="btnIn">JE JOUE</button>
+        <button class="btn out${status === 'out' ? ' on' : ''}" data-v="out" data-i18n="btnOut">JE NE JOUE PAS</button>
       </div>
-      <p class="state" id="msg">${['in', 'out'].includes(autoVal) ? 'Réponse enregistrée avec succès ! / Response recorded!' : ''}</p>`}
+      <p class="state" id="msg" data-i18n="${['in', 'out'].includes(autoVal) ? 'recorded' : ''}">${['in', 'out'].includes(autoVal) ? 'Réponse enregistrée avec succès !' : ''}</p>`}
     </div>
 <script>
+var RSVP_I18N = {
+  fr: { playing: 'Tu joues ?', statusLabel: 'Statut actuel :', locked: "Cet événement n'accepte plus de réponses.",
+        btnIn: 'JE JOUE', btnOut: 'JE NE JOUE PAS', recorded: 'Réponse enregistrée avec succès !',
+        status: { in: 'PRÉSENT', out: 'ABSENT', pending: 'EN ATTENTE' }, err: 'Erreur : ' },
+  en: { playing: 'Are you playing?', statusLabel: 'Current status:', locked: 'This event is no longer accepting responses.',
+        btnIn: "I'M IN", btnOut: "I'M OUT", recorded: 'Response recorded!',
+        status: { in: 'IN', out: 'OUT', pending: 'PENDING' }, err: 'Error: ' }
+};
+function applyLanguage(lang) {
+  var dict = RSVP_I18N[lang] || RSVP_I18N.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (k && dict[k] != null) el.innerHTML = dict[k];
+  });
+  var badge = document.getElementById('statusBadge');
+  if (badge) badge.textContent = dict.status[badge.dataset.status] || dict.status.pending;
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+
 document.querySelectorAll('.btn[data-v]').forEach(function(b) {
   b.addEventListener('click', async function() {
     var v = b.dataset.v;
@@ -8822,7 +9044,8 @@ document.querySelectorAll('.btn[data-v]').forEach(function(b) {
       if (!res.ok) throw new Error(await res.text());
       location.reload();
     } catch (e) {
-      document.getElementById('msg').textContent = 'Erreur / Error: ' + e.message;
+      var dict = RSVP_I18N[window.__currentLang || 'fr'] || RSVP_I18N.fr;
+      document.getElementById('msg').textContent = dict.err + e.message;
       document.querySelectorAll('.btn[data-v]').forEach(function(x) { x.disabled = false; });
     }
   });
