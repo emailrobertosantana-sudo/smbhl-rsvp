@@ -95,13 +95,15 @@ describe('Part 11: the entire second-league journey, end to end', () => {
   it('walks the entire flow end to end, and proves SMBHL is provably unaffected by all of it', async () => {
     env.PUBLIC_URL = 'https://notreligue.ca';
     try {
-      // ---- Step 0 (Part 0): this deployment's root lands on /signup,
-      // never smbhl.com -- the notreligue.ca consolidation.
+      // ---- Step 0 (Part 0): this deployment's root shows the real
+      // marketing homepage, with a Get Started button leading to
+      // /signup -- never smbhl.com -- the notreligue.ca consolidation.
       const rootRes = await SELF.fetch(`${BASE}/`, { redirect: 'manual' });
-      expect(rootRes.status).toBe(302);
-      const rootLocation = rootRes.headers.get('location');
-      expect(rootLocation).toContain('/signup');
-      expect(rootLocation).not.toContain('smbhl.com');
+      expect(rootRes.status).toBe(200);
+      const rootHtml = await rootRes.text();
+      expect(rootHtml).toContain('Notre Ligue');
+      expect(rootHtml).toContain('href="/signup"');
+      expect(rootHtml).not.toContain('smbhl.com');
 
       // ---- Step 1 (signup) + verify email, following the REAL emailed
       // link (same as Part 5's dedicated round-trip test), on THIS

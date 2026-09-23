@@ -333,6 +333,140 @@ if (window.__currentLang) {
 
 const notice = (fr, en, logoTooltip = '') => page(fr, `<h1>${esc(fr)}<span class="en">${esc(en)}</span></h1>`, logoTooltip);
 
+/* ---------- root marketing homepage (non-SMBHL hostnames) ----------
+ * Content ported from the standalone notreligue-marketing Worker
+ * (C:\Projects\notreligue-site — a real, already-written FR/EN
+ * marketing site: hero, feature highlights, "how it works", contact)
+ * now that its own domain routes here directly and the direct-to-
+ * /signup redirect (Part 0) turned out to skip introducing the product
+ * at all. Deliberately NOT built by calling page() (that shell's
+ * default league branding is SMBHL's own name/logo/tagline — wrong for
+ * a page whose entire purpose is introducing a DIFFERENT product to a
+ * prospect who has never heard of SMBHL) — but it DOES reuse this
+ * app's own established conventions rather than the marketing site's:
+ * bilingual FR-primary text with an always-visible `.en` sub-line
+ * (same technique as every signup/login/dashboard page in this file),
+ * not the marketing site's separate JS language-toggle. Its own color
+ * palette (purple/pink/yellow, Space Grotesk headings) is carried over
+ * from the marketing site's real, already-designed branding.
+ */
+function renderMarketingHomepage() {
+  return `<!DOCTYPE html><html lang="fr-CA"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Notre Ligue — Gestion de ligue sportive récréative</title>
+<meta name="description" content="Notre Ligue simplifie la gestion de votre ligue récréative : présences, remplaçants et assignations d'équipes, automatiquement.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%92%3C/text%3E%3C/svg%3E">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+ :root{--primary:#5B2EFF;--primary-dark:#3D1FBF;--pink:#FF3D81;--yellow:#FFD23F;
+   --ink:#1A1533;--ink-soft:#4A4363;--bg:#fff;--border:#E6DFFF}
+ *{box-sizing:border-box}
+ body{margin:0;font-family:'Inter',-apple-system,'Segoe UI',sans-serif;color:var(--ink);
+   background:var(--bg);line-height:1.5}
+ .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+ .en{color:var(--ink-soft);font-size:.85em;display:block;font-weight:400}
+ h1,h2,h3{font-family:'Space Grotesk',sans-serif}
+ .btn{display:inline-flex;align-items:center;gap:8px;font-family:'Space Grotesk',sans-serif;
+   font-weight:600;font-size:1rem;text-decoration:none;border-radius:6px;padding:14px 28px;
+   border:3px solid transparent;cursor:pointer;color:#fff;background:var(--primary);
+   box-shadow:0 6px 0 var(--primary-dark);transition:transform .15s ease}
+ .btn:hover{transform:translateY(-2px)}
+ header.top{padding:16px 0;border-bottom:1px solid var(--border)}
+ header.top .wrap{display:flex;align-items:center;justify-content:space-between}
+ .wordmark{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.4rem;
+   background:linear-gradient(100deg,#5B2EFF,#8A2EFF,#FF3D81);-webkit-background-clip:text;
+   background-clip:text;color:transparent;text-decoration:none}
+ .hero{text-align:center;padding:64px 0 72px;background:var(--ink)}
+ .hero .wordmark{font-size:clamp(2.2rem,9vw,4rem)}
+ .hero-tagline{font-family:'Space Grotesk',sans-serif;font-weight:600;
+   font-size:clamp(1.15rem,4vw,1.6rem);color:rgba(255,255,255,.8);margin:24px auto 32px;max-width:32ch}
+ .hero-tagline .en{color:rgba(255,255,255,.55)}
+ section{padding:56px 0}
+ .section-heading{font-weight:700;font-size:clamp(1.4rem,4vw,2rem);text-align:center;margin:0 0 40px}
+ .features-grid{display:grid;grid-template-columns:1fr;gap:20px}
+ @media(min-width:640px){.features-grid{grid-template-columns:1fr 1fr}}
+ @media(min-width:960px){.features-grid{grid-template-columns:repeat(4,1fr)}}
+ .feature-card{background:#fff;border:2px solid var(--border);border-radius:10px;padding:24px 20px}
+ .feature-icon{width:48px;height:48px;border-radius:8px;display:flex;align-items:center;
+   justify-content:center;margin-bottom:16px;font-size:22px}
+ .feature-card h3{font-size:1.05rem;margin:0 0 8px}
+ .feature-card p{margin:0;color:var(--ink-soft);font-size:.92rem}
+ .how{background:var(--ink);color:#fff}
+ .how .section-heading{color:#fff}
+ .steps{display:grid;grid-template-columns:1fr;gap:20px}
+ @media(min-width:760px){.steps{grid-template-columns:repeat(3,1fr)}}
+ .step{padding:22px 18px;background:rgba(255,255,255,.06);border-radius:10px;border:1px solid rgba(255,255,255,.12)}
+ .step-number{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.3rem;width:36px;height:36px;
+   border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--ink);
+   background:var(--yellow);margin-bottom:12px}
+ .step h3{margin:0 0 6px;font-size:1.02rem}
+ .step p{margin:0;color:#C9C1F5;font-size:.92rem}
+ .contact{text-align:center}
+ .contact-email{font-weight:700;color:var(--primary);text-decoration:none;border-bottom:3px solid var(--yellow)}
+ footer.bottom{border-top:1px solid var(--border);padding:24px 0;text-align:center;color:var(--ink-soft);font-size:.85rem}
+</style></head><body>
+<header class="top"><div class="wrap">
+  <span class="wordmark">Notre Ligue</span>
+  <a class="btn" style="padding:8px 18px;font-size:.85rem;box-shadow:none;" href="/signup">S'inscrire<span class="en" style="display:inline;">Get Started</span></a>
+</div></header>
+<section class="hero"><div class="wrap">
+  <span class="wordmark">Notre Ligue</span>
+  <p class="hero-tagline">Profitez de votre ligue. On s'occupe du reste.<span class="en">Enjoy your league. We'll handle the rest.</span></p>
+  <a class="btn" id="hero_cta" href="/signup">S'inscrire<span class="en" style="display:inline;">Get Started</span></a>
+</div></section>
+<section><div class="wrap">
+  <h2 class="section-heading">Tout ce qu'une ligue amateur doit gérer<span class="en">Everything a rec league has to manage</span></h2>
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon" style="background:var(--primary);color:#fff;">✅</div>
+      <h3>Qui vient dimanche?<span class="en" style="font-weight:400;font-size:.85rem;">Who's showing up?</span></h3>
+      <p>Les joueurs confirment en un clic. Vous savez toujours qui est là, qui est absent, et qui n'a pas répondu.<span class="en">Players confirm with one click. You always know who's in, who's out, and who hasn't answered yet.</span></p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon" style="background:var(--pink);color:#fff;">🔄</div>
+      <h3>Une équipe est courte? C'est déjà réglé.<span class="en" style="font-weight:400;font-size:.85rem;">A team's short? Already handled.</span></h3>
+      <p>Dès qu'un joueur se désiste, le système invite des remplaçants automatiquement, dans l'ordre, jusqu'à ce que l'équipe soit complète.<span class="en">The moment someone drops out, the system invites substitutes automatically, in order, until the team is full.</span></p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon" style="background:#17B37A;color:#fff;">📋</div>
+      <h3>Les équipes, envoyées d'avance<span class="en" style="font-weight:400;font-size:.85rem;">Team assignments, sent ahead of time</span></h3>
+      <p>Chaque joueur reçoit son assignation d'équipe avant la partie. Personne n'arrive en se demandant où il joue.<span class="en">Every player knows their team before game day. No one shows up wondering where they're playing.</span></p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon" style="background:#FF9F1C;color:#fff;">📊</div>
+      <h3>Pour les ligues qui gardent les statistiques<span class="en" style="font-weight:400;font-size:.85rem;">For leagues that keep stats</span></h3>
+      <p>Classement, pointage, séries éliminatoires — si votre ligue les suit, on les affiche. Sinon, ce n'est pas nécessaire.<span class="en">Standings, scoring, playoffs — if your league tracks them, we display them. If not, it's not required.</span></p>
+    </div>
+  </div>
+</div></section>
+<section class="how"><div class="wrap">
+  <h2 class="section-heading">Comment ça marche<span class="en">How it works</span></h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-number">1</div>
+      <h3>On configure votre ligue<span class="en" style="color:#C9C1F5;font-weight:400;font-size:.85rem;">We set up your league</span></h3>
+      <p>Équipes, horaire, format. Quinze minutes.<span class="en">Teams, schedule, format. Fifteen minutes.</span></p>
+    </div>
+    <div class="step">
+      <div class="step-number">2</div>
+      <h3>Vos joueurs confirment leur présence<span class="en" style="color:#C9C1F5;font-weight:400;font-size:.85rem;">Your players confirm attendance</span></h3>
+      <p>Chaque semaine, sans y penser.<span class="en">Every week, without thinking about it.</span></p>
+    </div>
+    <div class="step">
+      <div class="step-number">3</div>
+      <h3>Vous gérez votre ligue, pas des courriels<span class="en" style="color:#C9C1F5;font-weight:400;font-size:.85rem;">You run your league, not your inbox</span></h3>
+      <p>On s'occupe des rappels et des remplaçants.<span class="en">Reminders and substitutes are handled for you.</span></p>
+    </div>
+  </div>
+</div></section>
+<section class="contact"><div class="wrap">
+  <h2 class="section-heading">Une question? Une ligue à démarrer?<span class="en">A question? A league to start?</span></h2>
+  <p>Écrivez-nous à <a class="contact-email" href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a><span class="en" style="display:block;">Write to us at <a class="contact-email" href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a></span></p>
+</div></section>
+<footer class="bottom">© 2026 Notre Ligue</footer>
+</body></html>`;
+}
+
 /* ---------- user-account pages (signup / login / dashboard) ----------
  * Pure UI on top of the existing Part A/B/C backend routes (auth.js /
  * leagues.js) — no new backend logic here. Reuses page()'s existing shared
@@ -17177,25 +17311,26 @@ async function handleFetch(req, env, ctx) {
       if (url.pathname === '/health')
         return new Response('ok');
       if (url.pathname === '/' || url.pathname === '') {
-        // Part 0 (fixed post-deploy): this Worker serves other leagues'
-        // own domains (e.g. notreligue.ca) directly, not just SMBHL's,
-        // and multiple custom domains can be routed to the SAME
-        // deployment -- so the decision must be based on the actual
-        // incoming request's own hostname, never env.PUBLIC_URL (a
-        // single fixed value for the whole deployment, identical no
+        // Part 0 (fixed post-deploy, twice): this Worker serves other
+        // leagues' own domains (e.g. notreligue.ca) directly, not just
+        // SMBHL's, and multiple custom domains can be routed to the
+        // SAME deployment -- so the decision must be based on the
+        // actual incoming request's own hostname, never env.PUBLIC_URL
+        // (a single fixed value for the whole deployment, identical no
         // matter which domain routed the request in). SMBHL's own
         // hostname (smbhl.com or any subdomain of it, e.g.
-        // rsvp.smbhl.com) keeps its exact original behavior -- everyone
-        // else lands on THEIR OWN hostname's /signup, which is already
-        // a real, bilingual FR-default product intro + form (not a bare
-        // form), so a direct redirect is a genuine "simple homepage",
-        // not a dead end. This also means any future league's own
-        // domain works correctly out of the box with zero
-        // per-domain PUBLIC_URL reconfiguration.
+        // rsvp.smbhl.com) keeps its exact original behavior. Everyone
+        // else now sees a real marketing homepage (renderMarketingHomepage,
+        // above) introducing the product, with its own "Get
+        // Started" button leading to /signup -- a bare redirect
+        // straight to the signup form (the original Part 0 behavior)
+        // skipped introducing the product at all. This also means any
+        // future league's own domain works correctly out of the box
+        // with zero per-domain PUBLIC_URL reconfiguration.
         if (url.hostname.includes('smbhl.com')) {
           return Response.redirect('https://smbhl.com', 302);
         }
-        return Response.redirect(url.origin + '/signup', 302);
+        return new Response(renderMarketingHomepage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       }
       return new Response('not found', { status: 404 });
     } catch (e) {

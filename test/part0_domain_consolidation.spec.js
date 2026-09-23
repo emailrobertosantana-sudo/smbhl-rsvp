@@ -7,15 +7,18 @@
 // HOSTNAME the request actually arrived on, and nothing hardcodes
 // rsvp.notreligue.ca or any other non-SMBHL domain.
 //
-// Post-deploy bug fix: the original implementation branched on
+// Post-deploy fix #1 (091bf2e): the original implementation branched on
 // env.PUBLIC_URL (a single fixed value for the whole Worker
-// deployment) instead of the request's own hostname. Since multiple
-// custom domains (smbhl.com's production deployment AND notreligue.ca,
-// once consolidated onto the same Worker) can be routed to the same
-// deployment, this meant EVERY request -- regardless of which domain it
-// actually arrived on -- redirected to smbhl.com, because PUBLIC_URL is
-// fixed to https://rsvp.smbhl.com for that deployment. Fixed to decide
+// deployment) instead of the request's own hostname. Fixed to decide
 // based on url.hostname (the real incoming request), never PUBLIC_URL.
+//
+// Post-deploy fix #2 (this commit): a direct redirect straight to
+// /signup for every non-SMBHL hostname skipped introducing the product
+// at all -- a prospect landed on a bare signup form with zero context.
+// Root / for a non-SMBHL hostname now serves a real marketing homepage
+// (ported from the standalone notreligue-marketing Worker) with its
+// own "Get Started" button leading to /signup, instead of an immediate
+// redirect.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 
@@ -32,44 +35,56 @@ describe('Part 0: domain-aware GET /', () => {
     expect(res.headers.get('location')).toBe('https://smbhl.com/');
   });
 
-  it("any other hostname (e.g. notreligue.ca) redirects GET / to ITS OWN /signup, not to smbhl.com", async () => {
+  it("any other hostname (e.g. notreligue.ca) shows the marketing homepage, not an immediate redirect", async () => {
     const res = await SELF.fetch('http://notreligue.ca/', { redirect: 'manual' });
-    expect(res.status).toBe(302);
-    const location = res.headers.get('location');
-    expect(location).toContain('/signup');
-    expect(location).not.toContain('smbhl.com');
-    // Relative to the request's own origin -- never a hardcoded domain.
-    expect(location.startsWith('http://notreligue.ca')).toBe(true);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Notre Ligue');
+    expect(html).not.toContain('smbhl.com');
   });
 
-  it("rsvp.notreligue.ca hitting root also lands on its own /signup, not smbhl.com", async () => {
+  it("the homepage's Get Started button links to /signup", async () => {
+    const res = await SELF.fetch('http://notreligue.ca/');
+    const html = await res.text();
+    expect(html).toContain('href="/signup"');
+    expect(html).toContain('Get Started');
+    expect(html).toContain("S'inscrire"); // French-default copy
+  });
+
+  it("rsvp.notreligue.ca hitting root also shows the marketing homepage, not smbhl.com", async () => {
     const res = await SELF.fetch('https://rsvp.notreligue.ca/', { redirect: 'manual' });
-    expect(res.status).toBe(302);
-    const location = res.headers.get('location');
-    expect(location).toBe('https://rsvp.notreligue.ca/signup');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Notre Ligue');
   });
 
   it("a brand-new, never-configured league domain works correctly out of the box, with zero PUBLIC_URL reconfiguration needed", async () => {
     const res = await SELF.fetch('https://some-future-league.example/', { redirect: 'manual' });
-    expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe('https://some-future-league.example/signup');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('href="/signup"');
   });
 
-  it("REGRESSION (the live bug): notreligue.ca still lands on its own /signup even when env.PUBLIC_URL is fixed to SMBHL's own value -- the decision must never depend on PUBLIC_URL", async () => {
+  it("REGRESSION (the live bug): notreligue.ca still shows its own homepage, not a redirect to smbhl.com, even when env.PUBLIC_URL is fixed to SMBHL's own value", async () => {
     const originalPublicUrl = env.PUBLIC_URL;
-    env.PUBLIC_URL = 'https://rsvp.smbhl.com'; // the real, fixed, per-deployment value that caused the bug
+    env.PUBLIC_URL = 'https://rsvp.smbhl.com'; // the real, fixed, per-deployment value that caused the original bug
     try {
       const res = await SELF.fetch('https://notreligue.ca/', { redirect: 'manual' });
-      expect(res.status).toBe(302);
-      const location = res.headers.get('location');
-      expect(location).toBe('https://notreligue.ca/signup');
-      expect(location).not.toContain('smbhl.com');
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).not.toContain('smbhl.com');
     } finally {
       env.PUBLIC_URL = originalPublicUrl;
     }
   });
 
-  it("GET /signup (the effective root landing page for a non-SMBHL deployment) is French by default, not a bare form", async () => {
+  it("SMBHL's own root redirect is unaffected by the marketing homepage change", async () => {
+    const res = await SELF.fetch('https://rsvp.smbhl.com/', { redirect: 'manual' });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://smbhl.com/');
+  });
+
+  it('GET /signup (still reachable directly, e.g. from the homepage\'s Get Started button) is French by default, not a bare form', async () => {
     const res = await SELF.fetch('http://example.com/signup');
     expect(res.status).toBe(200);
     const html = await res.text();
