@@ -592,6 +592,62 @@ export async function handleLeagueContactsBulkCreate(req, env) {
  *     existing ADMIN_KEY path's own "an event with this id already
  *     exists" behavior, just with a proper status code instead of 400.
  */
+// Live-testing task, Part 7: the actual per-event validation/creation
+// logic used to live inline in handleLeagueEventCreate -- pulled out
+// here (same shape as Part 6's createLeagueContactRow) so bulk event
+// creation and event duplication (both below) run through the exact
+// same validation and collision-safe ID generation as the single-event
+// route, never a second copy of that logic. `leagueData` is passed in
+// (rather than fetched here) so a caller creating many events in one
+// request only fetches it once.
+async function createLeagueEventRow(env, leagueId, body, leagueData) {
+  const date = String(body.date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { ok: false, error: 'date is required, in YYYY-MM-DD format.', errorKey: 'DATE_REQUIRED' };
+  }
+
+  const timePattern = /^\d{2}:\d{2}$/;
+  const startTime = String(body.start_time || '').trim();
+  if (startTime && !timePattern.test(startTime)) {
+    return { ok: false, error: 'start_time must be in HH:MM format.', errorKey: 'START_TIME_FORMAT' };
+  }
+  const endTime = String(body.end_time || '').trim();
+  if (endTime && !timePattern.test(endTime)) {
+    return { ok: false, error: 'end_time must be in HH:MM format.', errorKey: 'END_TIME_FORMAT' };
+  }
+
+  const venue = String(body.venue || '').trim() || null;
+
+  const season = String(body.season || '').trim() || (leagueData && leagueData.current_season);
+  if (!season) {
+    return { ok: false, error: 'season is required (publish a season first via /league/season/publish, or pass one explicitly).', errorKey: 'SEASON_REQUIRED' };
+  }
+
+  let week = Number(body.week);
+  if (!Number.isFinite(week) || week < 1) {
+    const countRow = await env.DB.prepare(
+      'SELECT COUNT(*) c FROM events WHERE league_id = ? AND season = ?'
+    ).bind(leagueId, season).first();
+    week = (countRow?.c || 0) + 1;
+  }
+
+  const eventId = makeEventId(leagueId, date);
+  const existing = await env.DB.prepare('SELECT 1 FROM events WHERE id = ?').bind(eventId).first();
+  if (existing) {
+    return { ok: false, error: 'An event already exists for this date in your league.', errorKey: 'EVENT_DATE_EXISTS' };
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO events (id, season, week, date, venue, state, start_time, end_time, league_id)
+     VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)`
+  ).bind(eventId, season, week, date, venue, startTime || null, endTime || null, leagueId).run();
+
+  return {
+    ok: true,
+    event: { id: eventId, season, week, date, venue, state: 'open', start_time: startTime || null, end_time: endTime || null }
+  };
+}
+
 export async function handleLeagueEventCreate(req, env) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
@@ -616,53 +672,148 @@ export async function handleLeagueEventCreate(req, env) {
     return Response.json({ ok: false, error: 'This route cannot create events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
   }
 
-  const date = String(body.date || '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+  const leagueData = await getLeagueDataJson(env, leagueId);
+  const result = await createLeagueEventRow(env, leagueId, body, leagueData);
+  if (!result.ok) {
+    const status = result.errorKey === 'EVENT_DATE_EXISTS' ? 409 : 400;
+    return Response.json(result, { status });
+  }
+  return Response.json({ ok: true, league_id: leagueId, event: result.event });
+}
+
+function addDaysToDateStr(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+/* ---------- POST /league/events/bulk (Part 7, live-testing task) ----------
+ * Creates a whole season's worth of events at once: a start date plus
+ * EITHER an occurrence count OR an end date (occurrences wins if both
+ * are given -- documented decision, simpler than reconciling a
+ * mismatch between them), reusing the same venue/time/season for every
+ * one. Weekly only (every 7 days) -- the task's own scope explicitly
+ * calls a more complex recurrence pattern unnecessary ("we play every
+ * Sunday at the same venue all season" is the target case). Capped at
+ * 52 occurrences (a full year of weekly games) as a sane upper bound
+ * against a typo'd occurrence count, not a real product constraint.
+ * Each date is created through the exact same createLeagueEventRow
+ * used by the single-event route and by duplicate below -- a date that
+ * already has an event (e.g. the admin re-runs this after already
+ * creating a few by hand) is skipped with a note, not a hard failure
+ * of the whole batch, matching Part 6's bulk-import posture.
+ */
+export async function handleLeagueEventsBulkCreate(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot create events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+
+  const startDate = String(body.startDate || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
     return Response.json({ ok: false, error: 'date is required, in YYYY-MM-DD format.', errorKey: 'DATE_REQUIRED' }, { status: 400 });
   }
 
-  const timePattern = /^\d{2}:\d{2}$/;
-  const startTime = String(body.start_time || '').trim();
-  if (startTime && !timePattern.test(startTime)) {
-    return Response.json({ ok: false, error: 'start_time must be in HH:MM format.', errorKey: 'START_TIME_FORMAT' }, { status: 400 });
+  const INTERVAL_DAYS = 7;
+  let occurrences = Number(body.occurrences);
+  if (!Number.isFinite(occurrences) || occurrences < 1) {
+    const endDate = String(body.endDate || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+      const spanMs = Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`);
+      occurrences = spanMs >= 0 ? Math.floor(spanMs / (INTERVAL_DAYS * 86400000)) + 1 : 0;
+    }
   }
-  const endTime = String(body.end_time || '').trim();
-  if (endTime && !timePattern.test(endTime)) {
-    return Response.json({ ok: false, error: 'end_time must be in HH:MM format.', errorKey: 'END_TIME_FORMAT' }, { status: 400 });
+  if (!Number.isFinite(occurrences) || occurrences < 1) {
+    return Response.json({ ok: false, error: 'Provide an occurrence count or an end date after the start date.', errorKey: 'BULK_EVENTS_RECURRENCE_REQUIRED' }, { status: 400 });
   }
-
-  const venue = String(body.venue || '').trim() || null;
+  occurrences = Math.min(Math.floor(occurrences), 52);
 
   const leagueData = await getLeagueDataJson(env, leagueId);
-  const season = String(body.season || '').trim() || leagueData.current_season;
-  if (!season) {
-    return Response.json({ ok: false, error: 'season is required (publish a season first via /league/season/publish, or pass one explicitly).', errorKey: 'SEASON_REQUIRED' }, { status: 400 });
+  const results = [];
+  let date = startDate;
+  for (let i = 0; i < occurrences; i++) {
+    const created = await createLeagueEventRow(env, leagueId, { date, venue: body.venue, start_time: body.start_time, end_time: body.end_time, season: body.season }, leagueData);
+    if (created.ok) {
+      results.push({ status: 'created', event: created.event });
+    } else {
+      results.push({ status: 'skipped', date, reason: created.errorKey === 'EVENT_DATE_EXISTS' ? 'duplicate_date' : 'invalid', error: created.error, errorKey: created.errorKey });
+    }
+    date = addDaysToDateStr(date, INTERVAL_DAYS);
   }
-
-  let week = Number(body.week);
-  if (!Number.isFinite(week) || week < 1) {
-    const countRow = await env.DB.prepare(
-      'SELECT COUNT(*) c FROM events WHERE league_id = ? AND season = ?'
-    ).bind(leagueId, season).first();
-    week = (countRow?.c || 0) + 1;
-  }
-
-  const eventId = makeEventId(leagueId, date);
-  const existing = await env.DB.prepare('SELECT 1 FROM events WHERE id = ?').bind(eventId).first();
-  if (existing) {
-    return Response.json({ ok: false, error: 'An event already exists for this date in your league.', errorKey: 'EVENT_DATE_EXISTS' }, { status: 409 });
-  }
-
-  await env.DB.prepare(
-    `INSERT INTO events (id, season, week, date, venue, state, start_time, end_time, league_id)
-     VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)`
-  ).bind(eventId, season, week, date, venue, startTime || null, endTime || null, leagueId).run();
 
   return Response.json({
     ok: true,
     league_id: leagueId,
-    event: { id: eventId, season, week, date, venue, state: 'open', start_time: startTime || null, end_time: endTime || null }
+    createdCount: results.filter(r => r.status === 'created').length,
+    skippedCount: results.filter(r => r.status === 'skipped').length,
+    results
   });
+}
+
+/* ---------- POST /league/events/duplicate (Part 7, live-testing task) ----------
+ * A quicker one-off version of the same underlying capability as bulk
+ * create above: copies an existing event's venue/start_time/end_time/
+ * season to a new date, through the same createLeagueEventRow path.
+ * The source event must belong to this league (never lets one league
+ * duplicate another's event by guessing an id).
+ */
+export async function handleLeagueEventDuplicate(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot create events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+
+  const sourceEventId = String(body.event_id || '').trim();
+  if (!sourceEventId) {
+    return Response.json({ ok: false, error: 'event_id is required.', errorKey: 'EVENT_ID_REQUIRED' }, { status: 400 });
+  }
+  const source = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(sourceEventId, leagueId).first();
+  if (!source) {
+    return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  }
+
+  const leagueData = await getLeagueDataJson(env, leagueId);
+  const result = await createLeagueEventRow(env, leagueId, {
+    date: body.date, venue: source.venue, start_time: source.start_time, end_time: source.end_time, season: source.season
+  }, leagueData);
+  if (!result.ok) {
+    const status = result.errorKey === 'EVENT_DATE_EXISTS' ? 409 : 400;
+    return Response.json(result, { status });
+  }
+  return Response.json({ ok: true, league_id: leagueId, event: result.event });
 }
 
 /* ---------- POST /league/season/publish ----------

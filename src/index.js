@@ -6,7 +6,7 @@ import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmail
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -2949,7 +2949,13 @@ async function handleLeagueSchedulePage(req, env, url) {
       stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
       needsSeasonTitle: "Lance ta saison d'abord",
       needsSeasonBody: "Il te faut une saison active avant de pouvoir créer des matchs.",
-      goToDashboard: 'Aller au tableau de bord'
+      goToDashboard: 'Aller au tableau de bord',
+      bulkCreateBtn: 'Créer plusieurs matchs', bulkCreateTitle: 'Créer plusieurs matchs',
+      bulkCreateHelp: 'Crée une série de matchs chaque semaine, même heure et même lieu.',
+      lblStartDate: 'Première date', lblOccurrences: 'Nombre de matchs',
+      lblEndDate: 'ou date de fin (optionnel)', bulkCreateSubmit: 'Créer la série',
+      duplicateBtn: 'Dupliquer', duplicateConfirmBtn: 'Confirmer',
+      bulkCreateResultSummary: '{created} match(s) créé(s), {skipped} ignoré(s) (déjà existant).'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
@@ -2960,7 +2966,13 @@ async function handleLeagueSchedulePage(req, env, url) {
       stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled',
       needsSeasonTitle: 'Start your season first',
       needsSeasonBody: 'You need an active season before you can create events.',
-      goToDashboard: 'Go to dashboard'
+      goToDashboard: 'Go to dashboard',
+      bulkCreateBtn: 'Create multiple events', bulkCreateTitle: 'Create multiple events',
+      bulkCreateHelp: 'Create a weekly series of events, same time and venue each week.',
+      lblStartDate: 'First date', lblOccurrences: 'Number of events',
+      lblEndDate: 'or end date (optional)', bulkCreateSubmit: 'Create the series',
+      duplicateBtn: 'Duplicate', duplicateConfirmBtn: 'Confirm',
+      bulkCreateResultSummary: '{created} event(s) created, {skipped} skipped (already existed).'
     }
   };
 
@@ -2970,12 +2982,21 @@ async function handleLeagueSchedulePage(req, env, url) {
   const { header, tabbar } = dashChrome(leagueRow.name, 'schedule');
 
   const rowsHtml = events.length
-    ? events.map(ev => `<a class="nl-card sc-game" href="/league/events/detail?e=${encodeURIComponent(ev.id)}">
-      <div class="sc-when"><b>${esc(ev.date)}</b>${ev.start_time ? `<span>${esc(ev.start_time)}</span>` : ''}</div>
-      <div class="sc-venue">${ev.venue ? esc(ev.venue) : ''}</div>
-      <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
-      <span class="sc-chevron">&rsaquo;</span>
-    </a>`).join('')
+    ? events.map(ev => `<div class="nl-card sc-game-row">
+      <a class="sc-game" href="/league/events/detail?e=${encodeURIComponent(ev.id)}">
+        <div class="sc-when"><b>${esc(ev.date)}</b>${ev.start_time ? `<span>${esc(ev.start_time)}</span>` : ''}</div>
+        <div class="sc-venue">${ev.venue ? esc(ev.venue) : ''}</div>
+        <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
+        <span class="sc-chevron">&rsaquo;</span>
+      </a>
+      ${needsSeason ? '' : `<div class="sc-dup-wrap">
+        <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="duplicateBtn" onclick="toggleDuplicateRow('${esc(ev.id)}')">Dupliquer</button>
+        <div class="sc-dup-inline" id="dup_${esc(ev.id)}" style="display:none;">
+          <input type="date" class="nl-input" id="dup_date_${esc(ev.id)}">
+          <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" onclick="confirmDuplicate('${esc(ev.id)}')" data-i18n="duplicateConfirmBtn">Confirmer</button>
+        </div>
+      </div>`}
+    </div>`).join('')
     : `<p class="nl-help" data-i18n="noEvents">Aucun match pour l'instant.</p>`;
 
   const bodyHtml = `${dashStyles()}<style>
@@ -2996,11 +3017,21 @@ async function handleLeagueSchedulePage(req, env, url) {
   @media (max-width: 640px) { .sc-game { grid-template-columns: 72px 1fr auto; } .sc-game .sc-chevron { display: none; } }
   .sc-needs-season { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 2px solid var(--primary); }
   .sc-needs-season h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
+  .sc-game-row { display: flex; flex-direction: column; padding: 0; }
+  .sc-game-row .sc-game { padding: var(--space-3) var(--space-4); }
+  .sc-dup-wrap { padding: 0 var(--space-4) var(--space-3); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+  .sc-dup-inline { display: flex; gap: 8px; align-items: center; }
+  .sc-bulk-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); max-width: 480px; }
+  .sc-bulk-panel.open { display: flex; }
+  .sc-bulk-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
 </style>${header}
 <main class="dash-main sc-main">
   <div class="sc-top">
     <h1 data-i18n="title">Horaire</h1>
-    ${needsSeason ? '' : '<button type="button" class="nl-btn nl-btn--primary" onclick="toggleSchedulePanel()" data-i18n="createEvent">Créer un match</button>'}
+    ${needsSeason ? '' : `<div style="display:flex;gap:var(--space-2);flex-wrap:wrap;">
+      <button type="button" class="nl-btn nl-btn--secondary" onclick="toggleBulkPanel()" data-i18n="bulkCreateBtn">Créer plusieurs matchs</button>
+      <button type="button" class="nl-btn nl-btn--primary" onclick="toggleSchedulePanel()" data-i18n="createEvent">Créer un match</button>
+    </div>`}
   </div>
   ${needsSeason ? `
   <section class="nl-card sc-needs-season">
@@ -3038,6 +3069,42 @@ async function handleLeagueSchedulePage(req, env, url) {
         <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleSchedulePanel()">Annuler</button>
       </div>
     </aside>
+    <aside class="sc-bulk-panel" id="sc_bulk_panel" aria-label="Créer plusieurs matchs">
+      <h2 data-i18n="bulkCreateTitle">Créer plusieurs matchs</h2>
+      <p class="nl-help" data-i18n="bulkCreateHelp">Crée une série de matchs chaque semaine, même heure et même lieu.</p>
+      <div id="bulkEventErr" class="nl-error" style="display:none"></div>
+      <div id="bulkEventOk" class="nl-ok" style="display:none"></div>
+      <div class="nl-field">
+        <label class="nl-label" for="be_start_date" data-i18n="lblStartDate">Première date</label>
+        <input class="nl-input" id="be_start_date" type="date" required>
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="be_occurrences" data-i18n="lblOccurrences">Nombre de matchs</label>
+        <input class="nl-input" id="be_occurrences" type="number" min="1" max="52" value="10">
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="be_end_date" data-i18n="lblEndDate">ou date de fin (optionnel)</label>
+        <input class="nl-input" id="be_end_date" type="date">
+      </div>
+      <div class="sc-two">
+        <div class="nl-field">
+          <label class="nl-label" for="be_start" data-i18n="startOpt">Heure de début (optionnel)</label>
+          <input class="nl-input" id="be_start" type="time">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="be_end" data-i18n="endOpt">Heure de fin (optionnel)</label>
+          <input class="nl-input" id="be_end" type="time">
+        </div>
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="be_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
+        <input class="nl-input" id="be_venue" type="text">
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="be_submit" data-i18n="bulkCreateSubmit" onclick="submitBulkEvents()">Créer la série</button>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleBulkPanel()">Annuler</button>
+      </div>
+    </aside>
   </div>
   `}
 </main>
@@ -3067,6 +3134,67 @@ async function submitEvent() {
     window.location.reload();
   } catch (e) {
     showErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
+  }
+}
+// Part 7 (live-testing task): bulk event creation + duplicate. Both
+// reuse the single-event creation route's own validation server-side
+// (createLeagueEventRow, leagues.js) -- this script only collects the
+// form input and shows the result, it never re-implements the
+// recurrence or collision logic itself.
+function toggleBulkPanel() { document.getElementById('sc_bulk_panel').classList.toggle('open'); }
+function showBulkErr(msg) {
+  document.getElementById('bulkEventOk').style.display = 'none';
+  var el = document.getElementById('bulkEventErr'); el.textContent = msg; el.style.display = 'block';
+}
+async function submitBulkEvents() {
+  document.getElementById('bulkEventErr').style.display = 'none';
+  document.getElementById('bulkEventOk').style.display = 'none';
+  var startDate = document.getElementById('be_start_date').value;
+  var occurrences = document.getElementById('be_occurrences').value;
+  var endDate = document.getElementById('be_end_date').value;
+  var start_time = document.getElementById('be_start').value;
+  var end_time = document.getElementById('be_end').value;
+  var venue = document.getElementById('be_venue').value.trim();
+  if (!startDate) { showBulkErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
+  var btn = document.getElementById('be_submit');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/events/bulk', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({
+        startDate: startDate,
+        occurrences: (occurrences && !endDate) ? Number(occurrences) : undefined,
+        endDate: endDate || undefined,
+        start_time: start_time || undefined, end_time: end_time || undefined, venue: venue || undefined
+      })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { showBulkErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
+    window.location.reload();
+  } catch (e) {
+    showBulkErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
+  }
+}
+function toggleDuplicateRow(eventId) {
+  var row = document.getElementById('dup_' + eventId);
+  if (row) row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+}
+async function confirmDuplicate(eventId) {
+  var dateEl = document.getElementById('dup_date_' + eventId);
+  var date = dateEl ? dateEl.value : '';
+  if (!date) { showErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
+  try {
+    var res = await fetch('/league/events/duplicate', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: eventId, date: date })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); return; }
+    window.location.reload();
+  } catch (e) {
+    showErr(window.__errorText('NETWORK_ERROR'));
   }
 }`;
 
@@ -19543,6 +19671,10 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueContactsBulkCreate(req, env);
       if (url.pathname === '/league/events' && req.method === 'POST')
         return await handleLeagueEventCreate(req, env);
+      if (url.pathname === '/league/events/bulk' && req.method === 'POST')
+        return await handleLeagueEventsBulkCreate(req, env);
+      if (url.pathname === '/league/events/duplicate' && req.method === 'POST')
+        return await handleLeagueEventDuplicate(req, env);
       if (url.pathname === '/league/season/publish' && req.method === 'POST')
         return await handleLeagueSeasonPublish(req, env);
       // Signup/login/dashboard pages — pure UI on top of the routes above.

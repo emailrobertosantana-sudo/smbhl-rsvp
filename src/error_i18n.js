@@ -79,6 +79,8 @@ export const ERROR_I18N = {
   END_TIME_FORMAT: { fr: "L'heure de fin doit être au format HH:MM.", en: 'end_time must be in HH:MM format.' },
   SEASON_REQUIRED: { fr: "Il te faut une saison active avant de créer un match. Lance ta saison depuis le tableau de bord.", en: 'You need an active season before creating an event. Start your season from the dashboard.' },
   EVENT_DATE_EXISTS: { fr: 'Un match existe déjà à cette date dans ta ligue.', en: 'An event already exists for this date in your league.' },
+  BULK_EVENTS_RECURRENCE_REQUIRED: { fr: 'Indique un nombre de matchs ou une date de fin après la date de départ.', en: 'Provide an occurrence count or an end date after the start date.' },
+  EVENT_ID_REQUIRED: { fr: "L'identifiant du match est requis.", en: 'event_id is required.' },
   // Live-testing bug fix (Bug 6 sweep): the event-status page's admin
   // IN/OUT override was reaching these 4 without an errorKey at all --
   // window.__errorText() falls back to the raw English `error` string
