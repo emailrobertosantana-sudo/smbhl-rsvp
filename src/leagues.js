@@ -301,6 +301,111 @@ export async function handleLeagueContactCreate(req, env) {
   });
 }
 
+/* ---------- POST /league/events (Part K) ----------
+ * League-scoped event creation. Session+checkLeagueAccess-gated only, same
+ * discipline as contacts/season-publish above. Matches the existing
+ * ADMIN_KEY manual event-creation shape (events columns: season, week,
+ * date, venue, state, start_time, end_time) — see handleScheduleSave's
+ * `is_new` branch in index.js, which this mirrors. One event at a time,
+ * admin-entered; no fixture/schedule-generation engine here (that stays a
+ * separate, later task, same as Season Hub was for season/publish).
+ *
+ * id generation uses league_ids.js's makeEventId(leagueId, date) — exactly
+ * the mechanism built specifically to make this safe: two leagues
+ * creating a game on the same calendar date can never collide, because
+ * the id carries the owning league's id.
+ *
+ * Field decisions:
+ *   - date: required, must already be YYYY-MM-DD — the same shape
+ *     eventStart() (index.js) and makeEventId/eventDateFromId
+ *     (league_ids.js) all assume.
+ *   - season: optional; defaults to the league's own current_season
+ *     (getLeagueDataJson) if not given, since a league will normally have
+ *     already published one via /league/season/publish first. If neither
+ *     is available, this is a real error (400) — there's nothing
+ *     reasonable to default a season NAME to.
+ *   - week: optional; defaults to (that league's existing event count for
+ *     this season) + 1, a simple auto-increment rather than requiring the
+ *     admin to track week numbers by hand for a one-at-a-time flow.
+ *   - venue/start_time/end_time: optional. start_time/end_time, if given,
+ *     must be HH:MM (the same format eventStart() parses).
+ *   - state: always starts 'open' — this route doesn't expose creating a
+ *     pre-cancelled or pre-closed event; that's an edit capability this
+ *     task isn't building.
+ *   - duplicate date within the SAME league: rejected (409) — matches the
+ *     existing ADMIN_KEY path's own "an event with this id already
+ *     exists" behavior, just with a proper status code instead of 400.
+ */
+export async function handleLeagueEventCreate(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  // Defense in depth (see putLeagueDataJson's own comment): this route
+  // must never be able to write a row tagged as SMBHL's, even in principle.
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot create events for SMBHL.' }, { status: 403 });
+  }
+
+  const date = String(body.date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return Response.json({ ok: false, error: 'date is required, in YYYY-MM-DD format.' }, { status: 400 });
+  }
+
+  const timePattern = /^\d{2}:\d{2}$/;
+  const startTime = String(body.start_time || '').trim();
+  if (startTime && !timePattern.test(startTime)) {
+    return Response.json({ ok: false, error: 'start_time must be in HH:MM format.' }, { status: 400 });
+  }
+  const endTime = String(body.end_time || '').trim();
+  if (endTime && !timePattern.test(endTime)) {
+    return Response.json({ ok: false, error: 'end_time must be in HH:MM format.' }, { status: 400 });
+  }
+
+  const venue = String(body.venue || '').trim() || null;
+
+  const leagueData = await getLeagueDataJson(env, leagueId);
+  const season = String(body.season || '').trim() || leagueData.current_season;
+  if (!season) {
+    return Response.json({ ok: false, error: 'season is required (publish a season first via /league/season/publish, or pass one explicitly).' }, { status: 400 });
+  }
+
+  let week = Number(body.week);
+  if (!Number.isFinite(week) || week < 1) {
+    const countRow = await env.DB.prepare(
+      'SELECT COUNT(*) c FROM events WHERE league_id = ? AND season = ?'
+    ).bind(leagueId, season).first();
+    week = (countRow?.c || 0) + 1;
+  }
+
+  const eventId = makeEventId(leagueId, date);
+  const existing = await env.DB.prepare('SELECT 1 FROM events WHERE id = ?').bind(eventId).first();
+  if (existing) {
+    return Response.json({ ok: false, error: 'An event already exists for this date in your league.' }, { status: 409 });
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO events (id, season, week, date, venue, state, start_time, end_time, league_id)
+     VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)`
+  ).bind(eventId, season, week, date, venue, startTime || null, endTime || null, leagueId).run();
+
+  return Response.json({
+    ok: true,
+    league_id: leagueId,
+    event: { id: eventId, season, week, date, venue, state: 'open', start_time: startTime || null, end_time: endTime || null }
+  });
+}
+
 /* ---------- POST /league/season/publish ----------
  * The first WRITE path for a second league's own data_json-equivalent.
  * Deliberately minimal — a genuine starting point (current_season set, one
