@@ -598,6 +598,7 @@ const I18N_SIGNUP = {
     title3Headcount: 'Combien de joueurs?',
     lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
     minMaxHelp: "On invite des remplaçants automatiquement quand tu es sous le minimum.",
+    lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.',
     createLeague: 'Créer la ligue',
     doneBadge: 'Ligue créée', doneTitle: 'Ta ligue est prête.',
     doneBody: 'Ta page publique est déjà en ligne. Partage-la dans le groupe de la ligue.',
@@ -622,6 +623,7 @@ const I18N_SIGNUP = {
     title3Headcount: 'How many players?',
     lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
     minMaxHelp: 'Subs are invited automatically when you drop below the minimum.',
+    lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately.",
     createLeague: 'Create the league',
     doneBadge: 'League created', doneTitle: 'Your league is ready.',
     doneBody: 'Your public page is already live. Share it in the league group chat.',
@@ -944,6 +946,11 @@ function renderSignupStep3() {
       </div>
     </div>
     <p class="nl-help" data-i18n="minMaxHelp">On invite des remplaçants automatiquement quand tu es sous le minimum.</p>
+    <div class="nl-field">
+      <label class="nl-label" for="su_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
+      <input class="nl-input" id="su_min_goalies" type="number" min="0" value="0">
+      <p class="nl-help" data-i18n="minGoaliesHelp">Laisse à 0 si tu ne veux pas suivre les gardiens séparément.</p>
+    </div>
   </div>
 </main>
 <div class="su-bottom">
@@ -999,6 +1006,9 @@ async function submitStep3() {
     if (maxPlayers < minPlayers) { showError(window.__errorText('HEADCOUNT_MAX_TOO_LOW')); return; }
     payload.minPlayers = minPlayers;
     payload.maxPlayers = maxPlayers;
+    var minGoaliesEl = document.getElementById('su_min_goalies');
+    var minGoalies = minGoaliesEl ? Number(minGoaliesEl.value) : 0;
+    if (minGoalies > 0) { payload.minGoalies = minGoalies; }
   } else {
     // Bug fix (live testing): the field's own placeholder ("Équipe 1")
     // and helper text ("Pas encore décidé? Garde « Équipe 1, 2… ».")
@@ -1407,7 +1417,8 @@ function buildDashI18n({ state, needsSeason, unverified }) {
         structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
         structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
         structureWeeklyTitle: 'Équipes qui changent', structureWeeklyDesc: 'De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.',
-        lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs'
+        lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
+        lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.'
       });
       Object.assign(en, {
         seasonsTitle: 'Seasons', seasonsDesc: 'Create an additional season, or republish the current one to edit it. Each season can have its own team structure.',
@@ -1418,7 +1429,8 @@ function buildDashI18n({ state, needsSeason, unverified }) {
         structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
         structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
         structureWeeklyTitle: 'Teams shuffle', structureWeeklyDesc: 'Fresh teams every game — we can even build them for you, automatically.',
-        lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players'
+        lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
+        lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately."
       });
     }
     if (unverified) {
@@ -1697,6 +1709,11 @@ async function handleDashboardPage(req, env, url) {
           <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(String(leagueRow.max_players || 12))}">
         </div>
       </div>
+      <div class="nl-field">
+        <label class="nl-label" for="season_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
+        <input class="nl-input" id="season_min_goalies" type="number" min="0" value="${esc(String(leagueRow.min_goalies || 0))}">
+        <p class="nl-help" data-i18n="minGoaliesHelp">Laisse à 0 si tu ne veux pas suivre les gardiens séparément.</p>
+      </div>
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>
   </section>` : ''}
@@ -1848,6 +1865,8 @@ async function submitSeasonMgmt() {
   if (structure === 'headcount') {
     payload.min_players = Number(document.getElementById('season_min_players').value);
     payload.max_players = Number(document.getElementById('season_max_players').value);
+    var minGoaliesEl = document.getElementById('season_min_goalies');
+    if (minGoaliesEl) { payload.min_goalies = Number(minGoaliesEl.value) || 0; }
   }
   var btn = document.getElementById('season_mgmt_submit');
   btn.disabled = true;
@@ -2209,13 +2228,19 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     standings = season && Array.isArray(season.standings) ? season.standings : [];
   }
 
-  let poolConfirmed = 0, poolMin = 0, poolMax = 0;
+  let poolConfirmed = 0, poolMin = 0, poolMax = 0, poolGoaliesConfirmed = 0, poolGoalieMin = 0;
   if (isHeadcount && nextEvent) {
     const nextEventId = makeEventId(leagueId, nextEvent.date);
     const st = await teamState(env.DB, nextEventId, HEADCOUNT_TEAM_NAME, cfg);
     poolConfirmed = st.skaters + st.goalies;
     poolMin = cfg.minSkaters || 0;
     poolMax = cfg.skatersPerTeam || 0;
+    // Part 5: only shown when this league actually set a real goalie
+    // minimum (goaliesPerTeam > 0) -- a league that doesn't care about
+    // goalie coverage isn't shown irrelevant detail, per the task's
+    // own explicit requirement.
+    poolGoaliesConfirmed = st.goalies;
+    poolGoalieMin = cfg.goaliesPerTeam || 0;
   }
 
   // Scoped to whether standings/the headcount pool figure actually
@@ -2241,6 +2266,9 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     if (isHeadcount) {
       Object.assign(base, lang === 'fr' ? { poolConfirmed: 'confirmés' } : { poolConfirmed: 'confirmed' });
     }
+    if (isHeadcount && poolGoalieMin > 0) {
+      Object.assign(base, lang === 'fr' ? { poolGoalies: 'gardiens confirmés' } : { poolGoalies: 'goalies confirmed' });
+    }
     return base;
   }
   const I18N_PUBLIC = { fr: buildDict('fr'), en: buildDict('en') };
@@ -2253,6 +2281,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     <div class="overline" style="color:rgba(255,255,255,.65)" data-i18n="nextGame">${esc(t.nextGame)}</div>
     <div class="pb-hero-when">${esc(nextEvent.date)}${nextEvent.start_time ? ' · ' + esc(nextEvent.start_time) : ''}</div>
     ${isHeadcount ? `<div class="pb-hero-pool"><span class="tnum">${poolConfirmed}</span>${poolMax ? `<span>/${poolMax}</span>` : ''} <span data-i18n="poolConfirmed">${esc(t.poolConfirmed)}</span></div>` : ''}
+    ${isHeadcount && poolGoalieMin > 0 ? `<div class="pb-hero-pool"><span class="tnum">${poolGoaliesConfirmed}</span><span>/${poolGoalieMin}</span> <span data-i18n="poolGoalies">${esc(t.poolGoalies)}</span></div>` : ''}
     ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}</div>` : ''}
   </div>` : '';
 
@@ -2408,7 +2437,7 @@ async function handleLeagueRosterPage(req, env, url) {
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
 
   const contacts = (await env.DB.prepare(
-    'SELECT player_id, name, email, phone, role, preferred_team FROM contacts WHERE league_id = ? ORDER BY name'
+    'SELECT player_id, name, email, phone, role, preferred_team, is_goalie FROM contacts WHERE league_id = ? ORDER BY name'
   ).bind(leagueId).all()).results || [];
 
   const seasonCfg = await getLeagueSeasonConfig(env, leagueId);
@@ -2422,6 +2451,12 @@ async function handleLeagueRosterPage(req, env, url) {
   // page; only 'fixed' shows them, unchanged from before this task.
   const teamStructure = seasonCfg.teamStructure || 'fixed';
   const showTeams = teamStructure === 'fixed';
+  // Part 5: headcount+hockey gets a SECOND, independent Goalie/Player
+  // axis alongside the existing Regular/Sub one -- gated on sport_type
+  // so this stays inert (and invisible) the moment a non-hockey sport
+  // exists, without this page needing to know anything else about that
+  // future sport.
+  const showGoalieAxis = teamStructure === 'headcount' && seasonCfg.sportType === 'hockey';
 
   const subCount = contacts.filter(c => c.role !== 'roster').length;
   const unassignedCount = contacts.filter(c => c.role === 'roster' && !c.preferred_team).length;
@@ -2437,7 +2472,10 @@ async function handleLeagueRosterPage(req, env, url) {
       role: 'Rôle', roleRoster: 'Régulier', roleSubSkater: 'Remplaçant — joueur', roleSubGoalie: 'Remplaçant — gardien', roleSub: 'Remplaçant',
       teamOpt: 'Équipe (optionnel)', teamUnassigned: 'Non assigné', addBtn: 'Ajouter', cancel: 'Annuler',
       players: 'Joueurs', unassigned: 'Non assigné', noPlayers: "Aucun joueur pour l'instant.",
-      weeklyDrawNote: "Les équipes sont assignées à chaque match, pas ici — voir la page d'un match."
+      weeklyDrawNote: "Les équipes sont assignées à chaque match, pas ici — voir la page d'un match.",
+      goalieAxis: 'Gardien ou joueur?', axisPlayer: 'Joueur', axisGoalie: 'Gardien',
+      goalieAxisHelp: 'Indépendant de Régulier/Remplaçant — un gardien peut être régulier ou remplaçant.',
+      colGoalie: 'Gardien'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
@@ -2448,7 +2486,10 @@ async function handleLeagueRosterPage(req, env, url) {
       role: 'Role', roleRoster: 'Regular', roleSubSkater: 'Sub — skater', roleSubGoalie: 'Sub — goalie', roleSub: 'Sub',
       teamOpt: 'Team (optional)', teamUnassigned: 'Unassigned', addBtn: 'Add', cancel: 'Cancel',
       players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.',
-      weeklyDrawNote: 'Teams are assigned per game, not here — see a game’s own page.'
+      weeklyDrawNote: 'Teams are assigned per game, not here — see a game’s own page.',
+      goalieAxis: 'Goalie or player?', axisPlayer: 'Player', axisGoalie: 'Goalie',
+      goalieAxisHelp: "Independent of Regular/Sub — a goalie can be regular or sub.",
+      colGoalie: 'Goalie'
     }
   };
 
@@ -2468,6 +2509,7 @@ async function handleLeagueRosterPage(req, env, url) {
       <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}</td>
       ${showTeams ? `<td>${c.preferred_team ? esc(c.preferred_team) : `<span class="nl-help" data-i18n="teamUnassigned">Non assigné</span>`}</td>` : ''}
       <td><span data-i18n="${roleKey}">${esc(I18N_ROSTER.fr[roleKey])}</span></td>
+      ${showGoalieAxis ? `<td>${c.is_goalie ? `<span data-i18n="axisGoalie">Gardien</span>` : ''}</td>` : ''}
     </tr>`;
   }).join('');
 
@@ -2503,7 +2545,7 @@ async function handleLeagueRosterPage(req, env, url) {
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);" class="ro-grid">
     <div class="ro-table-wrap">
       <table>
-        <thead><tr><th data-i18n="colPlayer">Joueur</th>${showTeams ? '<th data-i18n="colTeam">Équipe</th>' : ''}<th data-i18n="colRole">Rôle</th></tr></thead>
+        <thead><tr><th data-i18n="colPlayer">Joueur</th>${showTeams ? '<th data-i18n="colTeam">Équipe</th>' : ''}<th data-i18n="colRole">Rôle</th>${showGoalieAxis ? '<th data-i18n="colGoalie">Gardien</th>' : ''}</tr></thead>
         <tbody id="ro_tbody">${rows || ''}</tbody>
       </table>
       ${!contacts.length ? `<p class="nl-help" style="padding:var(--space-4);margin:0;" data-i18n="noPlayers">Aucun joueur pour l'instant.</p>` : ''}
@@ -2534,6 +2576,14 @@ async function handleLeagueRosterPage(req, env, url) {
           <label data-value="sub_goalie"><span data-i18n="roleSubGoalie">Remplaçant — gardien</span></label>`}
         </div>
       </div>
+      ${showGoalieAxis ? `<div class="nl-field">
+        <span class="nl-label" data-i18n="goalieAxis">Gardien ou joueur?</span>
+        <div class="ro-radio" id="r_goalie_radio" style="grid-template-columns:1fr 1fr">
+          <label data-value="player" class="on"><span data-i18n="axisPlayer">Joueur</span></label>
+          <label data-value="goalie"><span data-i18n="axisGoalie">Gardien</span></label>
+        </div>
+        <p class="nl-help" data-i18n="goalieAxisHelp">Indépendant de Régulier/Remplaçant — un gardien peut être régulier ou remplaçant.</p>
+      </div>` : ''}
       ${showTeams ? `<div class="nl-field">
         <label class="nl-label" for="r_team" data-i18n="teamOpt">Équipe (optionnel)</label>
         <select class="nl-select" id="r_team">
@@ -2558,6 +2608,14 @@ document.querySelectorAll('#r_role_radio label').forEach(function(l) {
     document.querySelectorAll('#r_role_radio label').forEach(function(x) { x.classList.remove('on'); });
     l.classList.add('on');
     r_role = l.getAttribute('data-value');
+  });
+});
+var r_goalie = false;
+document.querySelectorAll('#r_goalie_radio label').forEach(function(l) {
+  l.addEventListener('click', function() {
+    document.querySelectorAll('#r_goalie_radio label').forEach(function(x) { x.classList.remove('on'); });
+    l.classList.add('on');
+    r_goalie = l.getAttribute('data-value') === 'goalie';
   });
 });
 function toggleRosterPanel() {
@@ -2588,7 +2646,7 @@ async function submitContact() {
     var res = await fetch('/league/contacts', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined })
+      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined, is_goalie: ${showGoalieAxis ? 'r_goalie' : 'undefined'} })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
@@ -2854,7 +2912,7 @@ ${tabbar}`;
       remindSentOne: 'Rappel envoyé à 1 joueur.', remindSentMany: 'Rappel envoyé à {n} joueurs.', remindSentNone: "Tout le monde a déjà répondu, rien à envoyer.",
       remindSendFailed: "Échec de l'envoi à {n} joueur(s). Réessaie plus tard ou contacte le soutien si le problème persiste.",
       remindSentPartial: 'Rappel envoyé à {sent} joueur(s), mais {failed} envoi(s) ont échoué.',
-      poolTitle: 'Joueurs',
+      poolTitle: 'Joueurs', poolGoalies: 'gardiens confirmés',
       unassignedTitle: 'Confirmés, pas encore assignés', unassignedDesc: 'Assigne chaque joueur confirmé à une équipe pour ce match.',
       noUnassigned: 'Tous les joueurs confirmés sont assignés.',
       assignTo: 'Assigner à…', assign: 'Assigner', randomDraw: 'Tirage aléatoire'
@@ -2871,7 +2929,7 @@ ${tabbar}`;
       remindSentOne: 'Reminder sent to 1 player.', remindSentMany: 'Reminder sent to {n} players.', remindSentNone: 'Everyone has already answered, nothing to send.',
       remindSendFailed: 'Failed to send to {n} player(s). Try again later, or contact support if this keeps happening.',
       remindSentPartial: 'Reminder sent to {sent} player(s), but {failed} send(s) failed.',
-      poolTitle: 'Players',
+      poolTitle: 'Players', poolGoalies: 'goalies confirmed',
       unassignedTitle: 'Confirmed, not yet assigned', unassignedDesc: 'Assign each confirmed player to a team for this game.',
       noUnassigned: 'Every confirmed player is assigned.',
       assignTo: 'Assign to…', assign: 'Assign', randomDraw: 'Random draw'
@@ -2956,6 +3014,7 @@ ${tabbar}`;
         <div><span class="stat tnum">${confirmed}</span><span data-i18n="confirmed">confirmés</span></div>
         <div><span class="stat tnum">${openSkaters + openGoalies}</span><span data-i18n="openSpots">places libres</span></div>
         <div><span class="stat tnum">${pendingCount}</span><span data-i18n="noReply">sans réponse</span></div>
+        ${isHeadcount && (cfg.goaliesPerTeam || 0) > 0 ? `<div><span class="stat tnum">${st.goalies}/${cfg.goaliesPerTeam}</span><span data-i18n="poolGoalies">gardiens confirmés</span></div>` : ''}
       </div>
       <div class="nl-meter">${Array.from({ length: meterSpots }, (_, s) => `<i class="${s < confirmed ? 'in' : 'open'}"></i>`).join('')}</div>
       ${inviteButtons.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${inviteButtons.join('')}</div>` : ''}
@@ -4704,11 +4763,20 @@ function hoursOut(ev) {
 // league-scoped caller (Part P) would pull SUB CANDIDATES FROM EVERY
 // LEAGUE, including SMBHL's real subs — a real cross-league data leak
 // this fixes, not a hypothetical one.
-async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID) {
-  const role = need === 'goalie' ? 'sub_goalie' : 'sub_skater';
+// isHeadcountHockeyPool: Part 5 -- a headcount+hockey league's subs
+// never get role='sub_goalie' at all (that 3-value role scheme belongs
+// to fixed/weekly_draw's own 3-option role picker); Goalie/Player is a
+// separate, independent is_goalie flag for this mode instead. Every
+// pre-existing caller (SMBHL's own flows, all of which never pass this
+// param) keeps the exact original role-only filter.
+async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, isHeadcountHockeyPool = false) {
+  const poolCondition = isHeadcountHockeyPool
+    ? (need === 'goalie' ? `c.role = 'sub_skater' AND c.is_goalie = 1` : `c.role = 'sub_skater' AND c.is_goalie != 1`)
+    : `c.role = ?`;
+  const poolBinds = isHeadcountHockeyPool ? [] : [need === 'goalie' ? 'sub_goalie' : 'sub_skater'];
   const pool = (await env.DB.prepare(
     `SELECT c.player_id FROM contacts c
-      WHERE c.role = ? AND c.league_id = ? AND c.opted_out = 0 AND c.dormant = 0 AND c.email IS NOT NULL
+      WHERE ${poolCondition} AND c.league_id = ? AND c.opted_out = 0 AND c.dormant = 0 AND c.email IS NOT NULL
         AND c.player_id NOT IN (SELECT player_id FROM rsvp
               WHERE event_id = ? AND player_id IS NOT NULL)
         AND c.player_id NOT IN (SELECT player_id FROM availability WHERE event_id = ?)
@@ -4722,7 +4790,7 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
                CASE WHEN c.last_asked IS NULL THEN 0 ELSE 1 END,
                c.last_asked ASC,
                c.name`
-  ).bind(role, leagueId, ev.id, ev.id, ev.id).all()).results || [];
+  ).bind(...poolBinds, leagueId, ev.id, ev.id, ev.id).all()).results || [];
 
   if (!pool.length) return 0;
   const hrs = hoursOut(ev);
@@ -10329,14 +10397,28 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
   });
   if (recent) return { invited: 0, reason: 'recently-invited' };
 
-  const role = need === 'goalie' ? 'sub_goalie' : 'sub_skater';
+  // Part 5: a headcount+hockey league's subs never get role='sub_goalie'
+  // at all -- that 3-value role scheme belongs to fixed/weekly_draw's
+  // own 3-option role picker (see the roster page's own comment).
+  // Headcount subs are always role='sub_skater', with Goalie/Player as
+  // a SEPARATE, independent is_goalie flag -- so a goalie-need pool for
+  // this mode has to match on is_goalie=1 AND role='sub_skater'
+  // instead of the old role='sub_goalie' filter, or it would silently
+  // find zero eligible subs for every headcount league forever.
+  // Fixed/weekly_draw are completely unaffected -- they keep the exact
+  // original role-only filter.
+  const isHeadcountHockeyPool = cfg.teamStructure === 'headcount' && cfg.sportType === 'hockey';
+  const poolCondition = isHeadcountHockeyPool
+    ? (need === 'goalie' ? `role = 'sub_skater' AND is_goalie = 1` : `role = 'sub_skater' AND is_goalie != 1`)
+    : `role = ?`;
+  const poolBinds = isHeadcountHockeyPool ? [] : [need === 'goalie' ? 'sub_goalie' : 'sub_skater'];
   const pool = (await env.DB.prepare(
     `SELECT player_id FROM contacts
-      WHERE role = ? AND league_id = ? AND opted_out = 0 AND dormant = 0 AND email IS NOT NULL
+      WHERE ${poolCondition} AND league_id = ? AND opted_out = 0 AND dormant = 0 AND email IS NOT NULL
         AND player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)
         AND player_id NOT IN (SELECT player_id FROM availability WHERE event_id = ?)
       ORDER BY answered_ever DESC, name`
-  ).bind(role, leagueId, ev.id, ev.id).all()).results || [];
+  ).bind(...poolBinds, leagueId, ev.id, ev.id).all()).results || [];
 
   if (!pool.length) return { invited: 0, reason: 'no-eligible-subs' };
 
@@ -11373,7 +11455,7 @@ async function handleLeagueInviteSubs(req, env, url) {
     return Response.json({ ok: false, error: 'Unknown team for this league.', errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
   }
 
-  const invited = await callSubs(env, ev, team, need, 0, leagueId);
+  const invited = await callSubs(env, ev, team, need, 0, leagueId, cfg.teamStructure === 'headcount' && cfg.sportType === 'hockey');
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, team, need, invited });
 }
 

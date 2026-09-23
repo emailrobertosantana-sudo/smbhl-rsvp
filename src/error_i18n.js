@@ -97,6 +97,8 @@ export const ERROR_I18N = {
   MIN_TEAM_NAMES: { fr: "Au moins 2 noms d'équipe sont requis.", en: 'At least 2 team names are required.' },
   HEADCOUNT_LIMITS_REQUIRED: { fr: 'Un nombre minimum et maximum de joueurs est requis.', en: 'A minimum and maximum player count are required.' },
   HEADCOUNT_MAX_TOO_LOW: { fr: 'Le maximum doit être au moins égal au minimum.', en: 'The maximum must be at least the minimum.' },
+  HEADCOUNT_MIN_GOALIES_INVALID: { fr: 'Le minimum de gardiens doit être zéro ou plus.', en: 'Minimum goalies must be zero or more.' },
+  HEADCOUNT_MIN_GOALIES_TOO_HIGH: { fr: "Le minimum de gardiens ne peut pas dépasser le maximum de joueurs.", en: "Minimum goalies can't be more than the maximum player count." },
   NOT_WEEKLY_DRAW: { fr: "Cette ligue n'assigne pas les équipes par match.", en: 'This league does not assign teams per event.' },
   INVALID_TEAM_STRUCTURE: { fr: "La structure doit être 'équipes fixes', 'aucune équipe' ou 'équipes chaque semaine'.", en: "team_structure must be 'fixed', 'headcount', or 'weekly_draw'." },
   ASSIGN_TEAM_FIELDS_REQUIRED: { fr: 'Des champs requis sont manquants.', en: 'event_id, player_id, and team are required.' },

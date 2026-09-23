@@ -47,7 +47,13 @@ export const DEFAULT_SEASON_CONFIG = {
   tracksStats: true,
   // Team-structure task: SMBHL (and every league before this task) is
   // 'fixed' -- teams set once, players belong to one all season.
-  teamStructure: 'fixed'
+  teamStructure: 'fixed',
+  // Part 5 (headcount goalie minimum) foundation: SMBHL and every
+  // league today is 'hockey' -- see migrate-028.sql. Threaded through
+  // the exact same way teamStructure already is (a league-level
+  // leagues.sport_type column, not part of a season's own config
+  // shape at all).
+  sportType: 'hockey'
 };
 
 /**
@@ -94,7 +100,20 @@ export function normalizeSeasonConfig(rawConfig) {
 
   return {
     teams,
-    goaliesPerTeam: Number(rawConfig.goaliesPerTeam) || DEFAULT_SEASON_CONFIG.goaliesPerTeam,
+    // Part 5 (headcount goalie minimum) fix: this used to be
+    // `Number(rawConfig.goaliesPerTeam) || DEFAULT...`, which silently
+    // discarded an explicit, intentional 0 (0 is falsy) and fell back
+    // to the generic default of 1 -- fine when nothing ever actually
+    // stored a literal 0 here (every pre-existing writer only sets
+    // this field when the value is > 0, so this branch was previously
+    // unreachable with real data), but wrong now that a headcount
+    // league's own min_goalies=0 ("no goalie requirement", a real,
+    // common, intentional choice) needs to resolve to a real 0, not
+    // silently become 1. Explicit undefined/null check instead --
+    // every existing caller is unaffected, since none of them have
+    // ever stored 0 here.
+    goaliesPerTeam: (rawConfig.goaliesPerTeam !== undefined && rawConfig.goaliesPerTeam !== null)
+      ? Number(rawConfig.goaliesPerTeam) : DEFAULT_SEASON_CONFIG.goaliesPerTeam,
     skatersPerTeam: Number(rawConfig.skatersPerTeam) || DEFAULT_SEASON_CONFIG.skatersPerTeam,
     minSkaters: Number(rawConfig.minSkaters) || DEFAULT_SEASON_CONFIG.minSkaters,
     playoffFormat: rawConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat,
@@ -106,7 +125,11 @@ export function normalizeSeasonConfig(rawConfig) {
     // always threaded in from the league's own leagues.team_structure
     // column (see getLeagueSeasonConfig), same mechanism as
     // leagueTeamNames/leagueBranding/leagueRosterLimits above.
-    teamStructure: rawConfig.teamStructure || 'fixed'
+    teamStructure: rawConfig.teamStructure || 'fixed',
+    // Part 5 foundation: same mechanism as teamStructure above -- a
+    // league-level leagues.sport_type column, threaded in via
+    // getLeagueSeasonConfig, never part of a season's own config shape.
+    sportType: rawConfig.sportType || 'hockey'
   };
 }
 
@@ -145,13 +168,19 @@ export function normalizeSeasonConfig(rawConfig) {
 // carries it (the exact "explicit field list" trap languageMode/color
 // already got caught by once each -- fixed here before it became a
 // live bug instead of after).
-function withLeagueBrandingDefault(config, leagueBranding, teamStructure) {
+function withLeagueBrandingDefault(config, leagueBranding, teamStructure, sportType) {
   let out = config;
   if (leagueBranding && typeof leagueBranding === 'object') {
     out = { ...out, league: { ...leagueBranding, ...(out.league || {}) } };
   }
   if (teamStructure) {
     out = { ...out, teamStructure: out.teamStructure || teamStructure };
+  }
+  // Part 5 foundation: same reasoning as teamStructure just above --
+  // sportType is a league-level property, not part of a published
+  // season's own .config object, so it has to be merged in here too.
+  if (sportType) {
+    out = { ...out, sportType: out.sportType || sportType };
   }
   return out;
 }
@@ -167,24 +196,30 @@ function withLeagueBrandingDefault(config, leagueBranding, teamStructure) {
 // parallel ones -- a headcount league has exactly one implicit "team"
 // (see writeLeagueRsvpStatus's own comment), so these fields already
 // mean exactly "how many people total" for it.
-function fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure) {
+function fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure, leagueSportType) {
   const hasTeams = Array.isArray(leagueTeamNames) && leagueTeamNames.length > 0;
   const hasBranding = leagueBranding && typeof leagueBranding === 'object';
   const hasLimits = leagueRosterLimits && typeof leagueRosterLimits === 'object'
     && Number.isFinite(Number(leagueRosterLimits.maxPlayers)) && Number.isFinite(Number(leagueRosterLimits.minPlayers));
+  // Part 5: minGoalies is optional even when hasLimits is true (0, "no
+  // goalie requirement", is a valid, common, intentional headcount
+  // choice) -- only included when it's a real finite number, so an
+  // absent/undefined minGoalies doesn't accidentally coerce to
+  // Number(undefined) = NaN downstream.
+  const hasMinGoalies = hasLimits && Number.isFinite(Number(leagueRosterLimits.minGoalies));
   if (hasTeams || hasBranding || hasLimits || leagueTeamStructure) {
     return normalizeSeasonConfig({
       ...(hasTeams ? { teams: leagueTeamNames } : {}),
       ...(hasBranding ? { league: leagueBranding } : {}),
-      // Deliberately no goaliesPerTeam override here: normalizeSeasonConfig's
-      // own `Number(x) || DEFAULT` resolution treats 0 as falsy and would
-      // silently fall back to the default (1) anyway. Headcount rosters
-      // never expose the is_goalie flag at all (see the roster page's own
-      // comment), so teamState's existing goalie-priority logic naturally
-      // finds zero goalie-flagged players and folds everyone into
-      // `skaters` regardless of this field's value -- no override needed.
       ...(hasLimits ? { skatersPerTeam: Number(leagueRosterLimits.maxPlayers), minSkaters: Number(leagueRosterLimits.minPlayers) } : {}),
-      ...(leagueTeamStructure ? { teamStructure: leagueTeamStructure } : {})
+      // normalizeSeasonConfig now correctly distinguishes an explicit 0
+      // from "not provided" (Part 5's own falsy-zero fix), so this can
+      // safely pass a real 0 through when that's the league's real
+      // min_goalies -- no longer needs to be omitted the way it used
+      // to be before that fix.
+      ...(hasMinGoalies ? { goaliesPerTeam: Number(leagueRosterLimits.minGoalies) } : {}),
+      ...(leagueTeamStructure ? { teamStructure: leagueTeamStructure } : {}),
+      ...(leagueSportType ? { sportType: leagueSportType } : {})
     });
   }
   return { ...DEFAULT_SEASON_CONFIG };
@@ -214,16 +249,19 @@ function fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimit
  *   league-level params above, this one is merged in REGARDLESS of
  *   whether a real season config exists (see withLeagueBrandingDefault's
  *   own comment for why)
+ * @param {string} [leagueSportType] - A league's own sport_type
+ *   ('hockey' today, always) — same "merged in regardless" treatment
+ *   as leagueTeamStructure, for the same reason (Part 5 foundation)
  * @returns {Object} Normalized season config
  */
-export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTeamNames = null, leagueBranding = null, leagueRosterLimits = null, leagueTeamStructure = null) {
+export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTeamNames = null, leagueBranding = null, leagueRosterLimits = null, leagueTeamStructure = null, leagueSportType = null) {
   if (!seasonOrData || typeof seasonOrData !== 'object') {
-    return fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure);
+    return fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure, leagueSportType);
   }
 
   // Case 1: Direct season object carrying .config
   if (seasonOrData.config && typeof seasonOrData.config === 'object') {
-    return normalizeSeasonConfig(withLeagueBrandingDefault(seasonOrData.config, leagueBranding, leagueTeamStructure));
+    return normalizeSeasonConfig(withLeagueBrandingDefault(seasonOrData.config, leagueBranding, leagueTeamStructure, leagueSportType));
   }
 
   // Case 2: Direct season object that has no config (e.g. historical season with standings or fixtures).
@@ -251,11 +289,11 @@ export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTea
     }
 
     if (seasonObj && seasonObj.config) {
-      return normalizeSeasonConfig(withLeagueBrandingDefault(seasonObj.config, leagueBranding, leagueTeamStructure));
+      return normalizeSeasonConfig(withLeagueBrandingDefault(seasonObj.config, leagueBranding, leagueTeamStructure, leagueSportType));
     }
   }
 
-  return fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure);
+  return fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure, leagueSportType);
 }
 
 /**

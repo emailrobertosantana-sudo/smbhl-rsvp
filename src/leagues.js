@@ -184,8 +184,9 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
   let leagueBranding = null;
   let leagueRosterLimits = null;
   let leagueTeamStructure = null;
+  let leagueSportType = null;
   const leagueRow = await env.DB.prepare(
-    `SELECT l.id, l.name, l.slug, l.team_names, l.language_mode, l.color, l.team_structure, l.min_players, l.max_players, u.email AS admin_email
+    `SELECT l.id, l.name, l.slug, l.team_names, l.language_mode, l.color, l.team_structure, l.min_players, l.max_players, l.min_goalies, l.sport_type, u.email AS admin_email
        FROM leagues l JOIN users u ON u.id = l.created_by
       WHERE l.id = ?`
   ).bind(leagueId).first();
@@ -232,11 +233,18 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
     // existing row.
     leagueTeamStructure = leagueRow.team_structure || 'fixed';
     if (leagueRow.min_players != null && leagueRow.max_players != null) {
-      leagueRosterLimits = { minPlayers: leagueRow.min_players, maxPlayers: leagueRow.max_players };
+      // Part 5: min_goalies (migrate-029.sql, DEFAULT 0) rides along
+      // with minPlayers/maxPlayers -- only meaningful for headcount,
+      // and 0 ("no goalie requirement") is real, intentional data, not
+      // an absence to special-case around.
+      leagueRosterLimits = { minPlayers: leagueRow.min_players, maxPlayers: leagueRow.max_players, minGoalies: leagueRow.min_goalies };
     }
+    // Part 5 foundation: migrate-028.sql, default 'hockey' for every
+    // existing row.
+    leagueSportType = leagueRow.sport_type || 'hockey';
   }
 
-  return getSeasonConfig(leagueData, seasonName, leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure);
+  return getSeasonConfig(leagueData, seasonName, leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure, leagueSportType);
 }
 
 /* ---------- proof of concept: GET /league/contacts ----------
@@ -390,7 +398,7 @@ export async function handleLeagueContactCreate(req, env) {
   phone = phone ? (phone.replace(/[^\d+().\s-]/g, '').trim() || null) : null;
 
   const position = String(body.position || '').toUpperCase().trim() || null;
-  const isGoalie = (role === 'sub_goalie' || position === 'G') ? 1 : 0;
+  let isGoalie = (role === 'sub_goalie' || position === 'G') ? 1 : 0;
 
   // Part 1 fix: the roster had no team assignment at all, so shortage
   // detection could never see real per-team roster sizes. `team` is
@@ -402,12 +410,27 @@ export async function handleLeagueContactCreate(req, env) {
   // published season's own config after), so this works identically
   // whether or not a season has been published yet.
   let team = String(body.team || '').trim() || null;
+  // Part 5: resolved unconditionally (not just when `team` is given)
+  // now, since headcount+hockey needs it below for the independent
+  // Goalie/Player axis.
+  const cfg = await getLeagueSeasonConfig(env, leagueId);
   if (team) {
-    const cfg = await getLeagueSeasonConfig(env, leagueId);
     const validTeams = getTeamNames(cfg);
     if (!validTeams.includes(team)) {
       return Response.json({ ok: false, error: `team must be one of: ${validTeams.join(', ')}`, errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
     }
+  }
+  // Part 5: for a headcount+hockey league, Regular/Sub (role) and
+  // Goalie/Player (is_goalie) are two INDEPENDENT axes -- role alone
+  // (roster/sub_skater, never sub_goalie for this mode -- see the
+  // roster page's own 2-option picker) can no longer imply is_goalie,
+  // so an explicit body.is_goalie boolean is accepted instead,
+  // defaulting to false (a regular player, not a goalie) when omitted.
+  // Fixed/weekly_draw leagues are completely unaffected -- they keep
+  // deriving is_goalie from role/position exactly as before, since
+  // this block only runs for headcount+hockey.
+  if (cfg.teamStructure === 'headcount' && cfg.sportType === 'hockey') {
+    isGoalie = body.is_goalie === true ? 1 : 0;
   }
 
   const maxP = await env.DB.prepare(
@@ -592,7 +615,7 @@ export async function handleLeagueSeasonPublish(req, env) {
     return Response.json({ ok: false, error: 'This route cannot publish to SMBHL\'s data.' }, { status: 403 });
   }
 
-  const leagueRow = await env.DB.prepare('SELECT team_names, team_structure, min_players, max_players FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT team_names, team_structure, min_players, max_players, min_goalies FROM leagues WHERE id = ?').bind(leagueId).first();
   let teamNames = [];
   if (leagueRow && leagueRow.team_names) {
     try {
@@ -713,13 +736,24 @@ export async function handleLeagueSeasonPublish(req, env) {
         return Response.json({ ok: false, error: 'The maximum must be at least the minimum.', errorKey: 'HEADCOUNT_MAX_TOO_LOW' }, { status: 400 });
       }
     }
-    // Deliberately no goaliesPerTeam override here -- same reasoning as
-    // fallbackSeasonConfig's own comment in season_config.js (headcount
-    // rosters never expose is_goalie, so it's never consulted for this
-    // mode regardless of its value).
     if (Number.isFinite(minP) && Number.isFinite(maxP)) {
       config.skatersPerTeam = maxP;
       config.minSkaters = minP;
+    }
+    // Part 5 (headcount goalie minimum): body.min_goalies if this call
+    // explicitly overrides it, else the league's own real min_goalies
+    // (always a real 0-or-more integer -- migrate-029.sql's own
+    // DEFAULT 0). Always set explicitly (even when 0) -- normalizeSeasonConfig
+    // (season_config.js) now correctly distinguishes an explicit 0 from
+    // "not provided", so this deliberately does NOT fall through to
+    // that function's own DEFAULT_SEASON_CONFIG.goaliesPerTeam (1),
+    // which would silently impose a goalie requirement no one asked
+    // for. Reuses config.goaliesPerTeam -- the exact same field
+    // fixed-mode teams already use -- so teamState/expected/openSpots
+    // need zero adaptation to enforce it pool-wide for headcount.
+    const minG = body.min_goalies !== undefined ? Number(body.min_goalies) : (leagueRow && leagueRow.min_goalies) || 0;
+    if (Number.isFinite(minG) && minG >= 0) {
+      config.goaliesPerTeam = minG;
     }
   }
 
@@ -852,6 +886,7 @@ export async function handleLeagueCreate(req, env) {
     let teamNames = [];
     let minPlayers = null;
     let maxPlayers = null;
+    let minGoalies = 0;
     if (teamStructure === 'headcount') {
       // No team concept at all -- a single minimum/maximum player
       // count instead (reuses the exact same min/max PATTERN fixed-mode
@@ -863,6 +898,21 @@ export async function handleLeagueCreate(req, env) {
       }
       if (maxPlayers < minPlayers) {
         return Response.json({ ok: false, error: 'The maximum must be at least the minimum.', errorKey: 'HEADCOUNT_MAX_TOO_LOW' }, { status: 400 });
+      }
+      // Part 5 (headcount goalie minimum): optional, unlike min/max
+      // players -- 0 (no goalie requirement at all) is a real,
+      // intentional, common choice for a pickup league that doesn't
+      // care about goalie coverage specifically, not a placeholder for
+      // "not decided yet". Only meaningful while sport_type is
+      // 'hockey' (every league today -- see migrate-028.sql).
+      if (body.minGoalies !== undefined && body.minGoalies !== null && String(body.minGoalies).trim() !== '') {
+        minGoalies = Number(body.minGoalies);
+        if (!Number.isFinite(minGoalies) || minGoalies < 0) {
+          return Response.json({ ok: false, error: 'Minimum goalies must be zero or more.', errorKey: 'HEADCOUNT_MIN_GOALIES_INVALID' }, { status: 400 });
+        }
+        if (minGoalies > maxPlayers) {
+          return Response.json({ ok: false, error: "Minimum goalies can't be more than the maximum player count.", errorKey: 'HEADCOUNT_MIN_GOALIES_TOO_HIGH' }, { status: 400 });
+        }
       }
       // The single implicit "team" every headcount league's rsvp rows
       // get tagged with -- never shown in any headcount UI surface
@@ -909,9 +959,9 @@ export async function handleLeagueCreate(req, env) {
     const now = new Date().toISOString();
 
     await env.DB.prepare(
-      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at, slug, team_structure, min_players, max_players)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug, teamStructure, minPlayers, maxPlayers).run();
+      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at, slug, team_structure, min_players, max_players, min_goalies)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug, teamStructure, minPlayers, maxPlayers, minGoalies).run();
 
     await env.DB.prepare(
       `INSERT INTO league_admins (user_id, league_id, role, created_at) VALUES (?, ?, 'admin', ?)`
@@ -929,7 +979,8 @@ export async function handleLeagueCreate(req, env) {
         slug,
         teamStructure,
         minPlayers,
-        maxPlayers
+        maxPlayers,
+        minGoalies
       }
     });
   } catch (err) {

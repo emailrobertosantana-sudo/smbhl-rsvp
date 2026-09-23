@@ -1,0 +1,22 @@
+-- Migration 029: goalie minimum for headcount leagues (Part 5 of a
+-- live-testing task). Purely additive -- every existing league,
+-- including SMBHL's own bootstrap row, gets min_goalies = 0 (no
+-- goalie requirement at all), functionally identical to today's
+-- single-number headcount shortage logic. This migration changes
+-- NOTHING about how any existing league behaves.
+--
+-- Apply with:
+--   npx wrangler d1 execute notreligue-demo --remote --env demo --file=./migrate-029.sql
+--
+-- WHAT THIS DOES:
+-- min_goalies: ONLY meaningful for a 'headcount' league whose
+-- sport_type is 'hockey' (every headcount league today). Optional --
+-- unlike min_players/max_players (required for headcount), 0 is a
+-- completely valid, intentional "I don't care about goalie coverage"
+-- choice, not a placeholder for "not set yet". Reuses the exact same
+-- per-role shortage machinery already built for fixed-team mode
+-- (config.goaliesPerTeam, teamState/expected/openSpots in index.js) --
+-- headcount's single implicit pool (HEADCOUNT_TEAM_NAME) already
+-- means that machinery needs zero adaptation to work pool-wide.
+
+ALTER TABLE leagues ADD COLUMN min_goalies INTEGER NOT NULL DEFAULT 0;

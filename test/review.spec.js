@@ -848,7 +848,8 @@ describe('Multi-team season config (6-team season, Parts 3 & 4)', () => {
         color: '#b3122e'
       },
       tracksStats: true,
-      teamStructure: 'fixed'
+      teamStructure: 'fixed',
+      sportType: 'hockey'
     });
     expect(getTeamNames(getSeasonConfig({ name: 'Configless Season', standings: [], fixtures: [] })))
       .toEqual(['Red', 'Blue', 'White', 'Black']);
