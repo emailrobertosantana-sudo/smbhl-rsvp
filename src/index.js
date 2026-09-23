@@ -16600,8 +16600,19 @@ async function handleFetch(req, env, ctx) {
           { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if (url.pathname === '/health')
         return new Response('ok');
-      if (url.pathname === '/' || url.pathname === '')
-        return Response.redirect('https://smbhl.com', 302);
+      if (url.pathname === '/' || url.pathname === '') {
+        // Part 0: this Worker now also serves other leagues' own domains
+        // (e.g. notreligue.ca) directly, not just SMBHL's. SMBHL's own
+        // deployment (env.PUBLIC_URL pointing at smbhl.com) keeps its
+        // exact original behavior -- everyone else lands on /signup,
+        // which is already a real, bilingual FR-default product intro +
+        // form (not a bare form), so a direct redirect is a genuine
+        // "simple homepage", not a dead end.
+        if ((env.PUBLIC_URL || '').includes('smbhl.com')) {
+          return Response.redirect('https://smbhl.com', 302);
+        }
+        return Response.redirect(url.origin + '/signup', 302);
+      }
       return new Response('not found', { status: 404 });
     } catch (e) {
       return new Response('error: ' + e.message, { status: 500 });
