@@ -589,9 +589,9 @@ const I18N_SIGNUP = {
     slugHelp: 'Créée à partir du nom. Tu peux la changer.',
     lblStats: 'Suivre les statistiques?', statsHelp: "Buts, passes, gardiens. Tu pourras l'activer plus tard.",
     structureLabel: 'Comment sont organisées tes équipes?',
-    structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'Les mêmes équipes toute la saison.',
-    structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: "Juste une liste de joueurs, pas d'équipes.",
-    structureWeeklyTitle: 'Équipes chaque semaine', structureWeeklyDesc: 'Les équipes changent à chaque match.',
+    structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
+    structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
+    structureWeeklyTitle: 'Équipes qui changent', structureWeeklyDesc: 'De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.',
     back: 'Retour',
     step3: 'Étape 3 sur 3', title3: "Combien d'équipes?",
     teamNamesLabel: 'Noms des équipes', teamPlaceholder: 'Équipe ', teamHelp: 'Pas encore décidé? Garde « Équipe 1, 2… ».',
@@ -613,9 +613,9 @@ const I18N_SIGNUP = {
     slugHelp: 'Created from the name. You can change it.',
     lblStats: 'Track stats?', statsHelp: 'Goals, assists, goalies. You can turn this on later.',
     structureLabel: 'How are your teams organized?',
-    structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same teams all season.',
-    structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of players, no teams.",
-    structureWeeklyTitle: 'Teams change weekly', structureWeeklyDesc: 'Teams are different every game.',
+    structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
+    structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
+    structureWeeklyTitle: 'Teams shuffle', structureWeeklyDesc: 'Fresh teams every game — we can even build them for you, automatically.',
     back: 'Back',
     step3: 'Step 3 of 3', title3: 'How many teams?',
     teamNamesLabel: 'Team names', teamPlaceholder: 'Team ', teamHelp: 'Not decided yet? Keep "Team 1, 2...".',
@@ -860,15 +860,15 @@ function renderSignupStep2() {
     <div class="su-structure" id="su_structure_radio">
       <label class="su-structure-opt on" data-value="fixed">
         <input type="radio" name="su_structure" value="fixed" checked>
-        <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">Les mêmes équipes toute la saison.</span></span>
+        <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue classique.</span></span>
       </label>
       <label class="su-structure-opt" data-value="headcount">
         <input type="radio" name="su_structure" value="headcount">
-        <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de joueurs, pas d'équipes.</span></span>
+        <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de qui embarque — parfait pour une partie improvisée.</span></span>
       </label>
       <label class="su-structure-opt" data-value="weekly_draw">
         <input type="radio" name="su_structure" value="weekly_draw">
-        <span><span class="t" data-i18n="structureWeeklyTitle">Équipes chaque semaine</span><span class="d" data-i18n="structureWeeklyDesc">Les équipes changent à chaque match.</span></span>
+        <span><span class="t" data-i18n="structureWeeklyTitle">Équipes qui changent</span><span class="d" data-i18n="structureWeeklyDesc">De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.</span></span>
       </label>
     </div>
   </div>
@@ -1404,9 +1404,9 @@ function buildDashI18n({ state, needsSeason, unverified }) {
         seasonStructureHelp: "Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.",
         seasonSaveBtn: 'Enregistrer la saison',
         structureLabel: 'Comment sont organisées tes équipes?',
-        structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'Les mêmes équipes toute la saison.',
-        structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: "Juste une liste de joueurs, pas d'équipes.",
-        structureWeeklyTitle: 'Équipes chaque semaine', structureWeeklyDesc: 'Les équipes changent à chaque match.',
+        structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
+        structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
+        structureWeeklyTitle: 'Équipes qui changent', structureWeeklyDesc: 'De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.',
         lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs'
       });
       Object.assign(en, {
@@ -1415,9 +1415,9 @@ function buildDashI18n({ state, needsSeason, unverified }) {
         seasonStructureHelp: "By default, a new season uses your league's usual structure. Change it here just for this season.",
         seasonSaveBtn: 'Save season',
         structureLabel: 'How are your teams organized?',
-        structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same teams all season.',
-        structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a player list, no teams.",
-        structureWeeklyTitle: 'New teams every week', structureWeeklyDesc: 'Teams change every game.',
+        structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
+        structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
+        structureWeeklyTitle: 'Teams shuffle', structureWeeklyDesc: 'Fresh teams every game — we can even build them for you, automatically.',
         lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players'
       });
     }
@@ -1673,15 +1673,15 @@ async function handleDashboardPage(req, env, url) {
       <div class="su-structure" id="season_structure_radio">
         <label class="su-structure-opt${leagueRow.team_structure === 'headcount' ? '' : ' on'}" data-value="fixed">
           <input type="radio" name="season_structure" value="fixed" ${leagueRow.team_structure === 'headcount' || leagueRow.team_structure === 'weekly_draw' ? '' : 'checked'}>
-          <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">Les mêmes équipes toute la saison.</span></span>
+          <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue classique.</span></span>
         </label>
         <label class="su-structure-opt${leagueRow.team_structure === 'headcount' ? ' on' : ''}" data-value="headcount">
           <input type="radio" name="season_structure" value="headcount" ${leagueRow.team_structure === 'headcount' ? 'checked' : ''}>
-          <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de joueurs, pas d'équipes.</span></span>
+          <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de qui embarque — parfait pour une partie improvisée.</span></span>
         </label>
         <label class="su-structure-opt${leagueRow.team_structure === 'weekly_draw' ? ' on' : ''}" data-value="weekly_draw">
           <input type="radio" name="season_structure" value="weekly_draw" ${leagueRow.team_structure === 'weekly_draw' ? 'checked' : ''}>
-          <span><span class="t" data-i18n="structureWeeklyTitle">Équipes chaque semaine</span><span class="d" data-i18n="structureWeeklyDesc">Les équipes changent à chaque match.</span></span>
+          <span><span class="t" data-i18n="structureWeeklyTitle">Équipes qui changent</span><span class="d" data-i18n="structureWeeklyDesc">De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.</span></span>
         </label>
       </div>
       <p class="nl-help" data-i18n="seasonStructureHelp">Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.</p>

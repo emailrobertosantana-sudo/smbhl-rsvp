@@ -206,7 +206,9 @@ describe('Team structure, Part 1: schema + signup', () => {
       expect(html).toContain('value="weekly_draw"');
       expect(html).toContain('Équipes fixes');
       expect(html).toContain('Aucune équipe');
-      expect(html).toContain('Équipes chaque semaine');
+      // Live-testing Part 3: title copy rewritten for clarity/voice --
+      // was "Équipes chaque semaine", now "Équipes qui changent".
+      expect(html).toContain('Équipes qui changent');
       expect(html).not.toContain('>fixed<');
       expect(html).not.toContain('>headcount<');
     });
