@@ -4,7 +4,7 @@ import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -15242,6 +15242,9 @@ async function handleFetch(req, env, ctx) {
       // this pattern.
       if (url.pathname === '/league/contacts' && req.method === 'GET')
         return await handleLeagueContacts(req, env, url);
+      // Events-read counterpart (Part L — see the task report).
+      if (url.pathname === '/league/events' && req.method === 'GET')
+        return await handleLeagueEvents(req, env, url);
       // Write-side league routes (Parts I/J/K — see the task reports):
       // session+checkLeagueAccess-gated ONLY, no ADMIN_KEY path at all —
       // these must never become a new door into SMBHL's data.

@@ -187,6 +187,33 @@ export async function handleLeagueContacts(req, env, url) {
   return Response.json({ ok: true, league_id: leagueId, contacts });
 }
 
+/* ---------- GET /league/events (Part L) ----------
+ * The events-read counterpart to GET /league/contacts above, built to
+ * close the loop for Part K's POST /league/events — same shape, same
+ * convention, so the two together give a league admin one consistent
+ * read/write pair per resource (/league/contacts, /league/events)
+ * instead of only being able to see their own events through the
+ * ADMIN_KEY-legacy-named /admin/schedule/data dual-auth route from Part G.
+ */
+export async function handleLeagueEvents(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const events = (await env.DB.prepare(
+    'SELECT id, season, week, date, venue, state, start_time, end_time FROM events WHERE league_id = ? ORDER BY date DESC, week DESC'
+  ).bind(leagueId).all()).results || [];
+
+  return Response.json({ ok: true, league_id: leagueId, events });
+}
+
 /* ---------- POST /league/contacts (Part J) ----------
  * League-scoped contact creation. Session+checkLeagueAccess-gated only —
  * same "no ADMIN_KEY door" discipline as season/publish. Matches the
