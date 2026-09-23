@@ -95,6 +95,22 @@ export function normalizeSeasonConfig(rawConfig) {
 // SMBHL already has real season configs, so this path doesn't trigger for
 // it either way, and every other existing caller's behavior is completely
 // unchanged.
+// Merges leagueBranding into config as a DEFAULT for its .league block —
+// the season's own explicit league branding (if it ever sets one) always
+// wins field-by-field, leagueBranding only fills in what's missing. This
+// matters because a real, already-published season (config.teams set at
+// /league/season/publish, say) has no .league block of its own at all —
+// without this merge, normalizeSeasonConfig would fall back to
+// DEFAULT_SEASON_CONFIG's SMBHL identity for EVERY branding field the
+// instant any real season config exists, even for a league that has
+// nothing to do with SMBHL. leagueBranding is null for every existing
+// 2/3-arg getSeasonConfig call (SMBHL's own, unconditionally), so this is
+// a no-op there — config is returned completely unchanged.
+function withLeagueBrandingDefault(config, leagueBranding) {
+  if (!leagueBranding || typeof leagueBranding !== 'object') return config;
+  return { ...config, league: { ...leagueBranding, ...(config.league || {}) } };
+}
+
 function fallbackSeasonConfig(leagueTeamNames, leagueBranding) {
   const hasTeams = Array.isArray(leagueTeamNames) && leagueTeamNames.length > 0;
   const hasBranding = leagueBranding && typeof leagueBranding === 'object';
@@ -132,7 +148,7 @@ export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTea
 
   // Case 1: Direct season object carrying .config
   if (seasonOrData.config && typeof seasonOrData.config === 'object') {
-    return normalizeSeasonConfig(seasonOrData.config);
+    return normalizeSeasonConfig(withLeagueBrandingDefault(seasonOrData.config, leagueBranding));
   }
 
   // Case 2: Direct season object that has no config (e.g. historical season with standings or fixtures).
@@ -160,7 +176,7 @@ export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTea
     }
 
     if (seasonObj && seasonObj.config) {
-      return normalizeSeasonConfig(seasonObj.config);
+      return normalizeSeasonConfig(withLeagueBrandingDefault(seasonObj.config, leagueBranding));
     }
   }
 

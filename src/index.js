@@ -793,8 +793,12 @@ function afterQuiet(d) {
 
 /* ---------- outbox ---------- */
 
+// league_id defaults to SMBHL_LEAGUE_ID — identical to what the outbox
+// table's own column DEFAULT would produce, so every existing call site
+// (none of which pass it) is completely unchanged. Only Part P's
+// league-scoped sub-invite route passes its own real leagueId.
 async function enqueue(env, { kind, event_id, player_id = null, team = null,
-                              dedup_key = null, payload = {}, delayMin = 0 }) {
+                              dedup_key = null, payload = {}, delayMin = 0, league_id = SMBHL_LEAGUE_ID }) {
   const now = new Date();
   const after = afterQuiet(new Date(now.getTime() + delayMin * 60000)).toISOString();
   if (dedup_key) {
@@ -804,10 +808,10 @@ async function enqueue(env, { kind, event_id, player_id = null, team = null,
     ).bind(dedup_key).run();
   }
   await env.DB.prepare(
-    `INSERT INTO outbox (kind,event_id,player_id,team,dedup_key,payload,send_after,created_at)
-     VALUES (?,?,?,?,?,?,?,?)`
+    `INSERT INTO outbox (kind,event_id,player_id,team,dedup_key,payload,send_after,created_at,league_id)
+     VALUES (?,?,?,?,?,?,?,?,?)`
   ).bind(kind, event_id, player_id, team, dedup_key,
-         JSON.stringify(payload), after, now.toISOString()).run();
+         JSON.stringify(payload), after, now.toISOString(), league_id).run();
 }
 
 async function cancelPending(env, dedup_key) {
@@ -1763,7 +1767,17 @@ async function drain(env, limit = 40) {
       } else if (!ev) {
         throw new Error('event gone');
       }
-      const seasonCfg = getSeasonConfig(await getDataJson(), ev.season);
+      // Part P: an outbox row tagged with a league other than SMBHL's
+      // resolves its send identity from THAT league's own data_json/
+      // branding (getLeagueSeasonConfig) instead of getDataJson(), which
+      // always reads the literal 'data_json' key — SMBHL's, unconditionally
+      // — and so is never correct for any other league's mail. Every
+      // existing SMBHL outbox row (m.league_id === SMBHL_LEAGUE_ID, the
+      // column's own DEFAULT) takes the exact same path as before this
+      // change, byte for byte.
+      const seasonCfg = (m.league_id && m.league_id !== SMBHL_LEAGUE_ID)
+        ? await getLeagueSeasonConfig(env, m.league_id, ev.season)
+        : getSeasonConfig(await getDataJson(), ev.season);
       const leagueCfg = getLeagueConfig(seasonCfg);
       if ((m.kind === 'season_recap' || m.kind === 'season_recap_prompt') && !tracksStats(seasonCfg)) {
         await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
@@ -2052,17 +2066,24 @@ function hoursOut(ev) {
   return st ? (st - new Date()) / 3600000 : 999;
 }
 
-async function callSubs(env, ev, team, need, startDelay = 0) {
+// leagueId defaults to SMBHL_LEAGUE_ID, matching every existing SMBHL
+// contact's own league_id tag (migrate-020.sql's default) exactly — so
+// every existing call site (none of which pass it) pulls the identical
+// pool of eligible subs as before this change. Without this filter, a
+// league-scoped caller (Part P) would pull SUB CANDIDATES FROM EVERY
+// LEAGUE, including SMBHL's real subs — a real cross-league data leak
+// this fixes, not a hypothetical one.
+async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID) {
   const role = need === 'goalie' ? 'sub_goalie' : 'sub_skater';
   const pool = (await env.DB.prepare(
     `SELECT c.player_id FROM contacts c
-      WHERE c.role = ? AND c.opted_out = 0 AND c.dormant = 0 AND c.email IS NOT NULL
+      WHERE c.role = ? AND c.league_id = ? AND c.opted_out = 0 AND c.dormant = 0 AND c.email IS NOT NULL
         AND c.player_id NOT IN (SELECT player_id FROM rsvp
               WHERE event_id = ? AND player_id IS NOT NULL)
         AND c.player_id NOT IN (SELECT player_id FROM availability WHERE event_id = ?)
-        AND c.player_id NOT IN (SELECT player_id FROM outbox 
-              WHERE event_id = ? AND kind = 'sub_call' AND player_id IS NOT NULL 
-                AND cancelled = 0 
+        AND c.player_id NOT IN (SELECT player_id FROM outbox
+              WHERE event_id = ? AND kind = 'sub_call' AND player_id IS NOT NULL
+                AND cancelled = 0
                 AND dedup_key NOT LIKE 'remind:%')
       ORDER BY c.answered_ever DESC,
                CASE WHEN c.last_played IS NULL THEN 1 ELSE 0 END,
@@ -2070,7 +2091,7 @@ async function callSubs(env, ev, team, need, startDelay = 0) {
                CASE WHEN c.last_asked IS NULL THEN 0 ELSE 1 END,
                c.last_asked ASC,
                c.name`
-  ).bind(role, ev.id, ev.id, ev.id).all()).results || [];
+  ).bind(role, leagueId, ev.id, ev.id, ev.id).all()).results || [];
 
   if (!pool.length) return 0;
   const hrs = hoursOut(ev);
@@ -2081,7 +2102,7 @@ async function callSubs(env, ev, team, need, startDelay = 0) {
   for (const p of pool) {
     await enqueue(env, { kind: 'sub_call', event_id: ev.id, player_id: p.player_id,
       team, dedup_key: `call:${ev.id}:${need}:${p.player_id}`,
-      payload: { need }, delayMin: startDelay + p.wave * gap });
+      payload: { need }, delayMin: startDelay + p.wave * gap, league_id: leagueId });
   }
   return pool.length;
 }
@@ -7646,6 +7667,56 @@ async function handleLeagueEventStatus(req, env, url) {
     event: { id: ev.id, season: ev.season, week: ev.week, date: ev.date, state: ev.state },
     teams
   });
+}
+
+/* ---------- league-scoped sub invites (Part P) ----------
+ * Session+checkLeagueAccess-gated. Manual trigger ONLY — see the task
+ * report's cron/automation design note for why this is not automatic yet.
+ * Reuses callSubs' exact wave logic (size, gap, dormancy, cutoff) — the
+ * only change from the SMBHL path is passing this league's own leagueId
+ * through so the eligible-subs pool is correctly scoped (see callSubs'
+ * own comment: without that, this would have pulled candidates from
+ * EVERY league, including SMBHL's real subs). The resulting outbox rows
+ * are tagged with this league_id, so drain() (see the fix above) sends
+ * them under this league's own identity, not SMBHL's.
+ */
+async function handleLeagueInviteSubs(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  // Defense in depth (see putLeagueDataJson's own comment): this route
+  // must never be able to act on SMBHL's behalf, even in principle.
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot invite subs for SMBHL.' }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const eventId = String(body.event_id || '').trim();
+  const team = String(body.team || '').trim();
+  const need = String(body.need || '').trim();
+  if (!eventId || !team || !['goalie', 'skater'].includes(need)) {
+    return Response.json({ ok: false, error: 'event_id, team, and need (goalie|skater) are required.' }, { status: 400 });
+  }
+
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
+    .bind(eventId, leagueId).first();
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.' }, { status: 404 });
+
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  if (!getTeamNames(cfg).includes(team)) {
+    return Response.json({ ok: false, error: 'Unknown team for this league.' }, { status: 400 });
+  }
+
+  const invited = await callSubs(env, ev, team, need, 0, leagueId);
+  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, team, need, invited });
 }
 
 async function linksRoute(req, env, url) {
@@ -15369,6 +15440,10 @@ async function handleFetch(req, env, ctx) {
       // Session-gated shortage status (Part O — see the task report).
       if (url.pathname === '/league/events/status' && req.method === 'GET')
         return await handleLeagueEventStatus(req, env, url);
+      // Session-gated manual sub-invite trigger (Part P — see the task
+      // report, including the cron/automation design note).
+      if (url.pathname === '/league/events/invite-subs' && req.method === 'POST')
+        return await handleLeagueInviteSubs(req, env, url);
       if (url.pathname === '/rsvp/absences' && req.method === 'POST')
         return await rsvpAbsencesPost(req, env, url);
       if (url.pathname === '/team-rsvp' && req.method === 'GET')

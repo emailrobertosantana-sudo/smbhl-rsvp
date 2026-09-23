@@ -17,7 +17,7 @@ describe("SMBHL Worker", () => {
 		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS player_dues (season TEXT NOT NULL, player_id TEXT NOT NULL, custom_due REAL, adjustment REAL NOT NULL DEFAULT 0, amount_paid REAL NOT NULL DEFAULT 0, notes TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (season, player_id))`).run();
 		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS season_costs (id TEXT PRIMARY KEY, season TEXT NOT NULL, category TEXT NOT NULL, description TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`).run();
 		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS planned_absences (id INTEGER PRIMARY KEY AUTOINCREMENT, player_id TEXT NOT NULL, date TEXT NOT NULL, season TEXT NOT NULL, reason TEXT, created_at TEXT NOT NULL, UNIQUE(player_id, date))` ).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT)`).run();
+		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
 		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`).run();
 		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN position TEXT DEFAULT NULL`).run().catch(() => {});
 		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN previous_role TEXT DEFAULT NULL`).run().catch(() => {});
@@ -556,12 +556,12 @@ describe("SMBHL Worker", () => {
 
 	it("cancels queued gameday email if player is no longer confirmed in", async () => {
 		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT)`).run();
+		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
 		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN is_sub INT DEFAULT 0`).run().catch(() => {});
 		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN preferred_team TEXT`).run().catch(() => {});
 		await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN last_played TEXT`).run().catch(() => {});
 		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, guest_name TEXT, team TEXT, status TEXT, role TEXT, status_by TEXT, updated_at TEXT, PRIMARY KEY (event_id, player_id))`).run();
-		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT)`).run();
+		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
 		await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`).run();
 
 		env.RSVP_SECRET = 'test-secret-12345';
@@ -597,10 +597,10 @@ describe("SMBHL Worker", () => {
 			env.RSVP_SECRET = 'test-secret-12345';
 			const past = new Date(Date.now() - 60000).toISOString();
 			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT)`).run();
+			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS contacts (player_id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, role TEXT, is_sub INT DEFAULT 0, is_goalie INT DEFAULT 0, token_salt TEXT, opted_out INT DEFAULT 0, asked_streak INT DEFAULT 0, last_asked TEXT, dormant INT DEFAULT 0, answered_ever INT DEFAULT 0, preferred_team TEXT, last_played TEXT, position TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
 			await env.DB.prepare(`ALTER TABLE contacts ADD COLUMN is_sub INT DEFAULT 0`).run().catch(() => {});
 			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, guest_name TEXT, team TEXT, status TEXT, role TEXT, status_by TEXT, updated_at TEXT, PRIMARY KEY (event_id, player_id))`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT)`).run();
+			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
 			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`).run();
 			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS team_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL, team TEXT NOT NULL, player_name TEXT NOT NULL, player_id TEXT, message TEXT NOT NULL, created_at TEXT NOT NULL)`).run();
 
@@ -724,6 +724,10 @@ describe("SMBHL Worker", () => {
 			expect(sentMails.length).toBe(1); // Still 1, no duplicate!
 		} finally {
 			globalThis.fetch = originalFetch;
+			// This test's goalie-OUT flow enqueues a sub_call outbox row (no
+			// backup goalie confirmed) that would otherwise leak into later
+			// tests' unscoped drain() calls.
+			await env.DB.prepare("DELETE FROM outbox WHERE event_id = '2026-09-20'").run();
 		}
 	});
 
@@ -2878,7 +2882,7 @@ describe("SMBHL Worker", () => {
 		beforeAll(async () => {
 			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
 			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, team TEXT, status TEXT, role TEXT, status_by TEXT, updated_at TEXT, guest_name TEXT, PRIMARY KEY(event_id, player_id))`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, send_after TEXT, sent_at TEXT, cancelled INT, error TEXT)`).run();
+			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, send_after TEXT, sent_at TEXT, cancelled INT, error TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
 			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS jobs (event_id TEXT, job TEXT, ran_at TEXT, PRIMARY KEY(event_id, job))`).run();
 		});
 
@@ -3421,7 +3425,7 @@ describe("SMBHL Worker", () => {
 		beforeAll(async () => {
 			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, season TEXT, week INT, date TEXT, venue TEXT, state TEXT, start_time TEXT, end_time TEXT)`).run();
 			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rsvp (event_id TEXT, player_id TEXT, guest_name TEXT, team TEXT, status TEXT, role TEXT, status_by TEXT, updated_at TEXT, PRIMARY KEY (event_id, player_id))`).run();
-			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT)`).run();
+			await env.DB.prepare(`CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, event_id TEXT, player_id TEXT, team TEXT, dedup_key TEXT, payload TEXT, send_after TEXT, sent_at TEXT, cancelled INT DEFAULT 0, error TEXT, created_at TEXT, league_id TEXT NOT NULL DEFAULT 'smbhl')`).run();
 		});
 
 		it("Fall 2026 (no league override) still sends under SMBHL's exact original identity — byte-for-byte unchanged", async () => {
