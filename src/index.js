@@ -575,6 +575,14 @@ async function handleDashboardPage(req, env, url) {
     </div>
   ` : '';
 
+  // Part 4: the public page only exists to be shared, so the dashboard
+  // is where an admin discovers its real, copyable URL.
+  const publicPageHtml = leagueRow ? `
+    <p class="state" style="margin:0 0 16px;">Page publique à partager avec vos joueurs :<span class="en" style="display:block;">Public page to share with your players:</span>
+      <a href="/league/public?league=${encodeURIComponent(leagueRow.id)}">${esc(url.origin)}/league/public?league=${esc(leagueRow.id)}</a>
+    </p>
+  ` : '';
+
   // The team names are already known from signup (leagues.team_names) —
   // POST /league/season/publish reads them server-side on its own, so this
   // form only ever asks for the one new thing: a season name.
@@ -608,6 +616,7 @@ async function handleDashboardPage(req, env, url) {
     ` : ''}
     ${startSeasonHtml}
     ${nav}
+    ${publicPageHtml}
     <div class="card">
       <h2>Équipes<span class="en">Teams</span></h2>
       <ul style="margin:0;padding-left:20px;">
@@ -702,6 +711,74 @@ const ROLE_LABEL_FR_EN = {
   sub_skater: 'Sub — joueur / Sub skater',
   sub_goalie: 'Sub — gardien / Sub goalie'
 };
+
+// Part 4: a public, read-only page for a league's own players/fans --
+// deliberately NO checkUserSession/checkLeagueAccess call at all, since
+// that's the whole point (a player shouldn't need an account just to see
+// their own league's schedule). Shows only what's genuinely safe to be
+// public: league name/branding, team list, and upcoming events'
+// date/venue/time -- never a contact's email, phone, or who's actually
+// attending a given event (that stays behind the session-gated pages).
+// Standings render only when the league itself has tracksStats on AND
+// its data_json actually has a standings array for the current season
+// (most leagues won't yet -- no league-scoped standings-entry feature
+// has been built, so this degrades to "no standings section" instead of
+// crashing or showing a misleading empty table).
+async function handleLeaguePublicPage(req, env, url) {
+  const leagueId = url.searchParams.get('league');
+  if (!leagueId) return new Response('league is required', { status: 400 });
+
+  const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) return new Response('not found', { status: 404 });
+
+  const cfg = await getLeagueSeasonConfig(env, leagueId);
+  const teamNames = getTeamNames(cfg);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const events = (await env.DB.prepare(
+    `SELECT date, venue, start_time, state FROM events
+      WHERE league_id = ? AND state != 'cancelled' AND date >= ?
+      ORDER BY date ASC LIMIT 20`
+  ).bind(leagueId, today).all()).results || [];
+  const scheduleHtml = events.length
+    ? `<table>${events.map(ev => `<tr><td>${esc(ev.date)}${ev.venue ? `<span class="by">${esc(ev.venue)}</span>` : ''}${ev.start_time ? `<span class="by">${esc(ev.start_time)}</span>` : ''}</td></tr>`).join('')}</table>`
+    : `<p class="state" style="margin:0;">Aucun match à venir pour l'instant.<span class="en" style="display:block;">No upcoming events yet.</span></p>`;
+
+  let standingsHtml = '';
+  if (leagueRow.tracks_stats) {
+    const leagueData = await getLeagueDataJson(env, leagueId);
+    const season = (leagueData.seasons || []).find(s => s.name === leagueData.current_season);
+    const standings = season && Array.isArray(season.standings) ? season.standings : [];
+    if (standings.length) {
+      standingsHtml = `
+      <div class="card">
+        <h2>Classement<span class="en">Standings</span></h2>
+        <table>${standings.map(s => `<tr><td>${esc(s.team)}</td><td class="s">${Number(s.w) || 0}-${Number(s.l) || 0}</td></tr>`).join('')}</table>
+      </div>`;
+    }
+  }
+
+  return new Response(page(leagueRow.name, `
+  <h1>${esc(leagueRow.name)}<span class="en"></span></h1>
+  ${leagueRow.division_label ? `<p class="when">${esc(leagueRow.division_label)}</p>` : ''}
+
+  <div class="card">
+    <h2>Équipes<span class="en">Teams</span></h2>
+    <ul style="margin:0;padding-left:20px;">
+      ${teamNames.map(t => `<li>${esc(t)}</li>`).join('')}
+    </ul>
+  </div>
+
+  ${standingsHtml}
+
+  <div class="card">
+    <h2>Prochains matchs<span class="en">Upcoming events</span></h2>
+    ${scheduleHtml}
+  </div>
+  `, '', cfg.league), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
 
 // Server-renders the roster table directly from the same query
 // GET /league/contacts uses (leagues.js's handleLeagueContacts) — not an
@@ -16091,6 +16168,10 @@ async function handleFetch(req, env, ctx) {
           { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if (url.pathname === '/league/rsvp' && req.method === 'POST')
         return await leagueRsvpPost(req, env, url);
+      // Part 4: public, read-only league page. No session/ADMIN_KEY at
+      // all -- deliberately as unauthenticated as /league/rsvp above.
+      if (url.pathname === '/league/public' && req.method === 'GET')
+        return await handleLeaguePublicPage(req, env, url);
       // Session-gated admin-set RSVP (Part R — see the task report). The
       // only "set a different player's status" path this app has for a
       // second league — never reachable via a player token.
