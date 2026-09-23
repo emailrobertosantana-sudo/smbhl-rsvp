@@ -105,7 +105,13 @@ describe('Part M: GET /league/rsvp and the league RSVP token', () => {
     const res = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueA)}&e=${encodeURIComponent(eventA)}&p=${encodeURIComponent(playerA)}&t=${token}`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('Player Alpha One');
+    // Design system Part 4: the page greets by first name only (the
+    // real ScreenRSVP voice, "Marc, tu joues dimanche?"), not the full
+    // name -- the league's own name in the header is the stronger
+    // signal the correct league/event/player all resolved together
+    // (the token itself is an HMAC over exactly those three ids, so a
+    // wrong resolution would show the "Lien invalide" error instead).
+    expect(html).toContain('RSVP Token League A');
     expect(html).not.toContain('Lien invalide');
   });
 

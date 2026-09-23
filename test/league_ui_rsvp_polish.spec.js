@@ -1,10 +1,14 @@
-// UI task Part V: confirms GET /league/rsvp (Part M's player-facing magic-
-// link page) uses the same shared, fully-styled page() shell/CSS as every
-// other page in this app (not a bare HTML form) — same fonts, .card,
-// .btn, color variables — and that it now uses the same interactive
-// fetch+POST button pattern (loading state, inline success message) as
-// SMBHL's real /rsvp page, rather than a less-polished plain-link
-// interaction.
+// UI task Part V (superseded by design system Part 4): GET /league/rsvp
+// (Part M's player-facing magic-link page) now uses the real Notre
+// Ligue design system (nlDocument, components/ScreenRSVP/preview.html)
+// instead of SMBHL's own page() shell -- real Archivo fonts/tokens,
+// nl-btn interactive buttons that POST in place (loading state,
+// question -> done-state swap), and the league's own color on the
+// primary "Je joue" button. Still proves the same underlying
+// behaviors the original Part V task cared about: a real styled
+// shell (not a bare form), current status reflected correctly, real
+// interactive POST-in-place buttons (not full-page-reload links), and
+// the ?v=in/out one-click emailed-link path still working.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
@@ -52,7 +56,7 @@ async function computeToken(secret, message) {
   return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
 }
 
-describe('UI task Part V: GET /league/rsvp visual polish', () => {
+describe('UI task Part V: GET /league/rsvp visual polish (design system Part 4)', () => {
   let leagueId, cookie, csrfToken, playerId, salt, eventId;
 
   beforeAll(async () => {
@@ -84,28 +88,27 @@ describe('UI task Part V: GET /league/rsvp visual polish', () => {
     eventId = (await eventRes.json()).event.id;
   });
 
-  it('uses the same shared, fully-styled page shell as every other page in this app -- not a bare HTML form', async () => {
+  it('uses the real design-system shell, not a bare HTML form', async () => {
     const token = await computeToken(RSVP_SECRET, `lr:${leagueId}:${eventId}:${playerId}:${salt}`);
     const res = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`);
     expect(res.status).toBe(200);
     const html = await res.text();
 
-    // The real shared CSS system (page()) -- fonts, color variables, .card.
-    expect(html).toContain('Barlow');
+    expect(html).toContain('Archivo');
     expect(html).toContain('--ink:');
-    expect(html).toContain('class="card"');
-    expect(html).toContain('class="btn');
-    expect(html).toContain('class="when"');
+    expect(html).toContain('nl-header');
+    expect(html).toContain('nl-btn');
   });
 
-  it('shows the current status with the same colored .in/.out/.pend convention used elsewhere in this app', async () => {
+  it('a pending player sees the question and answer buttons, not a done state', async () => {
     const token = await computeToken(RSVP_SECRET, `lr:${leagueId}:${eventId}:${playerId}:${salt}`);
     const res = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`);
     const html = await res.text();
-    expect(html).toContain('class="pend"'); // starts pending
+    expect(html).toContain('id="rv_form"');
+    expect(html).not.toContain('<section class="rv-done');
   });
 
-  it('uses interactive buttons that POST in place (matching SMBHL\'s real /rsvp page), not plain full-page-reload links', async () => {
+  it('uses interactive buttons that POST in place, not plain full-page-reload links', async () => {
     const token = await computeToken(RSVP_SECRET, `lr:${leagueId}:${eventId}:${playerId}:${salt}`);
     const res = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`);
     const html = await res.text();
@@ -114,10 +117,10 @@ describe('UI task Part V: GET /league/rsvp visual polish', () => {
     expect(html).toContain('<button');
     // No longer a plain <a href="...v=in"> link-based interaction.
     expect(html).not.toContain('href="?league=');
-    expect(html).toContain("fetch(location.pathname");
+    expect(html).toContain('fetch(location.pathname');
   });
 
-  it('after marking IN, the status badge and button state reflect it, colored green via the .in class', async () => {
+  it('after marking IN, the page shows the real done/"you\'re in" state instead of the question', async () => {
     const token = await computeToken(RSVP_SECRET, `lr:${leagueId}:${eventId}:${playerId}:${salt}`);
     await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`, {
       method: 'POST',
@@ -127,8 +130,8 @@ describe('UI task Part V: GET /league/rsvp visual polish', () => {
 
     const res = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`);
     const html = await res.text();
-    expect(html).toContain('class="in"');
-    expect(html).toContain('btn in on');
+    expect(html).toContain('rv-done--ok');
+    expect(html).toContain("C'est noté, tu joues.");
   });
 
   it('the ?v=in/out one-click emailed-link path still works unchanged after the visual update', async () => {
@@ -136,7 +139,8 @@ describe('UI task Part V: GET /league/rsvp visual polish', () => {
     const res = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}&v=out`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('Réponse enregistrée');
+    expect(html).toContain('rv-done--no');
+    expect(html).toContain('Merci de nous le dire.');
 
     const row = await env.DB.prepare('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
     expect(row.status).toBe('out');

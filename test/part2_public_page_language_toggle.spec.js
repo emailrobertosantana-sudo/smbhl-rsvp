@@ -129,7 +129,7 @@ describe('Part 2: real FR/EN toggle on every public-facing page', () => {
 
     const res = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`);
     const html = await res.text();
-    assertRealToggle(html, ['Are you playing?', "I'M IN", "I'M OUT", 'Current status:']);
+    assertRealToggleNl(html, ['are you playing', "I'm in", "I can't"]);
   });
 
   it('the /league/public page has a real, working toggle with genuine English content', async () => {
@@ -148,7 +148,7 @@ describe('Part 2: real FR/EN toggle on every public-facing page', () => {
 
     const res = await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(leagueId)}`);
     const html = await res.text();
-    assertRealToggle(html, ['Teams', 'Upcoming events']);
+    assertRealToggleNl(html, ['Teams', 'Upcoming events']);
   });
 
   it("SMBHL's own shared toggle plumbing (page()'s window.__setLang) is byte-for-byte unaffected", async () => {

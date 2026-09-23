@@ -68,7 +68,7 @@ describe('Part 4: per-league language_mode foundation', () => {
     const a = await signupAndCreateLeague('part4.both@example.com', '203.0.113.632', 'Part 4 Both League', ['Red', 'Blue']);
     const res = await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(a.leagueId)}`);
     const html = await res.text();
-    expect(html).toContain('langswitch');
+    expect(html).toContain('nl-lang');
     expect(html).toContain('id="btn-lang-en"');
     expect(html).toContain('Teams'); // the real English translation is present
   });
@@ -126,8 +126,9 @@ describe('Part 4: per-league language_mode foundation', () => {
     const html = await res.text();
     expect(html).not.toContain('id="btn-lang-fr"');
     expect(html).not.toContain('id="btn-lang-en"');
-    expect(html).toContain('>Tu joues ?<'); // forced French, even though the shared page() shell would otherwise pick a visitor's browser-language default
-    expect(html).not.toContain('>Are you playing?<'); // not rendered as visible content (still present, inertly, inside the shipped JS dict -- same as every other page's toggle)
+    // The page greets by first name only (real ScreenRSVP voice).
+    expect(html).toContain('>Part, tu joues'); // forced French, even though the shared page() shell would otherwise pick a visitor's browser-language default
+    expect(html).not.toContain('>Part, are you playing'); // not rendered as visible content (still present, inertly, inside the shipped JS dict -- same as every other page's toggle)
   });
 
   it("SMBHL is completely unaffected: its own default language_mode is 'both', and it isn't part of this per-league system at all", async () => {

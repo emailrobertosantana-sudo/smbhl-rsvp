@@ -199,7 +199,16 @@ async function getStandingsTooltip(env) {
  * (matching this app's own established convention of inlining every
  * page's CSS/JS rather than serving separate static assets).
  */
-function nlDocument({ title, description = '', bodyHtml, lang = 'fr' }) {
+// leagueColor: player-facing pages (RSVP, public page) pass the
+// league's own contrast-safe fill color (leagueFillColor(), Part 1)
+// here to override the --league/--on-league tokens for that one
+// response -- the "league's own color" rule (guidelines/20-public-
+// site-themes.md) applies ONLY when this is set; every Notre-Ligue-
+// branded page (marketing, signup, admin) leaves it unset and keeps
+// the shared sample --league token, which is never shown to a real
+// player. A second :root block, appended after TOKENS_CSS in the same
+// <style>, wins the cascade (same specificity, later rule).
+function nlDocument({ title, description = '', bodyHtml, lang = 'fr', leagueColor = null }) {
   return `<!DOCTYPE html><html lang="${lang === 'en' ? 'en-CA' : 'fr-CA'}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
@@ -207,7 +216,7 @@ ${description ? `<meta name="description" content="${esc(description)}">` : ''}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
-<style>${TOKENS_CSS}${BUNDLE_CSS}</style>
+<style>${TOKENS_CSS}${BUNDLE_CSS}${leagueColor ? `:root{--league:${esc(leagueColor)};--on-league:#ffffff}` : ''}</style>
 </head><body class="nl">
 ${bodyHtml}
 <script>${BUNDLE_JS}</script>
@@ -1847,42 +1856,42 @@ window.addEventListener('admin_lang_changed', function(e) {
 // separate data path. The original ?league=<uuid> query-param form (used
 // internally, and still a valid way to reach this page) keeps working
 // unchanged when resolvedLeagueId isn't passed.
+// Design system Part 4: public league page, matching
+// components/PublicThemes/preview.html's "Arène" theme -- the closest
+// to Notre Ligue's own look, and the only one built this session (of
+// the 4 themes guidelines/20-public-site-themes.md describes; no
+// picker UI exists yet to choose among them, so Arène is the
+// reasonable default -- same "foundation now, editor later" pattern
+// already used for language_mode). The other 3 themes (Classique,
+// Épuré, Quartier) are explicitly NOT built and are follow-up work.
+//
+// The league's own color rule applies here too: the hero block uses
+// leagueFillColor(), same contrast-safe darkening as the RSVP page.
+// "Propulsé par Notre Ligue" is the only Notre Ligue branding anywhere
+// on this page. Team colors are drawn from the same fixed palette
+// roster/schedule/event-status already use (no per-team color exists
+// in the data model), each also run through leagueFillColor() before
+// use as a tile fill so white text on it always passes contrast --
+// dots use the original, undarkened palette color. Reuses
+// ROSTER_TEAM_DOTS (defined below, roster page) rather than a second
+// copy of the same palette.
 async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const leagueId = resolvedLeagueId || url.searchParams.get('league');
   if (!leagueId) return new Response('league is required', { status: 400 });
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow) return new Response('not found', { status: 404 });
-  // Part 10: a deactivated league's public page stops being publicly
-  // viewable too -- consistent with checkLeagueAccess blocking every
-  // session-gated route for the same league.
   if (leagueRow.deactivated_at) {
-    return new Response(page('Ligue désactivée', `
-      <h1>Cette ligue n'est plus active<span class="en">This league is no longer active</span></h1>
-    `), { status: 410, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    const bodyHtml410 = `<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">Cette ligue n'est plus active</h1></div>`;
+    return new Response(nlDocument({ title: 'Ligue désactivée', description: '', bodyHtml: bodyHtml410 }), {
+      status: 410, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+    });
   }
 
   const cfg = await getLeagueSeasonConfig(env, leagueId);
   const teamNames = getTeamNames(cfg);
-
-  // Real FR/EN toggle (this task): page()'s own shared .langswitch
-  // buttons/window.__setLang infrastructure already renders on this
-  // page (cfg.league passed to page()); this script hooks into it the
-  // same way every other new public page does.
-  // Part 4 foundation: a league whose language_mode isn't 'both' pins
-  // that one language and hides the switcher entirely (migrate-023.sql)
-  // -- AND, unlike a 'both' league (which always server-renders French
-  // by default, then swaps client-side), the initial SSR itself is
-  // rendered directly in the forced language, so there's no
-  // flash-of-wrong-language before JS runs (and the page works
-  // correctly with JS disabled, in the one language it actually
-  // exposes).
   const forcedLang = cfg.league.languageMode && cfg.league.languageMode !== 'both' ? cfg.league.languageMode : null;
-  const I18N_PUBLIC = {
-    fr: { teams: 'Équipes', upcoming: 'Prochains matchs', noEvents: "Aucun match à venir pour l'instant.", standings: 'Classement' },
-    en: { teams: 'Teams', upcoming: 'Upcoming events', noEvents: 'No upcoming events yet.', standings: 'Standings' }
-  };
-  const t = I18N_PUBLIC[forcedLang || 'fr'];
+  const fillColor = leagueFillColor(cfg.league.color || '#b3122e');
 
   const today = new Date().toISOString().slice(0, 10);
   const events = (await env.DB.prepare(
@@ -1890,61 +1899,146 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
       WHERE league_id = ? AND state != 'cancelled' AND date >= ?
       ORDER BY date ASC LIMIT 20`
   ).bind(leagueId, today).all()).results || [];
-  const scheduleHtml = events.length
-    ? `<table>${events.map(ev => `<tr><td>${esc(ev.date)}${ev.venue ? `<span class="by">${esc(ev.venue)}</span>` : ''}${ev.start_time ? `<span class="by">${esc(ev.start_time)}</span>` : ''}</td></tr>`).join('')}</table>`
-    : `<p class="state" style="margin:0;" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
+  const nextEvent = events[0] || null;
 
-  let standingsHtml = '';
+  let standings = [];
   if (leagueRow.tracks_stats) {
     const leagueData = await getLeagueDataJson(env, leagueId);
     const season = (leagueData.seasons || []).find(s => s.name === leagueData.current_season);
-    const standings = season && Array.isArray(season.standings) ? season.standings : [];
-    if (standings.length) {
-      standingsHtml = `
-      <div class="card">
-        <h2 data-i18n="standings">${esc(t.standings)}</h2>
-        <table>${standings.map(s => `<tr><td>${esc(s.team)}</td><td class="s">${Number(s.w) || 0}-${Number(s.l) || 0}</td></tr>`).join('')}</table>
-      </div>`;
-    }
+    standings = season && Array.isArray(season.standings) ? season.standings : [];
   }
 
-  return new Response(page(leagueRow.name, `
-  <h1>${esc(leagueRow.name)}<span class="en"></span></h1>
-  ${leagueRow.division_label ? `<p class="when">${esc(leagueRow.division_label)}</p>` : ''}
+  // Scoped to whether standings actually render (real player/league
+  // data, not static markup) -- a league that doesn't track stats
+  // must never carry the word "Classement"/"Standings" anywhere in the
+  // shipped page, even inertly inside the embedded JS dict (the same
+  // leaked-string class of bug this session already found and fixed
+  // once for the dashboard's own scoped I18N dict).
+  function buildDict(lang) {
+    const base = lang === 'fr' ? {
+      nextGame: 'Prochain match', teams: 'Équipes', upcoming: 'Prochains matchs',
+      noEvents: "Aucun match à venir pour l'instant.", poweredBy: 'Propulsé par Notre Ligue'
+    } : {
+      nextGame: 'Next game', teams: 'Teams', upcoming: 'Upcoming events',
+      noEvents: 'No upcoming events yet.', poweredBy: 'Powered by Notre Ligue'
+    };
+    if (standings.length) {
+      Object.assign(base, lang === 'fr'
+        ? { standings: 'Classement', played: 'PJ', wins: 'V', losses: 'D', pts: 'PTS' }
+        : { standings: 'Standings', played: 'GP', wins: 'W', losses: 'L', pts: 'PTS' });
+    }
+    return base;
+  }
+  const I18N_PUBLIC = { fr: buildDict('fr'), en: buildDict('en') };
+  const lang = forcedLang || 'fr';
+  const t = I18N_PUBLIC[lang];
 
-  <div class="card">
-    <h2 data-i18n="teams">${esc(t.teams)}</h2>
-    <ul style="margin:0;padding-left:20px;">
-      ${teamNames.map(tm => `<li>${esc(tm)}</li>`).join('')}
-    </ul>
-  </div>
+  const teamDot = i => ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length];
 
+  const heroHtml = nextEvent ? `<div class="pb-hero" style="background:${esc(fillColor)}">
+    <div class="overline" style="color:rgba(255,255,255,.65)" data-i18n="nextGame">${esc(t.nextGame)}</div>
+    <div class="pb-hero-when">${esc(nextEvent.date)}${nextEvent.start_time ? ' · ' + esc(nextEvent.start_time) : ''}</div>
+    ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}</div>` : ''}
+  </div>` : '';
+
+  const standingsHtml = standings.length ? `
+  <h2 data-i18n="standings">${esc(t.standings)}</h2>
+  <table class="pb-table">
+    <thead><tr><th data-i18n="teams">${esc(t.teams)}</th><th data-i18n="played">${esc(t.played)}</th><th data-i18n="wins">${esc(t.wins)}</th><th data-i18n="losses">${esc(t.losses)}</th></tr></thead>
+    <tbody>${standings.map((s, i) => {
+      const w = Number(s.w) || 0, l = Number(s.l) || 0;
+      const dotIdx = teamNames.indexOf(s.team);
+      return `<tr><td class="pb-tm"><i style="background:${esc(teamDot(dotIdx >= 0 ? dotIdx : i))}"></i>${esc(s.team)}</td><td>${w + l}</td><td>${w}</td><td>${l}</td></tr>`;
+    }).join('')}</tbody>
+  </table>` : '';
+
+  const upcomingHtml = events.length ? `
+  <h2 data-i18n="upcoming">${esc(t.upcoming)}</h2>
+  <div class="pb-glist">${events.map(ev => `<div class="pb-g">
+      <div class="pb-g-d"><b>${esc(ev.date)}</b>${ev.start_time ? `<span>${esc(ev.start_time)}</span>` : ''}</div>
+      <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}</div>
+    </div>`).join('')}</div>` : `<p class="nl-help" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
+
+  const teamsHtml = `
+  <h2 data-i18n="teams">${esc(t.teams)}</h2>
+  <div class="pb-tg">${teamNames.map((tm, i) => `<div style="background:${esc(leagueFillColor(teamDot(i)))}">${esc(tm)}</div>`).join('')}</div>`;
+
+  const bodyHtml = `<style>
+  .nl { background: var(--surface-hero, #16181d); color: var(--ink-inverse, #f4f4f2); min-height: 100vh; display: flex; flex-direction: column; }
+  .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+  .pb-hero { margin: var(--space-4) 0; padding: var(--space-5); background: var(--primary); border-radius: var(--radius-lg); }
+  .pb-hero-when { font: 800 28px/32px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #fff; margin-top: 6px; }
+  .pb-hero-venue { font-size: 14px; color: rgba(255,255,255,.75); margin-top: 4px; }
+  .pb-main h2 { font: 800 13px/16px var(--font-display); font-stretch: 118%; letter-spacing: .1em; text-transform: uppercase; color: #a3a6ad; margin: var(--space-5) 0 var(--space-2); }
+  .pb-table { width: 100%; border-collapse: collapse; font: 500 15px/20px var(--font-sans); }
+  .pb-table th { font: 600 11px/16px var(--font-sans); color: #a3a6ad; border-bottom: 1px solid #2a2e36; padding: 8px 6px; text-align: center; }
+  .pb-table th:first-child, .pb-table td.pb-tm { text-align: left; }
+  .pb-table td { padding: 9px 6px; text-align: center; border-bottom: 1px solid #22252c; }
+  .pb-tm i { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 2px; }
+  .pb-glist { display: flex; flex-direction: column; }
+  .pb-g { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #22252c; gap: var(--space-3); }
+  .pb-g-d { display: flex; flex-direction: column; }
+  .pb-g-d b { font: 700 15px/20px var(--font-display); font-stretch: 118%; }
+  .pb-g-d span { font-size: 13px; color: #a3a6ad; }
+  .pb-g-venue { font-size: 14px; color: #a3a6ad; }
+  .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
+  .pb-tg div { height: 64px; border-radius: var(--radius-md); padding: var(--space-3); font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #fff; display: flex; align-items: flex-end; }
+  .pb-foot { padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: #a3a6ad; }
+  .nl-header { border-bottom: 1px solid #2a2e36; }
+  .nl-lang button { color: #a3a6ad; }
+  .nl-lang button[aria-pressed="true"] { background: #f4f4f2; color: #16181d; }
+</style>
+<header class="nl-header">
+  <span class="nl-brand" style="max-width:280px;font-weight:700;">${esc(leagueRow.name)}</span>
+  <div class="spacer"></div>
+  ${forcedLang ? '' : `<div class="nl-lang" role="group" aria-label="Langue / Language">
+    <button type="button" id="btn-lang-fr" aria-pressed="true" onclick="window.__setLang('fr')">FR</button>
+    <button type="button" id="btn-lang-en" aria-pressed="false" onclick="window.__setLang('en')">EN</button>
+  </div>`}
+</header>
+<main class="pb-main">
+  ${heroHtml}
   ${standingsHtml}
-
-  <div class="card">
-    <h2 data-i18n="upcoming">${esc(t.upcoming)}</h2>
-    ${scheduleHtml}
-  </div>
+  ${upcomingHtml}
+  ${teamsHtml}
+</main>
+<div class="pb-foot" data-i18n="poweredBy">${esc(t.poweredBy)}</div>
 <script>
-var I18N_PUBLIC = {
-  fr: { teams: 'Équipes', upcoming: 'Prochains matchs', noEvents: "Aucun match à venir pour l'instant."${standingsHtml ? `, standings: 'Classement'` : ''} },
-  en: { teams: 'Teams', upcoming: 'Upcoming events', noEvents: 'No upcoming events yet.'${standingsHtml ? `, standings: 'Standings'` : ''} }
-};
-function applyLanguage(lang) {
-  var dict = I18N_PUBLIC[lang] || I18N_PUBLIC.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (dict[k] != null) el.innerHTML = dict[k];
-  });
-}
-var forcedLang = ${JSON.stringify(forcedLang)};
-if (forcedLang) applyLanguage(forcedLang);
-else {
-  if (window.__currentLang) applyLanguage(window.__currentLang);
-  window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-}
-</script>
-  `, '', cfg.league, Boolean(forcedLang)), {
+var PB_I18N = ${JSON.stringify(I18N_PUBLIC)};
+var PB_FORCED_LANG = ${JSON.stringify(forcedLang)};
+(function() {
+  function applyLanguage(l) {
+    var dict = PB_I18N[l] || PB_I18N.fr;
+    document.querySelectorAll('[data-i18n]').forEach(function(el) {
+      var k = el.getAttribute('data-i18n');
+      if (dict[k] != null) el.innerHTML = dict[k];
+    });
+  }
+  if (PB_FORCED_LANG) { window.__currentLang = PB_FORCED_LANG; applyLanguage(PB_FORCED_LANG); return; }
+  var lang = 'fr';
+  try {
+    var saved = localStorage.getItem('smbhl_admin_lang');
+    if (saved === 'fr' || saved === 'en') lang = saved;
+    else if (/^en/i.test(navigator.language || '')) lang = 'en';
+  } catch (e) {}
+  window.__currentLang = lang;
+  window.__setLang = function(l) {
+    if (l !== 'fr' && l !== 'en') return;
+    window.__currentLang = l;
+    try { localStorage.setItem('smbhl_admin_lang', l); } catch (e) {}
+    var frBtn = document.getElementById('btn-lang-fr'), enBtn = document.getElementById('btn-lang-en');
+    if (frBtn) frBtn.setAttribute('aria-pressed', String(l === 'fr'));
+    if (enBtn) enBtn.setAttribute('aria-pressed', String(l === 'en'));
+    applyLanguage(l);
+  };
+  applyLanguage(lang);
+  var frBtn0 = document.getElementById('btn-lang-fr'), enBtn0 = document.getElementById('btn-lang-en');
+  if (frBtn0) frBtn0.setAttribute('aria-pressed', String(lang === 'fr'));
+  if (enBtn0) enBtn0.setAttribute('aria-pressed', String(lang === 'en'));
+})();
+</script>`;
+
+  return new Response(nlDocument({ title: leagueRow.name, description: '', bodyHtml, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -9625,6 +9719,42 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
   return { invited: pool.length, reason: 'invited' };
 }
 
+// Design system Part 4: player RSVP page, matching
+// components/ScreenRSVP/preview.html -- the league's OWN color rule
+// matters most here: header bar (nl-brand--league) + primary answer
+// button (nl-btn--league) in the league's own contrast-safe color
+// (leagueFillColor(), Part 1), "Propulsé par Notre Ligue" ONLY in the
+// footer, no other Notre Ligue branding anywhere on this page.
+//
+// Two deliberate drops from the literal preview: no deadline chip (no
+// "responses close by X" cutoff exists in this app's data model) and
+// no "sub request" screen (there is no dedicated web landing page for
+// sub invites in the league product yet -- only SMBHL's own legacy
+// /avail page, out of scope). Everything else -- the question-as-title
+// pattern, two full-width 64px answer buttons, the done/no states,
+// the team SpotMeter -- is real, and both languages of every dynamic
+// string (day name, venue, time) are computed server-side so the
+// existing real FR/EN toggle keeps working when a league exposes both
+// (forcedLang leagues, as before, render directly in their one
+// language and hide the switcher).
+function leagueRsvpNotice(fr, en) {
+  const bodyHtml = `<style>.nl{display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:var(--space-5)}</style>
+<div><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">${esc(fr)}</h1><p class="nl-help">${esc(en)}</p></div>`;
+  return new Response(nlDocument({ title: fr, description: '', bodyHtml }), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
+function weekdayLabel(dateStr, lang) {
+  try {
+    const d = new Date(dateStr + 'T12:00:00');
+    const label = new Intl.DateTimeFormat(lang === 'en' ? 'en-CA' : 'fr-CA', { weekday: 'long' }).format(d);
+    return lang === 'en' ? (label.charAt(0).toUpperCase() + label.slice(1)) : label;
+  } catch (_) {
+    return '';
+  }
+}
+
 async function leagueRsvpGet(req, env, url) {
   const leagueId = url.searchParams.get('league');
   const eventId = url.searchParams.get('e');
@@ -9632,7 +9762,7 @@ async function leagueRsvpGet(req, env, url) {
   const token = url.searchParams.get('t');
 
   const result = await verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token);
-  if (!result.ok) return notice(result.error.fr, result.error.en);
+  if (!result.ok) return leagueRsvpNotice(result.error.fr, result.error.en);
   const { contact, ev } = result;
 
   let row = await env.DB.prepare('SELECT * FROM rsvp WHERE event_id = ? AND player_id = ?')
@@ -9646,73 +9776,166 @@ async function leagueRsvpGet(req, env, url) {
     if (autoVal === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
   }
 
-  const leagueCfg = (await getLeagueSeasonConfig(env, leagueId, ev.season)).league;
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  const leagueCfg = cfg.league;
   const locked = ev.state !== 'open';
-  // Part 4 foundation: a league whose language_mode isn't 'both' pins
-  // that one language and hides the switcher on this player-facing
-  // page entirely (see migrate-023.sql / page()'s hideLangSwitch).
   const forcedLang = leagueCfg.languageMode && leagueCfg.languageMode !== 'both' ? leagueCfg.languageMode : null;
 
-  // Part V: same interactive fetch+POST button pattern as SMBHL's real
-  // /rsvp page (rsvpGet, above) — buttons that POST in place with a
-  // loading/success message, not plain <a href> full-page-reload links —
-  // rather than a parallel, less polished interaction style. ?v=in/out
-  // (the one-click emailed-link path) still works unchanged for GET.
-  // Real FR/EN toggle (this task): status label/badge and button text
-  // are re-rendered client-side from RSVP_I18N on admin_lang_changed,
-  // same data-i18n + dict mechanism as every other new public page.
-  // When forcedLang is set (Part 4 foundation), the initial SSR itself
-  // is rendered directly in that language -- see handleLeaguePublicPage's
-  // own comment for why (no flash-of-wrong-language, works with JS off).
-  const RSVP_I18N = {
-    fr: { playing: 'Tu joues ?', statusLabel: 'Statut actuel :', locked: "Cet événement n'accepte plus de réponses.",
-          btnIn: 'JE JOUE', btnOut: 'JE NE JOUE PAS', recorded: 'Réponse enregistrée avec succès !',
-          status: { in: 'PRÉSENT', out: 'ABSENT', pending: 'EN ATTENTE' }, err: 'Erreur : ' },
-    en: { playing: 'Are you playing?', statusLabel: 'Current status:', locked: 'This event is no longer accepting responses.',
-          btnIn: "I'M IN", btnOut: "I'M OUT", recorded: 'Response recorded!',
-          status: { in: 'IN', out: 'OUT', pending: 'PENDING' }, err: 'Error: ' }
-  };
-  const t = RSVP_I18N[forcedLang || 'fr'];
-  const recordedKey = ['in', 'out'].includes(autoVal) ? 'recorded' : '';
+  const team = contact.preferred_team || null;
+  let confirmed = 0, target = 0;
+  if (team) {
+    const st = await teamState(env.DB, ev.id, team, cfg);
+    confirmed = st.skaters + st.goalies;
+    target = (cfg.skatersPerTeam || 0) + (cfg.goaliesPerTeam || 0);
+  }
+  const meterSpots = team ? Math.min(14, Math.max(target, confirmed)) : 0;
+  const teamMeterHtml = team ? `<div class="rv-team">
+      <div class="rv-team-top"><span class="nl-label">${esc(team)}</span><span class="small" style="color:var(--ink-muted)">${confirmed}/${target || confirmed}</span></div>
+      <div class="nl-meter">${Array.from({ length: meterSpots }, (_, s) => `<i class="${s < confirmed ? 'in' : 'open'}"></i>`).join('')}</div>
+    </div>` : '';
 
-  const body = `
-    <h1>${esc(contact.name)}<span class="en"></span></h1>
-    <p class="when">${esc(ev.date)}${ev.venue ? ' · ' + esc(ev.venue) : ''}${ev.start_time ? ' · ' + esc(ev.start_time) : ''}</p>
-    <div class="card">
-      <h2 data-i18n="playing">${esc(t.playing)}</h2>
-      <p class="state" style="margin-top:0;"><span data-i18n="statusLabel">${esc(t.statusLabel)}</span>
-        <b id="statusBadge" data-status="${status}" class="${status === 'in' ? 'in' : status === 'out' ? 'out' : 'pend'}">${esc(t.status[status] || t.status.pending)}</b>
-      </p>
-      ${locked ? `<p class="state" data-i18n="locked">${esc(t.locked)}</p>` : `
-      <div class="btns">
-        <button class="btn in${status === 'in' ? ' on' : ''}" data-v="in" data-i18n="btnIn">${esc(t.btnIn)}</button>
-        <button class="btn out${status === 'out' ? ' on' : ''}" data-v="out" data-i18n="btnOut">${esc(t.btnOut)}</button>
+  const firstName = (contact.name || '').split(' ')[0] || contact.name;
+
+  function buildDict(lang) {
+    const dayLabel = weekdayLabel(ev.date, lang);
+    return lang === 'fr' ? {
+      question: `${firstName}, tu joues ${dayLabel || 'ce jour-là'}?`,
+      btnIn: 'Je joue', btnOut: 'Je ne peux pas',
+      lockedMsg: "Cet événement n'accepte plus de réponses.",
+      doneInTitle: "C'est noté, tu joues.",
+      doneInBody: `On se voit ${dayLabel || ''}${ev.start_time ? ' à ' + ev.start_time : ''}${ev.venue ? ' au ' + ev.venue : ''}.`,
+      doneOutTitle: 'Merci de nous le dire.',
+      doneOutBody: "On invite un remplaçant pour ta place. Rien d'autre à faire.",
+      change: 'Changer ma réponse',
+      poweredBy: 'Propulsé par Notre Ligue'
+    } : {
+      question: `${firstName}, are you playing${dayLabel ? ' ' + dayLabel.toLowerCase() : ''}?`,
+      btnIn: "I'm in", btnOut: "I can't",
+      lockedMsg: 'This event is no longer accepting responses.',
+      doneInTitle: "Got it, you're in.",
+      doneInBody: `See you ${dayLabel || 'then'}${ev.start_time ? ' at ' + ev.start_time : ''}${ev.venue ? ' at ' + ev.venue : ''}.`,
+      doneOutTitle: 'Thanks for letting us know.',
+      doneOutBody: "We'll invite a sub for your spot. Nothing else to do.",
+      change: 'Change my answer',
+      poweredBy: 'Powered by Notre Ligue'
+    };
+  }
+  const RSVP_I18N = { fr: buildDict('fr'), en: buildDict('en') };
+  const lang = forcedLang || 'fr';
+  const t = RSVP_I18N[lang];
+
+  const overline = `${esc(ev.date)}${ev.start_time ? ' · ' + esc(ev.start_time) : ''}`;
+  const metaHtml = `<div class="rv-meta">
+    ${team ? `<div><b>${esc(team)}</b></div>` : ''}
+    <div class="rv-where">${ev.venue ? esc(ev.venue) : ''}${ev.start_time && ev.end_time ? ` · ${esc(ev.start_time)} – ${esc(ev.end_time)}` : ''}</div>
+  </div>`;
+
+  const answeredHtml = status !== 'pending' ? `
+    <section class="rv-done rv-done--${status === 'in' ? 'ok' : 'no'}" role="status">
+      <div class="rv-mark">${status === 'in' ? '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 10.5l4 4 8-9"/></svg>' : '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 10h10"/></svg>'}</div>
+      <h2 data-i18n="${status === 'in' ? 'doneInTitle' : 'doneOutTitle'}">${esc(status === 'in' ? t.doneInTitle : t.doneOutTitle)}</h2>
+      <p data-i18n="${status === 'in' ? 'doneInBody' : 'doneOutBody'}">${esc(status === 'in' ? t.doneInBody : t.doneOutBody)}</p>
+    </section>
+    ${status === 'in' ? teamMeterHtml : ''}
+    ${!locked ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="change" onclick="showAnswerForm()">${esc(t.change)}</button>` : ''}
+  ` : '';
+
+  const formHtml = (status === 'pending' || !locked) ? `
+    <div id="rv_form" style="${status !== 'pending' ? 'display:none' : ''}">
+      <div class="overline">${overline}</div>
+      <h1 class="rv-q" data-i18n="question">${esc(t.question)}</h1>
+      ${metaHtml}
+      ${locked ? `<p class="nl-help" data-i18n="lockedMsg">${esc(t.lockedMsg)}</p>` : `
+      <div class="rv-answers">
+        <button type="button" class="nl-btn nl-btn--league nl-btn--lg nl-btn--block" data-v="in"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 10.5l4 4 8-9"/></svg><span data-i18n="btnIn">${esc(t.btnIn)}</span></button>
+        <button type="button" class="nl-btn nl-btn--secondary nl-btn--lg nl-btn--block" data-v="out"><span data-i18n="btnOut">${esc(t.btnOut)}</span></button>
       </div>
-      <p class="state" id="msg" data-i18n="${recordedKey}">${recordedKey ? esc(t.recorded) : ''}</p>`}
+      <p id="rv_msg" class="nl-help"></p>
+      ${teamMeterHtml}`}
     </div>
-<script>
-var RSVP_I18N = ${JSON.stringify(RSVP_I18N)};
-function applyLanguage(lang) {
-  var dict = RSVP_I18N[lang] || RSVP_I18N.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (k && dict[k] != null) el.innerHTML = dict[k];
-  });
-  var badge = document.getElementById('statusBadge');
-  if (badge) badge.textContent = dict.status[badge.dataset.status] || dict.status.pending;
-}
-var forcedLang = ${JSON.stringify(forcedLang)};
-if (forcedLang) applyLanguage(forcedLang);
-else {
-  if (window.__currentLang) applyLanguage(window.__currentLang);
-  window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-}
+  ` : '';
 
-document.querySelectorAll('.btn[data-v]').forEach(function(b) {
+  const bodyHtml = `<style>
+  .nl { display: flex; flex-direction: column; min-height: 100vh; }
+  .rv-body { flex: 1; max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-5); }
+  .rv-q { font: 800 32px/35px var(--font-display); font-stretch: 118%; letter-spacing: -.02em; margin: var(--space-2) 0; }
+  .rv-meta { display: flex; flex-direction: column; gap: 4px; font-size: 18px; line-height: 28px; }
+  .rv-where { font-size: 16px; line-height: 24px; color: var(--ink-muted); }
+  .rv-answers { display: flex; flex-direction: column; gap: var(--space-3); }
+  .rv-team { display: flex; flex-direction: column; gap: 10px; }
+  .rv-team-top { display: flex; justify-content: space-between; align-items: baseline; }
+  .rv-done { border-radius: var(--radius-lg); padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+  .rv-done--ok { background: var(--success-tint); }
+  .rv-done--no { background: var(--surface-sunken); }
+  .rv-mark { width: 48px; height: 48px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; }
+  .rv-done--ok .rv-mark { background: var(--success); color: var(--on-success); }
+  .rv-done--no .rv-mark { background: var(--surface); color: var(--ink-muted); border: 1px solid var(--line); }
+  .rv-mark svg { width: 28px; height: 28px; }
+  .rv-done h2 { font: 700 26px/32px var(--font-display); font-stretch: 118%; }
+  .rv-done--ok h2 { color: var(--success); }
+  .rv-foot { padding: var(--space-4); border-top: 1px solid var(--line); font-size: 13px; line-height: 18px; color: var(--ink-muted); text-align: center; }
+</style>
+<header class="nl-header">
+  <span class="nl-brand nl-brand--league">${esc(leagueCfg.name)}</span>
+  <div class="spacer"></div>
+  ${forcedLang ? '' : `<div class="nl-lang" role="group" aria-label="Langue / Language">
+    <button type="button" id="btn-lang-fr" aria-pressed="true" onclick="window.__setLang('fr')">FR</button>
+    <button type="button" id="btn-lang-en" aria-pressed="false" onclick="window.__setLang('en')">EN</button>
+  </div>`}
+</header>
+<main class="rv-body">
+  ${answeredHtml}
+  ${formHtml}
+</main>
+<div class="rv-foot" data-i18n="poweredBy">${esc(t.poweredBy)}</div>
+<script>
+var RV_I18N = ${JSON.stringify(RSVP_I18N)};
+var RV_FORCED_LANG = ${JSON.stringify(forcedLang)};
+(function() {
+  function applyLanguage(l) {
+    var dict = RV_I18N[l] || RV_I18N.fr;
+    document.querySelectorAll('[data-i18n]').forEach(function(el) {
+      var k = el.getAttribute('data-i18n');
+      if (dict[k] != null) el.innerHTML = dict[k];
+    });
+  }
+  if (RV_FORCED_LANG) {
+    window.__currentLang = RV_FORCED_LANG;
+    applyLanguage(RV_FORCED_LANG);
+    return;
+  }
+  var lang = 'fr';
+  try {
+    var saved = localStorage.getItem('smbhl_admin_lang');
+    if (saved === 'fr' || saved === 'en') lang = saved;
+    else if (/^en/i.test(navigator.language || '')) lang = 'en';
+  } catch (e) {}
+  window.__currentLang = lang;
+  window.__setLang = function(l) {
+    if (l !== 'fr' && l !== 'en') return;
+    window.__currentLang = l;
+    try { localStorage.setItem('smbhl_admin_lang', l); } catch (e) {}
+    var frBtn = document.getElementById('btn-lang-fr'), enBtn = document.getElementById('btn-lang-en');
+    if (frBtn) frBtn.setAttribute('aria-pressed', String(l === 'fr'));
+    if (enBtn) enBtn.setAttribute('aria-pressed', String(l === 'en'));
+    applyLanguage(l);
+  };
+  applyLanguage(lang);
+  var frBtn0 = document.getElementById('btn-lang-fr'), enBtn0 = document.getElementById('btn-lang-en');
+  if (frBtn0) frBtn0.setAttribute('aria-pressed', String(lang === 'fr'));
+  if (enBtn0) enBtn0.setAttribute('aria-pressed', String(lang === 'en'));
+})();
+function showAnswerForm() {
+  document.querySelectorAll('.rv-done').forEach(function(el) { el.style.display = 'none'; });
+  var f = document.getElementById('rv_form');
+  if (f) f.style.display = '';
+}
+document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(b) {
   b.addEventListener('click', async function() {
     var v = b.dataset.v;
-    document.querySelectorAll('.btn[data-v]').forEach(function(x) { x.disabled = true; });
-    document.getElementById('msg').textContent = '…';
+    document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(x) { x.disabled = true; });
+    var msg = document.getElementById('rv_msg');
+    if (msg) msg.textContent = '…';
     try {
       var res = await fetch(location.pathname + location.search, {
         method: 'POST',
@@ -9722,15 +9945,20 @@ document.querySelectorAll('.btn[data-v]').forEach(function(b) {
       if (!res.ok) throw new Error(await res.text());
       location.reload();
     } catch (e) {
-      var dict = RSVP_I18N[forcedLang || window.__currentLang || 'fr'] || RSVP_I18N.fr;
-      document.getElementById('msg').textContent = dict.err + e.message;
-      document.querySelectorAll('.btn[data-v]').forEach(function(x) { x.disabled = false; });
+      if (msg) msg.textContent = String(e.message || e);
+      document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(x) { x.disabled = false; });
     }
   });
 });
 </script>`;
 
-  return page(leagueCfg.name, body, '', leagueCfg, Boolean(forcedLang));
+  return new Response(nlDocument({
+    title: leagueCfg.name,
+    description: '',
+    bodyHtml,
+    lang,
+    leagueColor: leagueFillColor(leagueCfg.color || '#b3122e')
+  }), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
 // The `p=` URL param is the ONLY player this request can ever write to —
@@ -17616,8 +17844,7 @@ async function handleFetch(req, env, ctx) {
       // player clicked an emailed link" path, matching /rsvp's own
       // unauthenticated shape exactly, just league-scoped.
       if (url.pathname === '/league/rsvp' && req.method === 'GET')
-        return new Response(await leagueRsvpGet(req, env, url),
-          { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+        return await leagueRsvpGet(req, env, url);
       if (url.pathname === '/league/rsvp' && req.method === 'POST')
         return await leagueRsvpPost(req, env, url);
       // Part 4: public, read-only league page. No session/ADMIN_KEY at

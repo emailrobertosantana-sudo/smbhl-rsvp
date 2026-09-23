@@ -97,7 +97,9 @@ describe('Part 4: GET /league/public (unauthenticated public page)', () => {
   it('shows the real league name/branding, team list, and upcoming schedule', async () => {
     const res = await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(leagueA)}`);
     const html = await res.text();
-    expect(html).toContain(`<title>${LEAGUE_A_NAME} — ${LEAGUE_A_NAME}</title>`);
+    // Design system Part 4: the document title is just the league's
+    // own name now, not "{title} — {league}" duplicated.
+    expect(html).toContain(`<title>${LEAGUE_A_NAME}</title>`);
     expect(html).toContain('Otters');
     expect(html).toContain('Falcons');
     expect(html).toContain('2099-01-11');
