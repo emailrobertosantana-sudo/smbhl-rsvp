@@ -272,6 +272,177 @@ async function sendVerificationEmail(env, sendMailFunc, email, userId) {
   return { token, exp, verificationLink };
 }
 
+/* ---------- password reset (Part 6) ----------
+ * Same signed-HMAC-token shape as email verification above (userId.exp.sig,
+ * env.AUTH_SECRET), with its own message prefix ('reset' vs 'verify') so a
+ * verification token can never be replayed as a reset token or vice versa.
+ * Deliberately does NOT reuse VERIFY_TOKEN_TTL_MS's 24h window — a reset
+ * token grants control of the account (a new password), a meaningfully
+ * higher-stakes action than confirming an address already controls, so it
+ * gets a much shorter 1h window instead.
+ */
+
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
+
+const resetMsg = (userId, exp) => `reset:${userId}:${exp}`;
+
+async function generatePasswordResetToken(env, userId, ttlMs = RESET_TOKEN_TTL_MS) {
+  const exp = Date.now() + ttlMs;
+  const sig = await hmac(env.AUTH_SECRET, resetMsg(userId, exp));
+  const token = `${userId}.${exp}.${sig}`;
+  return { token, exp };
+}
+
+// Returns { ok: true, userId } or { ok: false, error } — never throws, and
+// unlike verifyEmailToken has NO side effect (it doesn't change any account
+// state on its own); the actual password change happens separately in
+// handleResetPassword once a new password is also supplied.
+async function verifyPasswordResetToken(env, token) {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3) return { ok: false, error: 'malformed' };
+  const [userId, expStr, sig] = parts;
+  const exp = Number(expStr);
+  if (!userId || !Number.isFinite(exp)) return { ok: false, error: 'malformed' };
+  if (Date.now() > exp) return { ok: false, error: 'expired' };
+
+  let want;
+  try {
+    want = await hmac(env.AUTH_SECRET, resetMsg(userId, exp));
+  } catch (_) {
+    return { ok: false, error: 'malformed' };
+  }
+  if (!same(want, sig)) return { ok: false, error: 'invalid' };
+  return { ok: true, userId };
+}
+
+function buildPasswordResetEmail(resetLink) {
+  const subject = 'Réinitialisation de mot de passe — SMBHL Ligue / Password reset';
+  const text =
+`Vous avez demandé une réinitialisation de mot de passe. Cliquez sur ce lien pour choisir un nouveau mot de passe :
+${resetLink}
+
+Ce lien expire dans 1 heure. Si vous n'avez pas demandé ceci, ignorez ce courriel — votre mot de passe actuel reste inchangé.
+
+---
+
+You requested a password reset. Click this link to choose a new password:
+${resetLink}
+
+This link expires in 1 hour. If you didn't request this, you can ignore this email — your current password stays unchanged.`;
+  const html =
+`<p>Vous avez demandé une réinitialisation de mot de passe. Cliquez sur le lien ci-dessous pour choisir un nouveau mot de passe&nbsp;:</p>
+<p><a href="${resetLink}">${resetLink}</a></p>
+<p>Ce lien expire dans 1 heure. Si vous n'avez pas demandé ceci, ignorez ce courriel — votre mot de passe actuel reste inchangé.</p>
+<hr>
+<p>You requested a password reset. Click the link below to choose a new password:</p>
+<p><a href="${resetLink}">${resetLink}</a></p>
+<p>This link expires in 1 hour. If you didn't request this, you can ignore this email — your current password stays unchanged.</p>`;
+  return { subject, text, html };
+}
+
+// Fixed window, same shape as checkSignupRateLimit (and deliberately reuses
+// the same signup_attempts table rather than a new migration/table for one
+// more IP-keyed counter — a 'reset:' key prefix keeps the two counters from
+// ever colliding or cross-throttling each other's normal usage).
+const RESET_REQUEST_WINDOW_MS = 60 * 60 * 1000;
+const RESET_REQUEST_LIMIT_PER_WINDOW = 5;
+
+async function checkPasswordResetRateLimit(env, ip) {
+  const key = `reset:${ip}`;
+  const now = Date.now();
+  const row = await env.DB.prepare('SELECT window_start, count FROM signup_attempts WHERE ip = ?').bind(key).first();
+
+  if (!row) {
+    await env.DB.prepare('INSERT INTO signup_attempts (ip, window_start, count) VALUES (?, ?, 1)').bind(key, String(now)).run();
+    return 'ok';
+  }
+
+  const windowStart = Number(row.window_start) || 0;
+  if (now - windowStart > RESET_REQUEST_WINDOW_MS) {
+    await env.DB.prepare('UPDATE signup_attempts SET window_start = ?, count = 1 WHERE ip = ?').bind(String(now), key).run();
+    return 'ok';
+  }
+
+  if (Number(row.count) >= RESET_REQUEST_LIMIT_PER_WINDOW) {
+    return 'rate_limited';
+  }
+
+  await env.DB.prepare('UPDATE signup_attempts SET count = count + 1 WHERE ip = ?').bind(key).run();
+  return 'ok';
+}
+
+// POST /auth/request-password-reset — body: { email }. Always responds
+// { ok: true } regardless of whether that email actually has an account
+// (a deliberate anti-enumeration measure: an attacker probing for which
+// emails have accounts here learns nothing from the response either way).
+// An email is only actually sent when a matching account genuinely exists.
+export async function handleRequestPasswordReset(req, env, sendMailFunc = null) {
+  const body = await req.json().catch(() => ({}));
+  const email = String(body.email || '').trim().toLowerCase();
+  if (!isValidEmail(email)) {
+    return Response.json({ ok: false, error: 'Please enter a valid email address.' }, { status: 400 });
+  }
+
+  const ip = req.headers.get('cf-connecting-ip') || '127.0.0.1';
+  const rateLimitStatus = await checkPasswordResetRateLimit(env, ip);
+  if (rateLimitStatus === 'rate_limited') {
+    return Response.json({ ok: false, error: 'Too many reset attempts from this network. Please try again later.' }, { status: 429 });
+  }
+
+  const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+  if (user) {
+    const { token } = await generatePasswordResetToken(env, user.id);
+    const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+    const resetLink = `${publicUrl}/reset-password?token=${encodeURIComponent(token)}`;
+    if (typeof sendMailFunc === 'function') {
+      try {
+        const { subject, text, html } = buildPasswordResetEmail(resetLink);
+        await sendMailFunc(env, email, subject, text, html);
+      } catch (err) {
+        console.error(`[auth] Failed to send password reset email to ${email}: ${err.message}`);
+      }
+    }
+  }
+
+  return Response.json({ ok: true });
+}
+
+// POST /auth/reset-password — body: { token, password }. Verifies the
+// signed, time-limited token, sets the new password, and -- per the task
+// requirement -- bumps session_epoch (invalidateAllSessions) so every
+// session issued under the OLD password is instantly revoked everywhere,
+// exactly like an explicit logout. Then issues a fresh session cookie under
+// the new epoch, matching handleSignup's own "immediately logged in"
+// convention, since a successful reset is itself a strong proof of email
+// ownership.
+export async function handleResetPassword(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const token = String(body.token || '');
+  const password = String(body.password || '');
+
+  if (!isValidPassword(password)) {
+    return Response.json({ ok: false, error: 'Password must be at least 8 characters.' }, { status: 400 });
+  }
+
+  const result = await verifyPasswordResetToken(env, token);
+  if (!result.ok) {
+    const status = result.error === 'expired' ? 410 : 400;
+    return Response.json({ ok: false, error: result.error }, { status });
+  }
+
+  const passwordHash = await hashPassword(password);
+  await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(passwordHash, result.userId).run();
+  await invalidateAllSessions(env, result.userId);
+
+  const user = await env.DB.prepare('SELECT session_epoch FROM users WHERE id = ?').bind(result.userId).first();
+  const cookie = await createSessionCookie(env, result.userId, user.session_epoch);
+
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { 'content-type': 'application/json', 'set-cookie': cookie }
+  });
+}
+
 // Checkable helpers for anything that later wants to gate player-facing email
 // sending. Not wired into any existing send path in this task — see the
 // final report for why, and what wiring them in would look like.

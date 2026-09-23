@@ -3,7 +3,7 @@ import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
-import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified } from './auth.js';
+import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig } from './leagues.js';
 import {
   cleanupOldReviews,
@@ -483,6 +483,7 @@ function renderLoginPage() {
     </div>
   </div>
   <p class="state">Pas de compte? <a href="/signup">Créer un compte</a><span class="en"> · No account? <a href="/signup">Sign up</a></span></p>
+  <p class="state"><a href="/forgot-password">Mot de passe oublié?</a><span class="en" style="display:block;"><a href="/forgot-password">Forgot password?</a></span></p>
 <script>
 function showError(msg) {
   const el = document.getElementById('formErr');
@@ -521,6 +522,121 @@ async function submitLogin() {
     window.location.href = '/dashboard';
   } catch (e) {
     showError("Erreur réseau. Veuillez réessayer. / Network error. Please try again.");
+    btn.disabled = false;
+  }
+}
+</script>`);
+}
+
+// Part 6: request a password reset (step 1 of 2). Always shows the same
+// generic confirmation after submitting, whether or not that email has a
+// real account -- matches handleRequestPasswordReset's own anti-enumeration
+// design (a real difference in UI text here would leak exactly what the
+// route itself deliberately avoids leaking).
+function renderForgotPasswordPage() {
+  return page('Mot de passe oublié', `
+  <h1>Mot de passe oublié<span class="en">Forgot password</span></h1>
+  <div class="card">
+    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+    <div id="formOk" class="state" style="display:none;">Si un compte existe avec ce courriel, un lien de réinitialisation a été envoyé.<span class="en" style="display:block;">If an account exists with this email, a reset link has been sent.</span></div>
+    <label style="display:block;margin-bottom:12px;" id="emailLabel">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Courriel<span class="en" style="display:block;font-weight:400;">Email</span></span>
+      <input type="email" id="fp_email" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <div class="btns" id="submitBtns">
+      <button type="button" class="btn" id="fp_submit" onclick="submitForgot()">ENVOYER<span class="en" style="display:block;font-size:13px;font-weight:600;">SEND</span></button>
+    </div>
+  </div>
+  <p class="state"><a href="/login">&larr; Se connecter</a><span class="en" style="display:block;"><a href="/login">&larr; Log in</a></span></p>
+<script>
+function showError(msg) {
+  const el = document.getElementById('formErr');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+async function submitForgot() {
+  document.getElementById('formErr').style.display = 'none';
+  const email = document.getElementById('fp_email').value.trim();
+  if (!email) {
+    showError('Le courriel est requis. / Email is required.');
+    return;
+  }
+  const btn = document.getElementById('fp_submit');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/auth/request-password-reset', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      showError(data.error || "Échec de la demande. / Request failed.");
+      btn.disabled = false;
+      return;
+    }
+    document.getElementById('emailLabel').style.display = 'none';
+    document.getElementById('submitBtns').style.display = 'none';
+    document.getElementById('formOk').style.display = 'block';
+  } catch (e) {
+    showError('Erreur réseau. / Network error.');
+    btn.disabled = false;
+  }
+}
+</script>`);
+}
+
+// Part 6: set a new password (step 2 of 2), reached via the emailed
+// reset link's ?token=. The token itself is opaque to this page -- it's
+// just forwarded verbatim to POST /auth/reset-password, which does the
+// real verification (this page never decodes or trusts it client-side).
+function renderResetPasswordPage(token) {
+  return page('Réinitialiser le mot de passe', `
+  <h1>Nouveau mot de passe<span class="en">New password</span></h1>
+  <div class="card">
+    <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;">Nouveau mot de passe (8 caractères min.)<span class="en" style="display:block;font-weight:400;">New password (min. 8 characters)</span></span>
+      <input type="password" id="rp_password" required minlength="8" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <div class="btns">
+      <button type="button" class="btn" id="rp_submit" onclick="submitReset()">RÉINITIALISER<span class="en" style="display:block;font-size:13px;font-weight:600;">RESET</span></button>
+    </div>
+  </div>
+<script>
+function showError(msg) {
+  const el = document.getElementById('formErr');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+async function submitReset() {
+  document.getElementById('formErr').style.display = 'none';
+  const password = document.getElementById('rp_password').value;
+  if (password.length < 8) {
+    showError('Le mot de passe doit contenir au moins 8 caractères. / Password must be at least 8 characters.');
+    return;
+  }
+  const btn = document.getElementById('rp_submit');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/auth/reset-password', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: ${JSON.stringify(token || '')}, password })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      showError(data.error === 'expired'
+        ? "Ce lien a expiré. Veuillez en demander un nouveau. / This link has expired. Please request a new one."
+        : (data.error || "Échec de la réinitialisation. / Reset failed."));
+      btn.disabled = false;
+      return;
+    }
+    window.location.href = '/dashboard';
+  } catch (e) {
+    showError('Erreur réseau. / Network error.');
     btn.disabled = false;
   }
 }
@@ -16218,6 +16334,12 @@ async function handleFetch(req, env, ctx) {
         return await handleVerifyEmail(req, env, url);
       if (url.pathname === '/auth/resend-verification' && req.method === 'POST')
         return await handleResendVerification(req, env, sendMail);
+      // Part 6: password reset. Both unauthenticated by design (a user
+      // who forgot their password has no valid session to check).
+      if (url.pathname === '/auth/request-password-reset' && req.method === 'POST')
+        return await handleRequestPasswordReset(req, env, sendMail);
+      if (url.pathname === '/auth/reset-password' && req.method === 'POST')
+        return await handleResetPassword(req, env);
       // League provisioning (leagues.js) — requires a valid user session.
       // Rows in the shared DB, scoped by league_id; see leagues.js's header
       // comment for the architecture decision behind that.
@@ -16247,6 +16369,10 @@ async function handleFetch(req, env, ctx) {
         return new Response(renderSignupPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/login' || url.pathname === '/login/') && req.method === 'GET')
         return new Response(renderLoginPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if ((url.pathname === '/forgot-password' || url.pathname === '/forgot-password/') && req.method === 'GET')
+        return new Response(renderForgotPasswordPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if ((url.pathname === '/reset-password' || url.pathname === '/reset-password/') && req.method === 'GET')
+        return new Response(renderResetPasswordPage(url.searchParams.get('token')), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/dashboard' || url.pathname === '/dashboard/') && req.method === 'GET')
         return await handleDashboardPage(req, env, url);
       // League-admin UI pages (Parts R-V — see the task report).
