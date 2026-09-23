@@ -1729,13 +1729,25 @@ async function runHoldCall(env, m) {
   await callSubs(env, ev, m.team, payload.need);
 }
 
-async function drain(env, limit = 40) {
+// filterEventId is additive and optional — every existing caller (cron via
+// runSchedule, /admin/drain, every existing test) omits it and gets the
+// exact same unscoped query as before. It exists for the immediate
+// self-triggered sub-invite path (Part R): draining ONLY the one event
+// that just got a new sub_call queued for it, rather than the whole
+// outbox, so a player's own RSVP action can't have the side effect of
+// also flushing unrelated pending mail (SMBHL's or another league's) that
+// simply happened to also be due at that moment.
+async function drain(env, limit = 40, filterEventId = null) {
   const now = new Date().toISOString();
   const due = (await env.DB.prepare(
-    `SELECT * FROM outbox
-      WHERE sent_at IS NULL AND cancelled = 0 AND send_after <= ?
-      ORDER BY id LIMIT ?`
-  ).bind(now, limit).all()).results || [];
+    filterEventId
+      ? `SELECT * FROM outbox
+          WHERE sent_at IS NULL AND cancelled = 0 AND send_after <= ? AND event_id = ?
+          ORDER BY id LIMIT ?`
+      : `SELECT * FROM outbox
+          WHERE sent_at IS NULL AND cancelled = 0 AND send_after <= ?
+          ORDER BY id LIMIT ?`
+  ).bind(...(filterEventId ? [now, filterEventId, limit] : [now, limit])).all()).results || [];
 
   let sent = 0, failed = 0;
   const highlightsCache = new Map();
@@ -7551,21 +7563,113 @@ async function verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token) {
   return { ok: true, contact, ev };
 }
 
-// Shared write path for both the GET one-click (?v=in/out) and POST forms
-// below. team comes from the contact's own preferred_team (there is no
-// roster-to-team assignment flow for a second league yet — see the report
-// — so this is the only team signal available); role mirrors the
-// roster/sub split contacts.role already uses.
-async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status) {
+// Shared write path for the GET one-click (?v=in/out), POST /league/rsvp
+// (both self, via the player's own token), and the admin-set path below
+// (status_by='manager'). team comes from the contact's own preferred_team
+// (there is no roster-to-team assignment flow for a second league yet —
+// see the report — so this is the only team signal available); role
+// mirrors the roster/sub split contacts.role already uses.
+//
+// DELIBERATE SCOPE NOTE (Part R): this function — and every caller of it
+// — always writes to the SAME playerId that was authenticated (either the
+// token's own player, or, for the admin path, a player explicitly
+// resolved and re-verified against the session's own league). There is no
+// "target a different player" parameter anywhere in this file's league
+// RSVP code, unlike SMBHL's real /rsvp+/team-rsvp, which lets a
+// signed-in teammate mark a DIFFERENT teammate via a team-scoped token.
+// That capability is genuinely not built for a second league — not
+// partially, not silently degraded — per this task's explicit decision;
+// see leagueRsvpPost's own comment and test/league_rsvp_no_teammate_edit.spec.js.
+async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, statusBy = 'self') {
   const now = new Date().toISOString();
   const team = contact?.preferred_team || null;
   const role = contact?.role === 'roster' ? 'roster' : 'sub';
   await env.DB.prepare(
     `INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at, league_id)
-     VALUES (?, ?, ?, ?, ?, 'self', ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(event_id, player_id) DO UPDATE SET
-       status = excluded.status, status_by = 'self', updated_at = excluded.updated_at`
-  ).bind(eventId, playerId, team, status, role, now, leagueId).run();
+       status = excluded.status, status_by = excluded.status_by, updated_at = excluded.updated_at`
+  ).bind(eventId, playerId, team, status, role, statusBy, now, leagueId).run();
+}
+
+// Part R: immediate (not batched/delayed) sub-invite when a self- or
+// admin-triggered OUT creates a real shortage. Deliberately simpler than
+// Part P's callSubs: no wave staggering, no quiet-hours delay (delayMin
+// is always 0), no asked_streak/dormancy bookkeeping — "simple and
+// immediate" per the task. Still excludes contacts already marked
+// dormant/opted-out from the pool (a sensible eligibility floor, not the
+// same thing as the streak-tracking this intentionally skips), and still
+// goes through the ordinary outbox (enqueue) + drain() pipeline rather
+// than calling sendMail directly, so it's auditable and reuses drain()'s
+// already-correct per-league send-identity resolution (Part P) instead of
+// duplicating it.
+//
+// Duplicate guard: if an immediate invite for this exact (event, need)
+// pair already went out in the last 10 minutes, this is a no-op. Chosen
+// specifically for the scenario the task calls out — a player flips
+// OUT, subs get invited, then flips back IN before anyone responds — so
+// a few minutes of flapping doesn't re-spam the same sub pool. 10 minutes
+// is a judgment call: short enough that a genuine NEW shortage (a
+// different player going out later) still gets its own fresh invite
+// soon after, long enough to absorb a quick correction. Documented here
+// rather than made configurable, since this whole mechanism is
+// explicitly a simple stopgap (see the task report's cron design note).
+const IMMEDIATE_INVITE_DEDUP_WINDOW_MIN = 10;
+
+async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
+  const team = contact?.preferred_team || null;
+  if (!team) return { invited: 0, reason: 'no-team-on-file' };
+
+  const need = (contact.is_goalie === 1 || contact.role === 'sub_goalie') ? 'goalie' : 'skater';
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  if (!getTeamNames(cfg).includes(team)) return { invited: 0, reason: 'unknown-team' };
+
+  const spots = await openSpots(env.DB, ev.id, team, need, cfg);
+  if (spots < 1) return { invited: 0, reason: 'not-short' };
+
+  // Exact event_id match + in-JS payload check, deliberately NOT a LIKE
+  // pattern on dedup_key: a league-prefixed event id (league_ids.js's
+  // makeEventId, UUID-based) makes a `call:${ev.id}:${need}:%` pattern
+  // long enough to exceed SQLite's default LIKE-pattern-length limit (50
+  // bytes) — D1 throws "LIKE or GLOB pattern too complex" for SMBHL's own
+  // short date-only event ids never hit this, but any league-scoped one
+  // reliably does. (stopWaves, above, has the same latent LIKE-pattern
+  // shape — not fixed here since nothing in this task calls it for a
+  // league event; see the task report.)
+  const windowStart = new Date(Date.now() - IMMEDIATE_INVITE_DEDUP_WINDOW_MIN * 60000).toISOString();
+  const recentRows = (await env.DB.prepare(
+    `SELECT payload FROM outbox WHERE event_id = ? AND kind = 'sub_call' AND created_at >= ?`
+  ).bind(ev.id, windowStart).all()).results || [];
+  const recent = recentRows.some(r => {
+    try { return JSON.parse(r.payload || '{}').need === need; } catch (_) { return false; }
+  });
+  if (recent) return { invited: 0, reason: 'recently-invited' };
+
+  const role = need === 'goalie' ? 'sub_goalie' : 'sub_skater';
+  const pool = (await env.DB.prepare(
+    `SELECT player_id FROM contacts
+      WHERE role = ? AND league_id = ? AND opted_out = 0 AND dormant = 0 AND email IS NOT NULL
+        AND player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)
+        AND player_id NOT IN (SELECT player_id FROM availability WHERE event_id = ?)
+      ORDER BY answered_ever DESC, name`
+  ).bind(role, leagueId, ev.id, ev.id).all()).results || [];
+
+  if (!pool.length) return { invited: 0, reason: 'no-eligible-subs' };
+
+  for (const p of pool) {
+    await enqueue(env, {
+      kind: 'sub_call', event_id: ev.id, player_id: p.player_id, team,
+      dedup_key: `call:${ev.id}:${need}:${p.player_id}`,
+      payload: { need }, delayMin: 0, league_id: leagueId
+    });
+  }
+  // Sends right away — scoped to THIS event only (filterEventId), so a
+  // player's own RSVP action never has the side effect of also flushing
+  // unrelated pending mail (SMBHL's or another league's) that happened to
+  // be due at the same moment.
+  await drain(env, 40, ev.id);
+
+  return { invited: pool.length, reason: 'invited' };
 }
 
 async function leagueRsvpGet(req, env, url) {
@@ -7586,6 +7690,7 @@ async function leagueRsvpGet(req, env, url) {
   if (['in', 'out'].includes(autoVal) && ev.state === 'open' && status !== autoVal) {
     await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, autoVal);
     status = autoVal;
+    if (autoVal === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
   }
 
   const leagueCfg = (await getLeagueSeasonConfig(env, leagueId, ev.season)).league;
@@ -7607,6 +7712,13 @@ async function leagueRsvpGet(req, env, url) {
   return page(leagueCfg.name, body, '', leagueCfg);
 }
 
+// The `p=` URL param is the ONLY player this request can ever write to —
+// it's both the identity verifyLeagueRsvpToken checks the signature
+// against AND the sole write target below. There is no separate
+// "target player" field anywhere in this body, so a token holder cannot
+// use their own valid token to affect any other player's row — see
+// writeLeagueRsvpStatus's own comment and this task's dedicated isolation
+// test for the explicit proof.
 async function leagueRsvpPost(req, env, url) {
   const leagueId = url.searchParams.get('league');
   const eventId = url.searchParams.get('e');
@@ -7621,7 +7733,51 @@ async function leagueRsvpPost(req, env, url) {
   if (ev.state !== 'open') return new Response('locked', { status: 409 });
 
   await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status);
+  if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
   return Response.json({ ok: true, league_id: leagueId, status });
+}
+
+/* ---------- admin-set RSVP status (Part R) ----------
+ * Session+checkLeagueAccess-gated. The one legitimate "set another
+ * player's status" capability for a second league — but only for the
+ * league's own ADMIN acting through their own session, never through a
+ * player's token. Distinct from, and does NOT reintroduce, the
+ * teammate-marks-teammate capability SMBHL's /team-rsvp has: there is no
+ * player-facing path here at all, only this session-gated one.
+ */
+async function handleLeagueAdminSetRsvp(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const body = await req.json().catch(() => ({}));
+  const eventId = String(body.event_id || '').trim();
+  const playerId = String(body.player_id || '').trim();
+  const status = String(body.status || '').trim();
+  if (!eventId || !playerId || !['in', 'out'].includes(status)) {
+    return Response.json({ ok: false, error: 'event_id, player_id, and status (in|out) are required.' }, { status: 400 });
+  }
+
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
+    .bind(eventId, leagueId).first();
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.' }, { status: 404 });
+  if (ev.state !== 'open') return Response.json({ ok: false, error: 'Event is locked.' }, { status: 409 });
+
+  const contact = await env.DB.prepare('SELECT * FROM contacts WHERE player_id = ? AND league_id = ?')
+    .bind(playerId, leagueId).first();
+  if (!contact) return Response.json({ ok: false, error: 'Player not found.' }, { status: 404 });
+
+  await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'manager');
+  if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
+
+  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, status });
 }
 
 /* ---------- league-scoped shortage status (Part O) ----------
@@ -15437,6 +15593,11 @@ async function handleFetch(req, env, ctx) {
           { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if (url.pathname === '/league/rsvp' && req.method === 'POST')
         return await leagueRsvpPost(req, env, url);
+      // Session-gated admin-set RSVP (Part R — see the task report). The
+      // only "set a different player's status" path this app has for a
+      // second league — never reachable via a player token.
+      if (url.pathname === '/league/rsvp/admin' && req.method === 'POST')
+        return await handleLeagueAdminSetRsvp(req, env, url);
       // Session-gated shortage status (Part O — see the task report).
       if (url.pathname === '/league/events/status' && req.method === 'GET')
         return await handleLeagueEventStatus(req, env, url);

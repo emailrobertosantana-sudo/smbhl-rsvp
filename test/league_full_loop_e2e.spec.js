@@ -137,39 +137,11 @@ describe('Part Q: full second-league loop, end to end', () => {
     const token = await computeToken(RSVP_SECRET, `lr:${leagueId}:${eventId}:${playerId}:${playerSalt}`);
 
     // 8. Player submits RSVP via the link: marks OUT, creating a shortage
-    // (skaters_per_team: 1, and now 0 confirmed).
-    const rsvpRes = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: 'out' })
-    });
-    expect(rsvpRes.status).toBe(200);
-    expect((await rsvpRes.json()).status).toBe('out');
-
-    // 9. Admin views the event's shortage status.
-    const statusRes = await SELF.fetch(`http://example.com/league/events/status?e=${encodeURIComponent(eventId)}`, {
-      headers: { cookie }
-    });
-    expect(statusRes.status).toBe(200);
-    const statusJson = await statusRes.json();
-    const comets = statusJson.teams.find(t => t.team === 'Comets');
-    expect(comets.short).toBe(true);
-    expect(comets.openSkaters).toBeGreaterThan(0);
-
-    // 10. Admin triggers a sub-invite for the shorted team.
-    const inviteRes = await SELF.fetch('http://example.com/league/events/invite-subs', {
-      method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ event_id: eventId, team: 'Comets', need: 'skater' })
-    });
-    expect(inviteRes.status).toBe(200);
-    const inviteJson = await inviteRes.json();
-    expect(inviteJson.invited).toBe(1);
-
-    // Drain the outbox and confirm the sub-invite email went out under
-    // THIS league's own identity, matching Part P's requirement, as the
-    // final visible proof the whole chain (write -> queue -> send)
-    // actually connects end to end.
+    // (skaters_per_team: 1, and now 0 confirmed). Since Part R, this
+    // immediately (synchronously, within this same request) queues AND
+    // sends a sub-invite -- no separate admin action needed for the
+    // common case.
+    env.RESEND_API_KEY = 're_test_key_full_loop';
     const originalFetch = globalThis.fetch;
     const sentMails = [];
     globalThis.fetch = async (url, opts) => {
@@ -179,16 +151,49 @@ describe('Part Q: full second-league loop, end to end', () => {
       }
       return originalFetch(url, opts);
     };
+    let rsvpRes;
     try {
-      env.RESEND_API_KEY = 're_test_key_full_loop';
-      await drain(env);
+      rsvpRes = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'out' })
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }
+    expect(rsvpRes.status).toBe(200);
+    expect((await rsvpRes.json()).status).toBe('out');
+
+    // The automatic (Part R) sub-invite email already went out under THIS
+    // league's own identity, matching Part P's requirement -- proof the
+    // whole chain (self-out -> shortage detected -> queued -> sent)
+    // connects end to end with zero admin action.
     expect(sentMails.length).toBe(1);
     expect(sentMails[0].to).toEqual(['sub@fullloop.com']);
     expect(sentMails[0].from).toContain('fullloop.admin@example.com');
     expect(sentMails[0].from).not.toContain('smbhl.com');
+
+    // 9. Admin views the event's shortage status -- still short, since no
+    // one has answered the automatic invite yet.
+    const statusRes = await SELF.fetch(`http://example.com/league/events/status?e=${encodeURIComponent(eventId)}`, {
+      headers: { cookie }
+    });
+    expect(statusRes.status).toBe(200);
+    const statusJson = await statusRes.json();
+    const comets = statusJson.teams.find(t => t.team === 'Comets');
+    expect(comets.short).toBe(true);
+    expect(comets.openSkaters).toBeGreaterThan(0);
+
+    // 10. Admin also has Part P's manual trigger available -- calling it
+    // again right away is correctly a no-op (Part R's duplicate guard),
+    // rather than re-spamming the same sub a second time.
+    const inviteRes = await SELF.fetch('http://example.com/league/events/invite-subs', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ event_id: eventId, team: 'Comets', need: 'skater' })
+    });
+    expect(inviteRes.status).toBe(200);
+    expect(sentMails.length).toBe(1); // still just the one, automatic invite
 
     // 11. This league published its own real data_json entry, under its
     // own scoped key -- never SMBHL's.
