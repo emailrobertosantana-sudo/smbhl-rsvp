@@ -964,6 +964,51 @@ async function submitReset() {
 </script>`);
 }
 
+// Scoped to exactly which dashboard state is rendering (state: 'none' |
+// 'active' | 'deactivated', plus the active-only needsSeason/unverified
+// flags) -- NOT a single static dict -- so a translation for a section
+// that isn't actually shown (e.g. "Démarrer votre saison" once a season
+// already exists) never leaks into the shipped page, even inertly
+// inside the JS dict. Same lesson as the public page's earlier bug
+// this task already found and fixed (an unrelated string leaking into
+// every response broke an existing test).
+function buildDashI18n({ state, needsSeason, unverified }) {
+  const fr = { logout: 'SE DÉCONNECTER' };
+  const en = { logout: 'LOG OUT' };
+  if (state === 'none') {
+    Object.assign(fr, { dashTitle: 'Tableau de bord', noLeagueYet: "Vous n'avez pas encore de ligue." });
+    Object.assign(en, { dashTitle: 'Dashboard', noLeagueYet: "You don't have a league yet." });
+  } else if (state === 'active') {
+    Object.assign(fr, {
+      navRoster: 'EFFECTIF', navSchedule: 'CALENDRIER',
+      publicPageLabel: 'Page publique à partager avec vos joueurs :',
+      coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteBtn: 'INVITER',
+      teams: 'Équipes',
+      deactivateLeague: 'Désactiver la ligue',
+      deactivateDesc: "Cette action désactive votre ligue -- vos données sont conservées, mais l'accès à la gestion est bloqué.",
+      deactivateBtn: 'DÉSACTIVER'
+    });
+    Object.assign(en, {
+      navRoster: 'ROSTER', navSchedule: 'SCHEDULE',
+      publicPageLabel: 'Public page to share with your players:',
+      coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteBtn: 'INVITE',
+      teams: 'Teams',
+      deactivateLeague: 'Deactivate league',
+      deactivateDesc: 'This deactivates your league -- your data is kept, but management access is blocked.',
+      deactivateBtn: 'DEACTIVATE'
+    });
+    if (needsSeason) {
+      Object.assign(fr, { startSeason: 'Démarrer votre saison', startSeasonDesc: 'Il vous faut une saison active avant de pouvoir créer des matchs.', seasonNameLabel: 'Nom de la saison', seasonStartBtn: 'DÉMARRER' });
+      Object.assign(en, { startSeason: 'Start your season', startSeasonDesc: 'You need an active season before you can create events.', seasonNameLabel: 'Season name', seasonStartBtn: 'START' });
+    }
+    if (unverified) {
+      Object.assign(fr, { notVerified: "⚠️ Votre courriel n'est pas encore vérifié.", resendBtn: 'RENVOYER LE COURRIEL' });
+      Object.assign(en, { notVerified: '⚠️ Your email is not yet verified.', resendBtn: 'RESEND EMAIL' });
+    }
+  }
+  return { fr, en };
+}
+
 async function handleDashboardPage(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) {
@@ -1007,15 +1052,15 @@ async function handleDashboardPage(req, env, url) {
   // pattern.
   const nav = leagueRow ? `
     <div class="btns" style="margin:16px 0;flex-wrap:wrap;">
-      <a class="btn" href="/league/roster">EFFECTIF<span class="en" style="display:block;font-size:13px;font-weight:600;">ROSTER</span></a>
-      <a class="btn" href="/league/schedule">CALENDRIER<span class="en" style="display:block;font-size:13px;font-weight:600;">SCHEDULE</span></a>
+      <a class="btn" href="/league/roster" data-i18n="navRoster">EFFECTIF</a>
+      <a class="btn" href="/league/schedule" data-i18n="navSchedule">CALENDRIER</a>
     </div>
   ` : '';
 
   // Part 4: the public page only exists to be shared, so the dashboard
   // is where an admin discovers its real, copyable URL.
   const publicPageHtml = leagueRow ? `
-    <p class="state" style="margin:0 0 16px;">Page publique à partager avec vos joueurs :<span class="en" style="display:block;">Public page to share with your players:</span>
+    <p class="state" style="margin:0 0 16px;"><span data-i18n="publicPageLabel">Page publique à partager avec vos joueurs :</span>
       <a href="/league/public?league=${encodeURIComponent(leagueRow.id)}">${esc(url.origin)}/league/public?league=${esc(leagueRow.id)}</a>
     </p>
   ` : '';
@@ -1028,18 +1073,18 @@ async function handleDashboardPage(req, env, url) {
   ).bind(leagueRow.id).all()).results.map(r => r.email) : [];
   const adminsHtml = leagueRow ? `
     <div class="card">
-      <h2>Co-administrateurs<span class="en">Co-admins</span></h2>
+      <h2 data-i18n="coAdmins">Co-administrateurs</h2>
       <ul style="margin:0 0 16px;padding-left:20px;">
         ${adminEmails.map(e => `<li>${esc(e)}</li>`).join('')}
       </ul>
       <div id="inviteErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
       <div id="inviteOk" class="state" style="display:none;"></div>
       <label style="display:block;margin-bottom:12px;">
-        <span style="display:block;font-weight:600;margin-bottom:4px;">Inviter un(e) co-administrateur(-trice)<span class="en" style="display:block;font-weight:400;">Invite a co-admin</span></span>
+        <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="inviteLabel">Inviter un(e) co-administrateur(-trice)</span>
         <input type="email" id="invite_email" placeholder="courriel@exemple.com" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
       </label>
       <div class="btns">
-        <button type="button" class="btn" id="invite_submit" onclick="submitInvite()">INVITER<span class="en" style="display:block;font-size:13px;font-weight:600;">INVITE</span></button>
+        <button type="button" class="btn" id="invite_submit" data-i18n="inviteBtn" onclick="submitInvite()">INVITER</button>
       </div>
     </div>
   ` : '';
@@ -1049,15 +1094,15 @@ async function handleDashboardPage(req, env, url) {
   // form only ever asks for the one new thing: a season name.
   const startSeasonHtml = !currentSeason ? `
     <div class="card" style="border-left:4px solid var(--blue);">
-      <h2>Démarrer votre saison<span class="en">Start your season</span></h2>
-      <p class="state" style="margin-top:0;">Il vous faut une saison active avant de pouvoir créer des matchs.<span class="en" style="display:block;">You need an active season before you can create events.</span></p>
+      <h2 data-i18n="startSeason">Démarrer votre saison</h2>
+      <p class="state" style="margin-top:0;" data-i18n="startSeasonDesc">Il vous faut une saison active avant de pouvoir créer des matchs.</p>
       <div id="seasonErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
       <label style="display:block;margin:12px 0;">
-        <span style="display:block;font-weight:600;margin-bottom:4px;">Nom de la saison<span class="en" style="display:block;font-weight:400;">Season name</span></span>
+        <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="seasonNameLabel">Nom de la saison</span>
         <input type="text" id="season_name" placeholder="Ex. Saison Hiver 2026" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
       </label>
       <div class="btns">
-        <button type="button" class="btn" id="season_submit" onclick="submitSeason()">DÉMARRER<span class="en" style="display:block;font-size:13px;font-weight:600;">START</span></button>
+        <button type="button" class="btn" id="season_submit" data-i18n="seasonStartBtn" onclick="submitSeason()">DÉMARRER</button>
       </div>
     </div>
   ` : '';
@@ -1066,6 +1111,12 @@ async function handleDashboardPage(req, env, url) {
   // never the normal management UI (no nav, no forms) -- confirming the
   // action took effect, without implying any of this league's other
   // data was touched (it wasn't; deactivating is purely an access gate).
+  // Dynamic-value strings (deactivation date, league name, season name,
+  // tracks-stats yes/no) deliberately keep the existing FR-primary +
+  // always-visible .en sub-line convention rather than the data-i18n
+  // toggle -- a bounded, documented scope decision (see Part 2/3 commit
+  // messages) rather than adding placeholder-substitution machinery for
+  // a handful of strings.
   const deactivatedHtml = leagueRow && leagueRow.deactivated_at ? `
     <h1>${esc(leagueRow.name)}</h1>
     <div class="card" style="border-left:4px solid var(--red);">
@@ -1077,15 +1128,15 @@ async function handleDashboardPage(req, env, url) {
   // own exact name (server-enforced too -- see handleLeagueDeactivate).
   const deactivateHtml = leagueRow && !leagueRow.deactivated_at ? `
     <div class="card" style="border-left:4px solid var(--red);">
-      <h2>Désactiver la ligue<span class="en">Deactivate league</span></h2>
-      <p class="state" style="margin-top:0;">Cette action désactive votre ligue -- vos données sont conservées, mais l'accès à la gestion est bloqué.<span class="en" style="display:block;">This deactivates your league -- your data is kept, but management access is blocked.</span></p>
+      <h2 data-i18n="deactivateLeague">Désactiver la ligue</h2>
+      <p class="state" style="margin-top:0;" data-i18n="deactivateDesc">Cette action désactive votre ligue -- vos données sont conservées, mais l'accès à la gestion est bloqué.</p>
       <div id="deactivateErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
       <label style="display:block;margin:12px 0;">
         <span style="display:block;font-weight:600;margin-bottom:4px;">Tapez le nom exact de la ligue pour confirmer : <i>${esc(leagueRow.name)}</i><span class="en" style="display:block;font-weight:400;">Type the league's exact name to confirm: <i>${esc(leagueRow.name)}</i></span></span>
         <input type="text" id="deactivate_confirm" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
       </label>
       <div class="btns">
-        <button type="button" class="btn" id="deactivate_submit" onclick="submitDeactivate()" style="border-color:var(--red);color:var(--red);">DÉSACTIVER<span class="en" style="display:block;font-size:13px;font-weight:600;">DEACTIVATE</span></button>
+        <button type="button" class="btn" id="deactivate_submit" data-i18n="deactivateBtn" onclick="submitDeactivate()" style="border-color:var(--red);color:var(--red);">DÉSACTIVER</button>
       </div>
     </div>
   ` : '';
@@ -1096,10 +1147,10 @@ async function handleDashboardPage(req, env, url) {
     ${currentSeason ? `<p class="state" style="margin:0 0 4px;">Saison actuelle : <b>${esc(currentSeason)}</b><span class="en" style="display:block;">Current season: <b>${esc(currentSeason)}</b></span></p>` : ''}
     ${!verified ? `
       <div class="card" style="border-left:4px solid var(--orange);">
-        <p class="state" style="margin:0;">⚠️ Votre courriel n'est pas encore vérifié.<span class="en" style="display:block;">Your email is not yet verified.</span></p>
+        <p class="state" style="margin:0;" data-i18n="notVerified">⚠️ Votre courriel n'est pas encore vérifié.</p>
         <p id="resendMsg" class="state" style="margin:8px 0 0;display:none;"></p>
         <div class="btns" style="margin-top:10px;">
-          <button class="btn" id="resendBtn" onclick="resendVerification()">RENVOYER LE COURRIEL<span class="en" style="display:block;font-size:13px;font-weight:600;">RESEND EMAIL</span></button>
+          <button class="btn" id="resendBtn" data-i18n="resendBtn" onclick="resendVerification()">RENVOYER LE COURRIEL</button>
         </div>
       </div>
     ` : ''}
@@ -1107,7 +1158,7 @@ async function handleDashboardPage(req, env, url) {
     ${nav}
     ${publicPageHtml}
     <div class="card">
-      <h2>Équipes<span class="en">Teams</span></h2>
+      <h2 data-i18n="teams">Équipes</h2>
       <ul style="margin:0;padding-left:20px;">
         ${(() => { try { return JSON.parse(leagueRow.team_names || '[]'); } catch (_) { return []; } })()
           .map(t => `<li>${esc(t)}</li>`).join('')}
@@ -1117,14 +1168,17 @@ async function handleDashboardPage(req, env, url) {
     ${adminsHtml}
     ${deactivateHtml}
   ` : `
-    <h1>Tableau de bord<span class="en">Dashboard</span></h1>
-    <div class="card"><p class="state" style="margin:0;">Vous n'avez pas encore de ligue.<span class="en" style="display:block;">You don't have a league yet.</span></p></div>
+    <h1 data-i18n="dashTitle">Tableau de bord</h1>
+    <div class="card"><p class="state" style="margin:0;" data-i18n="noLeagueYet">Vous n'avez pas encore de ligue.</p></div>
   `;
+
+  const dashState = leagueRow && leagueRow.deactivated_at ? 'deactivated' : leagueRow ? 'active' : 'none';
+  const I18N_DASH = buildDashI18n({ state: dashState, needsSeason: !currentSeason, unverified: !verified });
 
   return new Response(page('Tableau de bord', `
     ${body}
     <div class="btns" style="margin-top:20px;">
-      <button class="btn" id="logoutBtn" onclick="doLogout()">SE DÉCONNECTER<span class="en" style="display:block;font-size:13px;font-weight:600;">LOG OUT</span></button>
+      <button class="btn" id="logoutBtn" data-i18n="logout" onclick="doLogout()">SE DÉCONNECTER</button>
     </div>
 <script>
 async function doLogout() {
@@ -1244,6 +1298,17 @@ async function submitDeactivate() {
     btn.disabled = false;
   }
 }
+
+var I18N_DASH = ${JSON.stringify(I18N_DASH)};
+function applyLanguage(lang) {
+  var dict = I18N_DASH[lang] || I18N_DASH.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (k && dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
 </script>`, '', leagueCfg), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
@@ -1525,53 +1590,81 @@ async function handleLeagueRosterPage(req, env, url) {
   const leagueCfg = seasonCfg.league;
 
   const rosterHtml = contacts.length
-    ? `<table>${contacts.map(c => `<tr><td>${esc(c.name)}${c.email ? `<span class="by">${esc(c.email)}</span>` : ''}</td><td class="s">${esc(ROLE_LABEL_FR_EN[c.role] || c.role)}</td><td class="s">${c.preferred_team ? esc(c.preferred_team) : '<span style="color:var(--faint);">Non assigné<span class="en" style="display:block;">Unassigned</span></span>'}</td></tr>`).join('')}</table>`
-    : `<p class="state" style="margin:0;">Aucun joueur pour l'instant.<span class="en" style="display:block;">No players yet.</span></p>`;
+    ? `<table>${contacts.map(c => `<tr><td>${esc(c.name)}${c.email ? `<span class="by">${esc(c.email)}</span>` : ''}</td><td class="s">${esc(ROLE_LABEL_FR_EN[c.role] || c.role)}</td><td class="s">${c.preferred_team ? esc(c.preferred_team) : '<span style="color:var(--faint);" data-i18n="unassigned">Non assigné</span>'}</td></tr>`).join('')}</table>`
+    : `<p class="state" style="margin:0;" data-i18n="noPlayers">Aucun joueur pour l'instant.</p>`;
+
+  const I18N_ROSTER = {
+    fr: {
+      title: 'Effectif', backLink: '&larr; Tableau de bord', addPlayer: 'Ajouter un joueur',
+      fullName: 'Nom complet', emailOpt: 'Courriel <i>(optionnel)</i>', phoneOpt: 'Téléphone <i>(optionnel)</i>',
+      role: 'Rôle', roleRoster: 'Régulier / Roster', roleSubSkater: 'Sub — joueur / skater', roleSubGoalie: 'Sub — gardien / goalie',
+      teamOpt: 'Équipe <i>(optionnel)</i>', teamUnassigned: 'Non assigné', addBtn: 'AJOUTER',
+      players: 'Joueurs', unassigned: 'Non assigné', noPlayers: "Aucun joueur pour l'instant."
+    },
+    en: {
+      title: 'Roster', backLink: '&larr; Dashboard', addPlayer: 'Add a player',
+      fullName: 'Full name', emailOpt: 'Email <i>(optional)</i>', phoneOpt: 'Phone <i>(optional)</i>',
+      role: 'Role', roleRoster: 'Regular / Roster', roleSubSkater: 'Sub skater', roleSubGoalie: 'Sub goalie',
+      teamOpt: 'Team <i>(optional)</i>', teamUnassigned: 'Unassigned', addBtn: 'ADD',
+      players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.'
+    }
+  };
 
   return new Response(page('Effectif', `
-  <h1>Effectif<span class="en">Roster</span></h1>
-  <p class="state" style="margin:0 0 16px;"><a href="/dashboard">&larr; Tableau de bord<span class="en" style="display:inline;"> / Dashboard</span></a></p>
+  <h1 data-i18n="title">Effectif</h1>
+  <p class="state" style="margin:0 0 16px;"><a href="/dashboard" data-i18n="backLink">&larr; Tableau de bord</a></p>
 
   <div class="card">
-    <h2>Ajouter un joueur<span class="en">Add a player</span></h2>
+    <h2 data-i18n="addPlayer">Ajouter un joueur</h2>
     <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Nom complet<span class="en" style="display:block;font-weight:400;">Full name</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="fullName">Nom complet</span>
       <input type="text" id="r_name" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Courriel <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Email <i>(optional)</i></span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="emailOpt">Courriel <i>(optionnel)</i></span>
       <input type="email" id="r_email" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Téléphone <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Phone <i>(optional)</i></span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="phoneOpt">Téléphone <i>(optionnel)</i></span>
       <input type="tel" id="r_phone" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Rôle<span class="en" style="display:block;font-weight:400;">Role</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="role">Rôle</span>
       <select id="r_role" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-        <option value="roster">Régulier / Roster</option>
-        <option value="sub_skater">Sub — joueur / skater</option>
-        <option value="sub_goalie">Sub — gardien / goalie</option>
+        <option value="roster" data-i18n="roleRoster">Régulier / Roster</option>
+        <option value="sub_skater" data-i18n="roleSubSkater">Sub — joueur / skater</option>
+        <option value="sub_goalie" data-i18n="roleSubGoalie">Sub — gardien / goalie</option>
       </select>
     </label>
     <label style="display:block;margin-bottom:16px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Équipe <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Team <i>(optional)</i></span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="teamOpt">Équipe <i>(optionnel)</i></span>
       <select id="r_team" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-        <option value="">Non assigné / Unassigned</option>
+        <option value="" data-i18n="teamUnassigned">Non assigné</option>
         ${teamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
       </select>
     </label>
     <div class="btns">
-      <button type="button" class="btn" id="r_submit" onclick="submitContact()">AJOUTER<span class="en" style="display:block;font-size:13px;font-weight:600;">ADD</span></button>
+      <button type="button" class="btn" id="r_submit" data-i18n="addBtn" onclick="submitContact()">AJOUTER</button>
     </div>
   </div>
 
   <div class="card">
-    <h2>Joueurs<span class="en">Players</span></h2>
+    <h2 data-i18n="players">Joueurs</h2>
     <div id="rosterList">${rosterHtml}</div>
   </div>
 <script>
+var I18N_ROSTER = ${JSON.stringify(I18N_ROSTER)};
+function applyLanguage(lang) {
+  var dict = I18N_ROSTER[lang] || I18N_ROSTER.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (k && dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+
 function showErr(msg) {
   const el = document.getElementById('formErr');
   el.textContent = msg;
@@ -1639,44 +1732,71 @@ async function handleLeagueSchedulePage(req, env, url) {
   // Part 2 fix: see handleDashboardPage's comment for the full story.
   const leagueCfg = (await getLeagueSeasonConfig(env, leagueId)).league;
 
-  const STATE_LABEL = { open: 'Ouvert / Open', closed: 'Fermé / Closed', cancelled: 'Annulé / Cancelled' };
+  const STATE_LABEL = { open: 'Ouvert', closed: 'Fermé', cancelled: 'Annulé' };
+  const STATE_KEY = { open: 'stateOpen', closed: 'stateClosed', cancelled: 'stateCancelled' };
   const scheduleHtml = events.length
-    ? `<table>${events.map(ev => `<tr><td>${esc(ev.date)}${ev.venue ? `<span class="by">${esc(ev.venue)}</span>` : ''}${ev.start_time ? `<span class="by">${esc(ev.start_time)}</span>` : ''}</td><td class="s"><a href="/league/events/detail?e=${encodeURIComponent(ev.id)}">${esc(STATE_LABEL[ev.state] || ev.state)}</a></td></tr>`).join('')}</table>`
-    : `<p class="state" style="margin:0;">Aucun match pour l'instant.<span class="en" style="display:block;">No events yet.</span></p>`;
+    ? `<table>${events.map(ev => `<tr><td>${esc(ev.date)}${ev.venue ? `<span class="by">${esc(ev.venue)}</span>` : ''}${ev.start_time ? `<span class="by">${esc(ev.start_time)}</span>` : ''}</td><td class="s"><a href="/league/events/detail?e=${encodeURIComponent(ev.id)}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc(STATE_LABEL[ev.state] || ev.state)}</a></td></tr>`).join('')}</table>`
+    : `<p class="state" style="margin:0;" data-i18n="noEvents">Aucun match pour l'instant.</p>`;
+
+  const I18N_SCHEDULE = {
+    fr: {
+      title: 'Calendrier', backLink: '&larr; Tableau de bord', createEvent: 'Créer un match',
+      date: 'Date', startOpt: 'Heure de début <i>(optionnel)</i>', endOpt: 'Heure de fin <i>(optionnel)</i>',
+      venueOpt: 'Lieu <i>(optionnel)</i>', createBtn: 'CRÉER', events: 'Matchs', noEvents: "Aucun match pour l'instant.",
+      stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé'
+    },
+    en: {
+      title: 'Schedule', backLink: '&larr; Dashboard', createEvent: 'Create an event',
+      date: 'Date', startOpt: 'Start time <i>(optional)</i>', endOpt: 'End time <i>(optional)</i>',
+      venueOpt: 'Venue <i>(optional)</i>', createBtn: 'CREATE', events: 'Events', noEvents: 'No events yet.',
+      stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled'
+    }
+  };
 
   return new Response(page('Calendrier', `
-  <h1>Calendrier<span class="en">Schedule</span></h1>
-  <p class="state" style="margin:0 0 16px;"><a href="/dashboard">&larr; Tableau de bord<span class="en" style="display:inline;"> / Dashboard</span></a></p>
+  <h1 data-i18n="title">Calendrier</h1>
+  <p class="state" style="margin:0 0 16px;"><a href="/dashboard" data-i18n="backLink">&larr; Tableau de bord</a></p>
 
   <div class="card">
-    <h2>Créer un match<span class="en">Create an event</span></h2>
+    <h2 data-i18n="createEvent">Créer un match</h2>
     <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Date<span class="en" style="display:block;font-weight:400;">Date</span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="date">Date</span>
       <input type="date" id="e_date" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Heure de début <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Start time <i>(optional)</i></span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="startOpt">Heure de début <i>(optionnel)</i></span>
       <input type="time" id="e_start" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <label style="display:block;margin-bottom:12px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Heure de fin <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">End time <i>(optional)</i></span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="endOpt">Heure de fin <i>(optionnel)</i></span>
       <input type="time" id="e_end" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <label style="display:block;margin-bottom:16px;">
-      <span style="display:block;font-weight:600;margin-bottom:4px;">Lieu <i>(optionnel)</i><span class="en" style="display:block;font-weight:400;">Venue <i>(optional)</i></span></span>
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="venueOpt">Lieu <i>(optionnel)</i></span>
       <input type="text" id="e_venue" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
     </label>
     <div class="btns">
-      <button type="button" class="btn" id="e_submit" onclick="submitEvent()">CRÉER<span class="en" style="display:block;font-size:13px;font-weight:600;">CREATE</span></button>
+      <button type="button" class="btn" id="e_submit" data-i18n="createBtn" onclick="submitEvent()">CRÉER</button>
     </div>
   </div>
 
   <div class="card">
-    <h2>Matchs<span class="en">Events</span></h2>
+    <h2 data-i18n="events">Matchs</h2>
     <div id="scheduleList">${scheduleHtml}</div>
   </div>
 <script>
+var I18N_SCHEDULE = ${JSON.stringify(I18N_SCHEDULE)};
+function applyLanguage(lang) {
+  var dict = I18N_SCHEDULE[lang] || I18N_SCHEDULE.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (k && dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+
 function showErr(msg) {
   const el = document.getElementById('formErr');
   el.textContent = msg;
@@ -1742,8 +1862,20 @@ async function handleLeagueEventDetailPage(req, env, url) {
     // Part 2 fix: see handleDashboardPage's comment for the full story.
     const notFoundLeagueCfg = (await getLeagueSeasonConfig(env, leagueId)).league;
     return new Response(page('Match introuvable', `
-      <h1>Match introuvable<span class="en">Event not found</span></h1>
-      <p class="state"><a href="/league/schedule">&larr; Calendrier<span class="en" style="display:inline;"> / Schedule</span></a></p>
+      <h1 data-i18n="notFound">Match introuvable</h1>
+      <p class="state"><a href="/league/schedule" data-i18n="backToSchedule">&larr; Calendrier</a></p>
+<script>
+var I18N_DETAIL_404 = { fr: { notFound: 'Match introuvable', backToSchedule: '&larr; Calendrier' }, en: { notFound: 'Event not found', backToSchedule: '&larr; Schedule' } };
+function applyLanguage(lang) {
+  var dict = I18N_DETAIL_404[lang] || I18N_DETAIL_404.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (k && dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+</script>
     `, '', notFoundLeagueCfg), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
 
@@ -1754,8 +1886,8 @@ async function handleLeagueEventDetailPage(req, env, url) {
     const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
     const openSkaters = await openSpots(env.DB, ev.id, team, 'skater', cfg);
     const inviteButtons = [];
-    if (openGoalies > 0) inviteButtons.push(`<button type="button" class="mini" onclick="inviteSubs('${esc(team)}','goalie',this)">INVITER GARDIEN<span class="en" style="display:block;">INVITE GOALIE</span></button>`);
-    if (openSkaters > 0) inviteButtons.push(`<button type="button" class="mini" onclick="inviteSubs('${esc(team)}','skater',this)">INVITER JOUEUR<span class="en" style="display:block;">INVITE SKATER</span></button>`);
+    if (openGoalies > 0) inviteButtons.push(`<button type="button" class="mini" data-i18n="inviteGoalie" onclick="inviteSubs('${esc(team)}','goalie',this)">INVITER GARDIEN</button>`);
+    if (openSkaters > 0) inviteButtons.push(`<button type="button" class="mini" data-i18n="inviteSkater" onclick="inviteSubs('${esc(team)}','skater',this)">INVITER JOUEUR</button>`);
 
     // Part 3: every contact rostered to this team (preferred_team = team),
     // LEFT JOINed against this event's own rsvp row -- so a player who
@@ -1779,16 +1911,16 @@ async function handleLeagueEventDetailPage(req, env, url) {
           <button type="button" class="mini in ${p.status === 'in' ? 'on' : ''}" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
           <button type="button" class="mini out ${p.status === 'out' ? 'on' : ''}" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
         </td></tr>`).join('')}</table>`
-      : `<p class="state" style="margin:12px 0 0;">Aucun joueur assigné à cette équipe.<span class="en" style="display:block;">No players assigned to this team.</span></p>`;
+      : `<p class="state" style="margin:12px 0 0;" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
 
     teamCards.push(`
     <div class="card">
-      <h2>${esc(team)}${st.short ? ` <span class="short">— court / short</span>` : ''}</h2>
+      <h2>${esc(team)}${st.short ? ` <span class="short" data-i18n="shortBadge">— court</span>` : ''}</h2>
       <ul class="counts">
-        <li><b>${st.skaters}</b>Joueurs confirmés<span class="en" style="display:block;">Skaters confirmed</span></li>
-        <li><b>${st.goalies}</b>Gardiens confirmés<span class="en" style="display:block;">Goalies confirmed</span></li>
-        <li><b>${openSkaters}</b>Places joueurs ouvertes<span class="en" style="display:block;">Open skater spots</span></li>
-        <li><b>${openGoalies}</b>Places gardien ouvertes<span class="en" style="display:block;">Open goalie spots</span></li>
+        <li><b>${st.skaters}</b><span data-i18n="skatersConfirmed">Joueurs confirmés</span></li>
+        <li><b>${st.goalies}</b><span data-i18n="goaliesConfirmed">Gardiens confirmés</span></li>
+        <li><b>${openSkaters}</b><span data-i18n="openSkaterSpots">Places joueurs ouvertes</span></li>
+        <li><b>${openGoalies}</b><span data-i18n="openGoalieSpots">Places gardien ouvertes</span></li>
       </ul>
       ${inviteButtons.length ? `<div class="btns" style="margin-top:12px;">${inviteButtons.join('')}</div>` : ''}
       <p class="inviteMsg state" style="display:none;margin-top:8px;"></p>
@@ -1796,12 +1928,38 @@ async function handleLeagueEventDetailPage(req, env, url) {
     </div>`);
   }
 
+  const I18N_DETAIL = {
+    fr: {
+      backToSchedule: '&larr; Calendrier', inviteGoalie: 'INVITER GARDIEN', inviteSkater: 'INVITER JOUEUR',
+      noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.', shortBadge: '— court',
+      skatersConfirmed: 'Joueurs confirmés', goaliesConfirmed: 'Gardiens confirmés',
+      openSkaterSpots: 'Places joueurs ouvertes', openGoalieSpots: 'Places gardien ouvertes'
+    },
+    en: {
+      backToSchedule: '&larr; Schedule', inviteGoalie: 'INVITE GOALIE', inviteSkater: 'INVITE SKATER',
+      noPlayersOnTeam: 'No players assigned to this team.', shortBadge: '— short',
+      skatersConfirmed: 'Skaters confirmed', goaliesConfirmed: 'Goalies confirmed',
+      openSkaterSpots: 'Open skater spots', openGoalieSpots: 'Open goalie spots'
+    }
+  };
+
   return new Response(page('Statut du match', `
   <h1>${esc(ev.date)}<span class="en"></span></h1>
   <p class="when">${ev.venue ? esc(ev.venue) : ''}${ev.start_time ? ' · ' + esc(ev.start_time) : ''} · ${esc(ev.state)}</p>
-  <p class="state" style="margin:0 0 16px;"><a href="/league/schedule">&larr; Calendrier<span class="en" style="display:inline;"> / Schedule</span></a></p>
+  <p class="state" style="margin:0 0 16px;"><a href="/league/schedule" data-i18n="backToSchedule">&larr; Calendrier</a></p>
   ${teamCards.join('')}
 <script>
+var I18N_DETAIL = ${JSON.stringify(I18N_DETAIL)};
+function applyLanguage(lang) {
+  var dict = I18N_DETAIL[lang] || I18N_DETAIL.fr;
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (k && dict[k] != null) el.innerHTML = dict[k];
+  });
+}
+if (window.__currentLang) applyLanguage(window.__currentLang);
+window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
+
 async function inviteSubs(team, need, btn) {
   const card = btn.closest('.card');
   const msg = card.querySelector('.inviteMsg');
