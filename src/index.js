@@ -401,7 +401,10 @@ const I18N_HOME = {
     s2Title: 'Ajoute tes joueurs', s2Body: "Un nom et un numéro de cellulaire ou un courriel. Importe une liste si tu en as une.",
     s3Title: 'On s\'occupe du reste', s3Body: 'Invitations, rappels, remplaçants. Tu reçois une alerte seulement si quelque chose coince.',
     finalTitle: 'Ta prochaine saison commence ici.',
-    footerBrand: 'Notre Ligue · Fait au Québec', footerLinks: 'Confidentialité · Conditions · <a href="mailto:bonjour@notreligue.ca">Contact</a>'
+    footerBrand: 'Notre Ligue · Fait au Québec', footerLinks: 'Confidentialité · Conditions · <a href="mailto:bonjour@notreligue.ca">Contact</a>',
+    mockLeagueName: 'Ligue du dimanche matin', mockDayTime: 'Dimanche · 9 h',
+    mockQuestion: 'Marc, tu joues dimanche?', mockBtnIn: '✓ Je joue', mockBtnOut: 'Je ne peux pas',
+    mockShort: 'Manque 2', mockSubsInvited: '3 remplaçants invités'
   },
   en: {
     navFeatures: 'Features', navHow: 'How it works', login: 'Log in',
@@ -418,7 +421,10 @@ const I18N_HOME = {
     s2Title: 'Add your players', s2Body: "A name and a cell number or email. Import a list if you have one.",
     s3Title: 'We handle the rest', s3Body: "Invites, reminders, subs. You get an alert only if something's stuck.",
     finalTitle: 'Your next season starts here.',
-    footerBrand: 'Notre Ligue · Made in Quebec', footerLinks: 'Privacy · Terms · <a href="mailto:bonjour@notreligue.ca">Contact</a>'
+    footerBrand: 'Notre Ligue · Made in Quebec', footerLinks: 'Privacy · Terms · <a href="mailto:bonjour@notreligue.ca">Contact</a>',
+    mockLeagueName: 'Sunday morning league', mockDayTime: 'Sunday · 9 am',
+    mockQuestion: 'Marc, are you playing Sunday?', mockBtnIn: "✓ I'm in", mockBtnOut: "Can't make it",
+    mockShort: 'Short 2', mockSubsInvited: '3 subs invited'
   }
 };
 function renderMarketingHomepage() {
@@ -496,11 +502,11 @@ function renderMarketingHomepage() {
     </div>
     <div class="home-mock" aria-hidden="true">
       <div class="blk1"></div><div class="blk2"></div>
-      <div class="card a"><div class="ov lg">Ligue du dimanche matin</div><div class="ov">Dimanche · 9 h</div><h3>Marc, tu joues dimanche?</h3><div class="btn p">✓ Je joue</div><div class="btn s">Je ne peux pas</div></div>
-      <div class="card b"><div class="ov">Dimanche · 9 h</div>
+      <div class="card a"><div class="ov lg" data-i18n="mockLeagueName">Ligue du dimanche matin</div><div class="ov" data-i18n="mockDayTime">Dimanche · 9 h</div><h3 data-i18n="mockQuestion">Marc, tu joues dimanche?</h3><div class="btn p" data-i18n="mockBtnIn">✓ Je joue</div><div class="btn s" data-i18n="mockBtnOut">Je ne peux pas</div></div>
+      <div class="card b"><div class="ov" data-i18n="mockDayTime">Dimanche · 9 h</div>
         <div class="row"><b>Les Castors</b><span style="color:#0e7a4f;font-weight:600">✓ 10/10</span></div>
-        <div class="row"><b>Les Aurores</b><span style="background:#ffd23f;padding:2px 6px;border-radius:3px;font-weight:700">Manque 2</span></div>
-        <div class="row"><span style="color:#55585f">3 remplaçants invités</span></div>
+        <div class="row"><b>Les Aurores</b><span style="background:#ffd23f;padding:2px 6px;border-radius:3px;font-weight:700" data-i18n="mockShort">Manque 2</span></div>
+        <div class="row"><span style="color:#55585f" data-i18n="mockSubsInvited">3 remplaçants invités</span></div>
       </div>
     </div>
   </div>
@@ -536,32 +542,7 @@ function renderMarketingHomepage() {
   <span data-i18n="footerLinks">Confidentialité · Conditions · <a href="mailto:bonjour@notreligue.ca">Contact</a></span>
 </div></footer>
 <script>
-var I18N_HOME = ${JSON.stringify(I18N_HOME)};
-(function() {
-  var lang = 'fr';
-  try {
-    var saved = localStorage.getItem('smbhl_admin_lang');
-    if (saved === 'fr' || saved === 'en') lang = saved;
-    else if (/^en/i.test(navigator.language || '')) lang = 'en';
-  } catch(e) {}
-  window.__currentLang = lang;
-  window.__setLang = function(l) {
-    if (l !== 'fr' && l !== 'en') return;
-    window.__currentLang = l;
-    try { localStorage.setItem('smbhl_admin_lang', l); } catch(e) {}
-    applyLanguage(l);
-  };
-  function applyLanguage(l) {
-    var dict = I18N_HOME[l] || I18N_HOME.fr;
-    document.querySelectorAll('[data-i18n]').forEach(function(el) {
-      var k = el.getAttribute('data-i18n');
-      if (dict[k] != null) el.innerHTML = dict[k];
-    });
-    document.getElementById('btn-lang-fr').setAttribute('aria-pressed', String(l === 'fr'));
-    document.getElementById('btn-lang-en').setAttribute('aria-pressed', String(l === 'en'));
-  }
-  applyLanguage(lang);
-})();
+${nlAuthScript(I18N_HOME)}
 </script>`;
   return nlDocument({
     title: 'Notre Ligue',
@@ -726,9 +707,24 @@ window.__errorText = function(errorKey, fallback, vars) {
 (function() {
   var lang = 'fr';
   try {
-    var saved = localStorage.getItem('smbhl_admin_lang');
-    if (saved === 'fr' || saved === 'en') lang = saved;
-    else if (/^en/i.test(navigator.language || '')) lang = 'en';
+    // Live-testing bug fix (Part 1): a multi-step flow (signup) is a
+    // real full page navigation per step, not a SPA -- relying solely
+    // on localStorage surviving that navigation is fragile (private
+    // browsing storage partitioning, Safari ITP, or simply a step
+    // loading before an earlier step's write has flushed), and was the
+    // reported cause of step 2 sometimes rendering in the wrong
+    // language even on a session that had already picked one. The URL
+    // itself is the most authoritative, explicit signal for "what
+    // language was this specific navigation initiated in" -- checked
+    // FIRST, before localStorage, before the navigator.language guess.
+    var urlLang = new URLSearchParams(location.search).get('lang');
+    if (urlLang === 'fr' || urlLang === 'en') {
+      lang = urlLang;
+    } else {
+      var saved = localStorage.getItem('smbhl_admin_lang');
+      if (saved === 'fr' || saved === 'en') lang = saved;
+      else if (/^en/i.test(navigator.language || '')) lang = 'en';
+    }
   } catch(e) {}
   window.__currentLang = lang;
   window.__setLang = function(l) {
@@ -736,6 +732,14 @@ window.__errorText = function(errorKey, fallback, vars) {
     window.__currentLang = l;
     try { localStorage.setItem('smbhl_admin_lang', l); } catch(e) {}
     applyLanguage(l);
+  };
+  // Carries the CURRENT language forward on an internal same-app
+  // navigation (e.g. one signup step to the next), so the next page's
+  // own init above finds it via the URL immediately -- no dependency
+  // on localStorage having persisted in time. Relative paths only.
+  window.__navWithLang = function(path) {
+    var sep = path.indexOf('?') === -1 ? '?' : '&';
+    location.href = path + sep + 'lang=' + window.__currentLang;
   };
   window.__pageDict = function() { return __I18N[window.__currentLang] || __I18N.fr; };
   function applyLanguage(l) {
@@ -819,7 +823,7 @@ async function submitStep1() {
       btn.disabled = false;
       return;
     }
-    window.location.href = '/signup?step=2';
+    window.__navWithLang('/signup?step=2');
   } catch (e) {
     showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
@@ -871,7 +875,7 @@ function renderSignupStep2() {
 </main>
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="continueBtn" onclick="submitStep2()">Continuer</button>
-  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="location.href='/signup?step=1'">Retour</button>
+  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="window.__navWithLang('/signup?step=1')">Retour</button>
 </div>
 <script>
 ${signupLangScript()}
@@ -901,7 +905,7 @@ function submitStep2() {
   if (!name) { showError(window.__errorText('LEAGUE_NAME_REQUIRED_CLIENT')); return; }
   if (slug && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) { showError(window.__errorText('SLUG_INVALID_FORMAT')); return; }
   try { sessionStorage.setItem('nl_signup_league', JSON.stringify({ name: name, slug: slug, tracksStats: tracksStats, teamStructure: teamStructure })); } catch (e) {}
-  window.location.href = '/signup?step=3';
+  window.__navWithLang('/signup?step=3');
 }
 </script>`;
   return nlDocument({ title: 'Créer un compte', description: 'Ta ligue du dimanche, sans la paperasse.', bodyHtml });
@@ -944,13 +948,13 @@ function renderSignupStep3() {
 </main>
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="createLeague" onclick="submitStep3()">Créer la ligue</button>
-  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="location.href='/signup?step=2'">Retour</button>
+  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="window.__navWithLang('/signup?step=2')">Retour</button>
 </div>
 <script>
 ${signupLangScript()}
 var leagueDraft = null;
 try { leagueDraft = JSON.parse(sessionStorage.getItem('nl_signup_league') || 'null'); } catch (e) {}
-if (!leagueDraft || !leagueDraft.name) { window.location.href = '/signup?step=2'; }
+if (!leagueDraft || !leagueDraft.name) { window.__navWithLang('/signup?step=2'); }
 var isHeadcount = leagueDraft && leagueDraft.teamStructure === 'headcount';
 if (isHeadcount) {
   document.getElementById('su_teams_section').style.display = 'none';
@@ -986,7 +990,7 @@ function showError(msg) { var el = document.getElementById('formErr'); el.textCo
 function clearError() { document.getElementById('formErr').style.display = 'none'; }
 async function submitStep3() {
   clearError();
-  if (!leagueDraft) { window.location.href = '/signup?step=2'; return; }
+  if (!leagueDraft) { window.__navWithLang('/signup?step=2'); return; }
   var payload = { name: leagueDraft.name, tracksStats: leagueDraft.tracksStats, slug: leagueDraft.slug || undefined, teamStructure: leagueDraft.teamStructure };
   if (isHeadcount) {
     var minPlayers = Number(document.getElementById('su_min_players').value);
@@ -1033,7 +1037,7 @@ async function submitStep3() {
       sessionStorage.setItem('nl_signup_done', JSON.stringify({ slug: data.league.slug, name: data.league.name }));
       sessionStorage.removeItem('nl_signup_league');
     } catch (e) {}
-    window.location.href = '/signup?step=done';
+    window.__navWithLang('/signup?step=done');
   } catch (e) {
     showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
@@ -1079,16 +1083,22 @@ function copyLink() {
 // rather than rendering a broken form.
 async function renderSignupPage(req, env, url) {
   const step = url.searchParams.get('step');
+  // Live-testing bug fix (Part 1): a server-side redirect (session
+  // missing/expired, or no league yet) must carry the in-flight lang
+  // choice forward too, same as the client's own __navWithLang -- the
+  // language.
+  const langParam = url.searchParams.get('lang');
+  const langQS = (langParam === 'fr' || langParam === 'en') ? `&lang=${langParam}` : '';
   if (step === '2' || step === '3' || step === 'done') {
     const session = await checkUserSession(req, env);
-    if (!session) return Response.redirect(url.origin + '/signup?step=1', 302);
+    if (!session) return Response.redirect(`${url.origin}/signup?step=1${langQS}`, 302);
     if (step === 'done') {
       const league = await env.DB.prepare(
         `SELECT l.name, l.slug FROM leagues l
           JOIN league_admins a ON a.league_id = l.id
          WHERE a.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
       ).bind(session.userId).first();
-      if (!league) return Response.redirect(url.origin + '/signup?step=2', 302);
+      if (!league) return Response.redirect(`${url.origin}/signup?step=2${langQS}`, 302);
       return new Response(renderSignupDone(league), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     }
     if (step === '3') return new Response(renderSignupStep3(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
