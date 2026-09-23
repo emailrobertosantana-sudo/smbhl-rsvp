@@ -56,7 +56,7 @@ describe('Onboarding: dashboard "start your season" prompt', () => {
     const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('Démarrer votre saison');
+    expect(html).toContain('Lance ta première saison');
     expect(html).toContain('id="season_name"');
     expect(html).toContain('id="season_submit"');
     // And no confusing "current season" line, since there isn't one yet.
@@ -100,7 +100,7 @@ describe('Onboarding: dashboard "start your season" prompt', () => {
     const html = await res.text();
     expect(html).toContain('Saison actuelle');
     expect(html).toContain('Already Started Season');
-    expect(html).not.toContain('Démarrer votre saison');
+    expect(html).not.toContain('Lance ta première saison');
     expect(html).not.toContain('id="season_name"');
   });
 

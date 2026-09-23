@@ -65,7 +65,7 @@ describe('Part 5: resend-verification-email flow, real end to end', () => {
     const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
     const html = await res.text();
     expect(html).toContain('id="resendBtn"');
-    expect(html).toContain("Votre courriel n'est pas encore vérifié");
+    expect(html).toContain("Ton courriel n'est pas encore vérifié");
   });
 
   it('the full real round trip: resend sends a real, working link that actually verifies the account, and the dashboard banner then disappears', async () => {

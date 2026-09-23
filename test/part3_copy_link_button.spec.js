@@ -45,9 +45,9 @@ describe('Part 3: copy-link button on the dashboard', () => {
     expect(html).toContain('onclick="copyPublicUrl()"');
     expect(html).toContain('id="publicUrlLink"');
     expect(html).toContain('/copy-link-league"'); // the button targets the real, current public URL
-    expect(html).toContain('navigator.clipboard.writeText(link.href)');
+    expect(html).toContain('navigator.clipboard.writeText(url)');
     // Bilingual (Part 2/3 toggle system), not a one-off hardcoded string.
     expect(html).toContain('"copyLink"');
-    expect(html).toContain('COPY LINK');
+    expect(html).toContain('"Copy"'); // real EN translation, design system voice (verb button, not ALL CAPS)
   });
 });

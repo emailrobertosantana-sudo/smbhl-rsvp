@@ -36,6 +36,18 @@ function assertRealToggle(html, sampleEnStrings) {
   for (const s of sampleEnStrings) expect(html).toContain(s);
 }
 
+// The dashboard was migrated to the real design system (design system
+// task, Part 3) -- its toggle is now the real nl-lang component, not
+// the ad hoc .langswitch/.langbtn pattern the not-yet-migrated
+// roster/schedule pages below still use.
+function assertRealToggleNl(html, sampleEnStrings) {
+  expect(html).toContain('nl-lang');
+  expect(html).toContain('__setLang');
+  expect(html).toContain('localStorage');
+  expect(html).toContain('data-i18n');
+  for (const s of sampleEnStrings) expect(html).toContain(s);
+}
+
 async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
@@ -68,10 +80,10 @@ describe('Part 3: real FR/EN toggle on every session-authenticated admin page', 
     });
   });
 
-  it('the dashboard has a real, working toggle with genuine English content', async () => {
+  it('the dashboard has a real, working toggle with genuine English content (design system, ScreenDashboard)', async () => {
     const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
     const html = await res.text();
-    assertRealToggle(html, ['ROSTER', 'SCHEDULE', 'Co-admins', 'LOG OUT']);
+    assertRealToggleNl(html, ['Players', 'Schedule', 'Co-admins', 'Log out']);
   });
 
   it('the roster page has a real, working toggle with genuine English content', async () => {

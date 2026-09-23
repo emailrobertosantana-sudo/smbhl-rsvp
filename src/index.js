@@ -1244,56 +1244,136 @@ async function submitReset() {
 // Scoped to exactly which dashboard state is rendering (state: 'none' |
 // 'active' | 'deactivated', plus the active-only needsSeason/unverified
 // flags) -- NOT a single static dict -- so a translation for a section
-// that isn't actually shown (e.g. "Démarrer votre saison" once a season
-// already exists) never leaks into the shipped page, even inertly
-// inside the JS dict. Same lesson as the public page's earlier bug
-// this task already found and fixed (an unrelated string leaking into
-// every response broke an existing test).
+// that isn't actually shown (e.g. "Lance ta premiere saison" once a
+// season already exists) never leaks into the shipped page, even
+// inertly inside the JS dict. Same lesson as the public page's earlier
+// bug this session already found and fixed (an unrelated string
+// leaking into every response broke an existing test).
 function buildDashI18n({ state, needsSeason, unverified }) {
-  const fr = { logout: 'SE DÉCONNECTER' };
-  const en = { logout: 'LOG OUT' };
+  const fr = { logout: 'Se déconnecter', navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire' };
+  const en = { logout: 'Log out', navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule' };
   if (state === 'none') {
-    Object.assign(fr, { dashTitle: 'Tableau de bord', noLeagueYet: "Vous n'avez pas encore de ligue." });
+    Object.assign(fr, { dashTitle: 'Tableau de bord', noLeagueYet: "Tu n'as pas encore de ligue." });
     Object.assign(en, { dashTitle: 'Dashboard', noLeagueYet: "You don't have a league yet." });
   } else if (state === 'active') {
     Object.assign(fr, {
-      navRoster: 'EFFECTIF', navSchedule: 'CALENDRIER',
-      publicPageLabel: 'Page publique à partager avec vos joueurs :',
-      copyLink: 'COPIER LE LIEN', copied: 'COPIÉ !',
-      coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteBtn: 'INVITER',
-      teams: 'Équipes',
+      noSeason: 'Pas de saison active',
+      teamsLabel: 'équipes', playersLabel: 'joueurs',
+      publicPage: 'Page publique', copyLink: 'Copier', copied: 'Copié !',
+      teams: 'Équipes', tracksStatsLabel: 'Statistiques suivies', yes: 'Oui', no: 'Non',
+      coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteBtn: 'Inviter',
       langExposure: 'Langue exposée aux joueurs',
-      langExposureDesc: 'Détermine si la page publique et la page de présence de vos joueurs affichent un choix FR/EN, ou une seule langue fixe.',
+      langExposureDesc: 'Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.',
       langBoth: 'Les deux (FR/EN)', langFrOnly: 'Français seulement', langEnOnly: 'Anglais seulement',
-      save: 'ENREGISTRER', langSaved: 'Enregistré !',
+      save: 'Enregistrer', langSaved: 'Enregistré !',
       deactivateLeague: 'Désactiver la ligue',
-      deactivateDesc: "Cette action désactive votre ligue -- vos données sont conservées, mais l'accès à la gestion est bloqué.",
-      deactivateBtn: 'DÉSACTIVER'
+      deactivateDesc: "Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.",
+      deactivateBtn: 'Désactiver'
     });
     Object.assign(en, {
-      navRoster: 'ROSTER', navSchedule: 'SCHEDULE',
-      publicPageLabel: 'Public page to share with your players:',
-      copyLink: 'COPY LINK', copied: 'COPIED!',
-      coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteBtn: 'INVITE',
-      teams: 'Teams',
+      noSeason: 'No active season',
+      teamsLabel: 'teams', playersLabel: 'players',
+      publicPage: 'Public page', copyLink: 'Copy', copied: 'Copied!',
+      teams: 'Teams', tracksStatsLabel: 'Tracks stats', yes: 'Yes', no: 'No',
+      coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteBtn: 'Invite',
       langExposure: 'Language exposed to players',
       langExposureDesc: "Controls whether your players' public page and RSVP page show a FR/EN toggle, or a single fixed language.",
       langBoth: 'Both (FR/EN)', langFrOnly: 'French only', langEnOnly: 'English only',
-      save: 'SAVE', langSaved: 'Saved!',
+      save: 'Save', langSaved: 'Saved!',
       deactivateLeague: 'Deactivate league',
-      deactivateDesc: 'This deactivates your league -- your data is kept, but management access is blocked.',
-      deactivateBtn: 'DEACTIVATE'
+      deactivateDesc: 'This deactivates your league. Your data is kept, but management access is blocked.',
+      deactivateBtn: 'Deactivate'
     });
     if (needsSeason) {
-      Object.assign(fr, { startSeason: 'Démarrer votre saison', startSeasonDesc: 'Il vous faut une saison active avant de pouvoir créer des matchs.', seasonNameLabel: 'Nom de la saison', seasonStartBtn: 'DÉMARRER' });
-      Object.assign(en, { startSeason: 'Start your season', startSeasonDesc: 'You need an active season before you can create events.', seasonNameLabel: 'Season name', seasonStartBtn: 'START' });
+      Object.assign(fr, {
+        nextStep: 'Prochaine étape', startSeason: 'Lance ta première saison',
+        startSeasonDesc: 'Choisis un nom pour ta saison. Tu pourras créer des matchs ensuite.',
+        seasonNameLabel: 'Nom de la saison', seasonStartBtn: 'Créer la saison',
+        checklistTitle: 'Pour bien partir',
+        ckLeague: 'Créer la ligue', ckTeams: 'Nommer les équipes', ckPlayers: 'Ajouter les joueurs', ckSeason: 'Créer la saison'
+      });
+      Object.assign(en, {
+        nextStep: 'Next step', startSeason: 'Start your first season',
+        startSeasonDesc: 'Choose a name for your season. You can create events after.',
+        seasonNameLabel: 'Season name', seasonStartBtn: 'Create the season',
+        checklistTitle: 'Getting started',
+        ckLeague: 'Create the league', ckTeams: 'Name the teams', ckPlayers: 'Add players', ckSeason: 'Create a season'
+      });
+    } else {
+      Object.assign(fr, { currentSeasonLabel: 'Saison actuelle' });
+      Object.assign(en, { currentSeasonLabel: 'Current season' });
     }
     if (unverified) {
-      Object.assign(fr, { notVerified: "⚠️ Votre courriel n'est pas encore vérifié.", resendBtn: 'RENVOYER LE COURRIEL' });
-      Object.assign(en, { notVerified: '⚠️ Your email is not yet verified.', resendBtn: 'RESEND EMAIL' });
+      Object.assign(fr, { notVerified: "Ton courriel n'est pas encore vérifié.", resendBtn: 'Renvoyer le courriel' });
+      Object.assign(en, { notVerified: 'Your email is not yet verified.', resendBtn: 'Resend email' });
     }
+  } else if (state === 'deactivated') {
+    Object.assign(fr, { deactivatedOn: 'Cette ligue a été désactivée le' });
+    Object.assign(en, { deactivatedOn: 'This league was deactivated on' });
   }
   return { fr, en };
+}
+
+const DASH_ICON_HOME = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l7-6 7 6v8H3z"/></svg>';
+const DASH_ICON_PLAYERS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-4 3-6 7-6s7 2 7 6"/></svg>';
+const DASH_ICON_SCHEDULE = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="14" height="13" rx="1"/><path d="M3 8h14M7 2v4M13 2v4"/></svg>';
+const DASH_ICON_CHECK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 10.5l4 4 8-9"/></svg>';
+
+// Admin desktop/phone chrome (design system Part 3): nl-header with the
+// real Accueil/Joueurs/Horaire nav on desktop, collapsing to a fixed
+// bottom nl-tabbar on phones -- matches
+// notre-ligue-design-system/components/ScreenDashboard/preview.html's
+// own two layouts exactly (this same header/tabbar pair is reused by
+// the roster/schedule pages below, all three sharing one active-tab
+// state).
+function dashChrome(leagueName, active) {
+  const nav = [
+    { key: 'home', href: '/dashboard', icon: DASH_ICON_HOME, i18n: 'navHome' },
+    { key: 'roster', href: '/league/roster', icon: DASH_ICON_PLAYERS, i18n: 'navRoster' },
+    { key: 'schedule', href: '/league/schedule', icon: DASH_ICON_SCHEDULE, i18n: 'navSchedule' }
+  ];
+  const header = `<header class="nl-header">
+  <span class="nl-brand" style="max-width:280px">${esc(leagueName)}</span>
+  <nav class="nl-nav">${nav.map(n => `<a href="${n.href}"${n.key === active ? ' aria-current="page"' : ''} data-i18n="${n.i18n}">${esc(n.i18n === 'navHome' ? 'Accueil' : n.i18n === 'navRoster' ? 'Joueurs' : 'Horaire')}</a>`).join('')}</nav>
+  <div class="spacer"></div>
+  <div class="nl-lang" role="group" aria-label="Langue / Language">
+    <button type="button" id="btn-lang-fr" aria-pressed="true" onclick="window.__setLang('fr')">FR</button>
+    <button type="button" id="btn-lang-en" aria-pressed="false" onclick="window.__setLang('en')">EN</button>
+  </div>
+</header>`;
+  const tabbar = `<nav class="nl-tabbar">${nav.map(n => `<a href="${n.href}"${n.key === active ? ' aria-current="page"' : ''}>${n.icon}<span data-i18n="${n.i18n}">${esc(n.i18n === 'navHome' ? 'Accueil' : n.i18n === 'navRoster' ? 'Joueurs' : 'Horaire')}</span></a>`).join('')}</nav>`;
+  return { header, tabbar };
+}
+
+function dashStyles() {
+  return `<style>
+  .nl { display: flex; flex-direction: column; min-height: 100vh; }
+  .dash-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-5); flex: 1; }
+  .dash-top { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+  .dash-top h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; }
+  .dash-status { display: flex; align-items: center; gap: var(--space-2); margin-top: 6px; color: var(--ink-muted); font-size: 14px; flex-wrap: wrap; }
+  .dash-grid { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-5); }
+  .dash-start { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 2px solid var(--primary); }
+  .dash-start h2 { font: 700 26px/32px var(--font-display); font-stretch: 118%; }
+  .dash-start p { color: var(--ink-muted); max-width: 520px; }
+  .dash-start .acts { display: flex; gap: var(--space-3); margin-top: var(--space-2); flex-wrap: wrap; }
+  .dash-check { display: flex; flex-direction: column; gap: 4px; }
+  .dash-ck { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; font-size: 15px; }
+  .dash-ck .b { width: 24px; height: 24px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; flex: none; }
+  .dash-ck .b.y { background: var(--success); color: var(--on-success); }
+  .dash-ck .b.n { border: 1.5px solid var(--line-strong); }
+  .dash-ck .b svg { width: 16px; height: 16px; }
+  .dash-ck.done span:last-child { color: var(--ink-muted); text-decoration: line-through; }
+  .dash-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-5); }
+  .dash-tile .overline { margin-bottom: var(--space-2); }
+  .dash-tile a { font: 600 14px/20px var(--font-sans); }
+  .dash-share { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .dash-share code { flex: 1; min-width: 160px; font: 500 14px/20px var(--font-sans); color: var(--primary); background: var(--primary-tint); padding: 10px 12px; border-radius: var(--radius-md); word-break: break-all; }
+  .nl-error { color: var(--danger, #b3122e); font-weight: 600; font-size: 14px; }
+  .nl-ok { color: var(--success, #1c7a4a); font-weight: 600; font-size: 14px; }
+  @media (min-width: 640px) { .nl-tabbar { display: none; } }
+  @media (max-width: 639px) { .nl-nav { display: none; } .dash-main { padding-bottom: 76px; } .dash-grid { grid-template-columns: 1fr; } }
+</style>`;
 }
 
 async function handleDashboardPage(req, env, url) {
@@ -1312,369 +1392,278 @@ async function handleDashboardPage(req, env, url) {
   // dashboard is loaded (see getOrCreateLeagueSlug's own comment).
   const leagueSlug = leagueRow && !leagueRow.deactivated_at ? await getOrCreateLeagueSlug(env, leagueRow) : null;
 
-  // Part 2 fix: every session-based league page (dashboard, roster,
-  // schedule, event status/detail) was passing no leagueCfg to page(),
-  // so it silently fell back to SMBHL's own branding (DEFAULT_SEASON_CONFIG
-  // .league) for every league, not just SMBHL's real admin pages. page()
-  // already fully supports a leagueCfg 4th argument (title, favicon, logo
-  // alt text, footer, site link all already branch on it) -- getLeagueRsvpGet
-  // (Part M) already used it correctly; this was simply never wired up for
-  // any of the other league pages built in Parts R-V. getLeagueSeasonConfig
-  // resolves it the same way everywhere else (signup team names/no season
-  // yet, or the published season's own branding).
-  const leagueCfg = leagueRow ? (await getLeagueSeasonConfig(env, leagueRow.id)).league : null;
-
-  // Onboarding fix: POST /league/season/publish (Part I) had zero UI, so a
-  // brand-new admin who tried to create their first event hit a confusing
-  // "season is required" error with no path forward. Check the league's
-  // real current_season (getLeagueDataJson — the same source
-  // /league/events already defaults to) BEFORE rendering, so this prompt
-  // shows exactly once, only when actually needed, never as a confusing
-  // re-prompt once a season exists.
   const leagueData = leagueRow ? await getLeagueDataJson(env, leagueRow.id) : null;
   const currentSeason = leagueData ? leagueData.current_season : null;
 
-  // Nav to the league-admin pages built in the UI task (Parts R-V). Every
-  // link here (roster, schedule) is operational, never stats/OCR-related,
-  // so nothing is conditionally hidden today. If a stats-related page is
-  // ever added here, it should be wrapped in `leagueRow.tracks_stats ? ... : ''`
-  // — the same gate DEFAULT_SEASON_CONFIG.tracksStats already uses
-  // elsewhere in this codebase (season-recap/standings) — rather than a new
-  // pattern.
-  const nav = leagueRow ? `
-    <div class="btns" style="margin:16px 0;flex-wrap:wrap;">
-      <a class="btn" href="/league/roster" data-i18n="navRoster">EFFECTIF</a>
-      <a class="btn" href="/league/schedule" data-i18n="navSchedule">CALENDRIER</a>
-    </div>
-  ` : '';
+  const teamNames = leagueRow ? (() => { try { return JSON.parse(leagueRow.team_names || '[]'); } catch (_) { return []; } })() : [];
+  const playerCountRow = leagueRow ? await env.DB.prepare('SELECT COUNT(*) AS c FROM contacts WHERE league_id = ?').bind(leagueRow.id).first() : null;
+  const playerCount = playerCountRow ? Number(playerCountRow.c) || 0 : 0;
 
-  // Part 4: the public page only exists to be shared, so the dashboard
-  // is where an admin discovers its real, copyable URL. Part 2: that
-  // URL is now the short slug (origin/slug), not the raw UUID query-
-  // string form -- the slug route (index.js's route dispatch) renders
-  // the exact same page either way, so both keep working. Part 3: a
-  // "copy link" button next to it, since a short URL is only actually
-  // convenient to share if you don't have to select/copy it by hand.
   const publicUrl = leagueSlug ? `${url.origin}/${leagueSlug}` : `${url.origin}/league/public?league=${leagueRow ? leagueRow.id : ''}`;
-  const publicPageHtml = leagueRow ? `
-    <p class="state" style="margin:0 0 16px;"><span data-i18n="publicPageLabel">Page publique à partager avec vos joueurs :</span>
-      <a href="${esc(publicUrl)}" id="publicUrlLink">${esc(publicUrl)}</a>
-      <button type="button" class="mini" id="copyPublicUrlBtn" data-i18n="copyLink" onclick="copyPublicUrl()" style="margin-left:8px;">COPIER LE LIEN</button>
-    </p>
-  ` : '';
 
-  // Part 9: real current co-admins (for display) -- lets an admin see who
-  // already has access before inviting someone new, and confirms an
-  // invite actually landed once accepted.
   const adminEmails = leagueRow ? (await env.DB.prepare(
     `SELECT u.email FROM league_admins la JOIN users u ON u.id = la.user_id WHERE la.league_id = ? ORDER BY la.created_at`
   ).bind(leagueRow.id).all()).results.map(r => r.email) : [];
-  const adminsHtml = leagueRow ? `
-    <div class="card">
-      <h2 data-i18n="coAdmins">Co-administrateurs</h2>
-      <ul style="margin:0 0 16px;padding-left:20px;">
-        ${adminEmails.map(e => `<li>${esc(e)}</li>`).join('')}
-      </ul>
-      <div id="inviteErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-      <div id="inviteOk" class="state" style="display:none;"></div>
-      <label style="display:block;margin-bottom:12px;">
-        <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="inviteLabel">Inviter un(e) co-administrateur(-trice)</span>
-        <input type="email" id="invite_email" placeholder="courriel@exemple.com" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-      </label>
-      <div class="btns">
-        <button type="button" class="btn" id="invite_submit" data-i18n="inviteBtn" onclick="submitInvite()">INVITER</button>
-      </div>
-    </div>
-  ` : '';
-
-  // The team names are already known from signup (leagues.team_names) —
-  // POST /league/season/publish reads them server-side on its own, so this
-  // form only ever asks for the one new thing: a season name.
-  const startSeasonHtml = !currentSeason ? `
-    <div class="card" style="border-left:4px solid var(--blue);">
-      <h2 data-i18n="startSeason">Démarrer votre saison</h2>
-      <p class="state" style="margin-top:0;" data-i18n="startSeasonDesc">Il vous faut une saison active avant de pouvoir créer des matchs.</p>
-      <div id="seasonErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-      <label style="display:block;margin:12px 0;">
-        <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="seasonNameLabel">Nom de la saison</span>
-        <input type="text" id="season_name" placeholder="Ex. Saison Hiver 2026" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-      </label>
-      <div class="btns">
-        <button type="button" class="btn" id="season_submit" data-i18n="seasonStartBtn" onclick="submitSeason()">DÉMARRER</button>
-      </div>
-    </div>
-  ` : '';
-
-  // Part 10: a deactivated league shows a clear, dedicated state --
-  // never the normal management UI (no nav, no forms) -- confirming the
-  // action took effect, without implying any of this league's other
-  // data was touched (it wasn't; deactivating is purely an access gate).
-  // Dynamic-value strings (deactivation date, league name, season name,
-  // tracks-stats yes/no) deliberately keep the existing FR-primary +
-  // always-visible .en sub-line convention rather than the data-i18n
-  // toggle -- a bounded, documented scope decision (see Part 2/3 commit
-  // messages) rather than adding placeholder-substitution machinery for
-  // a handful of strings.
-  const deactivatedHtml = leagueRow && leagueRow.deactivated_at ? `
-    <h1>${esc(leagueRow.name)}</h1>
-    <div class="card" style="border-left:4px solid var(--red);">
-      <p class="state" style="margin:0;">Cette ligue a été désactivée le ${esc(leagueRow.deactivated_at.slice(0, 10))}.<span class="en" style="display:block;">This league was deactivated on ${esc(leagueRow.deactivated_at.slice(0, 10))}.</span></p>
-    </div>
-  ` : '';
-
-  // Part 10: session-gated soft-delete, guarded by typing the league's
-  // own exact name (server-enforced too -- see handleLeagueDeactivate).
-  const deactivateHtml = leagueRow && !leagueRow.deactivated_at ? `
-    <div class="card" style="border-left:4px solid var(--red);">
-      <h2 data-i18n="deactivateLeague">Désactiver la ligue</h2>
-      <p class="state" style="margin-top:0;" data-i18n="deactivateDesc">Cette action désactive votre ligue -- vos données sont conservées, mais l'accès à la gestion est bloqué.</p>
-      <div id="deactivateErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-      <label style="display:block;margin:12px 0;">
-        <span style="display:block;font-weight:600;margin-bottom:4px;">Tapez le nom exact de la ligue pour confirmer : <i>${esc(leagueRow.name)}</i><span class="en" style="display:block;font-weight:400;">Type the league's exact name to confirm: <i>${esc(leagueRow.name)}</i></span></span>
-        <input type="text" id="deactivate_confirm" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
-      </label>
-      <div class="btns">
-        <button type="button" class="btn" id="deactivate_submit" data-i18n="deactivateBtn" onclick="submitDeactivate()" style="border-color:var(--red);color:var(--red);">DÉSACTIVER</button>
-      </div>
-    </div>
-  ` : '';
-
-  const body = leagueRow && leagueRow.deactivated_at ? deactivatedHtml : leagueRow ? `
-    <h1>${esc(leagueRow.name)}</h1>
-    ${leagueRow.division_label ? `<p class="when">${esc(leagueRow.division_label)}</p>` : ''}
-    ${currentSeason ? `<p class="state" style="margin:0 0 4px;">Saison actuelle : <b>${esc(currentSeason)}</b><span class="en" style="display:block;">Current season: <b>${esc(currentSeason)}</b></span></p>` : ''}
-    ${!verified ? `
-      <div class="card" style="border-left:4px solid var(--orange);">
-        <p class="state" style="margin:0;" data-i18n="notVerified">⚠️ Votre courriel n'est pas encore vérifié.</p>
-        <p id="resendMsg" class="state" style="margin:8px 0 0;display:none;"></p>
-        <div class="btns" style="margin-top:10px;">
-          <button class="btn" id="resendBtn" data-i18n="resendBtn" onclick="resendVerification()">RENVOYER LE COURRIEL</button>
-        </div>
-      </div>
-    ` : ''}
-    ${startSeasonHtml}
-    ${nav}
-    ${publicPageHtml}
-    <div class="card">
-      <h2 data-i18n="teams">Équipes</h2>
-      <ul style="margin:0;padding-left:20px;">
-        ${(() => { try { return JSON.parse(leagueRow.team_names || '[]'); } catch (_) { return []; } })()
-          .map(t => `<li>${esc(t)}</li>`).join('')}
-      </ul>
-      <p class="state">Statistiques suivies : <b>${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b><span class="en"> · Tracks stats: <b>${leagueRow.tracks_stats ? 'Yes' : 'No'}</b></span></p>
-    </div>
-    <div class="card">
-      <h2 data-i18n="langExposure">Langue exposée aux joueurs</h2>
-      <p class="state" style="margin-top:0;" data-i18n="langExposureDesc">Détermine si la page publique et la page de présence de vos joueurs affichent un choix FR/EN, ou une seule langue fixe.</p>
-      <div id="langModeErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
-      <div id="langModeOk" class="state" style="display:none;"></div>
-      <select id="lang_mode_select" style="font:inherit;padding:9px;border:1px solid var(--rule2);border-radius:3px;">
-        <option value="both" data-i18n="langBoth" ${(leagueRow.language_mode || 'both') === 'both' ? 'selected' : ''}>Les deux (FR/EN)</option>
-        <option value="fr" data-i18n="langFrOnly" ${leagueRow.language_mode === 'fr' ? 'selected' : ''}>Français seulement</option>
-        <option value="en" data-i18n="langEnOnly" ${leagueRow.language_mode === 'en' ? 'selected' : ''}>Anglais seulement</option>
-      </select>
-      <button type="button" class="mini" id="lang_mode_save" data-i18n="save" onclick="submitLanguageMode()" style="margin-left:8px;">ENREGISTRER</button>
-    </div>
-    ${adminsHtml}
-    ${deactivateHtml}
-  ` : `
-    <h1 data-i18n="dashTitle">Tableau de bord</h1>
-    <div class="card"><p class="state" style="margin:0;" data-i18n="noLeagueYet">Vous n'avez pas encore de ligue.</p></div>
-  `;
 
   const dashState = leagueRow && leagueRow.deactivated_at ? 'deactivated' : leagueRow ? 'active' : 'none';
   const I18N_DASH = buildDashI18n({ state: dashState, needsSeason: !currentSeason, unverified: !verified });
 
-  return new Response(page('Tableau de bord', `
-    ${body}
-    <div class="btns" style="margin-top:20px;">
-      <button class="btn" id="logoutBtn" data-i18n="logout" onclick="doLogout()">SE DÉCONNECTER</button>
+  let bodyHtml;
+
+  if (dashState === 'none') {
+    const { header } = dashChrome('Notre Ligue', 'home');
+    bodyHtml = `${dashStyles()}${header}
+<main class="dash-main">
+  <h1 data-i18n="dashTitle">Tableau de bord</h1>
+  <section class="nl-card nl-card--pad-lg"><p class="nl-help" data-i18n="noLeagueYet">Tu n'as pas encore de ligue.</p></section>
+  <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
+</main>`;
+  } else if (dashState === 'deactivated') {
+    const { header } = dashChrome(leagueRow.name, 'home');
+    bodyHtml = `${dashStyles()}${header}
+<main class="dash-main">
+  <h1>${esc(leagueRow.name)}</h1>
+  <section class="nl-card nl-card--pad-lg">
+    <p class="nl-help" style="margin:0;">
+      <span data-i18n="deactivatedOn">Cette ligue a été désactivée le</span> ${esc(leagueRow.deactivated_at.slice(0, 10))}.
+    </p>
+  </section>
+  <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
+</main>`;
+  } else {
+    const { header, tabbar } = dashChrome(leagueRow.name, 'home');
+    const needsSeason = !currentSeason;
+
+    const startGridHtml = needsSeason ? `
+    <div class="dash-grid">
+      <section class="nl-card dash-start">
+        <div class="overline" style="color:var(--primary)" data-i18n="nextStep">Prochaine étape</div>
+        <h2 data-i18n="startSeason">Lance ta première saison</h2>
+        <p data-i18n="startSeasonDesc">Choisis un nom pour ta saison. Tu pourras créer des matchs ensuite.</p>
+        <div id="seasonErr" class="nl-error" style="display:none"></div>
+        <div class="nl-field" style="max-width:360px">
+          <label class="nl-label" for="season_name" data-i18n="seasonNameLabel">Nom de la saison</label>
+          <input class="nl-input" id="season_name" type="text" placeholder="Ex. Saison Hiver 2026">
+        </div>
+        <div class="acts"><button type="button" class="nl-btn nl-btn--primary" id="season_submit" data-i18n="seasonStartBtn" onclick="submitSeason()">Créer la saison</button></div>
+      </section>
+      <section class="nl-card nl-card--pad-lg">
+        <div class="h3" data-i18n="checklistTitle">Pour bien partir</div>
+        <div class="dash-check" style="margin-top:12px">
+          <div class="dash-ck done"><span class="b y">${DASH_ICON_CHECK}</span><span data-i18n="ckLeague">Créer la ligue</span></div>
+          <div class="dash-ck done"><span class="b y">${DASH_ICON_CHECK}</span><span data-i18n="ckTeams">Nommer les équipes</span></div>
+          <div class="dash-ck${playerCount > 0 ? ' done' : ''}"><span class="b ${playerCount > 0 ? 'y">' + DASH_ICON_CHECK : 'n">'}</span><span data-i18n="ckPlayers">Ajouter les joueurs</span></div>
+          <div class="dash-ck"><span class="b n"></span><span data-i18n="ckSeason">Créer la saison</span></div>
+        </div>
+      </section>
+    </div>` : '';
+
+    bodyHtml = `${dashStyles()}${header}
+<main class="dash-main">
+  <div class="dash-top">
+    <div>
+      <h1>${esc(leagueRow.name)}</h1>
+      ${leagueRow.division_label ? `<p class="nl-help" style="margin:2px 0 0;">${esc(leagueRow.division_label)}</p>` : ''}
+      <div class="dash-status">
+        ${needsSeason
+          ? `<span class="nl-badge nl-badge--pending" data-i18n="noSeason">Pas de saison active</span>`
+          : `<span><span data-i18n="currentSeasonLabel">Saison actuelle</span> : <b>${esc(currentSeason)}</b></span>`}
+        <span>${teamNames.length} <span data-i18n="teamsLabel">équipes</span> · ${playerCount} <span data-i18n="playersLabel">joueurs</span></span>
+      </div>
     </div>
-<script>
+  </div>
+  ${!verified ? `
+  <section class="nl-card nl-card--pad-lg">
+    <p class="nl-help" style="margin:0;" data-i18n="notVerified">Ton courriel n'est pas encore vérifié.</p>
+    <p id="resendMsg" style="margin:8px 0 0;display:none;font-size:14px;"></p>
+    <div style="margin-top:10px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="resendBtn" data-i18n="resendBtn" onclick="resendVerification()">Renvoyer le courriel</button></div>
+  </section>` : ''}
+  ${startGridHtml}
+  <div class="dash-tiles">
+    <section class="nl-card nl-card--pad-lg dash-tile"><div class="overline" data-i18n="teams">Équipes</div><div class="stat tnum">${teamNames.length}</div></section>
+    <section class="nl-card nl-card--pad-lg dash-tile"><div class="overline" data-i18n="navRoster">Joueurs</div><div class="stat tnum">${playerCount}</div><a href="/league/roster" data-i18n="navRoster">Joueurs</a></section>
+    <section class="nl-card nl-card--pad-lg dash-tile">
+      <div class="overline" data-i18n="publicPage">Page publique</div>
+      <div class="dash-share"><code id="publicUrlLink" data-href="${esc(publicUrl)}">${esc(publicUrl)}</code><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="copyPublicUrlBtn" data-i18n="copyLink" onclick="copyPublicUrl()">Copier</button></div>
+    </section>
+  </div>
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="teams">Équipes</div>
+    <div class="nl-list" style="margin-top:12px">
+      ${teamNames.map(t => `<div class="nl-row"><span class="grow">${esc(t)}</span></div>`).join('')}
+    </div>
+    <p class="nl-help" style="margin-top:12px;"><span data-i18n="tracksStatsLabel">Statistiques suivies</span> : <b data-i18n="${leagueRow.tracks_stats ? 'yes' : 'no'}">${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b></p>
+  </section>
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="langExposure">Langue exposée aux joueurs</div>
+    <p class="nl-help" data-i18n="langExposureDesc">Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.</p>
+    <div id="langModeErr" class="nl-error" style="display:none"></div>
+    <div id="langModeOk" class="nl-ok" style="display:none"></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+      <select id="lang_mode_select" class="nl-select" style="max-width:220px">
+        <option value="both" data-i18n="langBoth" ${(leagueRow.language_mode || 'both') === 'both' ? 'selected' : ''}>Les deux (FR/EN)</option>
+        <option value="fr" data-i18n="langFrOnly" ${leagueRow.language_mode === 'fr' ? 'selected' : ''}>Français seulement</option>
+        <option value="en" data-i18n="langEnOnly" ${leagueRow.language_mode === 'en' ? 'selected' : ''}>Anglais seulement</option>
+      </select>
+      <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="lang_mode_save" data-i18n="save" onclick="submitLanguageMode()">Enregistrer</button>
+    </div>
+  </section>
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="coAdmins">Co-administrateurs</div>
+    <div class="nl-list" style="margin:12px 0">
+      ${adminEmails.map(e => `<div class="nl-row"><span class="grow">${esc(e)}</span></div>`).join('')}
+    </div>
+    <div id="inviteErr" class="nl-error" style="display:none"></div>
+    <div id="inviteOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-field">
+      <label class="nl-label" for="invite_email" data-i18n="inviteLabel">Inviter un(e) co-administrateur(-trice)</label>
+      <input class="nl-input" id="invite_email" type="email" placeholder="courriel@exemple.com">
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="invite_submit" data-i18n="inviteBtn" onclick="submitInvite()">Inviter</button></div>
+  </section>
+  <section class="nl-card nl-card--pad-lg" style="border-color:var(--danger,#b3122e)">
+    <div class="h3" data-i18n="deactivateLeague">Désactiver la ligue</div>
+    <p class="nl-help" data-i18n="deactivateDesc">Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.</p>
+    <div id="deactivateErr" class="nl-error" style="display:none"></div>
+    <div class="nl-field">
+      <label class="nl-label" for="deactivate_confirm">${esc(leagueRow.name)}</label>
+      <input class="nl-input" id="deactivate_confirm" type="text">
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="deactivate_submit" data-i18n="deactivateBtn" onclick="submitDeactivate()" style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);">Désactiver</button></div>
+  </section>
+  <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
+</main>
+${tabbar}`;
+  }
+
+  const script = `
+${nlAuthScript(I18N_DASH)}
 async function doLogout() {
   await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
   window.location.href = '/login';
 }
-// Part 3: copy the public page URL without having to select/copy it by
-// hand. navigator.clipboard requires a secure context (https, which
-// this app always runs under outside local dev) -- falls back to
-// selecting the link text so the admin can still copy it manually if
-// the API isn't available for any reason.
 async function copyPublicUrl() {
-  const link = document.getElementById('publicUrlLink');
-  const btn = document.getElementById('copyPublicUrlBtn');
-  const original = btn.innerHTML;
+  var link = document.getElementById('publicUrlLink');
+  var btn = document.getElementById('copyPublicUrlBtn');
+  var original = btn.textContent;
+  var url = link.getAttribute('data-href') || link.textContent;
+  var dict = window.__pageDict();
   try {
-    await navigator.clipboard.writeText(link.href);
-    var dict = I18N_DASH[window.__currentLang || 'fr'] || I18N_DASH.fr;
+    await navigator.clipboard.writeText(url);
     btn.textContent = dict.copied;
   } catch (e) {
-    const range = document.createRange();
+    var range = document.createRange();
     range.selectNode(link);
     window.getSelection().removeAllRanges();
     window.getSelection().addRange(range);
   }
-  setTimeout(function() { btn.innerHTML = original; }, 1800);
+  setTimeout(function() { btn.textContent = original; }, 1800);
 }
 async function resendVerification() {
-  const btn = document.getElementById('resendBtn');
-  const msg = document.getElementById('resendMsg');
+  var btn = document.getElementById('resendBtn');
+  var msg = document.getElementById('resendMsg');
   btn.disabled = true;
   try {
-    const res = await fetch('/auth/resend-verification', { method: 'POST', credentials: 'same-origin', headers: window.__csrfHeader() });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.ok) {
-      msg.textContent = "Courriel de vérification envoyé (si ce n'est pas déjà fait). Vérifiez vos pourriels si vous ne le voyez pas. / Verification email sent (if not already). Check spam if you don't see it.";
-    } else {
-      msg.textContent = "Échec de l'envoi. Réessayez plus tard. / Failed to send. Please try again later.";
-    }
+    var res = await fetch('/auth/resend-verification', { method: 'POST', credentials: 'same-origin', headers: window.__csrfHeader() });
+    var data = await res.json().catch(function() { return {}; });
+    var isFr = (window.__currentLang || 'fr') === 'fr';
+    msg.textContent = (res.ok && data.ok)
+      ? (isFr ? "Courriel de vérification envoyé (si ce n'est pas déjà fait)." : 'Verification email sent (if not already).')
+      : (isFr ? "Échec de l'envoi. Réessaie plus tard." : 'Failed to send. Please try again later.');
   } catch (e) {
-    msg.textContent = "Erreur réseau. / Network error.";
+    msg.textContent = window.__errorText('NETWORK_ERROR');
   }
   msg.style.display = 'block';
   btn.disabled = false;
 }
 async function submitSeason() {
-  const el = document.getElementById('seasonErr');
+  var el = document.getElementById('seasonErr');
   el.style.display = 'none';
-  const name = document.getElementById('season_name').value.trim();
-  if (!name) {
-    el.textContent = window.__errorText('SEASON_NAME_REQUIRED_CLIENT');
-    el.style.display = 'block';
-    return;
-  }
-  const btn = document.getElementById('season_submit');
+  var name = document.getElementById('season_name').value.trim();
+  if (!name) { el.textContent = window.__errorText('SEASON_NAME_REQUIRED_CLIENT'); el.style.display = 'block'; return; }
+  var btn = document.getElementById('season_submit');
   btn.disabled = true;
   try {
-    const res = await fetch('/league/season/publish', {
+    var res = await fetch('/league/season/publish', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ season_name: name })
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
-      el.textContent = window.__errorText(data.errorKey, data.error);
-      el.style.display = 'block';
-      btn.disabled = false;
-      return;
-    }
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { el.textContent = window.__errorText(data.errorKey, data.error); el.style.display = 'block'; btn.disabled = false; return; }
     window.location.reload();
   } catch (e) {
-    el.textContent = window.__errorText('NETWORK_ERROR');
-    el.style.display = 'block';
-    btn.disabled = false;
+    el.textContent = window.__errorText('NETWORK_ERROR'); el.style.display = 'block'; btn.disabled = false;
   }
 }
-
 async function submitInvite() {
-  const err = document.getElementById('inviteErr');
-  const ok = document.getElementById('inviteOk');
-  err.style.display = 'none';
-  ok.style.display = 'none';
-  const email = document.getElementById('invite_email').value.trim();
-  if (!email) {
-    err.textContent = window.__errorText('EMAIL_REQUIRED_CLIENT');
-    err.style.display = 'block';
-    return;
-  }
-  const btn = document.getElementById('invite_submit');
+  var err = document.getElementById('inviteErr');
+  var ok = document.getElementById('inviteOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var email = document.getElementById('invite_email').value.trim();
+  if (!email) { err.textContent = window.__errorText('EMAIL_REQUIRED_CLIENT'); err.style.display = 'block'; return; }
+  var btn = document.getElementById('invite_submit');
   btn.disabled = true;
   try {
-    const res = await fetch('/league/admins/invite', {
+    var res = await fetch('/league/admins/invite', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ email: email })
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
-      err.textContent = window.__errorText(data.errorKey, data.error);
-      err.style.display = 'block';
-      btn.disabled = false;
-      return;
-    }
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     var isFr = (window.__currentLang || 'fr') === 'fr';
     ok.textContent = isFr ? ('Invitation envoyée à ' + email + '.') : ('Invitation sent to ' + email + '.');
     ok.style.display = 'block';
     document.getElementById('invite_email').value = '';
     btn.disabled = false;
   } catch (e) {
-    err.textContent = window.__errorText('NETWORK_ERROR');
-    err.style.display = 'block';
-    btn.disabled = false;
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
 }
-
 async function submitDeactivate() {
-  const err = document.getElementById('deactivateErr');
+  var err = document.getElementById('deactivateErr');
   err.style.display = 'none';
-  const confirmName = document.getElementById('deactivate_confirm').value;
-  const btn = document.getElementById('deactivate_submit');
+  var confirmName = document.getElementById('deactivate_confirm').value;
+  var btn = document.getElementById('deactivate_submit');
   btn.disabled = true;
   try {
-    const res = await fetch('/league/deactivate', {
+    var res = await fetch('/league/deactivate', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ confirmName })
+      body: JSON.stringify({ confirmName: confirmName })
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
-      err.textContent = window.__errorText(data.errorKey, data.error);
-      err.style.display = 'block';
-      btn.disabled = false;
-      return;
-    }
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     window.location.reload();
   } catch (e) {
-    err.textContent = window.__errorText('NETWORK_ERROR');
-    err.style.display = 'block';
-    btn.disabled = false;
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
 }
-
 async function submitLanguageMode() {
-  const err = document.getElementById('langModeErr');
-  const ok = document.getElementById('langModeOk');
-  err.style.display = 'none';
-  ok.style.display = 'none';
-  const languageMode = document.getElementById('lang_mode_select').value;
-  const btn = document.getElementById('lang_mode_save');
+  var err = document.getElementById('langModeErr');
+  var ok = document.getElementById('langModeOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var languageMode = document.getElementById('lang_mode_select').value;
+  var btn = document.getElementById('lang_mode_save');
   btn.disabled = true;
   try {
-    const res = await fetch('/league/language-mode', {
+    var res = await fetch('/league/language-mode', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ languageMode })
+      body: JSON.stringify({ languageMode: languageMode })
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
-      err.textContent = window.__errorText(data.errorKey, data.error);
-      err.style.display = 'block';
-      btn.disabled = false;
-      return;
-    }
-    var dict = I18N_DASH[window.__currentLang || 'fr'] || I18N_DASH.fr;
-    ok.textContent = dict.langSaved;
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    ok.textContent = window.__pageDict().langSaved;
     ok.style.display = 'block';
     btn.disabled = false;
   } catch (e) {
-    err.textContent = window.__errorText('NETWORK_ERROR');
-    err.style.display = 'block';
-    btn.disabled = false;
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
-}
+}`;
 
-window.__ERROR_I18N = ${JSON.stringify(ERROR_I18N)};
-var I18N_DASH = ${JSON.stringify(I18N_DASH)};
-function applyLanguage(lang) {
-  var dict = I18N_DASH[lang] || I18N_DASH.fr;
-  document.querySelectorAll('[data-i18n]').forEach(function(el) {
-    var k = el.getAttribute('data-i18n');
-    if (k && dict[k] != null) el.innerHTML = dict[k];
-  });
-}
-if (window.__currentLang) applyLanguage(window.__currentLang);
-window.addEventListener('admin_lang_changed', function(e) { applyLanguage(e.detail.lang); });
-</script>`, '', leagueCfg), {
+  return new Response(nlDocument({ title: leagueRow ? `Tableau de bord — ${leagueRow.name}` : 'Tableau de bord', description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
