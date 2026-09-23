@@ -4,7 +4,7 @@ import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -709,6 +709,30 @@ async function handleDashboardPage(req, env, url) {
     </p>
   ` : '';
 
+  // Part 9: real current co-admins (for display) -- lets an admin see who
+  // already has access before inviting someone new, and confirms an
+  // invite actually landed once accepted.
+  const adminEmails = leagueRow ? (await env.DB.prepare(
+    `SELECT u.email FROM league_admins la JOIN users u ON u.id = la.user_id WHERE la.league_id = ? ORDER BY la.created_at`
+  ).bind(leagueRow.id).all()).results.map(r => r.email) : [];
+  const adminsHtml = leagueRow ? `
+    <div class="card">
+      <h2>Co-administrateurs<span class="en">Co-admins</span></h2>
+      <ul style="margin:0 0 16px;padding-left:20px;">
+        ${adminEmails.map(e => `<li>${esc(e)}</li>`).join('')}
+      </ul>
+      <div id="inviteErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+      <div id="inviteOk" class="state" style="display:none;"></div>
+      <label style="display:block;margin-bottom:12px;">
+        <span style="display:block;font-weight:600;margin-bottom:4px;">Inviter un(e) co-administrateur(-trice)<span class="en" style="display:block;font-weight:400;">Invite a co-admin</span></span>
+        <input type="email" id="invite_email" placeholder="courriel@exemple.com" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+      </label>
+      <div class="btns">
+        <button type="button" class="btn" id="invite_submit" onclick="submitInvite()">INVITER<span class="en" style="display:block;font-size:13px;font-weight:600;">INVITE</span></button>
+      </div>
+    </div>
+  ` : '';
+
   // The team names are already known from signup (leagues.team_names) —
   // POST /league/season/publish reads them server-side on its own, so this
   // form only ever asks for the one new thing: a season name.
@@ -751,6 +775,7 @@ async function handleDashboardPage(req, env, url) {
       </ul>
       <p class="state">Statistiques suivies : <b>${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b><span class="en"> · Tracks stats: <b>${leagueRow.tracks_stats ? 'Yes' : 'No'}</b></span></p>
     </div>
+    ${adminsHtml}
   ` : `
     <h1>Tableau de bord<span class="en">Dashboard</span></h1>
     <div class="card"><p class="state" style="margin:0;">Vous n'avez pas encore de ligue.<span class="en" style="display:block;">You don't have a league yet.</span></p></div>
@@ -815,6 +840,43 @@ async function submitSeason() {
     btn.disabled = false;
   }
 }
+
+async function submitInvite() {
+  const err = document.getElementById('inviteErr');
+  const ok = document.getElementById('inviteOk');
+  err.style.display = 'none';
+  ok.style.display = 'none';
+  const email = document.getElementById('invite_email').value.trim();
+  if (!email) {
+    err.textContent = 'Le courriel est requis. / Email is required.';
+    err.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('invite_submit');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/league/admins/invite', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ email })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      err.textContent = data.error || "Échec de l'invitation. / Failed to invite.";
+      err.style.display = 'block';
+      btn.disabled = false;
+      return;
+    }
+    ok.textContent = 'Invitation envoyée à ' + email + '. / Invitation sent to ' + email + '.';
+    ok.style.display = 'block';
+    document.getElementById('invite_email').value = '';
+    btn.disabled = false;
+  } catch (e) {
+    err.textContent = 'Erreur réseau. / Network error.';
+    err.style.display = 'block';
+    btn.disabled = false;
+  }
+}
 </script>`, '', leagueCfg), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
@@ -837,6 +899,136 @@ const ROLE_LABEL_FR_EN = {
   sub_skater: 'Sub — joueur / Sub skater',
   sub_goalie: 'Sub — gardien / Sub goalie'
 };
+
+// Part 9: multi-admin invite acceptance page. Does a real server-side
+// verifyInviteToken() check before rendering (unlike /reset-password,
+// which renders unconditionally) specifically so it can show the RIGHT
+// one of three states -- expired/invalid link, "log in as X to accept"
+// for an existing account, or a real signup form for a brand-new one --
+// rather than a single generic form that can't tell them apart.
+async function handleLeagueAdminAcceptPage(req, env, url) {
+  const token = url.searchParams.get('token') || '';
+  const result = await verifyInviteToken(env, token);
+
+  if (!result.ok) {
+    return new Response(page('Invitation invalide', `
+      <h1>Invitation invalide ou expirée<span class="en">Invalid or expired invitation</span></h1>
+      <p class="state">Demandez à l'administrateur de la ligue de vous envoyer une nouvelle invitation.<span class="en" style="display:block;">Ask the league admin to send you a new invitation.</span></p>
+    `), { status: result.error === 'expired' ? 410 : 400, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+
+  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(result.leagueId).first();
+  if (!leagueRow) {
+    return new Response(page('Invitation invalide', `
+      <h1>Cette ligue n'existe plus<span class="en">This league no longer exists</span></h1>
+    `), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+
+  const existingUser = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(result.email).first();
+  const session = await checkUserSession(req, env);
+
+  let body;
+  if (existingUser) {
+    if (session && session.userId === existingUser.id) {
+      body = `
+        <h1>Rejoindre ${esc(leagueRow.name)}<span class="en">Join ${esc(leagueRow.name)}</span></h1>
+        <div class="card">
+          <p class="state" style="margin-top:0;">Accepter l'invitation à co-administrer cette ligue avec le compte <b>${esc(result.email)}</b>?<span class="en" style="display:block;">Accept the invitation to co-admin this league with the account <b>${esc(result.email)}</b>?</span></p>
+          <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+          <div class="btns">
+            <button type="button" class="btn" id="accept_submit" onclick="submitAccept()">ACCEPTER<span class="en" style="display:block;font-size:13px;font-weight:600;">ACCEPT</span></button>
+          </div>
+        </div>
+      <script>
+      async function submitAccept() {
+        const el = document.getElementById('formErr');
+        el.style.display = 'none';
+        const btn = document.getElementById('accept_submit');
+        btn.disabled = true;
+        try {
+          const res = await fetch('/league/admins/accept', {
+            method: 'POST', credentials: 'same-origin',
+            headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+            body: JSON.stringify({ token: ${JSON.stringify(token)} })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) {
+            el.textContent = data.error || "Échec de l'acceptation. / Failed to accept.";
+            el.style.display = 'block';
+            btn.disabled = false;
+            return;
+          }
+          window.location.href = '/dashboard';
+        } catch (e) {
+          el.textContent = 'Erreur réseau. / Network error.';
+          el.style.display = 'block';
+          btn.disabled = false;
+        }
+      }
+      </script>`;
+    } else {
+      body = `
+        <h1>Rejoindre ${esc(leagueRow.name)}<span class="en">Join ${esc(leagueRow.name)}</span></h1>
+        <div class="card">
+          <p class="state" style="margin-top:0;">Un compte existe déjà pour <b>${esc(result.email)}</b>. Connectez-vous avec ce compte, puis revenez sur ce lien pour accepter.<span class="en" style="display:block;">An account already exists for <b>${esc(result.email)}</b>. Log in with that account, then come back to this link to accept.</span></p>
+          <div class="btns">
+            <a class="btn" href="/login">SE CONNECTER<span class="en" style="display:block;font-size:13px;font-weight:600;">LOG IN</span></a>
+          </div>
+        </div>`;
+    }
+  } else {
+    body = `
+      <h1>Rejoindre ${esc(leagueRow.name)}<span class="en">Join ${esc(leagueRow.name)}</span></h1>
+      <div class="card">
+        <p class="state" style="margin-top:0;">Créez votre mot de passe pour co-administrer cette ligue avec <b>${esc(result.email)}</b>.<span class="en" style="display:block;">Create your password to co-admin this league as <b>${esc(result.email)}</b>.</span></p>
+        <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+        <label style="display:block;margin-bottom:12px;">
+          <span style="display:block;font-weight:600;margin-bottom:4px;">Mot de passe (8 caractères min.)<span class="en" style="display:block;font-weight:400;">Password (min. 8 characters)</span></span>
+          <input type="password" id="accept_password" required minlength="8" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+        </label>
+        <div class="btns">
+          <button type="button" class="btn" id="accept_submit" onclick="submitAccept()">CRÉER MON COMPTE<span class="en" style="display:block;font-size:13px;font-weight:600;">CREATE MY ACCOUNT</span></button>
+        </div>
+      </div>
+    <script>
+    async function submitAccept() {
+      const el = document.getElementById('formErr');
+      el.style.display = 'none';
+      const password = document.getElementById('accept_password').value;
+      if (password.length < 8) {
+        el.textContent = 'Le mot de passe doit contenir au moins 8 caractères. / Password must be at least 8 characters.';
+        el.style.display = 'block';
+        return;
+      }
+      const btn = document.getElementById('accept_submit');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/league/admins/accept', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ token: ${JSON.stringify(token)}, password })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          el.textContent = data.error || "Échec de la création. / Failed to create account.";
+          el.style.display = 'block';
+          btn.disabled = false;
+          return;
+        }
+        window.location.href = '/dashboard';
+      } catch (e) {
+        el.textContent = 'Erreur réseau. / Network error.';
+        el.style.display = 'block';
+        btn.disabled = false;
+      }
+    }
+    </script>`;
+  }
+
+  return new Response(page('Invitation', body), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
 
 // Part 4: a public, read-only page for a league's own players/fans --
 // deliberately NO checkUserSession/checkLeagueAccess call at all, since
@@ -16356,6 +16548,15 @@ async function handleFetch(req, env, ctx) {
         return await handleRequestPasswordReset(req, env, sendMail);
       if (url.pathname === '/auth/reset-password' && req.method === 'POST')
         return await handleResetPassword(req, env);
+      // Part 9: multi-admin invite. The accept POST is deliberately NOT
+      // session-required as a precondition (see handleLeagueAdminAccept's
+      // own comment) -- it may be someone's first contact with this app.
+      if (url.pathname === '/league/admins/accept' && req.method === 'GET')
+        return await handleLeagueAdminAcceptPage(req, env, url);
+      if (url.pathname === '/league/admins/accept' && req.method === 'POST')
+        return await handleLeagueAdminAccept(req, env);
+      if (url.pathname === '/league/admins/invite' && req.method === 'POST')
+        return await handleLeagueAdminInvite(req, env, url, sendMail);
       // League provisioning (leagues.js) — requires a valid user session.
       // Rows in the shared DB, scoped by league_id; see leagues.js's header
       // comment for the architecture decision behind that.

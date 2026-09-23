@@ -16,10 +16,11 @@
 // migration to this pattern is ongoing — see the task reports for exactly
 // which routes have been migrated so far and which remain.
 
-import { checkUserSession, checkCsrfToken } from './auth.js';
+import { checkUserSession, checkCsrfToken, hashPassword, sessionResponseHeaders } from './auth.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames } from './season_config.js';
+import { hmac, same } from './crypto_utils.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -644,4 +645,226 @@ export async function handleLeagueCreate(req, env) {
   } catch (err) {
     return Response.json({ ok: false, error: 'League creation failed: ' + err.message }, { status: 500 });
   }
+}
+
+/* ---------- multi-admin invite flow (Part 9) ----------
+ * Same signed-HMAC-token shape as email verification/password reset
+ * (auth.js), with its own message prefix so none of the three token
+ * kinds can be replayed as each other. 48h expiry -- long enough that a
+ * co-admin who isn't checking email daily still has a real window,
+ * short enough that a leaked/forwarded invite link doesn't stay useful
+ * indefinitely.
+ *
+ * Handles both cases the task asks for in one flow: if the invited
+ * email has no account yet, accepting creates one (password only --
+ * email comes from the token, never re-typed) and immediately links it;
+ * if an account already exists, accepting just requires being logged in
+ * as that same email and links the existing account. Either way,
+ * clicking the real emailed link is treated as proof of owning that
+ * inbox, the same trust decision handleVerifyEmail already makes for
+ * email verification -- so an invite-created account starts already
+ * email_verified.
+ */
+
+const INVITE_TOKEN_TTL_MS = 48 * 3600 * 1000;
+
+const inviteMsg = (leagueId, email, exp) => `invite:${leagueId}:${email}:${exp}`;
+
+// Real email addresses routinely contain '.' (e.g. user@example.com), so
+// encodeURIComponent alone is NOT safe to embed as one '.'-delimited
+// token segment -- it leaves '.' unescaped, which silently breaks the
+// token.split('.') parsing below for almost any real address (caught by
+// this file's own test, not a hypothetical). Base64url-encoding the
+// email first (same technique JWTs use for exactly this reason) removes
+// '.' from the encoded segment entirely, so it's always safe to join.
+function base64UrlEncode(str) {
+  const b64 = btoa(unescape(encodeURIComponent(str)));
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function base64UrlDecode(str) {
+  const b64 = str.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (str.length % 4)) % 4);
+  return decodeURIComponent(escape(atob(b64)));
+}
+
+async function generateInviteToken(env, leagueId, email, ttlMs = INVITE_TOKEN_TTL_MS) {
+  const exp = Date.now() + ttlMs;
+  const sig = await hmac(env.AUTH_SECRET, inviteMsg(leagueId, email, exp));
+  const token = `${leagueId}.${base64UrlEncode(email)}.${exp}.${sig}`;
+  return { token, exp };
+}
+
+// Returns { ok: true, leagueId, email } or { ok: false, error } -- never
+// throws, no side effect (mirrors verifyPasswordResetToken, not
+// verifyEmailToken -- accepting is a separate, explicit step).
+export async function verifyInviteToken(env, token) {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 4) return { ok: false, error: 'malformed' };
+  const [leagueId, encodedEmail, expStr, sig] = parts;
+  const exp = Number(expStr);
+  if (!leagueId || !encodedEmail || !Number.isFinite(exp)) return { ok: false, error: 'malformed' };
+  if (Date.now() > exp) return { ok: false, error: 'expired' };
+
+  let email;
+  try {
+    email = base64UrlDecode(encodedEmail);
+  } catch (_) {
+    return { ok: false, error: 'malformed' };
+  }
+
+  let want;
+  try {
+    want = await hmac(env.AUTH_SECRET, inviteMsg(leagueId, email, exp));
+  } catch (_) {
+    return { ok: false, error: 'malformed' };
+  }
+  if (!same(want, sig)) return { ok: false, error: 'invalid' };
+  return { ok: true, leagueId, email };
+}
+
+function buildInviteEmail(leagueName, inviteLink) {
+  const subject = `Invitation à co-administrer ${leagueName} / Invitation to co-admin ${leagueName}`;
+  const text =
+`Vous avez été invité(e) à devenir co-administrateur(-trice) de la ligue ${leagueName}. Cliquez sur ce lien pour accepter :
+${inviteLink}
+
+Ce lien expire dans 48 heures. Si vous ne connaissez pas cette ligue, ignorez ce courriel.
+
+---
+
+You've been invited to become a co-admin of the ${leagueName} league. Click this link to accept:
+${inviteLink}
+
+This link expires in 48 hours. If you don't recognize this league, you can ignore this email.`;
+  const html =
+`<p>Vous avez été invité(e) à devenir co-administrateur(-trice) de la ligue <b>${leagueName}</b>. Cliquez sur le lien ci-dessous pour accepter&nbsp;:</p>
+<p><a href="${inviteLink}">${inviteLink}</a></p>
+<p>Ce lien expire dans 48 heures. Si vous ne connaissez pas cette ligue, ignorez ce courriel.</p>
+<hr>
+<p>You've been invited to become a co-admin of the <b>${leagueName}</b> league. Click the link below to accept:</p>
+<p><a href="${inviteLink}">${inviteLink}</a></p>
+<p>This link expires in 48 hours. If you don't recognize this league, you can ignore this email.</p>`;
+  return { subject, text, html };
+}
+
+// POST /league/admins/invite -- session+CSRF-gated, same discipline as
+// every other league-admin write route. Body: { email }.
+export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+  }
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const body = await req.json().catch(() => ({}));
+  let email = String(body.email || '').trim().toLowerCase();
+  const check = sanitizeAndValidateEmail(email);
+  if (!check.valid) {
+    return Response.json({ ok: false, error: check.error }, { status: 400 });
+  }
+  email = check.email;
+
+  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) return Response.json({ ok: false, error: 'League not found.' }, { status: 404 });
+
+  // Already an admin of this league? Nothing to invite -- a clear,
+  // specific error beats silently sending a redundant invite email.
+  const existingUser = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+  if (existingUser) {
+    const alreadyAdmin = await env.DB.prepare(
+      'SELECT 1 FROM league_admins WHERE user_id = ? AND league_id = ?'
+    ).bind(existingUser.id, leagueId).first();
+    if (alreadyAdmin) {
+      return Response.json({ ok: false, error: 'This person is already an admin of this league.' }, { status: 409 });
+    }
+  }
+
+  const { token } = await generateInviteToken(env, leagueId, email);
+  const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+  const inviteLink = `${publicUrl}/league/admins/accept?token=${encodeURIComponent(token)}`;
+
+  if (typeof sendMailFunc === 'function') {
+    try {
+      const { subject, text, html } = buildInviteEmail(leagueRow.name, inviteLink);
+      await sendMailFunc(env, email, subject, text, html);
+    } catch (err) {
+      console.error(`[leagues] Failed to send admin invite to ${email}: ${err.message}`);
+    }
+  }
+
+  return Response.json({ ok: true, email, hasExistingAccount: !!existingUser });
+}
+
+// POST /league/admins/accept -- body: { token, password? }. Deliberately
+// NOT session-required as a precondition (unlike every other write route
+// here) -- the whole point is this may be someone's very first contact
+// with this app. Two paths, both guarded by the same verified token:
+//   - no account for that email yet: password is required, creates one
+//     (email_verified immediately -- see this section's header comment).
+//   - an account already exists: the CALLER must already be logged in
+//     as that exact email (no password re-entry, no way to hijack a
+//     different real account via a guessed/leaked invite link alone).
+export async function handleLeagueAdminAccept(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const result = await verifyInviteToken(env, body.token);
+  if (!result.ok) {
+    const status = result.error === 'expired' ? 410 : 400;
+    return Response.json({ ok: false, error: result.error }, { status });
+  }
+  const { leagueId, email } = result;
+
+  const leagueRow = await env.DB.prepare('SELECT id FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) return Response.json({ ok: false, error: 'League no longer exists.' }, { status: 404 });
+
+  const existingUser = await env.DB.prepare('SELECT id, session_epoch FROM users WHERE email = ?').bind(email).first();
+  const now = new Date().toISOString();
+
+  if (existingUser) {
+    const session = await checkUserSession(req, env);
+    if (!session || session.userId !== existingUser.id) {
+      return Response.json({ ok: false, error: 'Please log in as ' + email + ' to accept this invite.', requiresLogin: true, email }, { status: 401 });
+    }
+    // A real session is being used here (unlike the fresh-account branch
+    // below, which has no session yet) -- CSRF-protect it like every
+    // other route that acts on an existing session.
+    if (!(await checkCsrfToken(req, env, session))) {
+      return Response.json({ ok: false, error: 'Invalid or missing CSRF token.' }, { status: 403 });
+    }
+    const already = await env.DB.prepare(
+      'SELECT 1 FROM league_admins WHERE user_id = ? AND league_id = ?'
+    ).bind(existingUser.id, leagueId).first();
+    if (!already) {
+      await env.DB.prepare(
+        `INSERT INTO league_admins (user_id, league_id, role, created_at) VALUES (?, ?, 'admin', ?)`
+      ).bind(existingUser.id, leagueId, now).run();
+    }
+    return Response.json({ ok: true, leagueId, accountCreated: false });
+  }
+
+  // No account yet -- create one, same validation as real signup.
+  const password = String(body.password || '');
+  if (password.length < 8) {
+    return Response.json({ ok: false, error: 'Password must be at least 8 characters.' }, { status: 400 });
+  }
+
+  const userId = crypto.randomUUID();
+  const passwordHash = await hashPassword(password);
+  await env.DB.prepare(
+    `INSERT INTO users (id, email, password_hash, created_at, email_verified_at, last_login_at, session_epoch)
+     VALUES (?, ?, ?, ?, ?, ?, 0)`
+  ).bind(userId, email, passwordHash, now, now, now).run();
+  await env.DB.prepare(
+    `INSERT INTO league_admins (user_id, league_id, role, created_at) VALUES (?, ?, 'admin', ?)`
+  ).bind(userId, leagueId, now).run();
+
+  return new Response(JSON.stringify({ ok: true, leagueId, accountCreated: true }), {
+    status: 200,
+    headers: await sessionResponseHeaders(env, userId, 0)
+  });
 }
