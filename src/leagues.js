@@ -526,9 +526,23 @@ export async function handleLeagueSeasonPublish(req, env) {
   const existing = await getLeagueDataJson(env, leagueId);
   const seasons = (Array.isArray(existing.seasons) ? existing.seasons : []).filter(Boolean);
 
+  // Roster-size config (Part O): optional. When given, this is what
+  // shortage detection (teamState/expected/openSpots in index.js) uses for
+  // THIS league via getLeagueSeasonConfig instead of the generic
+  // DEFAULT_SEASON_CONFIG numbers (1 goalie/8 skaters/5-skater minimum) —
+  // those generic defaults are a reasonable last resort when a league
+  // hasn't set its own (same "last resort, not SMBHL's live data" pattern
+  // as leagueTeamNames/leagueBranding), not a requirement to configure
+  // this before publishing a season at all.
+  const config = { teams: teamNames };
+  for (const [bodyKey, cfgKey] of [['goalies_per_team', 'goaliesPerTeam'], ['skaters_per_team', 'skatersPerTeam'], ['min_skaters', 'minSkaters']]) {
+    const n = Number(body[bodyKey]);
+    if (Number.isFinite(n) && n > 0) config[cfgKey] = n;
+  }
+
   const newSeasonEntry = {
     name: seasonName,
-    config: { teams: teamNames },
+    config,
     standings: teamNames.map(team => ({ team, gp: 0, w: 0, l: 0, t: 0, pts: 0, gf: 0, ga: 0 })),
     games: 0
   };

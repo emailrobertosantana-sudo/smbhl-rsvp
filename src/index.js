@@ -7603,6 +7603,51 @@ async function leagueRsvpPost(req, env, url) {
   return Response.json({ ok: true, league_id: leagueId, status });
 }
 
+/* ---------- league-scoped shortage status (Part O) ----------
+ * Session+checkLeagueAccess-gated. Reuses the exact same shared shortage-
+ * detection logic SMBHL's own pages use (teamState/openSpots/expected
+ * above) — no duplicated goalie/skater-counting logic — the only thing
+ * that makes this league-aware is which cfg gets passed in:
+ * getLeagueSeasonConfig(env, leagueId, ev.season) instead of
+ * getSeasonConfigForEvent(env, ev.id, ev.season) (which always reads
+ * SMBHL's own KV data_json key, unconditionally — not usable here at all).
+ */
+async function handleLeagueEventStatus(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+  }
+
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const eventId = url.searchParams.get('e');
+  if (!eventId) return Response.json({ ok: false, error: 'e (event id) is required.' }, { status: 400 });
+
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
+    .bind(eventId, leagueId).first();
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.' }, { status: 404 });
+
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  const teams = [];
+  for (const team of getTeamNames(cfg)) {
+    const st = await teamState(env.DB, ev.id, team, cfg);
+    const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
+    const openSkaters = await openSpots(env.DB, ev.id, team, 'skater', cfg);
+    teams.push({ team, skaters: st.skaters, goalies: st.goalies, short: st.short, shortGoalie: st.shortGoalie, shortSkaters: st.shortSkaters, openGoalies, openSkaters });
+  }
+
+  return Response.json({
+    ok: true,
+    league_id: leagueId,
+    event: { id: ev.id, season: ev.season, week: ev.week, date: ev.date, state: ev.state },
+    teams
+  });
+}
+
 async function linksRoute(req, env, url) {
   const auth = checkAdminAuth(req, env);
   if (auth !== 'ok') return adminAuthResponse(auth);
@@ -15321,6 +15366,9 @@ async function handleFetch(req, env, ctx) {
           { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if (url.pathname === '/league/rsvp' && req.method === 'POST')
         return await leagueRsvpPost(req, env, url);
+      // Session-gated shortage status (Part O — see the task report).
+      if (url.pathname === '/league/events/status' && req.method === 'GET')
+        return await handleLeagueEventStatus(req, env, url);
       if (url.pathname === '/rsvp/absences' && req.method === 'POST')
         return await rsvpAbsencesPost(req, env, url);
       if (url.pathname === '/team-rsvp' && req.method === 'GET')
