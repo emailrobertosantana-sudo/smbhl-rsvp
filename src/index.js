@@ -1365,14 +1365,14 @@ function buildDashI18n({ state, needsSeason, unverified }) {
         startSeasonDesc: 'Choisis un nom pour ta saison. Tu pourras créer des matchs ensuite.',
         seasonNameLabel: 'Nom de la saison', seasonStartBtn: 'Créer la saison',
         checklistTitle: 'Pour bien partir',
-        ckLeague: 'Créer la ligue', ckTeams: 'Nommer les équipes', ckPlayers: 'Ajouter les joueurs', ckSeason: 'Créer la saison'
+        ckLeague: 'Créer la ligue', ckTeams: 'Nommer les équipes', ckPlayerCount: 'Choisir le nombre de joueurs', ckPlayers: 'Ajouter les joueurs', ckSeason: 'Créer la saison'
       });
       Object.assign(en, {
         nextStep: 'Next step', startSeason: 'Start your first season',
         startSeasonDesc: 'Choose a name for your season. You can create events after.',
         seasonNameLabel: 'Season name', seasonStartBtn: 'Create the season',
         checklistTitle: 'Getting started',
-        ckLeague: 'Create the league', ckTeams: 'Name the teams', ckPlayers: 'Add players', ckSeason: 'Create a season'
+        ckLeague: 'Create the league', ckTeams: 'Name the teams', ckPlayerCount: 'Choose your player count', ckPlayers: 'Add players', ckSeason: 'Create a season'
       });
     } else {
       Object.assign(fr, { currentSeasonLabel: 'Saison actuelle' });
@@ -1576,7 +1576,18 @@ async function handleDashboardPage(req, env, url) {
         <div class="h3" data-i18n="checklistTitle">Pour bien partir</div>
         <div class="dash-check" style="margin-top:12px">
           <div class="dash-ck done"><span class="b y">${DASH_ICON_CHECK}</span><span data-i18n="ckLeague">Créer la ligue</span></div>
-          <div class="dash-ck done"><span class="b y">${DASH_ICON_CHECK}</span><span data-i18n="ckTeams">Nommer les équipes</span></div>
+          <!-- Live-testing Bug 4: this row used to always read "Nommer
+               les équipes" ("Name the teams") and always show done --
+               accurate for fixed/weekly_draw (both really do pick real
+               team names at signup), but a headcount league never
+               names any teams at all, so it showed a false "done" for
+               a step that genuinely never happened. Its own real
+               signup step (picking a min/max player count) gets its
+               own accurate label instead; still correctly "done" (it
+               DID happen, just not team-naming) since headcount
+               creation requires it up front, same as fixed/weekly_draw
+               require team names up front. -->
+          <div class="dash-ck done"><span class="b y">${DASH_ICON_CHECK}</span><span data-i18n="${dashIsHeadcount ? 'ckPlayerCount' : 'ckTeams'}">${dashIsHeadcount ? 'Choisir le nombre de joueurs' : 'Nommer les équipes'}</span></div>
           <!-- Live-testing bug fix (Bug 5): season, not players, is the
                real blocking prerequisite (Bug 4 -- POST /league/events
                fails without one) for the next real step (creating
