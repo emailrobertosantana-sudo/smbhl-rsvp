@@ -30,7 +30,16 @@
       "name": "notreligue-rsvp",
       "vars": {
         "PUBLIC_URL": "https://rsvp.notreligue.ca",
-        "DEMO_ENV": "true"
+        "DEMO_ENV": "true",
+        // Distinct from DEMO_ENV (which only means "non-production
+        // deployment," used for the noindex/robots.txt behavior) --
+        // this specifically marks "this deployment is the Notre Ligue
+        // product Worker," so scheduled() below can route to the new,
+        // independent league-reminder cron instead of SMBHL's own
+        // runSchedule(), without depending on DEMO_ENV's unrelated
+        // meaning (a future real-production league-product deployment
+        // would set this without DEMO_ENV).
+        "LEAGUE_PRODUCT": "true"
       },
       "d1_databases": [
         {
@@ -45,8 +54,18 @@
           "id": "28a2834f15814fcb84bb98f62f4919f1"
         }
       ],
+      // A genuinely separate cron trigger from SMBHL's own
+      // (top-level triggers.crons, "*/5 * * * *") -- this env block's
+      // own triggers REPLACE the top-level ones for this named
+      // deployment (notreligue-rsvp) entirely, they don't merge with
+      // or inherit from them, so this can never fire against or
+      // alongside SMBHL's schedule. Every 15 minutes is frequent
+      // enough to catch the 72h/24h/12h reminder windows (each hours
+      // wide) with good precision without the cost of SMBHL's own
+      // 5-minute interval, which exists for its own tighter
+      // wave-based sub-call timing this feature doesn't need.
       "triggers": {
-        "crons": []
+        "crons": ["*/15 * * * *"]
       },
       "routes": [
         {

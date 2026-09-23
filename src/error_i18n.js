@@ -104,6 +104,8 @@ export const ERROR_I18N = {
   SLUG_TAKEN: { fr: 'Cette adresse est déjà utilisée par une autre ligue.', en: 'This URL is already used by another league.' },
   SLUG_RESERVED: { fr: 'Cette adresse est réservée. Choisis-en une autre.', en: 'This URL is reserved. Please choose another one.' },
   INVALID_LANGUAGE_MODE: { fr: "La langue doit être 'les deux', 'français' ou 'anglais'.", en: "Language must be 'both', 'fr', or 'en'." },
+  NO_SETTINGS_PROVIDED: { fr: 'Aucun réglage fourni.', en: 'No settings provided.' },
+  NO_UPCOMING_EVENT: { fr: 'Aucun prochain match trouvé.', en: 'No upcoming event found.' },
 
   // Client-side-only validation keys (no server round trip needed for
   // these -- checked in the page's own JS before submitting -- but

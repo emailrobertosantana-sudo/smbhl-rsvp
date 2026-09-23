@@ -1093,3 +1093,54 @@ export async function handleLeagueUpdateLanguageMode(req, env, url) {
   await env.DB.prepare('UPDATE leagues SET language_mode = ? WHERE id = ?').bind(languageMode, leagueId).run();
   return Response.json({ ok: true, languageMode });
 }
+
+/* ---------- per-league automated reminder settings ----------
+ * Session+CSRF+checkLeagueAccess-gated, same discipline as every other
+ * league-admin write route (handleLeagueUpdateLanguageMode just
+ * above). Three independent toggles (migrate-026.sql), each
+ * PATCH-style optional in the body -- only the keys actually present
+ * are updated, so the dashboard's 3 separate switches can each POST
+ * on their own without needing to know the other two's current state.
+ */
+export async function handleLeagueUpdateReminderSettings(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const body = await req.json().catch(() => ({}));
+  const updates = [];
+  const params = [];
+  for (const [bodyKey, col] of [
+    ['reminder72h', 'reminder_72h_enabled'],
+    ['reminder24h', 'reminder_24h_enabled'],
+    ['reminder12h', 'reminder_12h_enabled']
+  ]) {
+    if (typeof body[bodyKey] === 'boolean') { updates.push(`${col} = ?`); params.push(body[bodyKey] ? 1 : 0); }
+  }
+  if (!updates.length) {
+    return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
+  }
+  params.push(leagueId);
+  await env.DB.prepare(`UPDATE leagues SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
+
+  const row = await env.DB.prepare(
+    'SELECT reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?'
+  ).bind(leagueId).first();
+  return Response.json({
+    ok: true,
+    settings: {
+      reminder72h: !!row.reminder_72h_enabled,
+      reminder24h: !!row.reminder_24h_enabled,
+      reminder12h: !!row.reminder_12h_enabled
+    }
+  });
+}

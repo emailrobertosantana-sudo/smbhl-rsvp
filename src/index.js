@@ -2,11 +2,11 @@ import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
-import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument } from './design_system.js';
+import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton } from './design_system.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -1246,6 +1246,11 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       langExposureDesc: 'Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.',
       langBoth: 'Les deux (FR/EN)', langFrOnly: 'Français seulement', langEnOnly: 'Anglais seulement',
       save: 'Enregistrer', langSaved: 'Enregistré !',
+      remindersTitle: 'Rappels automatiques', remindersDesc: 'Envoyés automatiquement à tes joueurs avant chaque match.',
+      reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder72Desc: "Envoyé aux joueurs qui n'ont pas encore répondu.",
+      reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder24Desc: 'Même chose, plus proche du match.',
+      reminder12Label: 'Détails 12 h avant (joueurs confirmés)', reminder12Desc: 'Heure, lieu, et un lien pour se désister si besoin.',
+      remindersSaved: 'Enregistré !',
       deactivateLeague: 'Désactiver la ligue',
       deactivateDesc: "Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.",
       deactivateBtn: 'Désactiver'
@@ -1260,6 +1265,11 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       langExposureDesc: "Controls whether your players' public page and RSVP page show a FR/EN toggle, or a single fixed language.",
       langBoth: 'Both (FR/EN)', langFrOnly: 'French only', langEnOnly: 'English only',
       save: 'Save', langSaved: 'Saved!',
+      remindersTitle: 'Automatic reminders', remindersDesc: 'Sent automatically to your players before each game.',
+      reminder72Label: '72h reminder (no reply yet)', reminder72Desc: "Sent to players who haven't answered yet.",
+      reminder24Label: '24h reminder (no reply yet)', reminder24Desc: 'Same thing, closer to the game.',
+      reminder12Label: '12h game details (confirmed players)', reminder12Desc: 'Time, venue, and a link to drop out if needed.',
+      remindersSaved: 'Saved!',
       deactivateLeague: 'Deactivate league',
       deactivateDesc: 'This deactivates your league. Your data is kept, but management access is blocked.',
       deactivateBtn: 'Deactivate'
@@ -1497,6 +1507,24 @@ async function handleDashboardPage(req, env, url) {
     </div>
   </section>
   <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="remindersTitle">Rappels automatiques</div>
+    <p class="nl-help" data-i18n="remindersDesc">Envoyés automatiquement à tes joueurs avant chaque match.</p>
+    <div id="remindersErr" class="nl-error" style="display:none"></div>
+    <div id="remindersOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-toggle" style="margin-top:8px">
+      <div><div class="nl-label" data-i18n="reminder72Label">Rappel 72 h avant (sans réponse)</div><div class="nl-help" data-i18n="reminder72Desc">Envoyé aux joueurs qui n'ont pas encore répondu.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_72h_enabled ? 'true' : 'false'}" id="reminder_72h_switch" onclick="toggleReminderSwitch(this,'reminder72h')"></button>
+    </div>
+    <div class="nl-toggle">
+      <div><div class="nl-label" data-i18n="reminder24Label">Rappel 24 h avant (sans réponse)</div><div class="nl-help" data-i18n="reminder24Desc">Même chose, plus proche du match.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_24h_enabled ? 'true' : 'false'}" id="reminder_24h_switch" onclick="toggleReminderSwitch(this,'reminder24h')"></button>
+    </div>
+    <div class="nl-toggle">
+      <div><div class="nl-label" data-i18n="reminder12Label">Détails 12 h avant (joueurs confirmés)</div><div class="nl-help" data-i18n="reminder12Desc">Heure, lieu, et un lien pour se désister si besoin.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="reminder_12h_switch" onclick="toggleReminderSwitch(this,'reminder12h')"></button>
+    </div>
+  </section>
+  <section class="nl-card nl-card--pad-lg">
     <div class="h3" data-i18n="coAdmins">Co-administrateurs</div>
     <div class="nl-list" style="margin:12px 0">
       ${adminEmails.map(e => `<div class="nl-row"><span class="grow">${esc(e)}</span></div>`).join('')}
@@ -1649,6 +1677,34 @@ async function submitLanguageMode() {
   } catch (e) {
     err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
+}
+// Part 2 (automated reminders task): each switch POSTs its own new
+// state independently the moment it's clicked (no separate "save"
+// button) -- matches the toggle's own instant-feedback convention
+// (nl-switch), and each of the 3 keys is optional/independent server-
+// side (handleLeagueUpdateReminderSettings), so one switch's request
+// never has to know or resend the other two's current state.
+async function toggleReminderSwitch(btn, bodyKey) {
+  var err = document.getElementById('remindersErr');
+  var ok = document.getElementById('remindersOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var next = btn.getAttribute('aria-checked') !== 'true';
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/reminders/settings', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(Object.fromEntries([[bodyKey, next]]))
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    btn.setAttribute('aria-checked', String(next));
+    ok.textContent = window.__pageDict().remindersSaved;
+    ok.style.display = 'block';
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block';
+  }
+  btn.disabled = false;
 }`;
 
   return new Response(nlDocument({ title: leagueRow ? `Tableau de bord — ${leagueRow.name}` : 'Tableau de bord', description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
@@ -2465,7 +2521,9 @@ ${tabbar}`;
       inviteGoalie: 'Inviter un gardien', inviteSkater: 'Inviter des joueurs',
       noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.',
       statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu',
-      setIn: 'IN', setOut: 'OUT'
+      setIn: 'IN', setOut: 'OUT',
+      remindNow: 'Envoyer un rappel maintenant',
+      remindSentOne: 'Rappel envoyé à 1 joueur.', remindSentMany: 'Rappel envoyé à {n} joueurs.', remindSentNone: "Tout le monde a déjà répondu, rien à envoyer."
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
@@ -2474,7 +2532,9 @@ ${tabbar}`;
       inviteGoalie: 'Invite a goalie', inviteSkater: 'Invite players',
       noPlayersOnTeam: 'No players assigned to this team.',
       statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply',
-      setIn: 'IN', setOut: 'OUT'
+      setIn: 'IN', setOut: 'OUT',
+      remindNow: 'Send a reminder now',
+      remindSentOne: 'Reminder sent to 1 player.', remindSentMany: 'Reminder sent to {n} players.', remindSentNone: 'Everyone has already answered, nothing to send.'
     }
   };
   const BADGE_ICON_CHECK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 10.5l4 4 8-9"/></svg>';
@@ -2560,12 +2620,43 @@ ${tabbar}`;
     <h1>${esc(ev.date)}${ev.start_time ? ' · ' + esc(ev.start_time) : ''}</h1>
     <p class="nl-help" style="margin-top:4px">${ev.venue ? esc(ev.venue) : ''}</p>
   </div>
+  <div>
+    <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="remind_now_btn" data-i18n="remindNow" onclick="sendReminderNow(this)">Envoyer un rappel maintenant</button>
+    <p id="remindNowMsg" class="nl-help" style="display:none;margin-top:8px;"></p>
+  </div>
   <div class="ev-teams">${teamCards.join('')}</div>
 </main>
 ${tabbar}`;
 
   const script = `
 ${nlAuthScript(I18N_DETAIL)}
+async function sendReminderNow(btn) {
+  var msg = document.getElementById('remindNowMsg');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/events/send-reminder', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)} })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    var dict = window.__pageDict();
+    if (!res.ok || !data.ok) {
+      msg.textContent = window.__errorText(data.errorKey, data.error);
+    } else if (data.sent === 0) {
+      msg.textContent = dict.remindSentNone;
+    } else if (data.sent === 1) {
+      msg.textContent = dict.remindSentOne;
+    } else {
+      msg.textContent = dict.remindSentMany.split('{n}').join(String(data.sent));
+    }
+    msg.style.display = 'block';
+  } catch (e) {
+    msg.textContent = window.__errorText('NETWORK_ERROR');
+    msg.style.display = 'block';
+  }
+  btn.disabled = false;
+}
 async function inviteSubs(team, need, btn) {
   var card = btn.closest('.ev-team');
   var msg = card.querySelector('.inviteMsg');
@@ -9723,6 +9814,353 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
   return { invited: pool.length, reason: 'invited' };
 }
 
+/* ============================================================
+ * Part 2 (automated reminder/logistics task): per-league automatic
+ * reminder emails.
+ *
+ * GENUINELY SEPARATE from SMBHL's own reminder/cron system by
+ * construction, not just by convention:
+ *   - Its own cron trigger (wrangler.jsonc's env.demo block, its own
+ *     "triggers.crons", which REPLACES rather than merges with the
+ *     top-level one) -- fires only on the notreligue-rsvp deployment,
+ *     against notreligue-demo's own D1 database. SMBHL's production
+ *     Worker (smbhl-rsvp) keeps its own top-level every-5-minutes cron
+ *     completely unchanged and never executes a line of this code.
+ *   - scheduled() below branches on env.LEAGUE_PRODUCT (set only in
+ *     that env block) to call runLeagueReminders() INSTEAD OF
+ *     runSchedule() -- the two never run in the same invocation, and
+ *     runSchedule() itself is not modified at all.
+ *   - Its own email templates (nlEmailWrap/nlEmailButton,
+ *     src/design_system.js, the design system Part 5 task) -- never
+ *     emailWrap()/body() (this file, above), which render SMBHL's own
+ *     real, live transactional emails.
+ *   - Its own sent-tracking table (league_reminder_log,
+ *     migrate-026.sql) -- never the outbox/drain() pipeline SMBHL's
+ *     own cron drains.
+ *
+ * The ONE piece of existing logic this deliberately DOES reuse,
+ * unmodified, per the task's own explicit instruction ("reuse the
+ * existing league-scoped RSVP write path and its existing shortage/
+ * sub-invite trigger logic -- do not duplicate that logic"): the 12h
+ * logistics email's opt-out link is the exact same `/league/rsvp?
+ * ...&v=out` one-click path leagueRsvpGet already serves (below), and
+ * writeLeagueRsvpStatus()/maybeInviteSubsForShortage() (also below)
+ * are called exactly as they already are elsewhere in this file --
+ * maybeInviteSubsForShortage() internally calls the SHARED drain(),
+ * but that is calling existing, already-correctly-league-branded
+ * code, not modifying or restyling it (see drain()'s own Part P
+ * comment: it has resolved per-league branding via league_id for
+ * longer than this task).
+ * ============================================================ */
+
+const LEAGUE_REMINDER_ICON_ALERT = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px;"><path d="M10 3l8 14H2z"/><path d="M10 8v4M10 14.5v.5"/></svg>';
+
+function leagueReminderDict(lang, { firstName, dayLabel, ev, team }) {
+  const when = `${ev.date}${ev.start_time ? ' · ' + ev.start_time : ''}${ev.venue ? ' · ' + ev.venue : ''}`;
+  return lang === 'fr' ? {
+    r72Subject: `${firstName}, as-tu décidé pour ${dayLabel || 'ton prochain match'}?`,
+    r72Headline: 'As-tu décidé?',
+    r72Body: `On n'a pas encore ta réponse pour ${dayLabel || 'ton prochain match'}. ${when}.`,
+    r24Subject: `${firstName}, dernier rappel pour ${dayLabel || 'ton prochain match'}`,
+    r24Headline: 'Dernier rappel',
+    r24Body: `Le match approche et on n'a toujours pas ta réponse. ${when}.`,
+    btnIn: 'Je joue', btnOut: 'Je ne peux pas',
+    logisticsSubject: `${firstName}, les détails pour ${dayLabel || 'ton match'}`,
+    logisticsHeadline: 'Détails du match',
+    logisticsBody: `Tu es confirmé${'·'}e pour ${dayLabel || 'ton match'}. ${when}${team ? ` · Équipe ${team}` : ''}.`,
+    optOut: 'Je ne peux plus jouer',
+    poweredBy: 'Propulsé par Notre Ligue'
+  } : {
+    r72Subject: `${firstName}, have you decided for ${dayLabel || 'your next game'}?`,
+    r72Headline: 'Have you decided?',
+    r72Body: `We still don't have your answer for ${dayLabel || 'your next game'}. ${when}.`,
+    r24Subject: `${firstName}, last reminder for ${dayLabel || 'your next game'}`,
+    r24Headline: 'Last reminder',
+    r24Body: `The game is coming up and we still don't have your answer. ${when}.`,
+    btnIn: "I'm in", btnOut: "Can't make it",
+    logisticsSubject: `${firstName}, details for ${dayLabel || 'your game'}`,
+    logisticsHeadline: 'Game details',
+    logisticsBody: `You're confirmed for ${dayLabel || 'your game'}. ${when}${team ? ` · Team ${team}` : ''}.`,
+    optOut: "I can't play anymore",
+    poweredBy: 'Powered by Notre Ligue'
+  };
+}
+
+// kind: 'reminder_72h' | 'reminder_24h'. Bilingual single send (FR
+// then EN) unless the league forces one language -- same convention
+// as the account-level emails (design system Part 5).
+function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, dayLabel, ev, inLink, outLink, forcedLang }) {
+  const barColor = leagueFillColor(leagueColor || '#b3122e');
+  const langs = forcedLang ? [forcedLang] : ['fr', 'en'];
+  const dicts = langs.map(l => leagueReminderDict(l, { firstName, dayLabel, ev }));
+  const subjKey = kind === 'reminder_72h' ? 'r72Subject' : 'r24Subject';
+  const headKey = kind === 'reminder_72h' ? 'r72Headline' : 'r24Headline';
+  const bodyKey = kind === 'reminder_72h' ? 'r72Body' : 'r24Body';
+  const subject = dicts.map(d => d[subjKey]).join(' / ');
+  const bodyHtml = dicts.map((d, i) => `
+    ${i > 0 ? '<hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">' : ''}
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d[headKey]}</h1>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${d[bodyKey]}</p>
+    ${nlEmailButton(inLink, d.btnIn, barColor)}
+    <p style="margin:16px 0 0;text-align:center;font-size:15px;line-height:22px;"><a href="${outLink}" style="color:#16181d;font-weight:700;">${d.btnOut}</a></p>
+  `).join('');
+  const text = dicts.map(d => `${d[headKey]}\n${d[bodyKey]}\n${d.btnIn}: ${inLink}\n${d.btnOut}: ${outLink}`).join('\n\n---\n\n');
+  const html = nlEmailWrap({
+    brandName: leagueName, barColor, bodyHtml,
+    footerHtml: `${dicts[0].poweredBy} pour ${esc(leagueName)}`
+  });
+  return { subject, text, html };
+}
+
+// kind: 'logistics_12h'. Confirmed players only -- informs, does not
+// ask; the opt-out is a plain text link (not the primary button),
+// matching this app's own established "secondary action = text link"
+// convention rather than a second bulletproof button (guidelines/
+// 30-emails.md: one button per email).
+function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang }) {
+  const barColor = leagueFillColor(leagueColor || '#b3122e');
+  const langs = forcedLang ? [forcedLang] : ['fr', 'en'];
+  const dicts = langs.map(l => leagueReminderDict(l, { firstName, dayLabel, ev, team }));
+  const subject = dicts.map(d => d.logisticsSubject).join(' / ');
+  const bodyHtml = dicts.map((d, i) => `
+    ${i > 0 ? '<hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">' : ''}
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.logisticsHeadline}</h1>
+    <p style="margin:0 0 20px;font-size:16px;line-height:25px;">${d.logisticsBody}</p>
+    <p style="margin:0;font-size:13px;line-height:19px;color:#55585f;"><a href="${optOutLink}" style="color:#55585f;">${d.optOut}</a></p>
+  `).join('');
+  const text = dicts.map(d => `${d.logisticsHeadline}\n${d.logisticsBody}\n${d.optOut}: ${optOutLink}`).join('\n\n---\n\n');
+  const html = nlEmailWrap({
+    brandName: leagueName, barColor, bodyHtml,
+    footerHtml: `${dicts[0].poweredBy} pour ${esc(leagueName)}`
+  });
+  return { subject, text, html };
+}
+
+// The distinct late-reversal admin alert (12h opt-out only) -- a real
+// danger-tone badge, not the yellow "team short" tone the reference
+// preview's own alert uses, so it reads as visually different at a
+// glance from a routine shortage notice: this one means "someone who
+// was IN just dropped, 12 hours out," the least-recoverable shortage
+// scenario, not just "not everyone has answered yet."
+function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, team, dayLabel, ev, dashboardLink }) {
+  const barColor = leagueFillColor(leagueColor || '#b3122e');
+  const subject = `${team}: ${playerName} vient de se désister · 12 h avant le match / just dropped out, 12h before the game`;
+  const bodyHtml = `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Désistement tardif · Late reversal</td></tr></table>
+    <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(playerName)} ne joue plus</h1>
+    <p style="margin:0 0 8px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> était confirmé${'·'}e pour <b>${esc(team)}</b> et vient de changer sa réponse à 12 heures du match (${esc(dayLabel || ev.date)}). On a lancé l'invitation aux remplaçants automatiquement.</p>
+    <p style="margin:0 0 24px;font-size:15px;line-height:23px;color:#55585f;"><b>${esc(playerName)}</b> was confirmed for <b>${esc(team)}</b> and just changed their answer 12 hours before the game (${esc(dayLabel || ev.date)}). Subs have already been invited automatically.</p>
+    ${nlEmailButton(dashboardLink, 'Voir le match · View the game', barColor)}
+  `;
+  const text = `${playerName} (${team}) just dropped out 12h before the game (${ev.date}). Subs invited automatically. ${dashboardLink}`;
+  const html = nlEmailWrap({ brandName: leagueName, barColor, bodyHtml, footerHtml: 'Notre Ligue' });
+  return { subject, text, html };
+}
+
+// Sends the distinct late-reversal alert to every current admin of
+// this league (league_admins JOIN users, the same source the
+// dashboard's own co-admin list already reads) -- never just the
+// league's creator, since a co-admin invited later should hear about
+// this too.
+async function sendLateReversalAdminAlert(env, leagueId, ev, contact) {
+  const leagueRow = await env.DB.prepare('SELECT name, color FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) return;
+  const admins = (await env.DB.prepare(
+    `SELECT u.email FROM league_admins la JOIN users u ON u.id = la.user_id WHERE la.league_id = ?`
+  ).bind(leagueId).all()).results || [];
+  if (!admins.length) return;
+
+  const dayLabel = reminderDayLabel(ev.date, 'fr');
+  const dashboardLink = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
+  const mail = renderLateReversalAdminAlert({
+    leagueName: leagueRow.name, leagueColor: leagueRow.color,
+    playerName: contact.name, team: contact.preferred_team || '', dayLabel, ev, dashboardLink
+  });
+  for (const admin of admins) {
+    try {
+      await sendMail(env, admin.email, mail.subject, mail.text, mail.html);
+    } catch (err) {
+      console.error(`[league-reminders] failed to send late-reversal alert to ${admin.email}: ${err.message}`);
+    }
+  }
+}
+
+function reminderDayLabel(dateStr, lang) {
+  try {
+    const d = new Date(dateStr + 'T12:00:00');
+    const label = new Intl.DateTimeFormat(lang === 'en' ? 'en-CA' : 'fr-CA', { weekday: 'long', day: 'numeric', month: 'short' }).format(d);
+    return lang === 'en' ? (label.charAt(0).toUpperCase() + label.slice(1)) : label;
+  } catch (_) {
+    return dateStr;
+  }
+}
+
+// Non-responders: rostered to a real team, no rsvp row yet or an
+// explicit 'pending' one (same COALESCE(r.status,'pending') default
+// every other page in this app already uses), opted in, has an email.
+async function getNonResponders(env, leagueId, eventId) {
+  return (await env.DB.prepare(
+    `SELECT c.player_id, c.name, c.email, c.token_salt, c.preferred_team
+       FROM contacts c
+       LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+      WHERE c.league_id = ? AND c.preferred_team IS NOT NULL
+        AND c.opted_out = 0 AND c.email IS NOT NULL
+        AND (r.status IS NULL OR r.status = 'pending')`
+  ).bind(eventId, leagueId).all()).results || [];
+}
+
+// Confirmed players: a real rsvp row with status = 'in'.
+async function getConfirmedPlayers(env, leagueId, eventId) {
+  return (await env.DB.prepare(
+    `SELECT c.player_id, c.name, c.email, c.token_salt, c.preferred_team
+       FROM contacts c
+       JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+      WHERE c.league_id = ? AND r.status = 'in'
+        AND c.opted_out = 0 AND c.email IS NOT NULL`
+  ).bind(eventId, leagueId).all()).results || [];
+}
+
+async function leagueOptInOutLinks(env, leagueId, ev, contact) {
+  const base = env.PUBLIC_URL || 'https://rsvp.notreligue.ca';
+  const t = await hmac(env.RSVP_SECRET, leagueRsvpMsg(leagueId, ev.id, contact.player_id, contact.token_salt));
+  const qs = `league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(ev.id)}&p=${encodeURIComponent(contact.player_id)}&t=${t}`;
+  return {
+    inLink: `${base}/league/rsvp?${qs}&v=in`,
+    outLink: `${base}/league/rsvp?${qs}&v=out`,
+    // src=logistics12h distinguishes this specific opt-out context (see
+    // leagueRsvpGet's own comment) so the distinct late-reversal admin
+    // alert fires only from the 12h logistics email's own link, never
+    // from an ordinary self-service OUT click elsewhere.
+    optOutLink: `${base}/league/rsvp?${qs}&v=out&src=logistics12h`
+  };
+}
+
+// Sends one reminder wave for one event: real recipients (never a
+// static count), real per-league branding and color, real dedup via
+// league_reminder_log (never re-sent automatically for the same
+// event+kind once logged). kind: 'reminder_72h' | 'reminder_24h' |
+// 'logistics_12h'. Each kind has its OWN hours-until-start threshold
+// -- a 70h-out event only qualifies for reminder_72h, never also
+// reminder_24h/logistics_12h just because it's already <= 72h out.
+// Returns the number of emails actually sent, per kind.
+const LEAGUE_REMINDER_THRESHOLD_HOURS = { reminder_72h: 72, reminder_24h: 24, logistics_12h: 12 };
+async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil) {
+  const kindToColumn = { reminder_72h: 'reminder_72h_enabled', reminder_24h: 'reminder_24h_enabled', logistics_12h: 'reminder_12h_enabled' };
+  const results = {};
+  for (const kind of ['reminder_72h', 'reminder_24h', 'logistics_12h']) {
+    if (hoursUntil > LEAGUE_REMINDER_THRESHOLD_HOURS[kind]) { results[kind] = 0; continue; }
+    if (!leagueRow[kindToColumn[kind]]) { results[kind] = 0; continue; }
+    const already = await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(ev.id, kind).first();
+    if (already) { results[kind] = 0; continue; }
+    results[kind] = await sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog: true });
+  }
+  return results;
+}
+
+// writeLog: false for the manual "send now" trigger below -- see its
+// own comment for why a manual send must never suppress the automatic
+// 72h/24h waves for the same event.
+async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false } = {}) {
+  const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
+  const recipients = kind === 'logistics_12h'
+    ? await getConfirmedPlayers(env, leagueRow.id, ev.id)
+    : await getNonResponders(env, leagueRow.id, ev.id);
+
+  let sent = 0;
+  for (const contact of recipients) {
+    try {
+      const dayLabel = reminderDayLabel(ev.date, forcedLang || 'fr');
+      const firstName = (contact.name || '').split(' ')[0] || contact.name;
+      const { inLink, outLink, optOutLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
+      const mail = kind === 'logistics_12h'
+        ? renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: contact.preferred_team, optOutLink, forcedLang })
+        : renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang });
+      await sendMail(env, contact.email, mail.subject, mail.text, mail.html, null, cfg.league);
+      sent++;
+    } catch (err) {
+      console.error(`[league-reminders] failed to send ${kind} to ${contact.player_id}: ${err.message}`);
+    }
+  }
+  if (writeLog) {
+    await env.DB.prepare(
+      `INSERT INTO league_reminder_log (event_id, kind, league_id, sent_at, recipient_count) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(event_id, kind) DO NOTHING`
+    ).bind(ev.id, kind, leagueRow.id, new Date().toISOString(), sent).run();
+  }
+  return sent;
+}
+
+// The cron entry point (scheduled(), below the export default). Scans
+// every non-SMBHL, non-deactivated league's own OPEN events with a
+// real start_time (no start_time = no countdown to measure against --
+// the manual "send now" trigger still works for those, since it
+// targets non-responders directly, not a time window) and sends
+// whichever of the 3 waves have crossed their own threshold and
+// haven't been sent yet for that event. Self-healing by construction:
+// if a tick is ever missed, the NEXT tick still finds hoursUntil under
+// the threshold and sends it late, rather than silently skipping it
+// forever -- league_reminder_log is what prevents a duplicate send,
+// not a narrow time window.
+async function runLeagueReminders(env) {
+  const log = [];
+  const leagues = (await env.DB.prepare(
+    `SELECT * FROM leagues WHERE id != ? AND deactivated_at IS NULL`
+  ).bind(SMBHL_LEAGUE_ID).all()).results || [];
+
+  for (const leagueRow of leagues) {
+    const cfg = await getLeagueSeasonConfig(env, leagueRow.id);
+    const events = (await env.DB.prepare(
+      `SELECT * FROM events WHERE league_id = ? AND state = 'open' AND start_time IS NOT NULL`
+    ).bind(leagueRow.id).all()).results || [];
+
+    for (const ev of events) {
+      const start = eventStart(ev);
+      if (!start) continue;
+      const hoursUntil = (start.getTime() - Date.now()) / 3600000;
+      if (hoursUntil <= 0 || hoursUntil > 72) continue;
+
+      const results = await sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil);
+      const total = results.reminder_72h + results.reminder_24h + results.logistics_12h;
+      if (total > 0) log.push(`${leagueRow.id}:${ev.id} 72h=${results.reminder_72h} 24h=${results.reminder_24h} logistics=${results.logistics_12h}`);
+    }
+  }
+  return log;
+}
+
+// Admin-initiated manual "send now" -- session+CSRF+checkLeagueAccess-
+// gated, same discipline as every other league-admin write route.
+// Sends the same non-responder reminder as the automatic 72h/24h
+// waves, to whichever of this league's OWN upcoming open events is
+// next, immediately, regardless of the automatic time windows.
+// Deliberately does NOT write to league_reminder_log -- a manual send
+// is purely additive and must never suppress the automatic 72h/24h
+// reminders from still firing on their own schedule for the same
+// event (see migrate-026.sql's own comment).
+async function handleLeagueSendReminderNow(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const body = await req.json().catch(() => ({}));
+  const eventId = String(body.event_id || '').trim();
+  const ev = eventId
+    ? await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first()
+    : await env.DB.prepare(`SELECT * FROM events WHERE league_id = ? AND state = 'open' ORDER BY date ASC LIMIT 1`).bind(leagueId).first();
+  if (!ev) return Response.json({ ok: false, error: 'No upcoming event found.', errorKey: 'NO_UPCOMING_EVENT' }, { status: 404 });
+
+  const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
+  const cfg = await getLeagueSeasonConfig(env, leagueId);
+  const sent = await sendLeagueReminderKind(env, leagueRow, cfg, ev, 'reminder_72h', { writeLog: false });
+  return Response.json({ ok: true, league_id: leagueId, event_id: ev.id, sent });
+}
+
+
 // Design system Part 4: player RSVP page, matching
 // components/ScreenRSVP/preview.html -- the league's OWN color rule
 // matters most here: header bar (nl-brand--league) + primary answer
@@ -9775,9 +10213,21 @@ async function leagueRsvpGet(req, env, url) {
 
   const autoVal = url.searchParams.get('v');
   if (['in', 'out'].includes(autoVal) && ev.state === 'open' && status !== autoVal) {
+    // Part 2 (automated reminders task): a confirmed player using the
+    // 12h logistics email's own opt-out link (src=logistics12h) is a
+    // late reversal -- the least-recoverable shortage scenario, per
+    // the task's own framing -- distinct from an ordinary self-service
+    // OUT click at any other time, which never sends this alert. The
+    // reuse of writeLeagueRsvpStatus/maybeInviteSubsForShortage right
+    // below is completely unchanged either way -- this only ADDS one
+    // extra notification on top of that existing, unmodified path.
+    const wasConfirmed = row && row.status === 'in';
+    const isLateReversalOptOut = autoVal === 'out' && wasConfirmed && url.searchParams.get('src') === 'logistics12h';
+
     await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, autoVal);
     status = autoVal;
     if (autoVal === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
+    if (isLateReversalOptOut) await sendLateReversalAdminAlert(env, leagueId, ev, contact);
   }
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
@@ -17851,7 +18301,19 @@ async function handleChampionPhoto(req, env, url) {
 }
 
 export default {
+  // Part 2 (automated reminders task): env.LEAGUE_PRODUCT is set ONLY
+  // in wrangler.jsonc's env.demo block (and would be set the same way
+  // in any future real league-product production env) -- SMBHL's own
+  // production deployment never sets it, so this branch, and every
+  // line of runLeagueReminders() it calls, never executes under
+  // SMBHL's own cron/deployment. runSchedule() itself is completely
+  // untouched, called exactly as before for every deployment that
+  // doesn't set this flag.
   async scheduled(event, env, ctx) {
+    if (env.LEAGUE_PRODUCT === 'true') {
+      ctx.waitUntil(runLeagueReminders(env).then(log => console.log('league-reminders cron:', log.join(' | ') || '(nothing due)')));
+      return;
+    }
     ctx.waitUntil(runSchedule(env).then(log => console.log('cron:', log.join(' | '))));
     ctx.waitUntil(cleanupOldReviews(env));
   },
@@ -17967,6 +18429,16 @@ async function handleFetch(req, env, ctx) {
       // field existed with no way for an admin to ever change it.
       if (url.pathname === '/league/language-mode' && req.method === 'POST')
         return await handleLeagueUpdateLanguageMode(req, env, url);
+      // Part 2 (automated reminders task): the 3 independent toggle
+      // switches on the dashboard's own reminder-settings card.
+      if (url.pathname === '/league/reminders/settings' && req.method === 'POST')
+        return await handleLeagueUpdateReminderSettings(req, env, url);
+      // Part 2: admin-initiated manual "send now" trigger (same UI
+      // pattern as the existing manual sub-invite button) -- sends the
+      // same non-responder reminder outside the automatic 72h/24h
+      // windows. See handleLeagueSendReminderNow's own comment.
+      if (url.pathname === '/league/events/send-reminder' && req.method === 'POST')
+        return await handleLeagueSendReminderNow(req, env, url);
       // League provisioning (leagues.js) — requires a valid user session.
       // Rows in the shared DB, scoped by league_id; see leagues.js's header
       // comment for the architecture decision behind that.
@@ -18630,5 +19102,16 @@ export {
   ensureNextEvent,
   boardData,
   renderInviteEmail,
-  formatInviteDate
+  formatInviteDate,
+  // Part 2 (automated reminders task): exported for direct testing,
+  // same convention as runSchedule/drain above -- there's no way to
+  // simulate a real scheduled() cron trigger over SELF.fetch, so tests
+  // call runLeagueReminders() (and the smaller pieces it's built from)
+  // directly instead.
+  runLeagueReminders,
+  sendLeagueReminderWave,
+  sendLeagueReminderKind,
+  getNonResponders,
+  getConfirmedPlayers,
+  handleLeagueSendReminderNow
 };
