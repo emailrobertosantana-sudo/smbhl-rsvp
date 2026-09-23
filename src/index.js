@@ -1796,6 +1796,33 @@ const FROM = 'SMBHL - Hockey <joueur@smbhl.com>';
 const REPLY_TO = 'info@smbhl.com';
 const ADMIN_EMAIL = 'emailrobertosantana@gmail.com';
 
+// Bug fix (Part 1, this task): the auth-flow emails that run BEFORE any
+// league exists to derive a leagueCfg from -- the initial signup
+// verification email above all, also the password-reset request --
+// unconditionally fell back to SMBHL's own FROM/REPLY_TO constants
+// below, regardless of which domain/deployment actually sent them. A
+// signup on notreligue.ca got an email whose sender said "SMBHL -
+// Hockey" (and, worse, from a domain the demo Resend account/API key
+// may not even be authorized to send from at all). Mirrors Part 0's
+// root-redirect fix: derive the DEFAULT identity from env.PUBLIC_URL
+// (the one per-deployment signal that's already correct — SMBHL's own
+// deployment's PUBLIC_URL contains "smbhl.com", any other deployment's
+// doesn't), instead of a single hardcoded SMBHL default. SMBHL's own
+// deployment gets the exact same FROM/REPLY_TO as before -- provably
+// unchanged. A league that already exists by send time (e.g. the Part
+// 9 admin-invite email) still uses its OWN real leagueCfg.fromEmail
+// (unaffected by this -- see getLeagueSeasonConfig, leagues.js) and
+// never falls through to this default at all.
+const DEFAULT_FROM_NON_SMBHL = 'Notre Ligue <bonjour@mail.notreligue.ca>';
+const DEFAULT_REPLY_TO_NON_SMBHL = 'bonjour@notreligue.ca';
+function defaultMailIdentity(env) {
+  const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+  let hostname = '';
+  try { hostname = new URL(publicUrl).hostname; } catch (_) {}
+  if (hostname.includes('smbhl.com')) return { from: FROM, replyTo: REPLY_TO };
+  return { from: DEFAULT_FROM_NON_SMBHL, replyTo: DEFAULT_REPLY_TO_NON_SMBHL };
+}
+
 // sanitizeAndValidateEmail now lives in validation.js (imported at the top
 // of this file) — re-exported here so nothing that already imports it from
 // index.js (this codebase's own tests included) needs to change.
@@ -1807,15 +1834,17 @@ function extractEmailAddress(fromValue) {
 }
 
 // `leagueCfg` (from getLeagueConfig(seasonConfig)) lets season-scoped callers send
-// under that season's own identity. Omitting it (as most call sites still do)
-// preserves the exact SMBHL FROM/REPLY_TO/unsubscribe values used previously.
+// under that season's own identity. Omitting it falls back to
+// defaultMailIdentity(env) -- SMBHL's own deployment unchanged, any other
+// deployment gets ITS OWN product identity, never SMBHL's.
 async function sendMail(env, to, subject, text, html = null, attachments = null, leagueCfg = null) {
   if (!env.RESEND_API_KEY) throw new Error('RESEND_API_KEY not set');
   const check = sanitizeAndValidateEmail(to);
   if (!check.valid) throw new Error(`invalid email format: "${to}"`);
   const cleanTo = check.email;
-  const fromAddr = (leagueCfg && leagueCfg.fromEmail) || FROM;
-  const replyTo = (leagueCfg && leagueCfg.replyToEmail) || REPLY_TO;
+  const dflt = defaultMailIdentity(env);
+  const fromAddr = (leagueCfg && leagueCfg.fromEmail) || dflt.from;
+  const replyTo = (leagueCfg && leagueCfg.replyToEmail) || dflt.replyTo;
   const payload = {
     from: fromAddr,
     to: [cleanTo],

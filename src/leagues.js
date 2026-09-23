@@ -805,7 +805,14 @@ export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null
   if (typeof sendMailFunc === 'function') {
     try {
       const { subject, text, html } = buildInviteEmail(leagueRow.name, inviteLink);
-      await sendMailFunc(env, email, subject, text, html);
+      // Bug fix (Part 1, this task): this league already exists by this
+      // point (leagueRow was just fetched above) -- pass its own real
+      // branding (getLeagueSeasonConfig's leagueBranding, the same
+      // admin's-own-email fromEmail every other league-scoped email in
+      // this app already uses) instead of falling through to sendMail's
+      // generic default identity, which this call previously did.
+      const cfg = await getLeagueSeasonConfig(env, leagueId);
+      await sendMailFunc(env, email, subject, text, html, null, cfg.league);
     } catch (err) {
       console.error(`[leagues] Failed to send admin invite to ${email}: ${err.message}`);
     }
