@@ -8019,19 +8019,48 @@ async function leagueRsvpGet(req, env, url) {
 
   const leagueCfg = (await getLeagueSeasonConfig(env, leagueId, ev.season)).league;
   const locked = ev.state !== 'open';
-  const label = { in: 'PRÉSENT / IN', out: 'ABSENT / OUT', pending: 'EN ATTENTE / PENDING' };
 
+  // Part V: same interactive fetch+POST button pattern as SMBHL's real
+  // /rsvp page (rsvpGet, above) — buttons that POST in place with a
+  // loading/success message, not plain <a href> full-page-reload links —
+  // rather than a parallel, less polished interaction style. ?v=in/out
+  // (the one-click emailed-link path) still works unchanged for GET.
   const body = `
     <h1>${esc(contact.name)}<span class="en"></span></h1>
     <p class="when">${esc(ev.date)}${ev.venue ? ' · ' + esc(ev.venue) : ''}${ev.start_time ? ' · ' + esc(ev.start_time) : ''}</p>
     <div class="card">
-      <p class="state">Statut actuel / Current status : <b>${label[status] || status}</b></p>
+      <h2>Tu joues ?<span class="en">Are you playing?</span></h2>
+      <p class="state" style="margin-top:0;">Statut actuel / Current status :
+        <b class="${status === 'in' ? 'in' : status === 'out' ? 'out' : 'pend'}">${status === 'in' ? 'PRÉSENT / IN' : status === 'out' ? 'ABSENT / OUT' : 'EN ATTENTE / PENDING'}</b>
+      </p>
       ${locked ? `<p class="state">Cet événement n'accepte plus de réponses.<span class="en" style="display:block;">This event is no longer accepting responses.</span></p>` : `
       <div class="btns">
-        <a class="btn in${status === 'in' ? ' on' : ''}" href="?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}&v=in">JE JOUE<span class="en" style="display:block;">I'M IN</span></a>
-        <a class="btn out${status === 'out' ? ' on' : ''}" href="?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}&v=out">JE NE JOUE PAS<span class="en" style="display:block;">I'M OUT</span></a>
-      </div>`}
-    </div>`;
+        <button class="btn in${status === 'in' ? ' on' : ''}" data-v="in">JE JOUE<span class="en" style="display:block;">I'M IN</span></button>
+        <button class="btn out${status === 'out' ? ' on' : ''}" data-v="out">JE NE JOUE PAS<span class="en" style="display:block;">I'M OUT</span></button>
+      </div>
+      <p class="state" id="msg">${['in', 'out'].includes(autoVal) ? 'Réponse enregistrée avec succès ! / Response recorded!' : ''}</p>`}
+    </div>
+<script>
+document.querySelectorAll('.btn[data-v]').forEach(function(b) {
+  b.addEventListener('click', async function() {
+    var v = b.dataset.v;
+    document.querySelectorAll('.btn[data-v]').forEach(function(x) { x.disabled = true; });
+    document.getElementById('msg').textContent = '…';
+    try {
+      var res = await fetch(location.pathname + location.search, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: v })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      location.reload();
+    } catch (e) {
+      document.getElementById('msg').textContent = 'Erreur / Error: ' + e.message;
+      document.querySelectorAll('.btn[data-v]').forEach(function(x) { x.disabled = false; });
+    }
+  });
+});
+</script>`;
 
   return page(leagueCfg.name, body, '', leagueCfg);
 }
