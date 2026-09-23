@@ -5,7 +5,7 @@ import { ERROR_I18N } from './error_i18n.js';
 import { SMBHL_LEAGUE_ID, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueEventCreate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -620,6 +620,7 @@ const I18N_SIGNUP = {
     lblEmail: 'Courriel',
     lblPassword: 'Mot de passe (8 caractères min.)',
     lblLeagueName: 'Nom de la ligue',
+    lblSlug: 'Adresse de votre ligue', slugHint: 'Suggérée automatiquement à partir du nom -- modifiable.',
     lblDivision: "Division / groupe d'âge <i>(optionnel)</i>",
     lblTeamCount: "Nombre d'équipes",
     lblTracksStats: 'Cette ligue suit les statistiques (buts, passes, classement)',
@@ -634,6 +635,7 @@ const I18N_SIGNUP = {
     lblEmail: 'Email',
     lblPassword: 'Password (min. 8 characters)',
     lblLeagueName: 'League name',
+    lblSlug: 'Your league\'s web address', slugHint: 'Auto-suggested from the name -- editable.',
     lblDivision: 'Division / age group <i>(optional)</i>',
     lblTeamCount: 'Number of teams',
     lblTracksStats: 'This league tracks stats (goals, assists, standings)',
@@ -662,6 +664,14 @@ function renderSignupPage() {
     <label style="display:block;margin-bottom:12px;">
       <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblLeagueName">Nom de la ligue</span>
       <input type="text" id="su_league_name" required style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+    </label>
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblSlug">Adresse de votre ligue</span>
+      <div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap;">
+        <span id="su_slug_prefix" style="color:var(--soft);font-size:14px;white-space:nowrap;"></span>
+        <input type="text" id="su_slug" style="flex:1;min-width:120px;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
+      </div>
+      <span id="su_slug_hint" class="state" style="display:block;margin-top:4px;font-size:13px;" data-i18n="slugHint">Suggérée automatiquement à partir du nom -- modifiable.</span>
     </label>
     <label style="display:block;margin-bottom:12px;">
       <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n="lblDivision">Division / groupe d'âge <i>(optionnel)</i></span>
@@ -706,6 +716,32 @@ function renderTeamInputs() {
 }
 document.getElementById('su_team_count').addEventListener('input', renderTeamInputs);
 renderTeamInputs();
+
+// Part 2: short, human-readable public URL, auto-suggested from the
+// league name (live, as the admin types) but fully editable -- the
+// SAME slugify rule as the server's own validation (leagues.js /
+// league_ids.js), duplicated here since a browser can't import a
+// Worker module. Once the admin touches the slug field directly,
+// auto-suggestion stops (their own choice always wins).
+function clientSlugify(input) {
+  return String(input || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/g, '');
+}
+document.getElementById('su_slug_prefix').textContent = location.origin + '/';
+var slugTouched = false;
+document.getElementById('su_slug').addEventListener('input', function() {
+  slugTouched = true;
+  this.value = clientSlugify(this.value);
+});
+document.getElementById('su_league_name').addEventListener('input', function() {
+  if (!slugTouched) document.getElementById('su_slug').value = clientSlugify(this.value);
+});
+
 function applyLanguage(lang) {
   var dict = I18N_SIGNUP[lang] || I18N_SIGNUP.fr;
   document.querySelectorAll('[data-i18n]').forEach(function(el) {
@@ -771,10 +807,11 @@ async function submitSignup() {
       return;
     }
 
+    const slug = document.getElementById('su_slug').value.trim();
     const leagueRes = await fetch('/leagues/create', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ name: leagueName, teamNames, tracksStats, divisionLabel: division || null })
+      body: JSON.stringify({ name: leagueName, teamNames, tracksStats, divisionLabel: division || null, slug: slug || undefined })
     });
     const leagueData = await leagueRes.json().catch(() => ({}));
     if (!leagueRes.ok || !leagueData.ok) {
@@ -1064,8 +1101,13 @@ function buildDashI18n({ state, needsSeason, unverified }) {
     Object.assign(fr, {
       navRoster: 'EFFECTIF', navSchedule: 'CALENDRIER',
       publicPageLabel: 'Page publique à partager avec vos joueurs :',
+      copyLink: 'COPIER LE LIEN', copied: 'COPIÉ !',
       coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteBtn: 'INVITER',
       teams: 'Équipes',
+      langExposure: 'Langue exposée aux joueurs',
+      langExposureDesc: 'Détermine si la page publique et la page de présence de vos joueurs affichent un choix FR/EN, ou une seule langue fixe.',
+      langBoth: 'Les deux (FR/EN)', langFrOnly: 'Français seulement', langEnOnly: 'Anglais seulement',
+      save: 'ENREGISTRER', langSaved: 'Enregistré !',
       deactivateLeague: 'Désactiver la ligue',
       deactivateDesc: "Cette action désactive votre ligue -- vos données sont conservées, mais l'accès à la gestion est bloqué.",
       deactivateBtn: 'DÉSACTIVER'
@@ -1073,8 +1115,13 @@ function buildDashI18n({ state, needsSeason, unverified }) {
     Object.assign(en, {
       navRoster: 'ROSTER', navSchedule: 'SCHEDULE',
       publicPageLabel: 'Public page to share with your players:',
+      copyLink: 'COPY LINK', copied: 'COPIED!',
       coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteBtn: 'INVITE',
       teams: 'Teams',
+      langExposure: 'Language exposed to players',
+      langExposureDesc: "Controls whether your players' public page and RSVP page show a FR/EN toggle, or a single fixed language.",
+      langBoth: 'Both (FR/EN)', langFrOnly: 'French only', langEnOnly: 'English only',
+      save: 'SAVE', langSaved: 'Saved!',
       deactivateLeague: 'Deactivate league',
       deactivateDesc: 'This deactivates your league -- your data is kept, but management access is blocked.',
       deactivateBtn: 'DEACTIVATE'
@@ -1102,6 +1149,10 @@ async function handleDashboardPage(req, env, url) {
       WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
   ).bind(session.userId).first();
   const verified = await isUserEmailVerified(env, session.userId);
+  // Part 2: self-healing backfill -- a league created before slugs
+  // existed just gets one generated and persisted the first time its
+  // dashboard is loaded (see getOrCreateLeagueSlug's own comment).
+  const leagueSlug = leagueRow && !leagueRow.deactivated_at ? await getOrCreateLeagueSlug(env, leagueRow) : null;
 
   // Part 2 fix: every session-based league page (dashboard, roster,
   // schedule, event status/detail) was passing no leagueCfg to page(),
@@ -1140,10 +1191,17 @@ async function handleDashboardPage(req, env, url) {
   ` : '';
 
   // Part 4: the public page only exists to be shared, so the dashboard
-  // is where an admin discovers its real, copyable URL.
+  // is where an admin discovers its real, copyable URL. Part 2: that
+  // URL is now the short slug (origin/slug), not the raw UUID query-
+  // string form -- the slug route (index.js's route dispatch) renders
+  // the exact same page either way, so both keep working. Part 3: a
+  // "copy link" button next to it, since a short URL is only actually
+  // convenient to share if you don't have to select/copy it by hand.
+  const publicUrl = leagueSlug ? `${url.origin}/${leagueSlug}` : `${url.origin}/league/public?league=${leagueRow ? leagueRow.id : ''}`;
   const publicPageHtml = leagueRow ? `
     <p class="state" style="margin:0 0 16px;"><span data-i18n="publicPageLabel">Page publique à partager avec vos joueurs :</span>
-      <a href="/league/public?league=${encodeURIComponent(leagueRow.id)}">${esc(url.origin)}/league/public?league=${esc(leagueRow.id)}</a>
+      <a href="${esc(publicUrl)}" id="publicUrlLink">${esc(publicUrl)}</a>
+      <button type="button" class="mini" id="copyPublicUrlBtn" data-i18n="copyLink" onclick="copyPublicUrl()" style="margin-left:8px;">COPIER LE LIEN</button>
     </p>
   ` : '';
 
@@ -1247,6 +1305,18 @@ async function handleDashboardPage(req, env, url) {
       </ul>
       <p class="state">Statistiques suivies : <b>${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b><span class="en"> · Tracks stats: <b>${leagueRow.tracks_stats ? 'Yes' : 'No'}</b></span></p>
     </div>
+    <div class="card">
+      <h2 data-i18n="langExposure">Langue exposée aux joueurs</h2>
+      <p class="state" style="margin-top:0;" data-i18n="langExposureDesc">Détermine si la page publique et la page de présence de vos joueurs affichent un choix FR/EN, ou une seule langue fixe.</p>
+      <div id="langModeErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
+      <div id="langModeOk" class="state" style="display:none;"></div>
+      <select id="lang_mode_select" style="font:inherit;padding:9px;border:1px solid var(--rule2);border-radius:3px;">
+        <option value="both" data-i18n="langBoth" ${(leagueRow.language_mode || 'both') === 'both' ? 'selected' : ''}>Les deux (FR/EN)</option>
+        <option value="fr" data-i18n="langFrOnly" ${leagueRow.language_mode === 'fr' ? 'selected' : ''}>Français seulement</option>
+        <option value="en" data-i18n="langEnOnly" ${leagueRow.language_mode === 'en' ? 'selected' : ''}>Anglais seulement</option>
+      </select>
+      <button type="button" class="mini" id="lang_mode_save" data-i18n="save" onclick="submitLanguageMode()" style="margin-left:8px;">ENREGISTRER</button>
+    </div>
     ${adminsHtml}
     ${deactivateHtml}
   ` : `
@@ -1266,6 +1336,27 @@ async function handleDashboardPage(req, env, url) {
 async function doLogout() {
   await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
   window.location.href = '/login';
+}
+// Part 3: copy the public page URL without having to select/copy it by
+// hand. navigator.clipboard requires a secure context (https, which
+// this app always runs under outside local dev) -- falls back to
+// selecting the link text so the admin can still copy it manually if
+// the API isn't available for any reason.
+async function copyPublicUrl() {
+  const link = document.getElementById('publicUrlLink');
+  const btn = document.getElementById('copyPublicUrlBtn');
+  const original = btn.innerHTML;
+  try {
+    await navigator.clipboard.writeText(link.href);
+    var dict = I18N_DASH[window.__currentLang || 'fr'] || I18N_DASH.fr;
+    btn.textContent = dict.copied;
+  } catch (e) {
+    const range = document.createRange();
+    range.selectNode(link);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+  }
+  setTimeout(function() { btn.innerHTML = original; }, 1800);
 }
 async function resendVerification() {
   const btn = document.getElementById('resendBtn');
@@ -1375,6 +1466,38 @@ async function submitDeactivate() {
       return;
     }
     window.location.reload();
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR');
+    err.style.display = 'block';
+    btn.disabled = false;
+  }
+}
+
+async function submitLanguageMode() {
+  const err = document.getElementById('langModeErr');
+  const ok = document.getElementById('langModeOk');
+  err.style.display = 'none';
+  ok.style.display = 'none';
+  const languageMode = document.getElementById('lang_mode_select').value;
+  const btn = document.getElementById('lang_mode_save');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/league/language-mode', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ languageMode })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      err.textContent = window.__errorText(data.errorKey, data.error);
+      err.style.display = 'block';
+      btn.disabled = false;
+      return;
+    }
+    var dict = I18N_DASH[window.__currentLang || 'fr'] || I18N_DASH.fr;
+    ok.textContent = dict.langSaved;
+    ok.style.display = 'block';
+    btn.disabled = false;
   } catch (e) {
     err.textContent = window.__errorText('NETWORK_ERROR');
     err.style.display = 'block';
@@ -1577,8 +1700,14 @@ window.addEventListener('admin_lang_changed', function(e) {
 // (most leagues won't yet -- no league-scoped standings-entry feature
 // has been built, so this degrades to "no standings section" instead of
 // crashing or showing a misleading empty table).
-async function handleLeaguePublicPage(req, env, url) {
-  const leagueId = url.searchParams.get('league');
+// Part 2: resolvedLeagueId lets the bare-slug catch-all route (index.js's
+// route dispatch, checked last) reuse this exact same rendering logic --
+// the slug is just a friendlier way to name the same league, never a
+// separate data path. The original ?league=<uuid> query-param form (used
+// internally, and still a valid way to reach this page) keeps working
+// unchanged when resolvedLeagueId isn't passed.
+async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
+  const leagueId = resolvedLeagueId || url.searchParams.get('league');
   if (!leagueId) return new Response('league is required', { status: 400 });
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
@@ -17305,6 +17434,10 @@ async function handleFetch(req, env, ctx) {
       // gated like every other league write route.
       if (url.pathname === '/league/deactivate' && req.method === 'POST')
         return await handleLeagueDeactivate(req, env, url);
+      // Part 4: the only write path for language_mode -- previously the
+      // field existed with no way for an admin to ever change it.
+      if (url.pathname === '/league/language-mode' && req.method === 'POST')
+        return await handleLeagueUpdateLanguageMode(req, env, url);
       // League provisioning (leagues.js) — requires a valid user session.
       // Rows in the shared DB, scoped by league_id; see leagues.js's header
       // comment for the architecture decision behind that.
@@ -17877,6 +18010,18 @@ async function handleFetch(req, env, ctx) {
           return Response.redirect('https://smbhl.com', 302);
         }
         return new Response(renderMarketingHomepage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      }
+      // Part 2: last-resort GET route for a league's short public URL
+      // (notreligue.ca/dmbhl), checked ONLY after every fixed route
+      // above has already failed to match -- so a slug can never shadow
+      // a real route (and a real route always wins if a slug somehow
+      // collided with one, though RESERVED_SLUGS already prevents that
+      // at creation time). Single path segment only (no further slashes),
+      // GET only; anything else falls through to the generic 404 below,
+      // same as today.
+      if (req.method === 'GET' && /^\/[a-z0-9-]+$/.test(url.pathname)) {
+        const slugLeagueId = await resolveLeagueIdBySlug(env, url.pathname.slice(1));
+        if (slugLeagueId) return await handleLeaguePublicPage(req, env, url, slugLeagueId);
       }
       return new Response('not found', { status: 404 });
     } catch (e) {

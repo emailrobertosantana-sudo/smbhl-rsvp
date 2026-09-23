@@ -82,6 +82,10 @@ export const ERROR_I18N = {
   LEAGUE_GONE: { fr: "Cette ligue n'existe plus.", en: 'League no longer exists.' },
   LOGIN_AS_EMAIL: { fr: 'Veuillez vous connecter en tant que {email} pour accepter cette invitation.', en: 'Please log in as {email} to accept this invite.' },
   CONFIRM_NAME_MISMATCH: { fr: 'Le texte de confirmation ne correspond pas au nom de la ligue.', en: 'Confirmation text does not match the league name.' },
+  SLUG_INVALID_FORMAT: { fr: "L'adresse doit contenir seulement des lettres minuscules, des chiffres et des traits d'union.", en: 'The URL must contain only lowercase letters, numbers, and hyphens.' },
+  SLUG_TAKEN: { fr: 'Cette adresse est déjà utilisée par une autre ligue.', en: 'This URL is already used by another league.' },
+  SLUG_RESERVED: { fr: 'Cette adresse est réservée. Veuillez en choisir une autre.', en: 'This URL is reserved. Please choose another one.' },
+  INVALID_LANGUAGE_MODE: { fr: "La langue doit être 'les deux', 'français' ou 'anglais'.", en: "Language must be 'both', 'fr', or 'en'." },
 
   // Client-side-only validation keys (no server round trip needed for
   // these -- checked in the page's own JS before submitting -- but

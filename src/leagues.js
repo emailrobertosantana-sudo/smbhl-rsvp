@@ -18,7 +18,7 @@
 
 import { checkUserSession, checkCsrfToken, hashPassword, sessionResponseHeaders } from './auth.js';
 import { sanitizeAndValidateEmail } from './validation.js';
-import { SMBHL_LEAGUE_ID, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
+import { SMBHL_LEAGUE_ID, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
 
@@ -610,6 +610,76 @@ export async function handleLeagueSeasonPublish(req, env) {
   return Response.json({ ok: true, league_id: leagueId, current_season: seasonName, teams: teamNames, overwritten });
 }
 
+/* ---------- league URL slugs (Part 2, overnight follow-up task) ----------
+ * Short, human-readable public URLs (notreligue.ca/dmbhl) instead of the
+ * raw UUID (notreligue.ca/league/public?league=<uuid>). Decision: NOT
+ * changeable after creation (see handleLeagueUpdateSlug's absence --
+ * deliberately not built). A league's public URL, once shared, is exactly
+ * the kind of link that ends up bookmarked, posted in a group chat, or
+ * embedded in an already-sent invite/magic-link email; changing the slug
+ * later would silently break every one of those without any way for this
+ * app to know who to notify. Not changeable-after-creation is the simpler,
+ * safer choice for now. A real "change it, with a redirect from the old
+ * slug" follow-up is a reasonable future feature IF this ever becomes a
+ * real pain point (e.g. a league renaming itself) -- redirects would need
+ * their own small table (old_slug -> league_id, checked before the 404
+ * fallback) to avoid losing the old URL entirely, which is why it's not
+ * just "let them edit the column" even as a fast-follow.
+ */
+
+// Collision-safe: tries the bare slugified name first, then -2, -3, ...
+// `excludeLeagueId` lets a future "check availability without this being
+// a collision against itself" caller reuse this (not used by
+// handleLeagueCreate today, since a league never already has a slug at
+// creation time, but kept general rather than duplicated for the lazy
+// backfill path below, which DOES need to exclude nothing since the
+// league in question has no slug yet either).
+export async function generateUniqueSlug(env, baseName, excludeLeagueId = null) {
+  const base = slugify(baseName) || 'ligue';
+  let candidate = base;
+  let suffix = 1;
+  for (;;) {
+    if (!RESERVED_SLUGS.has(candidate)) {
+      const existing = await env.DB.prepare(
+        excludeLeagueId
+          ? 'SELECT id FROM leagues WHERE slug = ? AND id != ?'
+          : 'SELECT id FROM leagues WHERE slug = ?'
+      ).bind(...(excludeLeagueId ? [candidate, excludeLeagueId] : [candidate])).first();
+      if (!existing) return candidate;
+    }
+    suffix += 1;
+    candidate = `${base}-${suffix}`.slice(0, 40);
+  }
+}
+
+// Self-healing backfill: any league created before migrate-024.sql (slug
+// column didn't exist yet) simply has slug = NULL. Rather than a separate
+// one-time migration script, the first time anything needs that league's
+// real slug (today: the dashboard, rendering its shareable public URL),
+// this generates and persists a real one using the exact same
+// collision-avoiding logic new leagues get at creation time.
+export async function getOrCreateLeagueSlug(env, leagueRow) {
+  if (leagueRow.slug) return leagueRow.slug;
+  const slug = await generateUniqueSlug(env, leagueRow.name, leagueRow.id);
+  await env.DB.prepare('UPDATE leagues SET slug = ? WHERE id = ? AND slug IS NULL')
+    .bind(slug, leagueRow.id).run();
+  return slug;
+}
+
+// Resolves a bare top-level path segment to a league id, for index.js's
+// last-resort GET route (checked only after every fixed route has
+// already failed to match -- see that route's own comment for why this
+// can never shadow a real route). Never matches SMBHL (no league_admins
+// row exists for it, and it's never given a slug), and never matches a
+// deactivated league (its public page is already gone via the existing
+// deactivated_at check in handleLeaguePublicPage -- this just resolves
+// the id, the deactivated check still happens the normal way).
+export async function resolveLeagueIdBySlug(env, slug) {
+  if (!slug || !isValidSlugFormat(slug)) return null;
+  const row = await env.DB.prepare('SELECT id FROM leagues WHERE slug = ?').bind(slug).first();
+  return row ? row.id : null;
+}
+
 export async function handleLeagueCreate(req, env) {
   try {
     const session = await checkUserSession(req, env);
@@ -635,13 +705,35 @@ export async function handleLeagueCreate(req, env) {
       return Response.json({ ok: false, error: 'At least 2 team names are required.', errorKey: 'MIN_TEAM_NAMES' }, { status: 400 });
     }
 
+    // Part 2: a short, human-readable public URL slug -- auto-suggested
+    // client-side from the league name, editable before submitting. An
+    // explicit slug in the body (the signup form always sends one, even
+    // if the user never touched it) is validated; omitting it entirely
+    // (e.g. a direct API call) falls back to auto-generating one from
+    // the league name, same as an existing league's lazy backfill does.
+    let slug = body.slug != null ? String(body.slug).trim().toLowerCase() : '';
+    if (slug) {
+      if (!isValidSlugFormat(slug)) {
+        return Response.json({ ok: false, error: 'The URL must contain only lowercase letters, numbers, and hyphens.', errorKey: 'SLUG_INVALID_FORMAT' }, { status: 400 });
+      }
+      if (RESERVED_SLUGS.has(slug)) {
+        return Response.json({ ok: false, error: 'This URL is reserved. Please choose another one.', errorKey: 'SLUG_RESERVED' }, { status: 409 });
+      }
+      const taken = await env.DB.prepare('SELECT id FROM leagues WHERE slug = ?').bind(slug).first();
+      if (taken) {
+        return Response.json({ ok: false, error: 'This URL is already used by another league.', errorKey: 'SLUG_TAKEN' }, { status: 409 });
+      }
+    } else {
+      slug = await generateUniqueSlug(env, name);
+    }
+
     const leagueId = crypto.randomUUID();
     const now = new Date().toISOString();
 
     await env.DB.prepare(
-      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now).run();
+      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at, slug)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug).run();
 
     await env.DB.prepare(
       `INSERT INTO league_admins (user_id, league_id, role, created_at) VALUES (?, ?, 'admin', ?)`
@@ -655,7 +747,8 @@ export async function handleLeagueCreate(req, env) {
         divisionLabel,
         tracksStats,
         teamCount: teamNames.length,
-        teamNames
+        teamNames,
+        slug
       }
     });
   } catch (err) {
@@ -930,4 +1023,35 @@ export async function handleLeagueDeactivate(req, env, url) {
 
   await env.DB.prepare('UPDATE leagues SET deactivated_at = ? WHERE id = ?').bind(new Date().toISOString(), leagueId).run();
   return Response.json({ ok: true, leagueId });
+}
+
+/* ---------- language exposure setting (Part 4 foundation + editor) ----------
+ * migrate-023.sql's language_mode column, default 'both'. This is the
+ * FIRST and only write path for it -- the field previously existed with
+ * no way for an admin to change it at all.
+ */
+const VALID_LANGUAGE_MODES = new Set(['both', 'fr', 'en']);
+
+export async function handleLeagueUpdateLanguageMode(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const body = await req.json().catch(() => ({}));
+  const languageMode = String(body.languageMode || '').trim();
+  if (!VALID_LANGUAGE_MODES.has(languageMode)) {
+    return Response.json({ ok: false, error: "Language must be 'both', 'fr', or 'en'.", errorKey: 'INVALID_LANGUAGE_MODE' }, { status: 400 });
+  }
+
+  await env.DB.prepare('UPDATE leagues SET language_mode = ? WHERE id = ?').bind(languageMode, leagueId).run();
+  return Response.json({ ok: true, languageMode });
 }

@@ -95,3 +95,41 @@ export function extractTrailingNumber(id) {
 export function dataJsonKeyFor(leagueId) {
   return leagueId === SMBHL_LEAGUE_ID ? 'data_json' : `data_json:${leagueId}`;
 }
+
+/* ---------- league URL slugs (Part 2, overnight follow-up task) ----------
+ * Short, human-readable public URLs (e.g. notreligue.ca/dmbhl) instead of
+ * the raw UUID (notreligue.ca/league/public?league=<uuid>). Pure, DB-free
+ * helpers live here; the DB-aware uniqueness check (generateUniqueSlug)
+ * lives in leagues.js, matching this file's existing pure/impure split.
+ */
+
+// Lowercase, alphanumeric + hyphens only, no leading/trailing/doubled
+// hyphens, capped at a sane length. Same rule client-side (the signup
+// form's live preview) and server-side (validation on submit) --
+// duplicated intentionally (client can't import a Worker module), kept
+// trivially short so drift is easy to notice/fix.
+export function slugify(input) {
+  return String(input || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // strip accents (é -> e)
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/g, '');
+}
+
+export function isValidSlugFormat(slug) {
+  return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) && slug.length >= 2 && slug.length <= 40;
+}
+
+// Every existing top-level route this Worker handles (see index.js's
+// route dispatch) -- a league slug matching one of these would never
+// actually be reachable at its own bare path (fixed routes are checked
+// first), so it's rejected at creation time with a clear error instead
+// of silently producing an unreachable public URL.
+export const RESERVED_SLUGS = new Set([
+  'admin', 'api', 'auth', 'avail', 'dashboard', 'forgot-password', 'health',
+  'img', 'league', 'leagues', 'login', 'logout', 'poll', 'reset-password',
+  'rsvp', 'signup', 'team-rsvp', 'verify', 'robots.txt', 'favicon.ico',
+  'well-known', 'static', 'assets', 'public'
+]);

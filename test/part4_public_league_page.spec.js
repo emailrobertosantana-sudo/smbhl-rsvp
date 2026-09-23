@@ -148,9 +148,12 @@ describe('Part 4: GET /league/public (unauthenticated public page)', () => {
     expect(html).not.toContain('Standings');
   });
 
-  it('the dashboard shows the real, copyable public page URL for the admin to share', async () => {
+  it("the dashboard shows the real, copyable public page URL for the admin to share -- now a short slug (Part 2), not the raw UUID", async () => {
     const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie: cookieA } });
     const html = await res.text();
-    expect(html).toContain(`/league/public?league=${leagueA}`);
+    expect(html).not.toContain(`/league/public?league=${leagueA}`);
+    const row = await env.DB.prepare('SELECT slug FROM leagues WHERE id = ?').bind(leagueA).first();
+    expect(row.slug).toBeTruthy();
+    expect(html).toContain(`/${row.slug}"`);
   });
 });
