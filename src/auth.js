@@ -511,6 +511,47 @@ export async function checkSignupRateLimit(env, ip) {
   return 'ok';
 }
 
+/* ---------- login rate limiting (Part 7) ----------
+ * Same fixed-window-counter shape and same reused signup_attempts table as
+ * checkSignupRateLimit/checkPasswordResetRateLimit, under its own 'login:'
+ * key prefix so none of the three ever cross-throttle each other. Tighter
+ * window than signup's (15 min, not 1h) and a higher raw count (10, not 5)
+ * -- login brute-forcing is a faster, higher-frequency attack than signup
+ * spam, so it needs a shorter window to actually blunt it, while still
+ * being generous enough that a legitimate user who mistypes their password
+ * a few times in a row is never the one who gets blocked. Counts every
+ * attempt (success or failure), matching checkSignupRateLimit's own
+ * behavior, not just failures -- simpler, and consistent with the rest of
+ * this file's rate limiters.
+ */
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_LIMIT_PER_WINDOW = 10;
+
+async function checkLoginRateLimit(env, ip) {
+  const key = `login:${ip}`;
+  const now = Date.now();
+  const row = await env.DB.prepare('SELECT window_start, count FROM signup_attempts WHERE ip = ?').bind(key).first();
+
+  if (!row) {
+    await env.DB.prepare('INSERT INTO signup_attempts (ip, window_start, count) VALUES (?, ?, 1)').bind(key, String(now)).run();
+    return 'ok';
+  }
+
+  const windowStart = Number(row.window_start) || 0;
+  if (now - windowStart > LOGIN_WINDOW_MS) {
+    await env.DB.prepare('UPDATE signup_attempts SET window_start = ?, count = 1 WHERE ip = ?').bind(String(now), key).run();
+    return 'ok';
+  }
+
+  if (Number(row.count) >= LOGIN_LIMIT_PER_WINDOW) {
+    return 'rate_limited';
+  }
+
+  await env.DB.prepare('UPDATE signup_attempts SET count = count + 1 WHERE ip = ?').bind(key).run();
+  return 'ok';
+}
+
 /* ---------- validation ---------- */
 
 function isValidEmail(email) {
@@ -579,6 +620,12 @@ export async function handleLogin(req, env) {
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
     const genericFailure = () => Response.json({ ok: false, error: 'Invalid email or password.' }, { status: 401 });
+
+    const ip = req.headers.get('cf-connecting-ip') || '127.0.0.1';
+    const rateLimitStatus = await checkLoginRateLimit(env, ip);
+    if (rateLimitStatus === 'rate_limited') {
+      return Response.json({ ok: false, error: 'Too many login attempts from this network. Please try again later.' }, { status: 429 });
+    }
 
     if (!email || !password) return genericFailure();
 
