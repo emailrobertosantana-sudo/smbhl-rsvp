@@ -124,6 +124,9 @@ describe('Frontend pages: /signup, /login, /dashboard', () => {
       expect(html).toContain('Falcons');
       expect(html).toContain('Otters');
       expect(html).toContain('Comets');
+      // UI task Part R: nav to the roster/schedule pages.
+      expect(html).toContain('href="/league/roster"');
+      expect(html).toContain('href="/league/schedule"');
     });
 
     it('a freshly-signed-up (unverified) user sees the unverified-email notice on the dashboard', async () => {

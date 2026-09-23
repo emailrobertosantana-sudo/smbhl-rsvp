@@ -539,6 +539,20 @@ async function handleDashboardPage(req, env, url) {
   ).bind(session.userId).first();
   const verified = await isUserEmailVerified(env, session.userId);
 
+  // Nav to the league-admin pages built in the UI task (Parts R-V). Every
+  // link here (roster, schedule) is operational, never stats/OCR-related,
+  // so nothing is conditionally hidden today. If a stats-related page is
+  // ever added here, it should be wrapped in `leagueRow.tracks_stats ? ... : ''`
+  // — the same gate DEFAULT_SEASON_CONFIG.tracksStats already uses
+  // elsewhere in this codebase (season-recap/standings) — rather than a new
+  // pattern.
+  const nav = leagueRow ? `
+    <div class="btns" style="margin:16px 0;flex-wrap:wrap;">
+      <a class="btn" href="/league/roster">EFFECTIF<span class="en" style="display:block;font-size:13px;font-weight:600;">ROSTER</span></a>
+      <a class="btn" href="/league/schedule">CALENDRIER<span class="en" style="display:block;font-size:13px;font-weight:600;">SCHEDULE</span></a>
+    </div>
+  ` : '';
+
   const body = leagueRow ? `
     <h1>${esc(leagueRow.name)}</h1>
     ${leagueRow.division_label ? `<p class="when">${esc(leagueRow.division_label)}</p>` : ''}
@@ -551,6 +565,7 @@ async function handleDashboardPage(req, env, url) {
         </div>
       </div>
     ` : ''}
+    ${nav}
     <div class="card">
       <h2>Équipes<span class="en">Teams</span></h2>
       <ul style="margin:0;padding-left:20px;">
