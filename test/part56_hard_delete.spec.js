@@ -274,6 +274,25 @@ describe('Part 12 (live-testing task, batch 2): hard delete (privacy/Law 25)', (
     expect(logRow.deleted_via).toBe('super_admin');
   });
 
+  it('the hard-delete UI is reachable on the dashboard once a league is deactivated -- not stranded behind the deactivated-league gate', async () => {
+    // checkLeagueAccess (leagues.js) blocks every OTHER session-gated
+    // route once a league is deactivated, including the dashboard's own
+    // normal "active" rendering -- discovered live (notreligue.ca) after
+    // shipping the first version of this UI only in the 'active' branch:
+    // the moment a league is actually eligible for hard delete, its
+    // dashboard had already switched to the minimal 'deactivated' branch
+    // and the controls were unreachable. Fixed by adding the same
+    // section there too; this test locks that in.
+    const { cookie, csrfToken } = await signup('harddelete.uireachable@example.com', '203.0.172.040');
+    const league = await createLeague(cookie, csrfToken, { name: 'UI Reachable League', teamNames: ['A', 'B'], tracksStats: true });
+    await deactivate(cookie, csrfToken, league.name);
+
+    const dashHtml = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
+    expect(dashHtml).toContain('id="hardDeleteStatus"');
+    expect(dashHtml).toContain('id="hard_delete_submit"');
+    expect(dashHtml).toContain('id="hard_delete_confirm"');
+  });
+
   it('the super-admin entry point requires ADMIN_KEY -- a league-admin session alone is rejected', async () => {
     const { cookie, csrfToken } = await signup('harddelete.superadmin.noauth@example.com', '203.0.172.031');
     const league = await createLeague(cookie, csrfToken, { name: 'No Auth League', teamNames: ['A', 'B'], tracksStats: true });

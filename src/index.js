@@ -1714,6 +1714,17 @@ async function handleDashboardPage(req, env, url) {
       <span data-i18n="deactivatedOn">Cette ligue a été désactivée le</span> ${esc(leagueRow.deactivated_at.slice(0, 10))}.
     </p>
   </section>
+  <section class="nl-card nl-card--pad-lg" style="border-color:var(--danger,#b3122e)">
+    <div class="h3" data-i18n="hardDeleteTitle">Supprimer définitivement la ligue</div>
+    <p class="nl-help" data-i18n="hardDeleteDesc">Efface pour de bon toutes les données de la ligue (parties, joueurs, présences, etc.). Aucune récupération possible. Nécessite que la ligue soit déjà désactivée depuis 15 jours.</p>
+    <p id="hardDeleteStatus" class="nl-help"></p>
+    <div id="hardDeleteErr" class="nl-error" style="display:none"></div>
+    <div class="nl-field">
+      <label class="nl-label" for="hard_delete_confirm" data-i18n="hardDeleteConfirmLabel">Tape "SUPPRIMER" suivi du nom de ta ligue pour confirmer</label>
+      <input class="nl-input" id="hard_delete_confirm" type="text" placeholder="SUPPRIMER ${esc(leagueRow.name)}" autocomplete="off">
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="hard_delete_submit" data-i18n="hardDeleteBtn" onclick="submitHardDelete()" disabled style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);">Supprimer définitivement</button></div>
+  </section>
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>`;
   } else {
