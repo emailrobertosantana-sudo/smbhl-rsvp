@@ -1533,6 +1533,22 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // the read-only label + edit link stay here.
       Object.assign(fr, { currentSeasonLabel: 'Saison actuelle', editSeason: 'Modifier' });
       Object.assign(en, { currentSeasonLabel: 'Current season', editSeason: 'Edit' });
+      // Live-testing task (batch 6), Part 8: "current-week status" card
+      // (eventWeekStatus) -- only ever rendered once a season exists
+      // (weekStatusHtml itself is '' under needsSeason), so scoped here
+      // exactly like currentSeasonLabel/editSeason just above.
+      Object.assign(fr, {
+        weekStatusTitle: 'Cette semaine', weekStatusNoEvent: 'Aucun match à venir pour le moment.',
+        weekStatusCreateBtn: "Créer l'horaire", weekStatusDetailBtn: 'Voir le match',
+        weekStatusConfirmed: 'confirmés', weekStatusOut: 'absents', weekStatusNoResponse: 'sans réponse',
+        weekStatusShort: 'Manque de joueurs'
+      });
+      Object.assign(en, {
+        weekStatusTitle: 'This week', weekStatusNoEvent: 'No upcoming game for now.',
+        weekStatusCreateBtn: 'Create the schedule', weekStatusDetailBtn: 'View the game',
+        weekStatusConfirmed: 'confirmed', weekStatusOut: 'out', weekStatusNoResponse: 'no reply',
+        weekStatusShort: 'Short players'
+      });
     }
     if (unverified) {
       Object.assign(fr, { notVerified: "Ton courriel n'est pas encore vérifié.", resendBtn: 'Renvoyer le courriel' });
@@ -1612,6 +1628,9 @@ function dashStyles() {
   .dash-top { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
   .dash-top h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; }
   .dash-status { display: flex; align-items: center; gap: var(--space-2); margin-top: 6px; color: var(--ink-muted); font-size: 14px; flex-wrap: wrap; }
+  .dash-week-when { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; font: 700 18px/24px var(--font-display); font-stretch: 118%; margin-top: 8px; }
+  .dash-week-venue { font: 400 14px/20px var(--font-sans); color: var(--ink-muted); }
+  .dash-week-counts { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: 10px; }
   .dash-grid { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-5); }
   .dash-start { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 2px solid var(--primary); }
   .dash-start h2 { font: 700 26px/32px var(--font-display); font-stretch: 118%; }
@@ -1748,6 +1767,51 @@ async function handleDashboardPage(req, env, url) {
     const { header, tabbar } = dashChrome(leagueRow.name, 'home');
     const needsSeason = !currentSeason;
 
+    // Live-testing task (batch 6), Part 8: "current-week status" --
+    // SMBHL's own /admin/board is this product's admin home page,
+    // showing (for the next open game) per-team rosters with live
+    // status, skater/goalie counts, and a shortage flag (teamState),
+    // plus a substitute waitlist and drag-drop team balance. The league
+    // product already has an equivalent DETAIL surface for all of that
+    // (handleLeagueEventDetailPage, /league/events/detail) -- what the
+    // dashboard HOME was missing is SMBHL's other habit: glancing at
+    // the board on login to see how the next game is shaping up without
+    // opening it. This card is that glance -- next event, confirmed/
+    // out/no-response counts, and a shortage flag (eventWeekStatus,
+    // shared with the future -- not a reimplementation of teamState) --
+    // linking to the existing detail page for anything more. SMBHL's
+    // own board is untouched; this is additive to the league product
+    // only.
+    let weekStatus = null;
+    let nextEvent = null;
+    if (!needsSeason) {
+      const today = new Date().toISOString().slice(0, 10);
+      nextEvent = await env.DB.prepare(
+        `SELECT id, date, venue, start_time, season FROM events
+          WHERE league_id = ? AND state != 'cancelled' AND date >= ?
+          ORDER BY date ASC LIMIT 1`
+      ).bind(leagueRow.id, today).first();
+      if (nextEvent) {
+        const eventCfg = await getLeagueSeasonConfig(env, leagueRow.id, nextEvent.season);
+        weekStatus = await eventWeekStatus(env, leagueRow.id, nextEvent, eventCfg);
+      }
+    }
+    const weekStatusHtml = needsSeason ? '' : `
+    <section class="nl-card nl-card--pad-lg">
+      <div class="h3" data-i18n="weekStatusTitle">Cette semaine</div>
+      ${!nextEvent ? `
+      <p class="nl-help" style="margin-top:8px" data-i18n="weekStatusNoEvent">Aucun match à venir pour le moment.</p>
+      <div style="margin-top:8px"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/schedule" data-i18n="weekStatusCreateBtn">Créer l'horaire</a></div>` : `
+      <div class="dash-week-when">${dateTimeSpanHtml('span', nextEvent.date, nextEvent.start_time, 'short')}${nextEvent.venue ? `<span class="dash-week-venue">${esc(nextEvent.venue)}</span>` : ''}</div>
+      <div class="dash-week-counts">
+        <span class="nl-badge nl-badge--in">${weekStatus.confirmed} <span data-i18n="weekStatusConfirmed">confirmés</span></span>
+        <span class="nl-badge nl-badge--out">${weekStatus.out} <span data-i18n="weekStatusOut">absents</span></span>
+        <span class="nl-badge nl-badge--pending">${weekStatus.noResponse} <span data-i18n="weekStatusNoResponse">sans réponse</span></span>
+        ${weekStatus.short ? `<span class="nl-badge nl-badge--short" data-i18n="weekStatusShort">Manque de joueurs</span>` : ''}
+      </div>
+      <div style="margin-top:10px"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/events/detail?e=${encodeURIComponent(nextEvent.id)}" data-i18n="weekStatusDetailBtn">Voir le match</a></div>`}
+    </section>`;
+
     const startGridHtml = needsSeason ? `
     <div class="dash-grid">
       <section class="nl-card dash-start">
@@ -1835,6 +1899,7 @@ async function handleDashboardPage(req, env, url) {
     <div style="margin-top:10px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="resendBtn" data-i18n="resendBtn" onclick="resendVerification()">Renvoyer le courriel</button></div>
   </section>` : ''}
   ${startGridHtml}
+  ${weekStatusHtml}
   ${nextStepsHtml}
   <div class="dash-tiles">
     <section class="nl-card nl-card--pad-lg dash-tile">
@@ -7319,6 +7384,71 @@ export async function teamState(db, eventId, team, cfg) {
     shortSkaters: skaters < minSkaters,
     short: goalies < targetGoalies || skaters < minSkaters
   };
+}
+
+// Live-testing task (batch 6), Part 8: shared status computation for
+// "how's the next game looking" -- reused by the league product's
+// dashboard home (handleDashboardPage) and built on the SAME
+// teamState() SMBHL's own board already uses for shortage detection,
+// not a reimplementation. confirmed/out/noResponse are structure-
+// agnostic (every roster contact either has an rsvp row for this event
+// or doesn't -- true regardless of team_structure), computed once via
+// a single aggregate query. Only `short` genuinely varies per
+// structure, since it depends on how teamState's own per-team query
+// can be used:
+//  - fixed: teams are real and permanently assigned (rsvp.team is set
+//    at invite time) -- teamState(team) is exactly right, per team;
+//    short if ANY team is short, same as SMBHL's own board would flag.
+//  - headcount: one implicit pool (HEADCOUNT_TEAM_NAME) -- the exact
+//    same call the public page already makes for its own pool-progress
+//    display.
+//  - weekly_draw: teams are NOT assigned to players until an admin
+//    draws them for this specific event (handleLeagueRandomAssignEvent
+//    Teams/handleLeagueAssignEventTeam) -- before that, every rsvp.team
+//    is null, so teamState(team) would see nobody at all for every
+//    named team even with a full pool confirmed. Compares the WHOLE
+//    confirmed pool against the total needed ACROSS every team instead
+//    (teamNames.length x the per-team thresholds) -- the same
+//    "ungrouped pool" shape headcount uses, generalized to
+//    weekly_draw's own multi-team total. A simpler goalie count (is_
+//    goalie=1 among confirmed, no backup-goalie fallback) is used here
+//    since the primary/backup distinction is inherently per-team and
+//    meaningless pool-wide before teams exist.
+async function eventWeekStatus(env, leagueId, ev, cfg) {
+  const teamNames = getTeamNames(cfg);
+  const teamStructure = cfg.teamStructure || 'fixed';
+
+  const rows = (await env.DB.prepare(
+    `SELECT COALESCE(r.status, 'pending') AS status, COUNT(*) AS cnt
+       FROM contacts c
+       LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+      WHERE c.league_id = ? AND c.role = 'roster'
+      GROUP BY COALESCE(r.status, 'pending')`
+  ).bind(ev.id, leagueId).all()).results || [];
+  const counts = { in: 0, out: 0, pending: 0 };
+  for (const r of rows) counts[r.status] = Number(r.cnt) || 0;
+
+  let short = false;
+  if (teamStructure === 'headcount') {
+    short = (await teamState(env.DB, ev.id, HEADCOUNT_TEAM_NAME, cfg)).short;
+  } else if (teamStructure === 'weekly_draw') {
+    const goalieRow = await env.DB.prepare(
+      `SELECT COUNT(*) AS c FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+        WHERE r.event_id = ? AND r.status = 'in' AND c.is_goalie = 1`
+    ).bind(ev.id).first();
+    const maxGoaliesPerTeam = cfg.maxGoalies || cfg.goaliesPerTeam || 0;
+    const confirmedGoalies = Math.min(Number(goalieRow && goalieRow.c) || 0, maxGoaliesPerTeam * teamNames.length);
+    const confirmedSkaters = counts.in - confirmedGoalies;
+    const neededSkaters = (cfg.minSkaters || 0) * teamNames.length;
+    const neededGoalies = (cfg.goaliesPerTeam || 0) * teamNames.length;
+    short = confirmedSkaters < neededSkaters || confirmedGoalies < neededGoalies;
+  } else {
+    for (const team of teamNames) {
+      if ((await teamState(env.DB, ev.id, team, cfg)).short) { short = true; break; }
+    }
+  }
+
+  return { confirmed: counts.in, out: counts.out, noResponse: counts.pending, short };
 }
 
 const WAVE_SIZE = 5;
