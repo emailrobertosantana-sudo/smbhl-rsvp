@@ -1461,7 +1461,25 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // intended "teams are formed per match, not permanent" -- reuses
       // the exact phrase the structure-picker itself already uses for
       // this same concept (structureWeeklyTitle) for consistency.
-      teamsPerGame: 'Équipes qui changent', noFixedTeams: 'Aucune équipe fixe',
+      // Live-testing task (batch 5), Part 5: this overline pairs with a
+      // big number right below it (the same KPI-tile pattern this
+      // dashboard uses for "Joueurs"/playerCount) -- "Équipes qui
+      // changent" over a bare "2" didn't say WHEN they change, so the
+      // pairing read as unrelated rather than "2 nouvelles équipes,
+      // chaque match".
+      //
+      // IMPORTANT: do NOT revert to "Équipes (par match)" here --
+      // test/part49_teams_per_game_label.spec.js (an earlier task,
+      // batch 2 Part 5) already tried and deliberately rejected that
+      // exact wording: it was misread as "how many teams play in each
+      // match" rather than "these teams are reformed, not permanent".
+      // That test still runs and still enforces this. Instead this
+      // reuses "Nouvelles équipes" (new teams), the same word
+      // weeklyDrawTeamsDesc/structureWeeklyDesc below already use for
+      // this identical concept -- "new" inherently signals reformation
+      // the way a bare "(per game)" count never did, so pairing it
+      // with "chaque match" doesn't reintroduce the original ambiguity.
+      teamsPerGame: 'Nouvelles équipes chaque match', noFixedTeams: 'Aucune équipe fixe',
       noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.",
       weeklyDrawTeamsDesc: 'Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.',
       coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteEmailPh: 'courriel@exemple.com', inviteBtn: 'Inviter',
@@ -1484,7 +1502,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       publicPage: 'Public page', copyLink: 'Copy', copied: 'Copied!',
       publicPageDisabled: "Disabled -- no one can see this page.",
       teams: 'Teams', tracksStatsLabel: 'Tracks stats', yes: 'Yes', no: 'No',
-      teamsPerGame: 'Teams shuffle', noFixedTeams: 'No fixed teams',
+      teamsPerGame: 'Fresh teams every game', noFixedTeams: 'No fixed teams',
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
       coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteEmailPh: 'email@example.com', inviteBtn: 'Invite',
@@ -1842,7 +1860,7 @@ async function handleDashboardPage(req, env, url) {
   ${startGridHtml}
   <div class="dash-tiles">
     <section class="nl-card nl-card--pad-lg dash-tile">
-      <div class="overline" data-i18n="${dashIsWeeklyDraw ? 'teamsPerGame' : 'teams'}">${dashIsWeeklyDraw ? 'Équipes qui changent' : 'Équipes'}</div>
+      <div class="overline" data-i18n="${dashIsWeeklyDraw ? 'teamsPerGame' : 'teams'}">${dashIsWeeklyDraw ? 'Nouvelles équipes chaque match' : 'Équipes'}</div>
       ${dashIsHeadcount
         ? `<div class="stat tnum" style="font-size:20px" data-i18n="noFixedTeams">Aucune équipe fixe</div>`
         : `<div class="stat tnum">${teamNames.length}</div>`}

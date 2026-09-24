@@ -6,6 +6,17 @@
 // structure-picker itself already uses for this same concept
 // (structureWeeklyTitle: "Équipes qui changent" / "Teams shuffle"),
 // for consistency and genuine clarity.
+//
+// SUPERSEDED (batch 5, Part 5): "Équipes qui changent" over a bare
+// number still didn't say WHEN teams change, so the pairing read as
+// unrelated rather than "2 nouvelles équipes, chaque match". Reworded
+// again, to "Nouvelles équipes chaque match" / "Fresh teams every
+// game" -- reusing weeklyDrawTeamsDesc's own established wording for
+// this identical concept. The ORIGINAL lesson from this file still
+// holds and is still enforced below: never revert to a bare
+// "(par match)"/"(per game)" qualifier with no verb, since that
+// specific form is what read as a team COUNT per game rather than
+// teams being reformed.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
@@ -43,12 +54,12 @@ describe('Part 5 (live-testing task, batch 2): dashboard team-count label is cle
     await applyRealSchema(env);
   });
 
-  it('weekly_draw: the overline reuses "Équipes qui changent", not the old ambiguous "(par match)"', async () => {
+  it('weekly_draw: the overline reuses "Nouvelles équipes chaque match" (batch 5\'s reword), never the old ambiguous "(par match)" form', async () => {
     const { cookie, csrfToken } = await signup('teamlabel.weekly@example.com', '203.0.165.001');
     await createLeague(cookie, csrfToken, { name: 'Team Label Weekly League', teamStructure: 'weekly_draw', teamNames: ['A', 'B'], tracksStats: true });
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
     expect(html).toContain('data-i18n="teamsPerGame"');
-    expect(html).toContain('Équipes qui changent');
+    expect(html).toContain('Nouvelles équipes chaque match');
     expect(html).not.toContain('Équipes (par match)');
   });
 
