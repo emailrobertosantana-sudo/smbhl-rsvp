@@ -275,7 +275,7 @@ describe('Part 1 (live-testing task): consolidated settings page', () => {
       });
       expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json.settings).toEqual({ teamStructure: 'headcount', minPlayers: 8, maxPlayers: 14, minGoalies: 2 });
+      expect(json.settings).toEqual({ teamStructure: 'headcount', minPlayers: 8, maxPlayers: 14, minGoalies: 2, maxGoalies: null });
     });
 
     it('rejects max < min for headcount limits', async () => {

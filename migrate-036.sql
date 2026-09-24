@@ -1,0 +1,18 @@
+-- Live-testing task, Part 5: roster minimums AND maximums, for both
+-- players and goalies, must be settable per league (and per season, via
+-- the existing season/publish override mechanism) for every team
+-- structure -- not just headcount, which is all min_players/max_players/
+-- min_goalies (migrate-027.sql, migrate-029.sql) have ever supported.
+-- max_goalies is the only genuinely new column here; min/max players
+-- already exist and this migration does not touch them.
+--
+-- Nullable, no DEFAULT -- NULL means "not explicitly set", which every
+-- league before this migration is. Existing behavior for every current
+-- league is completely unaffected: normalizeSeasonConfig only ever
+-- consults this column (via leagueRosterLimits) when it is non-NULL,
+-- and even then falls back to that league's own real goaliesPerTeam
+-- value (not a hardcoded default) whenever an explicit max isn't set --
+-- see season_config.js's own comment on maxGoalies for the full
+-- reasoning. So min=max exactly as goaliesPerTeam already behaved,
+-- unless an admin explicitly opts into a real, distinct maximum.
+ALTER TABLE leagues ADD COLUMN max_goalies INTEGER;

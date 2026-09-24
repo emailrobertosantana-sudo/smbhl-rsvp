@@ -186,7 +186,7 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
   let leagueTeamStructure = null;
   let leagueSportType = null;
   const leagueRow = await env.DB.prepare(
-    `SELECT l.id, l.name, l.slug, l.team_names, l.language_mode, l.color, l.team_structure, l.min_players, l.max_players, l.min_goalies, l.sport_type, u.email AS admin_email
+    `SELECT l.id, l.name, l.slug, l.team_names, l.language_mode, l.color, l.team_structure, l.min_players, l.max_players, l.min_goalies, l.max_goalies, l.sport_type, u.email AS admin_email
        FROM leagues l JOIN users u ON u.id = l.created_by
       WHERE l.id = ?`
   ).bind(leagueId).first();
@@ -234,10 +234,20 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
     leagueTeamStructure = leagueRow.team_structure || 'fixed';
     if (leagueRow.min_players != null && leagueRow.max_players != null) {
       // Part 5: min_goalies (migrate-029.sql, DEFAULT 0) rides along
-      // with minPlayers/maxPlayers -- only meaningful for headcount,
-      // and 0 ("no goalie requirement") is real, intentional data, not
-      // an absence to special-case around.
-      leagueRosterLimits = { minPlayers: leagueRow.min_players, maxPlayers: leagueRow.max_players, minGoalies: leagueRow.min_goalies };
+      // with minPlayers/maxPlayers -- 0 ("no goalie requirement") is
+      // real, intentional data, not an absence to special-case around.
+      // Live-testing task, Part 5: these columns are no longer
+      // headcount-only -- 'fixed'/'weekly_draw' can now set them too
+      // (settings page), so this fallback (used only before a real
+      // season config exists) applies identically to every structure.
+      // max_goalies (migrate-036.sql) is nullable and only included
+      // when actually set -- normalizeSeasonConfig's own maxGoalies
+      // resolution defaults it to goaliesPerTeam otherwise.
+      leagueRosterLimits = {
+        minPlayers: leagueRow.min_players, maxPlayers: leagueRow.max_players,
+        minGoalies: leagueRow.min_goalies,
+        ...(leagueRow.max_goalies != null ? { maxGoalies: leagueRow.max_goalies } : {})
+      };
     }
     // Part 5 foundation: migrate-028.sql, default 'hockey' for every
     // existing row.
@@ -875,7 +885,7 @@ export async function handleLeagueSeasonPublish(req, env) {
     return Response.json({ ok: false, error: 'This route cannot publish to SMBHL\'s data.' }, { status: 403 });
   }
 
-  const leagueRow = await env.DB.prepare('SELECT team_names, team_structure, min_players, max_players, min_goalies FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT team_names, team_structure, min_players, max_players, min_goalies, max_goalies FROM leagues WHERE id = ?').bind(leagueId).first();
   let teamNames = [];
   if (leagueRow && leagueRow.team_names) {
     try {
@@ -1026,6 +1036,83 @@ export async function handleLeagueSeasonPublish(req, env) {
     const minG = body.min_goalies !== undefined ? Number(body.min_goalies) : (leagueRow && leagueRow.min_goalies) || 0;
     if (Number.isFinite(minG) && minG >= 0) {
       config.goaliesPerTeam = minG;
+    }
+    // Live-testing task, Part 5: max_goalies, same "body override, else
+    // the league's own stored value" pattern as min_goalies just above.
+    // Left unset (falls through to season_config.js's own
+    // maxGoalies-defaults-to-goaliesPerTeam resolution) when neither is
+    // a real number -- so a headcount league that has never set a
+    // distinct max keeps min===max, unchanged from before this task.
+    const maxG = body.max_goalies !== undefined ? Number(body.max_goalies) : (leagueRow && leagueRow.max_goalies);
+    if (Number.isFinite(maxG) && maxG >= 0) {
+      config.maxGoalies = maxG;
+    }
+  }
+
+  // Live-testing task, Part 5: 'fixed' and 'weekly_draw' roster limits.
+  // Unlike headcount's block above, this is entirely OPTIONAL -- when
+  // neither this request nor the league's own row has a real value,
+  // config simply doesn't set these fields, so normalizeSeasonConfig's
+  // own DEFAULT_SEASON_CONFIG numbers (8 skaters/5 min skaters/1 goalie)
+  // apply exactly as they silently have for every fixed/weekly_draw
+  // league before this task. That's what makes the safety guarantee
+  // true here: no existing league's effective numbers change unless its
+  // admin explicitly sets a real value via the settings page.
+  //
+  // Shape, per the task's own explicit requirement: 'fixed' numbers are
+  // already real PER-TEAM values -- teamState/expected/openSpots already
+  // call this engine once per real named team for fixed leagues, so
+  // these are used directly, no translation needed. 'weekly_draw' is
+  // collected as a PER-EVENT POOL total instead (the admin sets "how
+  // many total for the whole game", not per-team) -- but shortage
+  // detection itself still runs per REAL ASSIGNED team once this
+  // event's draw has happened (unchanged machinery), so the pool total
+  // is divided down to a per-team equivalent here. ceil() for minimums
+  // (every team must individually clear its own floor, so the real
+  // total actually reached across all teams is always >= the admin's
+  // stated pool minimum, never less -- erring toward calling a sub
+  // rather than silently under-covering) and floor() for maximums (so
+  // teams' combined maximums never exceed the admin's stated pool cap).
+  if (effectiveStructure === 'fixed' || effectiveStructure === 'weekly_draw') {
+    const numTeams = effectiveStructure === 'weekly_draw' ? Math.max(1, seasonTeamNames.length) : 1;
+    const toPerTeam = (poolVal, roundUp) => (numTeams <= 1
+      ? poolVal
+      : (roundUp ? Math.ceil(poolVal / numTeams) : Math.floor(poolVal / numTeams)));
+
+    const minP = body.min_players !== undefined ? Number(body.min_players) : (leagueRow && leagueRow.min_players);
+    const maxP = body.max_players !== undefined ? Number(body.max_players) : (leagueRow && leagueRow.max_players);
+    if (Number.isFinite(minP) && Number.isFinite(maxP) && minP >= 1 && maxP >= minP) {
+      config.minSkaters = toPerTeam(minP, true);
+      config.skatersPerTeam = toPerTeam(maxP, false);
+    }
+
+    // leagueRow.min_goalies is only trusted as a fallback once this
+    // league's row ALREADY has real, stored min/max-player limits
+    // (priorPlayerLimitsExist -- note: the STORED row, not just this
+    // request's resolved minP/maxP above, which could be the very
+    // first time this league ever sets them). leagues.min_goalies
+    // defaults to 0 for EVERY league regardless of structure
+    // (handleLeagueCreate), and that 0 is only a real, intentional
+    // choice once handleLeagueUpdateStructure's own fixed/weekly_draw
+    // block has explicitly stamped it -- which it always does, exactly
+    // once, the first time it writes real min/max-player limits (see
+    // that function's own comment). Before that has ever happened, a
+    // stored min_goalies=0 is just the column's inert creation-time
+    // default, not a real "no goalie requirement" decision -- trusting
+    // it here would silently flip such a league's goalie requirement
+    // from DEFAULT_SEASON_CONFIG's 1 to 0 the moment it republishes for
+    // any unrelated reason, with nothing in this request ever having
+    // asked for that.
+    const priorPlayerLimitsExist = !!(leagueRow && leagueRow.min_players != null && leagueRow.max_players != null);
+    const minG = body.min_goalies !== undefined ? Number(body.min_goalies)
+      : (priorPlayerLimitsExist ? leagueRow.min_goalies : undefined);
+    if (Number.isFinite(minG) && minG >= 0) {
+      config.goaliesPerTeam = toPerTeam(minG, true);
+      const maxG = body.max_goalies !== undefined ? Number(body.max_goalies)
+        : (priorPlayerLimitsExist && leagueRow.max_goalies != null ? leagueRow.max_goalies : undefined);
+      if (Number.isFinite(maxG) && maxG >= minG) {
+        config.maxGoalies = toPerTeam(maxG, false);
+      }
     }
   }
 
@@ -1806,18 +1893,20 @@ export async function handleLeagueUpdateTeams(req, env, url) {
   return Response.json({ ok: true, teamNames, teamColors });
 }
 
-// League-level team structure default + headcount roster limits.
+// League-level team structure default + roster limits (Live-testing
+// task, Part 5: min/max players AND min/max goalies, for every
+// structure -- originally headcount-only).
 // CRITICAL safety property (the task's own explicit requirement):
 // changing this must NOT retroactively alter any already-published
 // season's resolved config -- freezeExistingSeasonsTeamStructure (above)
 // is called with the OLD value BEFORE the league row is updated, so
 // every existing season keeps resolving exactly as before. Roster
-// limits (min/max/min_goalies) don't need the same freeze: they're
-// only meaningful for 'headcount', and handleLeagueSeasonPublish
-// already unconditionally snapshots them into every published
-// headcount season's own config at publish time (Bug 3 fix, this
-// file) -- so they were never dynamically re-read from the league row
-// once a season exists, unlike team_structure was.
+// limits (min/max players, min/max goalies) don't need the same
+// freeze: handleLeagueSeasonPublish already unconditionally snapshots
+// them into every published season's own config at publish time (Bug 3
+// fix for headcount; Part 5 generalizes the same snapshot to
+// fixed/weekly_draw) -- so they're never dynamically re-read from the
+// league row once a season exists, unlike team_structure was.
 export async function handleLeagueUpdateStructure(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
@@ -1834,7 +1923,7 @@ export async function handleLeagueUpdateStructure(req, env, url) {
     return Response.json({ ok: false, error: 'This route cannot update SMBHL.', errorKey: 'ROUTE_BLOCKED_SETTINGS' }, { status: 403 });
   }
 
-  const leagueRow = await env.DB.prepare('SELECT team_structure, team_names, min_players, max_players, min_goalies FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT team_structure, team_names, min_players, max_players, min_goalies, max_goalies FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow) {
     return Response.json({ ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' }, { status: 404 });
   }
@@ -1887,6 +1976,82 @@ export async function handleLeagueUpdateStructure(req, env, url) {
       }
       updates.push('min_goalies = ?'); params.push(minG);
     }
+    // Live-testing task, Part 5: max_goalies, same optional posture as
+    // min_goalies just above.
+    if (body.max_goalies !== undefined) {
+      const maxG = Number(body.max_goalies);
+      if (!Number.isFinite(maxG) || maxG < 0) {
+        return Response.json({ ok: false, error: 'Maximum goalies must be zero or more.', errorKey: 'HEADCOUNT_MAX_GOALIES_INVALID' }, { status: 400 });
+      }
+      const effectiveMinG = body.min_goalies !== undefined ? Number(body.min_goalies) : leagueRow.min_goalies;
+      if (Number.isFinite(effectiveMinG) && maxG < effectiveMinG) {
+        return Response.json({ ok: false, error: 'The maximum goalies must be at least the minimum.', errorKey: 'HEADCOUNT_MAX_GOALIES_TOO_LOW' }, { status: 400 });
+      }
+      updates.push('max_goalies = ?'); params.push(maxG);
+    }
+  } else if (newStructure === 'fixed' || newStructure === 'weekly_draw') {
+    // Live-testing task, Part 5: the same 4 fields, but genuinely
+    // optional here -- no "required together" rule like headcount's own
+    // block above. A fixed/weekly_draw league that never sets these
+    // keeps falling back to DEFAULT_SEASON_CONFIG's numbers exactly as
+    // it always has (see handleLeagueSeasonPublish's own comment for
+    // where these actually take effect -- per-team directly for
+    // 'fixed', divided into a per-team equivalent for 'weekly_draw''s
+    // per-event pool shape).
+    if (body.min_players !== undefined || body.max_players !== undefined) {
+      const minP = body.min_players !== undefined ? Number(body.min_players) : leagueRow.min_players;
+      const maxP = body.max_players !== undefined ? Number(body.max_players) : leagueRow.max_players;
+      if (!Number.isFinite(minP) || !Number.isFinite(maxP) || minP < 1) {
+        return Response.json({ ok: false, error: 'A minimum and maximum player count are required together.', errorKey: 'ROSTER_LIMITS_REQUIRED' }, { status: 400 });
+      }
+      if (maxP < minP) {
+        return Response.json({ ok: false, error: 'The maximum must be at least the minimum.', errorKey: 'ROSTER_MAX_TOO_LOW' }, { status: 400 });
+      }
+      updates.push('min_players = ?', 'max_players = ?'); params.push(minP, maxP);
+      // Live-testing task, Part 5: leagues.min_goalies defaults to 0 for
+      // EVERY league (handleLeagueCreate), including fixed/weekly_draw
+      // ones that have never touched this feature -- that stored 0 is
+      // just the column's inert default, not a real "no goalie
+      // requirement" choice, unlike headcount's own 0 (always set
+      // explicitly, required at signup there). The FIRST time real
+      // min/max-player limits are set for a fixed/weekly_draw league
+      // (this transition: leagueRow.min_players was NULL, now becoming
+      // real) is exactly when that ambiguity has to be resolved one way
+      // or the other -- if this same request doesn't also provide a
+      // real min_goalies, stamp the column with DEFAULT_SEASON_CONFIG's
+      // own goaliesPerTeam (1) rather than 0: the safest choice per the
+      // task's own safety requirement is to make this league's CURRENT
+      // effective behavior (it has always silently required 1
+      // goalie/team, same as every fixed/weekly_draw league) its new
+      // explicit stored value, not silently introduce a "no goalie
+      // requirement" the admin never actually asked for just because
+      // they set player limits without touching the goalie fields.
+      // After this point, leagueRow.min_goalies is always genuinely
+      // meaningful, so handleLeagueSeasonPublish can safely trust it as
+      // a real league-level default (gated on hasPlayerLimits there,
+      // matching this same "player limits exist" signal).
+      if (body.min_goalies === undefined && leagueRow.min_players == null) {
+        updates.push('min_goalies = ?'); params.push(DEFAULT_SEASON_CONFIG.goaliesPerTeam);
+      }
+    }
+    if (body.min_goalies !== undefined) {
+      const minG = Number(body.min_goalies);
+      if (!Number.isFinite(minG) || minG < 0) {
+        return Response.json({ ok: false, error: 'Minimum goalies must be zero or more.', errorKey: 'MIN_GOALIES_INVALID' }, { status: 400 });
+      }
+      updates.push('min_goalies = ?'); params.push(minG);
+    }
+    if (body.max_goalies !== undefined) {
+      const maxG = Number(body.max_goalies);
+      if (!Number.isFinite(maxG) || maxG < 0) {
+        return Response.json({ ok: false, error: 'Maximum goalies must be zero or more.', errorKey: 'MAX_GOALIES_INVALID' }, { status: 400 });
+      }
+      const effectiveMinG = body.min_goalies !== undefined ? Number(body.min_goalies) : leagueRow.min_goalies;
+      if (Number.isFinite(effectiveMinG) && maxG < effectiveMinG) {
+        return Response.json({ ok: false, error: 'The maximum goalies must be at least the minimum.', errorKey: 'MAX_GOALIES_TOO_LOW' }, { status: 400 });
+      }
+      updates.push('max_goalies = ?'); params.push(maxG);
+    }
   }
 
   if (!updates.length) {
@@ -1902,9 +2067,9 @@ export async function handleLeagueUpdateStructure(req, env, url) {
   params.push(leagueId);
   await env.DB.prepare(`UPDATE leagues SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
 
-  const row = await env.DB.prepare('SELECT team_structure, min_players, max_players, min_goalies FROM leagues WHERE id = ?').bind(leagueId).first();
+  const row = await env.DB.prepare('SELECT team_structure, min_players, max_players, min_goalies, max_goalies FROM leagues WHERE id = ?').bind(leagueId).first();
   return Response.json({
     ok: true,
-    settings: { teamStructure: row.team_structure, minPlayers: row.min_players, maxPlayers: row.max_players, minGoalies: row.min_goalies }
+    settings: { teamStructure: row.team_structure, minPlayers: row.min_players, maxPlayers: row.max_players, minGoalies: row.min_goalies, maxGoalies: row.max_goalies }
   });
 }

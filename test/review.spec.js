@@ -834,6 +834,10 @@ describe('Multi-team season config (6-team season, Parts 3 & 4)', () => {
     expect(getSeasonConfig(undefined)).toEqual({
       teams: expect.any(Array),
       goaliesPerTeam: 1,
+      // Live-testing task, Part 5: maxGoalies defaults to goaliesPerTeam
+      // (min===max) for every league that's never set a real, distinct
+      // maximum -- see normalizeSeasonConfig's own comment.
+      maxGoalies: 1,
       skatersPerTeam: 8,
       minSkaters: 5,
       playoffFormat: 'top4_single_day',

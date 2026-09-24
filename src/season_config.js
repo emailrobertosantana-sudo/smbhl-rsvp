@@ -14,6 +14,15 @@ export const DEFAULT_SEASON_CONFIG = {
     { name: 'Black', name_fr: 'Noir', colour: '#1c1f24', aliases: ['Bruins'] }
   ],
   goaliesPerTeam: 1,
+  // Live-testing task, Part 5: the goalie roster CAP, independent from
+  // goaliesPerTeam (the goalie roster FLOOR/target -- shortGoalie and
+  // sub-invites still key off that field alone, unchanged). Defaults to
+  // the same value as goaliesPerTeam so min=max exactly as before this
+  // task for every league that never sets a real, distinct maximum --
+  // see normalizeSeasonConfig's own comment for how this default is
+  // actually resolved (it is NOT this hardcoded 1, except when
+  // goaliesPerTeam itself is also unset).
+  maxGoalies: 1,
   skatersPerTeam: 8,
   minSkaters: 5,
   playoffFormat: 'top4_single_day',
@@ -116,6 +125,9 @@ export function normalizeSeasonConfig(rawConfig) {
     color: rawLeague.color || DEFAULT_SEASON_CONFIG.league.color
   };
 
+  const resolvedGoaliesPerTeam = (rawConfig.goaliesPerTeam !== undefined && rawConfig.goaliesPerTeam !== null)
+    ? Number(rawConfig.goaliesPerTeam) : DEFAULT_SEASON_CONFIG.goaliesPerTeam;
+
   return {
     teams,
     // Part 5 (headcount goalie minimum) fix: this used to be
@@ -130,8 +142,19 @@ export function normalizeSeasonConfig(rawConfig) {
     // silently become 1. Explicit undefined/null check instead --
     // every existing caller is unaffected, since none of them have
     // ever stored 0 here.
-    goaliesPerTeam: (rawConfig.goaliesPerTeam !== undefined && rawConfig.goaliesPerTeam !== null)
-      ? Number(rawConfig.goaliesPerTeam) : DEFAULT_SEASON_CONFIG.goaliesPerTeam,
+    goaliesPerTeam: resolvedGoaliesPerTeam,
+    // Live-testing task, Part 5: an explicit rawConfig.maxGoalies always
+    // wins; otherwise this defaults to resolvedGoaliesPerTeam (the real
+    // goalie floor just resolved above), NOT DEFAULT_SEASON_CONFIG's own
+    // maxGoalies constant -- a league with goaliesPerTeam=3 and no
+    // explicit max must still get max=3, never silently clipped down to
+    // the generic default of 1 (which would make teamState's own cap
+    // contradict the very minimum it's supposed to be capping above).
+    // This is what guarantees min===max, unchanged from before this
+    // task, for every league that has never set a real, distinct
+    // maximum.
+    maxGoalies: (rawConfig.maxGoalies !== undefined && rawConfig.maxGoalies !== null)
+      ? Number(rawConfig.maxGoalies) : resolvedGoaliesPerTeam,
     skatersPerTeam: Number(rawConfig.skatersPerTeam) || DEFAULT_SEASON_CONFIG.skatersPerTeam,
     minSkaters: Number(rawConfig.minSkaters) || DEFAULT_SEASON_CONFIG.minSkaters,
     playoffFormat: rawConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat,
@@ -225,6 +248,12 @@ function fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimit
   // absent/undefined minGoalies doesn't accidentally coerce to
   // Number(undefined) = NaN downstream.
   const hasMinGoalies = hasLimits && Number.isFinite(Number(leagueRosterLimits.minGoalies));
+  // Live-testing task, Part 5: maxGoalies, same optional posture as
+  // minGoalies just above -- only included when it's a real finite
+  // number (a league that has never set a distinct max leaves
+  // normalizeSeasonConfig to default it to whatever minGoalies resolves
+  // to, exactly as before this task).
+  const hasMaxGoalies = hasLimits && Number.isFinite(Number(leagueRosterLimits.maxGoalies));
   if (hasTeams || hasBranding || hasLimits || leagueTeamStructure) {
     return normalizeSeasonConfig({
       ...(hasTeams ? { teams: leagueTeamNames } : {}),
@@ -236,6 +265,7 @@ function fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimit
       // min_goalies -- no longer needs to be omitted the way it used
       // to be before that fix.
       ...(hasMinGoalies ? { goaliesPerTeam: Number(leagueRosterLimits.minGoalies) } : {}),
+      ...(hasMaxGoalies ? { maxGoalies: Number(leagueRosterLimits.maxGoalies) } : {}),
       ...(leagueTeamStructure ? { teamStructure: leagueTeamStructure } : {}),
       ...(leagueSportType ? { sportType: leagueSportType } : {})
     });

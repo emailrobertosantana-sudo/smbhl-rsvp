@@ -1452,7 +1452,11 @@ function buildDashI18n({ state, needsSeason, unverified }) {
         structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
         structureWeeklyTitle: 'Équipes qui changent', structureWeeklyDesc: 'De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.',
         lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
-        lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.'
+        lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.',
+        lblMaxGoalies: 'Maximum de gardiens (optionnel)', maxGoaliesHelp: "Laisse vide pour utiliser le même nombre que le minimum.",
+        rosterLimitsTitle: 'Effectif de l\'équipe',
+        rosterLimitsPerTeamHelp: 'Ces nombres s\'appliquent à chaque équipe.',
+        rosterLimitsPerEventHelp: 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs (pas par équipe).'
       });
       Object.assign(en, {
         seasonsTitle: 'Seasons', seasonsDesc: 'Create an additional season, or republish the current one to edit it. Each season can have its own team structure.',
@@ -1464,7 +1468,11 @@ function buildDashI18n({ state, needsSeason, unverified }) {
         structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
         structureWeeklyTitle: 'Teams shuffle', structureWeeklyDesc: 'Fresh teams every game — we can even build them for you, automatically.',
         lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
-        lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately."
+        lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately.",
+        lblMaxGoalies: 'Maximum goalies (optional)', maxGoaliesHelp: 'Leave blank to use the same number as the minimum.',
+        rosterLimitsTitle: 'Roster size',
+        rosterLimitsPerTeamHelp: 'These numbers apply to each team.',
+        rosterLimitsPerEventHelp: 'These numbers apply to each game, across every player (not per team).'
       });
     }
     if (unverified) {
@@ -1586,6 +1594,12 @@ async function handleDashboardPage(req, env, url) {
   const dashTeamStructure = leagueRow ? (leagueRow.team_structure || 'fixed') : 'fixed';
   const dashIsHeadcount = dashTeamStructure === 'headcount';
   const dashIsWeeklyDraw = dashTeamStructure === 'weekly_draw';
+  // Live-testing task, Part 5: same hasRosterLimits gate the settings
+  // page uses -- see that page's own comment for why min_players/
+  // max_players (never null once genuinely set) is the reliable signal,
+  // not min_goalies (which defaults to 0 for every league regardless of
+  // structure).
+  const dashHasRosterLimits = !!(leagueRow && leagueRow.min_players != null && leagueRow.max_players != null);
   const playerCountRow = leagueRow ? await env.DB.prepare('SELECT COUNT(*) AS c FROM contacts WHERE league_id = ?').bind(leagueRow.id).first() : null;
   const playerCount = playerCountRow ? Number(playerCountRow.c) || 0 : 0;
 
@@ -1748,22 +1762,30 @@ async function handleDashboardPage(req, env, url) {
       </div>
       <p class="nl-help" data-i18n="seasonStructureHelp">Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.</p>
     </div>
-    <div id="season_headcount_section" style="${leagueRow.team_structure === 'headcount' ? '' : 'display:none'}">
+    <div id="season_headcount_section" style="">
+      <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
+      <p class="nl-help" id="season_roster_limits_help" data-i18n="${(leagueRow.team_structure || 'fixed') === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp'}">${(leagueRow.team_structure || 'fixed') === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe.' : 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs (pas par équipe).'}</p>
       <div class="su-two">
         <div class="nl-field">
           <label class="nl-label" for="season_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
-          <input class="nl-input" id="season_min_players" type="number" min="1" value="${esc(String(leagueRow.min_players || 8))}">
+          <input class="nl-input" id="season_min_players" type="number" min="1" value="${esc(dashHasRosterLimits ? String(leagueRow.min_players) : (dashIsHeadcount ? '8' : ''))}">
         </div>
         <div class="nl-field">
           <label class="nl-label" for="season_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
-          <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(String(leagueRow.max_players || 12))}">
+          <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(dashHasRosterLimits ? String(leagueRow.max_players) : (dashIsHeadcount ? '12' : ''))}">
         </div>
       </div>
-      <div class="nl-field">
-        <label class="nl-label" for="season_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
-        <input class="nl-input" id="season_min_goalies" type="number" min="0" value="${esc(String(leagueRow.min_goalies || 0))}">
-        <p class="nl-help" data-i18n="minGoaliesHelp">Laisse à 0 si tu ne veux pas suivre les gardiens séparément.</p>
+      <div class="su-two">
+        <div class="nl-field">
+          <label class="nl-label" for="season_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
+          <input class="nl-input" id="season_min_goalies" type="number" min="0" value="${esc(dashHasRosterLimits ? String(leagueRow.min_goalies || 0) : '')}">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="season_max_goalies" data-i18n="lblMaxGoalies">Maximum de gardiens (optionnel)</label>
+          <input class="nl-input" id="season_max_goalies" type="number" min="0" value="${esc(dashHasRosterLimits && leagueRow.max_goalies != null ? String(leagueRow.max_goalies) : '')}">
+        </div>
       </div>
+      <p class="nl-help" data-i18n="maxGoaliesHelp">Laisse vide pour utiliser le même nombre que le minimum.</p>
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>
   </section>` : ''}
@@ -1867,8 +1889,12 @@ async function submitSeason() {
     r.addEventListener('change', function() {
       radioGroup.querySelectorAll('.su-structure-opt').forEach(function(opt) { opt.classList.remove('on'); });
       r.closest('.su-structure-opt').classList.add('on');
-      var hc = document.getElementById('season_headcount_section');
-      if (hc) hc.style.display = r.value === 'headcount' ? '' : 'none';
+      // Live-testing task, Part 5: roster limits are shown -- and
+      // settable -- for every structure now, not headcount alone; only
+      // the help text's wording changes (per-team vs per-event pool).
+      var helpKey = r.value === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp';
+      var helpEl = document.getElementById('season_roster_limits_help');
+      if (helpEl) { helpEl.setAttribute('data-i18n', helpKey); helpEl.textContent = window.__pageDict()[helpKey]; }
     });
   });
 })();
@@ -1880,12 +1906,18 @@ async function submitSeasonMgmt() {
   if (!name) { err.textContent = window.__errorText('SEASON_NAME_REQUIRED_CLIENT'); err.style.display = 'block'; return; }
   var structure = document.querySelector('#season_structure_radio input:checked').value;
   var payload = { season_name: name, team_structure: structure };
-  if (structure === 'headcount') {
-    payload.min_players = Number(document.getElementById('season_min_players').value);
-    payload.max_players = Number(document.getElementById('season_max_players').value);
-    var minGoaliesEl = document.getElementById('season_min_goalies');
-    if (minGoaliesEl) { payload.min_goalies = Number(minGoaliesEl.value) || 0; }
-  }
+  // Live-testing task, Part 5: sent for every structure now (the
+  // server-side route treats them as fully optional for
+  // fixed/weekly_draw). A field left blank is omitted entirely rather
+  // than coerced to 0 -- see the settings page's identical comment.
+  var minPlayersEl = document.getElementById('season_min_players');
+  var maxPlayersEl = document.getElementById('season_max_players');
+  if (minPlayersEl && minPlayersEl.value !== '') { payload.min_players = Number(minPlayersEl.value); }
+  if (maxPlayersEl && maxPlayersEl.value !== '') { payload.max_players = Number(maxPlayersEl.value); }
+  var minGoaliesEl = document.getElementById('season_min_goalies');
+  if (minGoaliesEl && minGoaliesEl.value !== '') { payload.min_goalies = Number(minGoaliesEl.value); }
+  var maxGoaliesEl = document.getElementById('season_max_goalies');
+  if (maxGoaliesEl && maxGoaliesEl.value !== '') { payload.max_goalies = Number(maxGoaliesEl.value); }
   var btn = document.getElementById('season_mgmt_submit');
   btn.disabled = true;
   try {
@@ -2560,6 +2592,14 @@ async function handleLeagueSettingsPage(req, env, url) {
   const leagueSlug = await getOrCreateLeagueSlug(env, leagueRow);
   const teamStructure = leagueRow.team_structure || 'fixed';
   const isHeadcount = teamStructure === 'headcount';
+  // Live-testing task, Part 5: whether this league has ever engaged
+  // with the roster-limits feature for real (min_players/max_players
+  // are a reliable, unambiguous "never set" signal -- unlike
+  // min_goalies, which defaults to 0 for every league regardless of
+  // structure, so it alone can't distinguish a real choice from an
+  // untouched default -- see handleLeagueSeasonPublish's own comment).
+  // Always true for headcount (required at signup there).
+  const hasRosterLimits = leagueRow.min_players != null && leagueRow.max_players != null;
   let teamNames = [];
   try { teamNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
   if (isHeadcount) teamNames = [];
@@ -2586,6 +2626,10 @@ async function handleLeagueSettingsPage(req, env, url) {
       structureWeeklyTitle: 'Équipes qui changent', structureWeeklyDesc: 'De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.',
       lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
       lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.',
+      lblMaxGoalies: 'Maximum de gardiens (optionnel)', maxGoaliesHelp: "Laisse vide pour utiliser le même nombre que le minimum.",
+      rosterLimitsTitle: 'Effectif de l\'équipe',
+      rosterLimitsPerTeamHelp: 'Ces nombres s\'appliquent à chaque équipe.',
+      rosterLimitsPerEventHelp: 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs (pas par équipe).',
       langExposure: 'Langue exposée aux joueurs',
       langExposureDesc: 'Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.',
       langBoth: 'Les deux (FR/EN)', langFrOnly: 'Français seulement', langEnOnly: 'Anglais seulement',
@@ -2618,6 +2662,10 @@ async function handleLeagueSettingsPage(req, env, url) {
       structureWeeklyTitle: 'Teams shuffle', structureWeeklyDesc: 'Fresh teams every game — we can even build them for you, automatically.',
       lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
       lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately.",
+      lblMaxGoalies: 'Maximum goalies (optional)', maxGoaliesHelp: 'Leave blank to use the same number as the minimum.',
+      rosterLimitsTitle: 'Roster size',
+      rosterLimitsPerTeamHelp: 'These numbers apply to each team.',
+      rosterLimitsPerEventHelp: 'These numbers apply to each game, across every player (not per team).',
       langExposure: 'Language exposed to players',
       langExposureDesc: "Controls whether your players' public page and RSVP page show a FR/EN toggle, or a single fixed language.",
       langBoth: 'Both (FR/EN)', langFrOnly: 'French only', langEnOnly: 'English only',
@@ -2725,22 +2773,30 @@ async function handleLeagueSettingsPage(req, env, url) {
         </label>
       </div>
     </div>
-    <div id="se_headcount_fields" style="${isHeadcount ? '' : 'display:none'}">
+    <div id="se_headcount_fields" style="">
+      <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
+      <p class="nl-help" id="se_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp'}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe.' : 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs (pas par équipe).'}</p>
       <div class="su-two">
         <div class="nl-field">
           <label class="nl-label" for="se_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
-          <input class="nl-input" id="se_min_players" type="number" min="1" value="${esc(String(leagueRow.min_players || 8))}">
+          <input class="nl-input" id="se_min_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.min_players) : (isHeadcount ? '8' : ''))}">
         </div>
         <div class="nl-field">
           <label class="nl-label" for="se_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
-          <input class="nl-input" id="se_max_players" type="number" min="1" value="${esc(String(leagueRow.max_players || 12))}">
+          <input class="nl-input" id="se_max_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.max_players) : (isHeadcount ? '12' : ''))}">
         </div>
       </div>
-      <div class="nl-field">
-        <label class="nl-label" for="se_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
-        <input class="nl-input" id="se_min_goalies" type="number" min="0" value="${esc(String(leagueRow.min_goalies || 0))}">
-        <p class="nl-help" data-i18n="minGoaliesHelp">Laisse à 0 si tu ne veux pas suivre les gardiens séparément.</p>
+      <div class="su-two">
+        <div class="nl-field">
+          <label class="nl-label" for="se_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
+          <input class="nl-input" id="se_min_goalies" type="number" min="0" value="${esc(hasRosterLimits ? String(leagueRow.min_goalies || 0) : '')}">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="se_max_goalies" data-i18n="lblMaxGoalies">Maximum de gardiens (optionnel)</label>
+          <input class="nl-input" id="se_max_goalies" type="number" min="0" value="${esc(hasRosterLimits && leagueRow.max_goalies != null ? String(leagueRow.max_goalies) : '')}">
+        </div>
       </div>
+      <p class="nl-help" data-i18n="maxGoaliesHelp">Laisse vide pour utiliser le même nombre que le minimum.</p>
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="structure_save" data-i18n="save" onclick="submitStructure()">Enregistrer</button></div>
   </section>
@@ -2855,7 +2911,15 @@ document.querySelectorAll('#se_structure_radio label').forEach(function(l) {
   l.addEventListener('click', function() {
     document.querySelectorAll('#se_structure_radio label').forEach(function(x) { x.classList.remove('on'); });
     l.classList.add('on');
-    document.getElementById('se_headcount_fields').style.display = l.getAttribute('data-value') === 'headcount' ? '' : 'none';
+    // Live-testing task, Part 5: roster limits are shown -- and
+    // settable -- for every structure now, not headcount alone; only
+    // the help text's wording changes (per-team vs per-event pool),
+    // matching the shape this league's own selected structure uses.
+    var val = l.getAttribute('data-value');
+    var helpKey = val === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp';
+    var helpEl = document.getElementById('se_roster_limits_help');
+    helpEl.setAttribute('data-i18n', helpKey);
+    helpEl.textContent = window.__pageDict()[helpKey];
   });
 });
 async function submitStructure() {
@@ -2863,11 +2927,22 @@ async function submitStructure() {
   err.style.display = 'none'; ok.style.display = 'none';
   var structure = document.querySelector('#se_structure_radio input:checked').value;
   var payload = { team_structure: structure };
-  if (structure === 'headcount') {
-    payload.min_players = Number(document.getElementById('se_min_players').value);
-    payload.max_players = Number(document.getElementById('se_max_players').value);
-    payload.min_goalies = Number(document.getElementById('se_min_goalies').value);
-  }
+  // Live-testing task, Part 5: sent for every structure now (the
+  // server-side route treats them as fully optional for
+  // fixed/weekly_draw -- see handleLeagueUpdateStructure's own
+  // comment), not headcount alone. A field left BLANK is omitted
+  // entirely rather than coerced to 0/NaN -- for headcount these are
+  // always pre-filled (required), but a fixed/weekly_draw league that
+  // has never engaged with this feature shows blank fields, and
+  // leaving them blank must mean "don't set this," not "set it to 0."
+  var minPlayersEl = document.getElementById('se_min_players');
+  var maxPlayersEl = document.getElementById('se_max_players');
+  if (minPlayersEl.value !== '') { payload.min_players = Number(minPlayersEl.value); }
+  if (maxPlayersEl.value !== '') { payload.max_players = Number(maxPlayersEl.value); }
+  var minGoaliesEl = document.getElementById('se_min_goalies');
+  if (minGoaliesEl.value !== '') { payload.min_goalies = Number(minGoaliesEl.value); }
+  var maxGoaliesEl = document.getElementById('se_max_goalies');
+  if (maxGoaliesEl && maxGoaliesEl.value !== '') { payload.max_goalies = Number(maxGoaliesEl.value); }
   var btn = document.getElementById('structure_save'); btn.disabled = true;
   try {
     var res = await fetch('/league/settings/structure', {
@@ -5545,6 +5620,16 @@ export function eventStart(ev) {
 
 export async function teamState(db, eventId, team, cfg) {
   const targetGoalies = cfg ? cfg.goaliesPerTeam : TARGET_GOALIES;
+  // Live-testing task, Part 5: the CAP on confirmed goalies counted
+  // (below) is the real maximum now, independent from targetGoalies
+  // (the minimum/shortage threshold, used unchanged just below and in
+  // openSpots). Falls back to targetGoalies for a cfg-less call (SMBHL's
+  // own legacy season_hub path, which never had a max concept either),
+  // and cfg.maxGoalies itself already defaults to cfg.goaliesPerTeam
+  // (season_config.js) for every league that hasn't set a real,
+  // distinct maximum -- so this is min===max, byte-identical to before
+  // this task, unless a league explicitly opts into a wider cap.
+  const maxGoalies = cfg ? cfg.maxGoalies : TARGET_GOALIES;
   const minSkaters   = cfg ? cfg.minSkaters       : 5;
   const rows = (await db.prepare(
     `SELECT r.player_id, r.guest_name, r.status, r.role,
@@ -5565,7 +5650,7 @@ export async function teamState(db, eventId, team, cfg) {
   const primaryKeepers = ins.filter(r => r.is_goalie === 1).length;
   let goalies = 0;
   if (primaryKeepers > 0) {
-    goalies = Math.min(primaryKeepers, targetGoalies);
+    goalies = Math.min(primaryKeepers, maxGoalies);
   } else {
     // If starting goalie is not in (or out), check if a backup goalie is confirmed in
     const primaryRow = uniqueRows.find(r => r.is_goalie === 1);
@@ -5573,7 +5658,7 @@ export async function teamState(db, eventId, team, cfg) {
     if (primaryIsOut) {
       const backupKeepers = ins.filter(r => r.is_backup_goalie === 1).length;
       if (backupKeepers > 0) {
-        goalies = Math.min(backupKeepers, targetGoalies);
+        goalies = Math.min(backupKeepers, maxGoalies);
       }
     }
   }
@@ -5670,6 +5755,11 @@ const TARGET_GOALIES = 1;
 
 export async function expected(db, eventId, team, cfg) {
   const targetGoalies = cfg ? cfg.goaliesPerTeam  : TARGET_GOALIES;
+  // Live-testing task, Part 5: same min-vs-max split as teamState above
+  // -- the count is capped at the real maximum, while openSpots (below)
+  // still targets targetGoalies (the minimum) to decide whether more
+  // subs are needed.
+  const maxGoalies = cfg ? cfg.maxGoalies : TARGET_GOALIES;
   const rows = (await db.prepare(
     `SELECT r.player_id, r.role, r.status,
             COALESCE(c.is_goalie,0) AS is_goalie,
@@ -5681,12 +5771,12 @@ export async function expected(db, eventId, team, cfg) {
   const primaryKeepers = rows.filter(r => r.is_goalie === 1);
   let goalies = 0;
   if (primaryKeepers.length > 0) {
-    goalies = Math.min(primaryKeepers.length, targetGoalies);
+    goalies = Math.min(primaryKeepers.length, maxGoalies);
   } else {
     // If starting goalie is out, backup goalie can satisfy the goalie spot
     const backupKeepers = rows.filter(r => r.is_backup_goalie === 1);
     if (backupKeepers.length > 0) {
-      goalies = Math.min(backupKeepers.length, targetGoalies);
+      goalies = Math.min(backupKeepers.length, maxGoalies);
     }
   }
   const skaters = rows.length - goalies;
