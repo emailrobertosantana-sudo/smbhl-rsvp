@@ -83,6 +83,10 @@ describe('Part 2 (live-testing task): public site theme picker', () => {
     expect(html).not.toContain('background: var(--surface-hero, #16181d)');
   });
 
+  // Superseded by live-testing task (batch 2), Part 6: dates now render
+  // in the design system's own format (date_format.js), not raw ISO --
+  // 2099-04-04 is a Saturday, so "Sam 4 avr" replaces the old raw
+  // assertion.
   it('the SAME data (next game, standings, upcoming, teams) renders in both themes -- only the CSS differs', async () => {
     const { cookie, csrfToken } = await signup('theme.samedata@example.com', '203.0.134.003');
     const league = await createLeague(cookie, csrfToken, { name: 'Theme Same Data League', teamNames: ['Falcons', 'Otters'], tracksStats: true });
@@ -96,14 +100,14 @@ describe('Part 2 (live-testing task): public site theme picker', () => {
     });
 
     const areneHtml = await (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.id)}`)).text();
-    expect(areneHtml).toContain('2099-04-04');
+    expect(areneHtml).toContain('Sam 4 avr');
     expect(areneHtml).toContain('Theme Test Arena');
     expect(areneHtml).toContain('Falcons');
     expect(areneHtml).toContain('Otters');
 
     await setTheme(cookie, csrfToken, 'clean');
     const cleanHtml = await (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.id)}`)).text();
-    expect(cleanHtml).toContain('2099-04-04');
+    expect(cleanHtml).toContain('Sam 4 avr');
     expect(cleanHtml).toContain('Theme Test Arena');
     expect(cleanHtml).toContain('Falcons');
     expect(cleanHtml).toContain('Otters');

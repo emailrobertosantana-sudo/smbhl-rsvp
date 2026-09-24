@@ -102,7 +102,10 @@ describe('Part 4: GET /league/public (unauthenticated public page)', () => {
     expect(html).toContain(`<title>${LEAGUE_A_NAME}</title>`);
     expect(html).toContain('Otters');
     expect(html).toContain('Falcons');
-    expect(html).toContain('2099-01-11');
+    // Superseded by live-testing task (batch 2), Part 6: dates now
+    // render in the design system's own format -- 2099-01-11 is a
+    // Sunday, so "Dim 11 janv" replaces the old raw ISO assertion.
+    expect(html).toContain('Dim 11 janv');
     expect(html).toContain('Public Page Rink');
   });
 

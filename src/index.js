@@ -3,6 +3,7 @@ import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton } from './design_system.js';
+import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
@@ -152,6 +153,30 @@ function dayNames(dateLabel) {
 
 const esc = s => String(s == null ? '' : s)
   .replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+// Live-testing task (batch 2), Part 6: shared server-side render
+// helpers for the new league product's dates/times (design system
+// format -- date_format.js). Every page pre-renders BOTH languages
+// into data-date-fr/data-date-en on the same element (initial visible
+// text is the French one), so each page's own client-side
+// applyLanguage() (nlAuthScript, and the public/RSVP pages' own
+// versions) can swap it live on toggle without needing this formatting
+// logic duplicated as embedded browser-facing text.
+function dateSpanHtml(tag, dateISO, style, extraAttrs) {
+  const fr = formatEventDate(dateISO, 'fr', style);
+  const en = formatEventDate(dateISO, 'en', style);
+  return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(fr)}</${tag}>`;
+}
+function timeSpanHtml(tag, timeHHMM, extraAttrs) {
+  const fr = formatEventTime(timeHHMM, 'fr');
+  const en = formatEventTime(timeHHMM, 'en');
+  return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(fr)}</${tag}>`;
+}
+function dateTimeSpanHtml(tag, dateISO, timeHHMM, style, extraAttrs) {
+  const fr = formatEventDateTime(dateISO, timeHHMM, 'fr', style);
+  const en = formatEventDateTime(dateISO, timeHHMM, 'en', style);
+  return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(fr)}</${tag}>`;
+}
 
 async function getStandingsTooltip(env) {
   try {
@@ -763,6 +788,16 @@ window.__errorText = function(errorKey, fallback, vars) {
     document.querySelectorAll('[data-i18n]').forEach(function(el) {
       var k = el.getAttribute('data-i18n');
       if (dict[k] != null) el.innerHTML = dict[k];
+    });
+    // Live-testing task (batch 2), Part 6: dates/times are dynamic data,
+    // not a static dictionary string, so they can't go through the
+    // [data-i18n] lookup above -- the server pre-renders BOTH
+    // languages' text into data-date-fr/data-date-en on the same
+    // element, and this just swaps which one is visible, same as every
+    // other page-load-once-then-live-toggle piece of text here.
+    document.querySelectorAll('[data-date-fr]').forEach(function(el) {
+      var v = l === 'en' ? el.getAttribute('data-date-en') : el.getAttribute('data-date-fr');
+      if (v != null) el.textContent = v;
     });
     var frBtn = document.getElementById('btn-lang-fr'), enBtn = document.getElementById('btn-lang-en');
     if (frBtn) frBtn.setAttribute('aria-pressed', String(l === 'fr'));
@@ -2455,7 +2490,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
 
   const heroHtml = nextEvent ? `<div class="pb-hero" style="background:${esc(fillColor)}">
     <div class="overline" style="color:rgba(255,255,255,.65)" data-i18n="nextGame">${esc(t.nextGame)}</div>
-    <div class="pb-hero-when">${esc(nextEvent.date)}${nextEvent.start_time ? ' · ' + esc(nextEvent.start_time) : ''}</div>
+    ${dateTimeSpanHtml('div', nextEvent.date, nextEvent.start_time, 'short', 'class="pb-hero-when"')}
     ${isHeadcount ? `<div class="pb-hero-pool"><span class="tnum">${poolConfirmed}</span>${poolMax ? `<span>/${poolMax}</span>` : ''} <span data-i18n="poolConfirmed">${esc(t.poolConfirmed)}</span></div>` : ''}
     ${isHeadcount && poolGoalieMin > 0 ? `<div class="pb-hero-pool"><span class="tnum">${poolGoaliesConfirmed}</span><span>/${poolGoalieMin}</span> <span data-i18n="poolGoalies">${esc(t.poolGoalies)}</span></div>` : ''}
     ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}</div>` : ''}
@@ -2475,7 +2510,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const upcomingHtml = events.length ? `
   <h2 data-i18n="upcoming">${esc(t.upcoming)}</h2>
   <div class="pb-glist">${events.map(ev => `<div class="pb-g">
-      <div class="pb-g-d"><b>${esc(ev.date)}</b>${ev.start_time ? `<span>${esc(ev.start_time)}</span>` : ''}</div>
+      <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
       <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}</div>
     </div>`).join('')}</div>` : `<p class="nl-help" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
 
@@ -2527,6 +2562,15 @@ var PB_FORCED_LANG = ${JSON.stringify(forcedLang)};
     document.querySelectorAll('[data-i18n]').forEach(function(el) {
       var k = el.getAttribute('data-i18n');
       if (dict[k] != null) el.innerHTML = dict[k];
+    });
+    // Live-testing task (batch 2), Part 6: dates/times are dynamic
+    // data pre-rendered in BOTH languages (data-date-fr/data-date-en
+    // on the same element) -- this swaps which one is visible, since
+    // they can't go through the plain [data-i18n] dictionary lookup
+    // above.
+    document.querySelectorAll('[data-date-fr]').forEach(function(el) {
+      var v = l === 'en' ? el.getAttribute('data-date-en') : el.getAttribute('data-date-fr');
+      if (v != null) el.textContent = v;
     });
   }
   if (PB_FORCED_LANG) { window.__currentLang = PB_FORCED_LANG; applyLanguage(PB_FORCED_LANG); return; }
@@ -3637,7 +3681,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   const rowsHtml = events.length
     ? events.map(ev => `<div class="nl-card sc-game-row">
       <a class="sc-game" href="/league/events/detail?e=${encodeURIComponent(ev.id)}">
-        <div class="sc-when"><b>${esc(ev.date)}</b>${ev.start_time ? `<span>${esc(ev.start_time)}</span>` : ''}</div>
+        <div class="sc-when">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
         <div class="sc-venue">${ev.venue ? esc(ev.venue) : ''}</div>
         <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
         <span class="sc-chevron">&rsaquo;</span>
@@ -3670,9 +3714,20 @@ async function handleLeagueSchedulePage(req, env, url) {
   @media (max-width: 640px) { .sc-game { grid-template-columns: 72px 1fr auto; } .sc-game .sc-chevron { display: none; } }
   .sc-needs-season { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 2px solid var(--primary); }
   .sc-needs-season h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
-  .sc-game-row { display: flex; flex-direction: column; padding: 0; }
-  .sc-game-row .sc-game { padding: var(--space-3) var(--space-4); }
-  .sc-dup-wrap { padding: 0 var(--space-4) var(--space-3); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+  /* Live-testing task (batch 2), Part 6: two fixes for this row.
+     (1) the shared base stylesheet's .nl a rule (0,1,1 specificity)
+     was silently overriding .sc-game's own text-decoration: none
+     (0,1,0) -- the exact same specificity trap already fixed once for
+     .rv-foot elsewhere in this app -- so the date/venue/badge text
+     inside this row's link rendered underlined like a plain hyperlink.
+     .nl a.sc-game (0,2,1) reliably wins. (2) Dupliquer used to be a
+     separate flex-column BELOW the row (its own full-width block) --
+     now sits inline at the end of the row, wrapping onto its own line
+     only once its own inline edit form (date picker + confirm) is
+     actually open and needs the room. */
+  .sc-game-row { display: flex; flex-wrap: wrap; align-items: center; padding: 0; }
+  .nl a.sc-game { flex: 1 1 auto; padding: var(--space-3) var(--space-4); text-decoration: none; color: inherit; }
+  .sc-dup-wrap { padding: var(--space-3) var(--space-4) var(--space-3) 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .sc-dup-inline { display: flex; gap: 8px; align-items: center; }
   .sc-bulk-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); max-width: 480px; }
   .sc-bulk-panel.open { display: flex; }
@@ -4102,7 +4157,7 @@ ${tabbar}`;
 <main class="dash-main ev-main">
   <div>
     <p class="nl-help" style="margin:0"><a href="/league/schedule" data-i18n="backToSchedule">&lsaquo; Horaire</a></p>
-    <h1>${esc(ev.date)}${ev.start_time ? ' · ' + esc(ev.start_time) : ''}</h1>
+    ${dateTimeSpanHtml('h1', ev.date, ev.start_time, 'long')}
     <p class="nl-help" style="margin-top:4px">${ev.venue ? esc(ev.venue) : ''}</p>
   </div>
   <div>
@@ -4264,7 +4319,7 @@ async function setPlayerStatus(playerId, status, btn) {
   }
 }`;
 
-  return new Response(nlDocument({ title: `${ev.date} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+  return new Response(nlDocument({ title: `${formatEventDate(ev.date, 'fr', 'short')} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -4808,7 +4863,26 @@ function body(kind, { ev, name, team, link, payload, leagueCfg = null }) {
   const siteUrl = league.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl;
   const siteHost = String(siteUrl).replace(/^https?:\/\//, '').replace(/\/$/, '');
   const wrapEmail = (title, contentHtml) => emailWrap(title, contentHtml, league);
-  const w = whenLine(ev);
+  // Live-testing task (batch 2), Part 6: dayNames() (whenLine's own
+  // basis) expects SMBHL's own event.date shape -- a descriptive
+  // string starting with an English day name ("Sunday September
+  // 28..."). A league-product event's date is a real ISO string
+  // ("2026-09-28"), which dayNames' own regex can't match at all --
+  // it silently fell through to a generic "that day"/"ce jour-là"
+  // placeholder instead of any real date, in every email this shared
+  // body() builds (sub-call invites, "assigned"/"released"/"notice"
+  // confirmations, shortage alerts...). Detecting the ISO shape
+  // directly (not leagueCfg, which getLeagueConfig always returns as a
+  // real object for both SMBHL and league events -- not a reliable
+  // signal here) keeps SMBHL's own path completely untouched while
+  // fixing every league-product email that flows through this shared
+  // function at once.
+  const w = /^\d{4}-\d{2}-\d{2}/.test(String(ev.date || ''))
+    ? {
+        fr: `${formatEventDateTime(ev.date, ev.start_time, 'fr', 'long')}${ev.venue ? ' au ' + ev.venue : ''}`,
+        en: `${formatEventDateTime(ev.date, ev.start_time, 'en', 'long')}${ev.venue ? ' at ' + ev.venue : ''}`
+      }
+    : whenLine(ev);
   const sign = `\n\n—\n${league.name} · ${siteHost}`;
   const matchInfo = payload && payload.fixtureText ? payload.fixtureText : '';
 
@@ -11531,7 +11605,11 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
 const LEAGUE_REMINDER_ICON_ALERT = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px;"><path d="M10 3l8 14H2z"/><path d="M10 8v4M10 14.5v.5"/></svg>';
 
 function leagueReminderDict(lang, { firstName, dayLabel, ev, team }) {
-  const when = `${ev.date}${ev.start_time ? ' · ' + ev.start_time : ''}${ev.venue ? ' · ' + ev.venue : ''}`;
+  // Live-testing task (batch 2), Part 6: was raw ISO ("2026-11-21")
+  // directly interpolated -- an email is a single-language, one-shot
+  // artifact (no live toggle possible), so it just formats straight in
+  // this dict's own `lang`, no data-date-fr/en attribute pair needed.
+  const when = `${formatEventDate(ev.date, lang, 'short')}${ev.start_time ? ' · ' + formatEventTime(ev.start_time, lang) : ''}${ev.venue ? ' · ' + ev.venue : ''}`;
   return lang === 'fr' ? {
     r72Subject: `${firstName}, as-tu décidé pour ${dayLabel || 'ton prochain match'}?`,
     r72Headline: 'As-tu décidé?',
@@ -11623,11 +11701,11 @@ function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, tea
   const bodyHtml = `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Désistement tardif · Late reversal</td></tr></table>
     <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(playerName)} ne joue plus</h1>
-    <p style="margin:0 0 8px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> était confirmé${'·'}e pour <b>${esc(team)}</b> et vient de changer sa réponse à 12 heures du match (${esc(dayLabel || ev.date)}). On a lancé l'invitation aux remplaçants automatiquement.</p>
-    <p style="margin:0 0 24px;font-size:15px;line-height:23px;color:#55585f;"><b>${esc(playerName)}</b> was confirmed for <b>${esc(team)}</b> and just changed their answer 12 hours before the game (${esc(dayLabel || ev.date)}). Subs have already been invited automatically.</p>
+    <p style="margin:0 0 8px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> était confirmé${'·'}e pour <b>${esc(team)}</b> et vient de changer sa réponse à 12 heures du match (${esc(dayLabel || formatEventDate(ev.date, 'fr', 'short'))}). On a lancé l'invitation aux remplaçants automatiquement.</p>
+    <p style="margin:0 0 24px;font-size:15px;line-height:23px;color:#55585f;"><b>${esc(playerName)}</b> was confirmed for <b>${esc(team)}</b> and just changed their answer 12 hours before the game (${esc(dayLabel || formatEventDate(ev.date, 'en', 'short'))}). Subs have already been invited automatically.</p>
     ${nlEmailButton(dashboardLink, 'Voir le match · View the game', barColor)}
   `;
-  const text = `${playerName} (${team}) just dropped out 12h before the game (${ev.date}). Subs invited automatically. ${dashboardLink}`;
+  const text = `${playerName} (${team}) just dropped out 12h before the game (${dayLabel || formatEventDate(ev.date, 'en', 'short')}). Subs invited automatically. ${dashboardLink}`;
   const html = nlEmailWrap({ brandName: leagueName, barColor, bodyHtml, footerHtml: 'Notre Ligue' });
   return { subject, text, html };
 }
@@ -11660,14 +11738,16 @@ async function sendLateReversalAdminAlert(env, leagueId, ev, contact) {
   }
 }
 
+// Live-testing task (batch 2), Part 6: used to go through
+// Intl.DateTimeFormat, whose locale defaults don't match the design
+// system's own specific format -- fr-CA's own 'short' month always
+// adds a trailing period ("28 sept."), and en-CA's 'long' style
+// inserts a comma after the weekday ("Monday, Sep 28") -- neither of
+// which the spec (README.md: "dim 28 sept" / "Sun Sep 28") has. Now
+// goes through the same shared formatter every page uses
+// (date_format.js), for one consistent format everywhere.
 function reminderDayLabel(dateStr, lang) {
-  try {
-    const d = new Date(dateStr + 'T12:00:00');
-    const label = new Intl.DateTimeFormat(lang === 'en' ? 'en-CA' : 'fr-CA', { weekday: 'long', day: 'numeric', month: 'short' }).format(d);
-    return lang === 'en' ? (label.charAt(0).toUpperCase() + label.slice(1)) : label;
-  } catch (_) {
-    return dateStr;
-  }
+  return formatEventDate(dateStr, lang, 'long', false);
 }
 
 // Non-responders: a real roster player (not a sub, who's only ever
@@ -12286,10 +12366,10 @@ async function leagueRsvpGet(req, env, url) {
   const lang = forcedLang || 'fr';
   const t = RSVP_I18N[lang];
 
-  const overline = `${esc(ev.date)}${ev.start_time ? ' · ' + esc(ev.start_time) : ''}`;
+  const overline = dateTimeSpanHtml('span', ev.date, ev.start_time, 'long');
   const metaHtml = `<div class="rv-meta">
     ${team ? `<div><b>${esc(team)}</b></div>` : ''}
-    <div class="rv-where">${ev.venue ? esc(ev.venue) : ''}${ev.start_time && ev.end_time ? ` · ${esc(ev.start_time)} – ${esc(ev.end_time)}` : ''}</div>
+    <div class="rv-where">${ev.venue ? esc(ev.venue) : ''}${ev.start_time && ev.end_time ? ` · ${timeSpanHtml('span', ev.start_time)} – ${timeSpanHtml('span', ev.end_time)}` : ''}</div>
   </div>`;
 
   const answeredHtml = status !== 'pending' ? `
@@ -12365,6 +12445,13 @@ var RV_FORCED_LANG = ${JSON.stringify(forcedLang)};
     document.querySelectorAll('[data-i18n]').forEach(function(el) {
       var k = el.getAttribute('data-i18n');
       if (dict[k] != null) el.innerHTML = dict[k];
+    });
+    // Live-testing task (batch 2), Part 6: same data-date-fr/
+    // data-date-en swap as every other page's applyLanguage -- dates
+    // are dynamic data, not a plain dictionary string.
+    document.querySelectorAll('[data-date-fr]').forEach(function(el) {
+      var v = l === 'en' ? el.getAttribute('data-date-en') : el.getAttribute('data-date-fr');
+      if (v != null) el.textContent = v;
     });
   }
   if (RV_FORCED_LANG) {

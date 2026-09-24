@@ -12,6 +12,7 @@
 //   real schedule/teams -> and finally, SMBHL's own data is proven
 //   byte-for-byte unaffected by every single step above.
 import { env, SELF } from 'cloudflare:test';
+import { formatEventDate } from '../src/date_format.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { dataJsonKeyFor } from '../src/league_ids.js';
 import { applyRealSchema } from './support/real_schema.js';
@@ -331,7 +332,9 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       expect(publicHtml).toContain(LEAGUE_NAME);
       expect(publicHtml).toContain('Nordiques');
       expect(publicHtml).toContain('Canadiens');
-      expect(publicHtml).toContain(futureDate);
+      // Superseded by live-testing task (batch 2), Part 6: dates now
+      // render in the design system's own format, not raw ISO.
+      expect(publicHtml).toContain(formatEventDate(futureDate, 'fr', 'short'));
       expect(publicHtml).toContain('Aréna Notre Ligue');
       expect(publicHtml).not.toContain('skater1@part11.com');
       expect(publicHtml).not.toContain('Nordiques Skater One'); // no roster/attendee names on the public page

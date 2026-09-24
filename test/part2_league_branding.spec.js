@@ -105,7 +105,10 @@ describe('Part 2: league branding on session-based pages', () => {
     const res = await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } });
     const html = await res.text();
     // Design system Part 3: the event's own date, not a generic label.
-    expect(html).toContain(`<title>2026-12-13 — ${LEAGUE_NAME}</title>`);
+    // Superseded by live-testing task (batch 2), Part 6: dates now
+    // render in the design system's own format -- 2026-12-13 is a
+    // Sunday, so "Dim 13 déc" replaces the old raw ISO title.
+    expect(html).toContain(`<title>Dim 13 déc — ${LEAGUE_NAME}</title>`);
     expect(html).not.toContain('SMBHL');
   });
 
