@@ -1,5 +1,5 @@
 // Proves test/support/real_schema.js's applyRealSchema() actually builds
-// a working, complete database by running schema.sql + all migrate-*.sql
+// a working, complete database by running base_schema_v1.sql + all migrate-*.sql
 // files (see that file's header for the migrate-021.sql ordering note) --
 // and, specifically, that it would have caught Part 1's FK bug: applying
 // an *unfixed* copy of the SMBHL bootstrap insert (created_by = 'system'

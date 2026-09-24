@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Schema-drift guard, generator half. Reads schema.sql + every
+// Schema-drift guard, generator half. Reads test/support/base_schema_v1.sql + every
 // migrate-*.sql in the repo root and derives the full set of tables and
 // columns the migration chain has ever added, then writes it out as a
 // committed JS module (src/schema_manifest.js) the Worker imports.
@@ -112,7 +112,7 @@ function parseFile(sql, manifest) {
 function main() {
   const manifest = {};
 
-  const schemaPath = path.join(ROOT, 'schema.sql');
+  const schemaPath = path.join(ROOT, 'test', 'support', 'base_schema_v1.sql');
   if (!fs.existsSync(schemaPath)) {
     console.error(`generate_schema_manifest: ${schemaPath} not found`);
     process.exit(1);
@@ -139,7 +139,8 @@ function main() {
   const columnCount = Object.values(sortedManifest).reduce((n, cols) => n + cols.length, 0);
 
   const out = `// GENERATED FILE -- do not hand-edit.
-// Produced by scripts/generate_schema_manifest.js from schema.sql +
+// Produced by scripts/generate_schema_manifest.js from
+// test/support/base_schema_v1.sql +
 // all migrate-*.sql files (${1 + migrationFiles.length} files parsed, as of this
 // generation). Re-run that script after adding a new migration, then
 // run the full test suite -- test/schema_manifest.spec.js fails loudly

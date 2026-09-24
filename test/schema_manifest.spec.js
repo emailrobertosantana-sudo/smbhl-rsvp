@@ -1,5 +1,5 @@
 // Schema-drift guard, part 1: proves the generated manifest
-// (src/schema_manifest.js) genuinely matches what schema.sql +
+// (src/schema_manifest.js) genuinely matches what base_schema_v1.sql +
 // migrate-*.sql actually produce -- the safety net that keeps
 // scripts/generate_schema_manifest.js's output honest. If someone adds
 // a new migrate-NNN.sql file and forgets to re-run the generator, this

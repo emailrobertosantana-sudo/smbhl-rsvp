@@ -76,7 +76,7 @@ npx wrangler secret put ADMIN_KEY --env demo
 | `node_modules/` | Directory | Installed npm dependencies. |
 | `package-lock.json` | Config | Exact npm dependency lockfile. |
 | `package.json` | Config | Node package configuration, scripts, and dependencies (`vitest`, `wrangler`). |
-| `schema.sql` | SQL Schema | Initial base D1 tables (`contacts`, `events`, `rsvp`, `sheet_reviews`, `team_messages`). |
+| `test/support/base_schema_v1.sql` | SQL Schema (test-only) | Initial base D1 tables (`contacts`, `events`, `rsvp`, `sheet_reviews`, `team_messages`). **Never run against a live/remote database** — opens with `DROP TABLE`. Replayed only by the test suite and `scripts/generate_schema_manifest.js`; see **Section 10** for the schema-drift guard this feeds. |
 | `scratch/` | Directory | Scratch directory for diagnostic tools and verification scripts. |
 | `scratch/check_all_invites.js`| Script (Node) | Local test script to verify sub invite eligibility. |
 | `scratch/check_invites.js` | Script (Node) | Local test script for invite validation. |
@@ -101,7 +101,7 @@ npx wrangler secret put ADMIN_KEY --env demo
 
 | Migration File | Summary of Changes |
 |---|---|
-| `schema.sql` | Creates base tables: `contacts`, `events`, `rsvp`, `sheet_reviews`, and `team_messages`. |
+| `test/support/base_schema_v1.sql` (test-only, see **Section 3**) | Creates base tables: `contacts`, `events`, `rsvp`, `sheet_reviews`, and `team_messages`. |
 | `migrate-002.sql` | Adds event time windows (`start_time`, `end_time`), contact `role`, goalie sub pool (`is_goalie`), and `settings` table. |
 | `migrate-003.sql` | Creates `outbox` queue table for asynchronous mail holds and `jobs` table to prevent duplicate cron runs. |
 | `migrate-004.sql` | Creates `availability` table to queue sub responses and automate immediate waitlist placement. |

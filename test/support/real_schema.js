@@ -1,8 +1,8 @@
 // Shared test schema loader: builds each test file's isolated D1 instance
-// by actually running this repo's real schema.sql + migrate-*.sql files,
-// the same way the real (demo/production) database is built -- instead of
-// each spec file hand-rolling its own separate, ad hoc approximation of
-// the schema.
+// by actually running this repo's real base_schema_v1.sql + migrate-*.sql
+// files, the same way the real (demo/production) database is built --
+// instead of each spec file hand-rolling its own separate, ad hoc
+// approximation of the schema.
 //
 // WHY THIS EXISTS: migrate-020.sql's SMBHL bootstrap row failed against the
 // real demo D1 database with a FOREIGN KEY constraint violation
@@ -12,7 +12,7 @@
 // `REFERENCES users(id)` clause the real migration has. Building the test
 // schema from the real files closes that class of gap for good.
 //
-// FILE ORDER: schema.sql is this app's original (unnumbered) base schema
+// FILE ORDER: base_schema_v1.sql (test/support/) is this app's original (unnumbered) base schema
 // -- contacts/events/rsvp/sheet_reviews/team_messages. migrate-002.sql
 // onward assumes those tables already exist. migrate-021.sql is a special
 // case: it backfills CREATE TABLE statements for season_pricing and
@@ -23,8 +23,8 @@
 // migrate-020.sql where its number would literally place it. It is
 // numbered 021 because it was written after 020 (it documents a
 // pre-existing gap discovered while building this very loader), but it is
-// *applied* right after schema.sql, alongside it, since -- like
-// schema.sql -- it is base/prerequisite schema, not a chronologically-last
+// *applied* right after base_schema_v1.sql, alongside it, since -- like
+// base_schema_v1.sql -- it is base/prerequisite schema, not a chronologically-last
 // change. It's pure `CREATE TABLE IF NOT EXISTS`, so applying it early is
 // always safe. See migrate-021.sql's own header comment for the full story
 // and a note on real vs. previously-assumed default-value drift.
@@ -37,7 +37,7 @@
 // smarter splitter than this one.
 import { applyD1Migrations } from 'cloudflare:test';
 
-const schemaModules = import.meta.glob('../../schema.sql', { eager: true, query: '?raw', import: 'default' });
+const schemaModules = import.meta.glob('./base_schema_v1.sql', { eager: true, query: '?raw', import: 'default' });
 const migrationModules = import.meta.glob('../../migrate-*.sql', { eager: true, query: '?raw', import: 'default' });
 
 function splitStatements(sql) {
@@ -60,7 +60,7 @@ function numberFromMigratePath(p) {
 }
 
 const schemaSql = Object.values(schemaModules)[0];
-if (!schemaSql) throw new Error('real_schema.js: schema.sql not found via import.meta.glob');
+if (!schemaSql) throw new Error('real_schema.js: base_schema_v1.sql not found via import.meta.glob');
 
 const migrationEntries = Object.entries(migrationModules)
   .map(([path, sql]) => ({ path, num: numberFromMigratePath(path), sql }))
@@ -72,14 +72,14 @@ if (!gapFill021) throw new Error('real_schema.js: migrate-021.sql not found');
 const restInOrder = migrationEntries.filter(e => e.num !== 21);
 
 const orderedFiles = [
-  { name: 'schema.sql', sql: schemaSql },
+  { name: 'base_schema_v1.sql', sql: schemaSql },
   { name: 'migrate-021.sql (applied early: season_pricing/player_dues gap-fill, predates migrate-011.sql -- see this file\'s header)', sql: gapFill021.sql },
   ...restInOrder.map(e => ({ name: `migrate-${String(e.num).padStart(3, '0')}.sql`, sql: e.sql })),
 ];
 
 const REAL_MIGRATIONS = orderedFiles.map(f => ({ name: f.name, queries: splitStatements(f.sql) }));
 
-// Applies the real schema.sql + migrate-*.sql chain (see file order note
+// Applies the real base_schema_v1.sql + migrate-*.sql chain (see file order note
 // above) to `env.DB`. Idempotent per D1 instance via applyD1Migrations'
 // own d1_migrations bookkeeping table -- safe to call more than once.
 export async function applyRealSchema(env) {

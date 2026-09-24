@@ -10,7 +10,7 @@
 // Fix (Option C from the investigation): migrate-020.sql now inserts a
 // real, inert 'system' user before the leagues insert.
 //
-// This file now applies the real schema.sql + migrate-*.sql chain via
+// This file now applies the real base_schema_v1.sql + migrate-*.sql chain via
 // test/support/real_schema.js (Part 2 of the follow-up) instead of
 // hand-rolling its own copy -- test/real_schema_loader.spec.js already
 // covers that the real chain applies cleanly, is idempotent, and would

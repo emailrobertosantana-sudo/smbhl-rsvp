@@ -1,5 +1,29 @@
 -- SMBHL attendance — schema v1
--- Apply with:  npx wrangler d1 execute smbhl-rsvp --remote --file=./schema.sql
+--
+-- *** TEST-ONLY FIXTURE. DO NOT RUN THIS AGAINST ANY LIVE OR REMOTE
+-- *** DATABASE, EVER. IT OPENS WITH DROP TABLE AND WILL DESTROY REAL
+-- *** DATA.
+--
+-- Schema-drift guard task, Part 3: this file used to live at the repo
+-- root as `schema.sql`, alongside every real migrate-*.sql file, with
+-- an "Apply with: npx wrangler d1 execute smbhl-rsvp --remote
+-- --file=./schema.sql" comment identically phrased to every one of
+-- them -- an invitation to run it against production by pattern-
+-- matching the other files, which would DROP the real rsvp/events/
+-- contacts tables and every row in them. Moved here and renamed
+-- specifically to break that pattern-match: it no longer sits in the
+-- root, no longer matches the migrate-NNN.sql naming convention, and
+-- no longer carries a copy-pasteable remote-apply command.
+--
+-- This is genuinely still load-bearing, not dead weight to delete:
+-- test/support/real_schema.js replays this file (the app's original,
+-- unnumbered base schema -- contacts/events/rsvp/sheet_reviews/
+-- team_messages) followed by every migrate-*.sql file, to build each
+-- test's own real, fully-migrated database. The real production and
+-- demo databases were built from this exact content years ago and
+-- have been evolving via migrate-*.sql ever since -- this file is a
+-- historical record of that starting point, consumed only by the test
+-- suite and scripts/generate_schema_manifest.js, never by a deploy.
 
 DROP TABLE IF EXISTS rsvp;
 DROP TABLE IF EXISTS events;

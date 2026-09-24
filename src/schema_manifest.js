@@ -1,5 +1,6 @@
 // GENERATED FILE -- do not hand-edit.
-// Produced by scripts/generate_schema_manifest.js from schema.sql +
+// Produced by scripts/generate_schema_manifest.js from
+// test/support/base_schema_v1.sql +
 // all migrate-*.sql files (42 files parsed, as of this
 // generation). Re-run that script after adding a new migration, then
 // run the full test suite -- test/schema_manifest.spec.js fails loudly
