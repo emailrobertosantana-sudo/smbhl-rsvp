@@ -11508,6 +11508,56 @@ async function leagueOptInOutLinks(env, leagueId, ev, contact) {
   };
 }
 
+// Live-testing task, Part 3: "team assigned" follow-up for the
+// specific late-draw timing case -- a weekly_draw event whose teams
+// get drawn/assigned AFTER its 12h logistics wave already went out.
+// Normally the 12h logistics email already includes the player's team
+// (getConfirmedPlayers now reads rsvp.team -- see Part 8's own fix),
+// so this must NOT fire in the normal case (draw before the 12h
+// email) -- only when the wave already logged for this event.
+//
+// Reuses the EXISTING league-aware template (renderLeagueLogisticsEmail)
+// and sending identity (sendMail(..., cfg.league), the same
+// slug@mail.notreligue.ca / admin Reply-To every other league email
+// already uses) rather than a new path -- this IS the same "you're
+// confirmed, here's your team" email, just sent again once the team
+// becomes known, not a different email.
+//
+// Idempotent via league_team_assigned_email_log (migrate-034.sql):
+// fires at most once per (event, player) regardless of how many times
+// that player's team assignment changes afterward.
+async function maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, team) {
+  const alreadyLogged12h = await env.DB.prepare(
+    `SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = 'logistics_12h'`
+  ).bind(ev.id).first();
+  if (!alreadyLogged12h) return; // normal case: the draw beat the 12h email, team was already in it.
+
+  const already = await env.DB.prepare(
+    'SELECT 1 FROM league_team_assigned_email_log WHERE event_id = ? AND player_id = ?'
+  ).bind(ev.id, playerId).first();
+  if (already) return;
+
+  const contact = await env.DB.prepare(
+    'SELECT player_id, name, email, token_salt FROM contacts WHERE player_id = ? AND league_id = ? AND opted_out = 0 AND email IS NOT NULL'
+  ).bind(playerId, leagueRow.id).first();
+  if (!contact) return;
+
+  try {
+    const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
+    const dayLabel = reminderDayLabel(ev.date, forcedLang || 'fr');
+    const firstName = (contact.name || '').split(' ')[0] || contact.name;
+    const { optOutLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
+    const mail = renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team, optOutLink, forcedLang });
+    await sendMail(env, contact.email, mail.subject, mail.text, mail.html, null, cfg.league);
+    await env.DB.prepare(
+      `INSERT INTO league_team_assigned_email_log (event_id, player_id, sent_at) VALUES (?, ?, ?)
+       ON CONFLICT(event_id, player_id) DO NOTHING`
+    ).bind(ev.id, playerId, new Date().toISOString()).run();
+  } catch (err) {
+    console.error(`[team-assigned-followup] failed to send to ${playerId}: ${err.message}`);
+  }
+}
+
 // Sends one reminder wave for one event: real recipients (never a
 // static count), real per-league branding and color, real dedup via
 // league_reminder_log (never re-sent automatically for the same
@@ -11632,7 +11682,7 @@ async function runLeagueReminders(env) {
       if (leagueRow.auto_draw_enabled && cfg.teamStructure === 'weekly_draw' && hoursUntil <= leagueRow.auto_draw_hours_before) {
         const alreadyDrawn = await env.DB.prepare('SELECT 1 FROM league_auto_draw_log WHERE event_id = ?').bind(ev.id).first();
         if (!alreadyDrawn) {
-          const drawResult = await randomAssignEventTeams(env, leagueRow.id, ev.id, cfg);
+          const drawResult = await randomAssignEventTeams(env, leagueRow, ev, cfg);
           if (drawResult.ok) {
             await env.DB.prepare(
               `INSERT INTO league_auto_draw_log (event_id, league_id, drawn_at, assigned_count) VALUES (?, ?, ?, ?)
@@ -11749,6 +11799,15 @@ async function handleLeagueAssignEventTeam(req, env, url) {
   }
 
   await env.DB.prepare('UPDATE rsvp SET team = ? WHERE event_id = ? AND player_id = ?').bind(team, eventId, playerId).run();
+
+  // Live-testing task, Part 3: a manual per-player assignment can also
+  // be the "late" case (this event's 12h logistics email already went
+  // out with no team) -- same follow-up as the bulk random draw below.
+  const leagueRowForFollowup = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (leagueRowForFollowup) {
+    await maybeSendTeamAssignedFollowup(env, leagueRowForFollowup, cfg, ev, playerId, team);
+  }
+
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, team });
 }
 
@@ -11788,7 +11847,13 @@ function shuffleInPlace(arr) {
 // run the EXACT same shuffle-and-assign logic as the admin's manual
 // "draw teams" button, never a second copy. Returns a plain result
 // object, not an HTTP Response.
-async function randomAssignEventTeams(env, leagueId, eventId, cfg) {
+// Live-testing task, Part 3: now takes the full leagueRow/ev objects
+// (not just their ids) so it can trigger maybeSendTeamAssignedFollowup
+// per assignment -- both call sites (the manual "draw teams" button and
+// the scheduled auto-draw cron) already have these objects in hand.
+async function randomAssignEventTeams(env, leagueRow, ev, cfg) {
+  const leagueId = leagueRow.id;
+  const eventId = ev.id;
   if ((cfg.teamStructure || 'fixed') !== 'weekly_draw') {
     return { ok: false, error: 'This league does not assign teams per event.', errorKey: 'NOT_WEEKLY_DRAW' };
   }
@@ -11812,6 +11877,9 @@ async function randomAssignEventTeams(env, leagueId, eventId, cfg) {
 
   for (const a of assignments) {
     await env.DB.prepare('UPDATE rsvp SET team = ? WHERE event_id = ? AND player_id = ?').bind(a.team, eventId, a.playerId).run();
+  }
+  for (const a of assignments) {
+    await maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, a.playerId, a.team);
   }
 
   return { ok: true, assigned: assignments.length };
@@ -11839,7 +11907,8 @@ async function handleLeagueRandomAssignEventTeams(req, env, url) {
 
   // Same season-aware structure check as the manual assign-team route.
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
-  const result = await randomAssignEventTeams(env, leagueId, eventId, cfg);
+  const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
+  const result = await randomAssignEventTeams(env, leagueRow, ev, cfg);
   if (!result.ok) {
     return Response.json(result, { status: 400 });
   }
