@@ -7,7 +7,7 @@ import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateT
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -2751,11 +2751,16 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
 
   const today = new Date().toISOString().slice(0, 10);
   const events = (await env.DB.prepare(
-    `SELECT date, venue, start_time, state FROM events
+    `SELECT date, venue, venue_id, start_time, state FROM events
       WHERE league_id = ? AND state != 'cancelled' AND date >= ?
       ORDER BY date ASC LIMIT 20`
   ).bind(leagueId, today).all()).results || [];
   const nextEvent = events[0] || null;
+  // Live-testing task (batch 6), Part 9: reusable venues -- surfaces a
+  // map link next to the venue name wherever one resolves, on the two
+  // spots this page already shows a venue (the hero's next game, and
+  // the upcoming list).
+  const venueMapLinks = await getVenueMapLinksById(env, leagueId, events.map(ev => ev.venue_id));
 
   // Team-structure task, Part 4: standings are inherently team-vs-team
   // -- meaningless (and a real leak of the internal HEADCOUNT_TEAM_NAME
@@ -2843,6 +2848,13 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
         ? { drawnTeams: 'Équipes du prochain match', drawnTeamsNone: "Les équipes n'ont pas encore été formées." }
         : { drawnTeams: 'Teams for the next game', drawnTeamsNone: 'Teams have not been drawn yet.' });
     }
+    // Live-testing task (batch 6), Part 9: only carried when at least
+    // one listed event actually resolves to a real map link -- same
+    // "never ship an unused word" discipline as isHeadcount/isWeeklyDraw
+    // above.
+    if (venueMapLinks.size > 0) {
+      Object.assign(base, lang === 'fr' ? { viewOnMap: 'Voir sur la carte' } : { viewOnMap: 'View on map' });
+    }
     return base;
   }
   const I18N_PUBLIC = { fr: buildDict('fr'), en: buildDict('en') };
@@ -2856,7 +2868,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     ${dateTimeSpanHtml('div', nextEvent.date, nextEvent.start_time, 'short', 'class="pb-hero-when"')}
     ${isHeadcount ? `<div class="pb-hero-pool"><span class="tnum">${poolConfirmed}</span>${poolMax ? `<span>/${poolMax}</span>` : ''} <span data-i18n="poolConfirmed">${esc(t.poolConfirmed)}</span></div>` : ''}
     ${isHeadcount && poolGoalieMin > 0 ? `<div class="pb-hero-pool"><span class="tnum">${poolGoaliesConfirmed}</span><span>/${poolGoalieMin}</span> <span data-i18n="poolGoalies">${esc(t.poolGoalies)}</span></div>` : ''}
-    ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}</div>` : ''}
+    ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}${venueMapLinks.has(nextEvent.venue_id) ? ` · <a href="${esc(venueMapLinks.get(nextEvent.venue_id))}" target="_blank" rel="noopener" style="color:inherit" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>` : ''}
   </div>` : '';
 
   const standingsHtml = standings.length ? `
@@ -2874,7 +2886,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   <h2 data-i18n="upcoming">${esc(t.upcoming)}</h2>
   <div class="pb-glist">${events.map(ev => `<div class="pb-g">
       <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
-      <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}</div>
+      <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${venueMapLinks.has(ev.venue_id) ? ` · <a href="${esc(venueMapLinks.get(ev.venue_id))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
     </div>`).join('')}</div>` : `<p class="nl-help" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
 
   // 'headcount' has no team names to show at all (just the internal,
@@ -3688,6 +3700,12 @@ async function handleLeagueSettingsPage(req, env, url) {
     `SELECT u.email FROM league_admins la JOIN users u ON u.id = la.user_id WHERE la.league_id = ? ORDER BY la.created_at`
   ).bind(leagueId).all()).results.map(r => r.email);
 
+  // Live-testing task (batch 6), Part 9: reusable venues -- defined once
+  // here, selected (or free-texted) at event creation on the schedule
+  // page (getLeagueVenues is the shared read side of this feature; see
+  // its own comment in leagues.js).
+  const venues = await getLeagueVenues(env, leagueId);
+
   const { header, tabbar } = dashChrome(leagueRow.name, 'settings');
 
   const I18N_SETTINGS = {
@@ -3702,6 +3720,11 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblPublicTheme: 'Thème de la page publique', themeArene: 'Arène (sombre, actuel)', themeClean: 'Épuré (blanc, minimal)',
       themeHelp: "Deux thèmes sont offerts pour l'instant; deux autres (Classique, Quartier) s'en viennent.",
       themePreview: 'Voir la page publique',
+      venuesTitle: 'Lieux', venuesDesc: "Enregistre tes patinoires ou gymnases une fois, puis choisis-les à la création d'un match au lieu de retaper l'adresse à chaque fois.",
+      lblVenueName: 'Nom', lblVenueAddress: 'Adresse (optionnel)', lblVenueMapLink: 'Lien vers une carte (optionnel)',
+      venueNamePh: 'Ex. Aréna Notre-Dame', venueAddressPh: '123 rue Principale, Ville', venueMapLinkPh: 'https://maps.google.com/...',
+      addVenue: 'Ajouter le lieu', removeVenue: 'Retirer', noVenuesYet: "Aucun lieu enregistré pour l'instant.",
+      viewOnMap: 'Voir sur la carte',
       teamsTitle: 'Équipes', teamsDesc: "Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue -- republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).",
       teamsHeadcountNote: "Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.",
       addTeam: 'Ajouter une équipe', removeTeam: 'Retirer', lblTeamName: 'Nom', lblTeamColor: 'Couleur',
@@ -3770,6 +3793,11 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblPublicTheme: 'Public page theme', themeArene: 'Arène (dark, current)', themeClean: 'Épuré (white, minimal)',
       themeHelp: 'Two themes are available for now; two more (Classique, Quartier) are coming.',
       themePreview: 'View the public page',
+      venuesTitle: 'Venues', venuesDesc: 'Save your rinks or gyms once, then pick one when creating a game instead of retyping the address every time.',
+      lblVenueName: 'Name', lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
+      venueNamePh: 'E.g. Notre-Dame Arena', venueAddressPh: '123 Main St, City', venueMapLinkPh: 'https://maps.google.com/...',
+      addVenue: 'Add venue', removeVenue: 'Remove', noVenuesYet: 'No venues saved yet.',
+      viewOnMap: 'View on map',
       teamsTitle: 'Teams', teamsDesc: "Rename your teams and pick their colour. A change here updates the league's default team list -- republish the current season for it to show up everywhere (players, games, public page).",
       teamsHeadcountNote: 'This league has no fixed teams -- nothing to name here.',
       addTeam: 'Add a team', removeTeam: 'Remove', lblTeamName: 'Name', lblTeamColor: 'Colour',
@@ -3874,6 +3902,33 @@ async function handleLeagueSettingsPage(req, env, url) {
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.public_page_enabled ? 'true' : 'false'}" id="se_public_page_switch" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="identity_save" data-i18n="save" onclick="submitIdentity()">Enregistrer</button></div>
+  </section>
+
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="venuesTitle">Lieux</div>
+    <p class="nl-help" data-i18n="venuesDesc">Enregistre tes patinoires ou gymnases une fois, puis choisis-les à la création d'un match au lieu de retaper l'adresse à chaque fois.</p>
+    <div id="venuesErr" class="nl-error" style="display:none"></div>
+    <div id="se_venues_list" style="margin-top:12px">
+      ${venues.length ? venues.map(v => `<div class="se-venue-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px" data-venue-id="${esc(v.id)}">
+        <span style="flex:1">${esc(v.name)}${v.address ? ` <span class="nl-help" style="display:inline">(${esc(v.address)})</span>` : ''}${v.map_link ? ` · <a href="${esc(v.map_link)}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</span>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="removeVenue" onclick="removeVenueRow('${esc(v.id)}', this)">Retirer</button>
+      </div>`).join('') : `<p class="nl-help" id="se_no_venues" data-i18n="noVenuesYet">Aucun lieu enregistré pour l'instant.</p>`}
+    </div>
+    <div class="su-two" style="margin-top:8px">
+      <div class="nl-field">
+        <label class="nl-label" for="se_new_venue_name" data-i18n="lblVenueName">Nom</label>
+        <input class="nl-input" id="se_new_venue_name" type="text" data-i18n-ph="venueNamePh" placeholder="Ex. Aréna Notre-Dame">
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="se_new_venue_address" data-i18n="lblVenueAddress">Adresse (optionnel)</label>
+        <input class="nl-input" id="se_new_venue_address" type="text" data-i18n-ph="venueAddressPh" placeholder="123 rue Principale, Ville">
+      </div>
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" for="se_new_venue_map_link" data-i18n="lblVenueMapLink">Lien vers une carte (optionnel)</label>
+      <input class="nl-input" id="se_new_venue_map_link" type="text" data-i18n-ph="venueMapLinkPh" placeholder="https://maps.google.com/...">
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="venue_add_submit" data-i18n="addVenue" onclick="submitAddVenue()">Ajouter le lieu</button></div>
   </section>
 
   ${!isHeadcount ? `
@@ -4204,6 +4259,44 @@ async function submitSeasonTeams() {
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error, data.team ? { team: data.team } : null); err.style.display = 'block'; btn.disabled = false; return; }
     ok.textContent = window.__pageDict().saved; ok.style.display = 'block'; btn.disabled = false;
+    window.location.reload();
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
+// Live-testing task (batch 6), Part 9: reusable venues -- create/delete
+// only (no edit route -- see leagues.js's own comment on why), both
+// reload the page on success so the list/schedule-page dropdown always
+// reflect real server state, same pattern as season teams above.
+async function submitAddVenue() {
+  var err = document.getElementById('venuesErr');
+  err.style.display = 'none';
+  var name = document.getElementById('se_new_venue_name').value.trim();
+  if (!name) { err.textContent = window.__errorText('VENUE_NAME_REQUIRED'); err.style.display = 'block'; return; }
+  var address = document.getElementById('se_new_venue_address').value.trim();
+  var mapLink = document.getElementById('se_new_venue_map_link').value.trim();
+  var btn = document.getElementById('venue_add_submit'); btn.disabled = true;
+  try {
+    var res = await fetch('/league/venues', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ name: name, address: address || undefined, map_link: mapLink || undefined })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    window.location.reload();
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
+async function removeVenueRow(id, btn) {
+  var err = document.getElementById('venuesErr');
+  err.style.display = 'none';
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/venues/delete', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ id: id })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     window.location.reload();
   } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
 }
@@ -5056,8 +5149,15 @@ async function handleLeagueSchedulePage(req, env, url) {
 
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
   const events = (await env.DB.prepare(
-    'SELECT id, season, week, date, venue, state, start_time, end_time FROM events WHERE league_id = ? ORDER BY date DESC, week DESC'
+    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time FROM events WHERE league_id = ? ORDER BY date DESC, week DESC'
   ).bind(leagueId).all()).results || [];
+  // Live-testing task (batch 6), Part 9: reusable venues -- `venues`
+  // populates the create-event form's select-or-freetext control;
+  // `venueMapLinks` resolves each listed event's own venue_id (if any)
+  // to a map link, one batch query rather than one per row (see
+  // getVenueMapLinksById's own comment, leagues.js).
+  const venues = await getLeagueVenues(env, leagueId);
+  const venueMapLinks = await getVenueMapLinksById(env, leagueId, events.map(ev => ev.venue_id));
   // Live-testing bug fix (Bug 4): POST /league/events fails with
   // SEASON_REQUIRED whenever no season has been published yet (see
   // leagues.js's own check) -- this page's create-match form must not
@@ -5073,6 +5173,8 @@ async function handleLeagueSchedulePage(req, env, url) {
       title: 'Horaire', createEvent: 'Créer un match',
       date: 'Date', startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
       venueOpt: 'Lieu (optionnel)', createBtn: 'Créer le match', cancel: 'Annuler',
+      venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun -- texte libre ci-dessous',
+      viewOnMap: 'Voir sur la carte',
       noEvents: "Aucun match pour l'instant.",
       stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
       needsSeasonTitle: "Lance ta saison d'abord",
@@ -5090,6 +5192,8 @@ async function handleLeagueSchedulePage(req, env, url) {
       title: 'Schedule', createEvent: 'Create an event',
       date: 'Date', startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
       venueOpt: 'Venue (optional)', createBtn: 'Create the event', cancel: 'Cancel',
+      venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None -- free text below',
+      viewOnMap: 'View on map',
       noEvents: 'No events yet.',
       stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled',
       needsSeasonTitle: 'Start your season first',
@@ -5117,13 +5221,14 @@ async function handleLeagueSchedulePage(req, env, url) {
         <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
         <span class="sc-chevron">&rsaquo;</span>
       </a>
-      ${needsSeason ? '' : `<div class="sc-dup-wrap">
-        <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="duplicateBtn" onclick="toggleDuplicateRow('${esc(ev.id)}')">Dupliquer</button>
+      <div class="sc-dup-wrap">
+        ${venueMapLinks.has(ev.venue_id) ? `<a class="nl-help" href="${esc(venueMapLinks.get(ev.venue_id))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}
+        ${needsSeason ? '' : `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="duplicateBtn" onclick="toggleDuplicateRow('${esc(ev.id)}')">Dupliquer</button>
         <div class="sc-dup-inline" id="dup_${esc(ev.id)}" style="display:none;">
           <input type="date" class="nl-input" id="dup_date_${esc(ev.id)}">
           <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" onclick="confirmDuplicate('${esc(ev.id)}')" data-i18n="duplicateConfirmBtn">Confirmer</button>
-        </div>
-      </div>`}
+        </div>`}
+      </div>
     </div>`).join('')
     : `<p class="nl-help" data-i18n="noEvents">Aucun match pour l'instant.</p>`;
 
@@ -5208,6 +5313,13 @@ async function handleLeagueSchedulePage(req, env, url) {
           <input class="nl-input" id="e_end" type="time">
         </div>
       </div>
+      ${venues.length ? `<div class="nl-field">
+        <label class="nl-label" for="e_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
+        <select class="nl-select" id="e_venue_select">
+          <option value="" data-i18n="venueSelectNone">Aucun -- texte libre ci-dessous</option>
+          ${venues.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('')}
+        </select>
+      </div>` : ''}
       <div class="nl-field">
         <label class="nl-label" for="e_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
         <input class="nl-input" id="e_venue" type="text">
@@ -5244,6 +5356,13 @@ async function handleLeagueSchedulePage(req, env, url) {
           <input class="nl-input" id="be_end" type="time">
         </div>
       </div>
+      ${venues.length ? `<div class="nl-field">
+        <label class="nl-label" for="be_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
+        <select class="nl-select" id="be_venue_select">
+          <option value="" data-i18n="venueSelectNone">Aucun -- texte libre ci-dessous</option>
+          ${venues.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('')}
+        </select>
+      </div>` : ''}
       <div class="nl-field">
         <label class="nl-label" for="be_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
         <input class="nl-input" id="be_venue" type="text">
@@ -5268,6 +5387,13 @@ async function submitEvent() {
   var start_time = document.getElementById('e_start').value;
   var end_time = document.getElementById('e_end').value;
   var venue = document.getElementById('e_venue').value.trim();
+  // Live-testing task (batch 6), Part 9: a saved venue (select) wins
+  // over free text when both are somehow filled -- venue_id is the
+  // more precise, reusable signal; the free-text field only matters
+  // when no saved venue is picked (or this league has none yet, in
+  // which case the select isn't even rendered).
+  var venueSelect = document.getElementById('e_venue_select');
+  var venueId = venueSelect ? venueSelect.value : '';
   if (!date) { showErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
   var btn = document.getElementById('e_submit');
   btn.disabled = true;
@@ -5275,7 +5401,7 @@ async function submitEvent() {
     var res = await fetch('/league/events', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venue || undefined })
+      body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
@@ -5303,6 +5429,8 @@ async function submitBulkEvents() {
   var start_time = document.getElementById('be_start').value;
   var end_time = document.getElementById('be_end').value;
   var venue = document.getElementById('be_venue').value.trim();
+  var venueSelect = document.getElementById('be_venue_select');
+  var venueId = venueSelect ? venueSelect.value : '';
   if (!startDate) { showBulkErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
   var btn = document.getElementById('be_submit');
   btn.disabled = true;
@@ -5314,7 +5442,8 @@ async function submitBulkEvents() {
         startDate: startDate,
         occurrences: (occurrences && !endDate) ? Number(occurrences) : undefined,
         endDate: endDate || undefined,
-        start_time: start_time || undefined, end_time: end_time || undefined, venue: venue || undefined
+        start_time: start_time || undefined, end_time: end_time || undefined,
+        venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined
       })
     });
     var data = await res.json().catch(function() { return {}; });
@@ -5400,6 +5529,12 @@ ${tabbar}`;
     });
   }
 
+  // Live-testing task (batch 6), Part 9: reusable venues -- resolves
+  // THIS event's own venue_id (if any) to a map link, same shared
+  // lookup the schedule/public pages use.
+  const venueMapLinks = await getVenueMapLinksById(env, leagueId, [ev.venue_id]);
+  const venueMapLink = venueMapLinks.get(ev.venue_id) || null;
+
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
   const teamNames = getTeamNames(cfg);
   const totalTarget = (cfg.skatersPerTeam || 0) + (cfg.goaliesPerTeam || 0);
@@ -5432,7 +5567,8 @@ ${tabbar}`;
       poolTitle: 'Joueurs', poolGoalies: 'gardiens confirmés',
       unassignedTitle: 'Confirmés, pas encore assignés', unassignedDesc: 'Assigne chaque joueur confirmé à une équipe pour ce match.',
       noUnassigned: 'Tous les joueurs confirmés sont assignés.',
-      assignTo: 'Assigner à…', assign: 'Assigner', randomDraw: 'Tirage aléatoire'
+      assignTo: 'Assigner à…', assign: 'Assigner', randomDraw: 'Tirage aléatoire',
+      ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
@@ -5449,7 +5585,8 @@ ${tabbar}`;
       poolTitle: 'Players', poolGoalies: 'goalies confirmed',
       unassignedTitle: 'Confirmed, not yet assigned', unassignedDesc: 'Assign each confirmed player to a team for this game.',
       noUnassigned: 'Every confirmed player is assigned.',
-      assignTo: 'Assign to…', assign: 'Assign', randomDraw: 'Random draw'
+      assignTo: 'Assign to…', assign: 'Assign', randomDraw: 'Random draw',
+      ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     }
   };
   const BADGE_ICON_CHECK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 10.5l4 4 8-9"/></svg>';
@@ -5598,7 +5735,7 @@ ${tabbar}`;
   <div>
     <p class="nl-help" style="margin:0"><a href="/league/schedule" data-i18n="backToSchedule">&lsaquo; Horaire</a></p>
     ${dateTimeSpanHtml('h1', ev.date, ev.start_time, 'long')}
-    <p class="nl-help" style="margin-top:4px">${ev.venue ? esc(ev.venue) : ''}</p>
+    <p class="nl-help" style="margin-top:4px">${ev.venue ? esc(ev.venue) : ''}${venueMapLink ? ` · <a href="${esc(venueMapLink)}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</p>
   </div>
   <div>
     <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="remind_now_btn" data-i18n="remindNow" onclick="sendReminderNow(this)">Envoyer un rappel maintenant</button>
@@ -14216,6 +14353,12 @@ async function leagueRsvpGet(req, env, url) {
 
   const firstName = (contact.name || '').split(' ')[0] || contact.name;
 
+  // Live-testing task (batch 6), Part 9: reusable venues -- surfaces a
+  // map link on the RSVP page itself (reached from the invite/reminder
+  // emails' own link), the same shared lookup every other surface uses.
+  // Computed before buildDict below, which references it.
+  const venueMapLink = (await getVenueMapLinksById(env, leagueId, [ev.venue_id])).get(ev.venue_id) || null;
+
   function buildDict(lang) {
     const dayLabel = weekdayLabel(ev.date, lang);
     return lang === 'fr' ? {
@@ -14231,7 +14374,8 @@ async function leagueRsvpGet(req, env, url) {
       errBadStatus: 'Réponse invalide. Réessaie.',
       errBadToken: 'Ce lien est invalide ou expiré.',
       errLocked: "Cet événement n'accepte plus de réponses.",
-      errNetwork: 'Erreur réseau. Réessaie.'
+      errNetwork: 'Erreur réseau. Réessaie.',
+      ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
     } : {
       question: `${firstName}, are you playing${dayLabel ? ' ' + dayLabel.toLowerCase() : ''}?`,
       btnIn: "I'm in", btnOut: "Can't make it",
@@ -14245,7 +14389,8 @@ async function leagueRsvpGet(req, env, url) {
       errBadStatus: 'Invalid response. Please try again.',
       errBadToken: 'This link is invalid or expired.',
       errLocked: 'This event is no longer accepting responses.',
-      errNetwork: 'Network error. Please try again.'
+      errNetwork: 'Network error. Please try again.',
+      ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     };
   }
   const RSVP_I18N = { fr: buildDict('fr'), en: buildDict('en') };
@@ -14255,7 +14400,7 @@ async function leagueRsvpGet(req, env, url) {
   const overline = dateTimeSpanHtml('span', ev.date, ev.start_time, 'long');
   const metaHtml = `<div class="rv-meta">
     ${team ? `<div><b>${esc(team)}</b></div>` : ''}
-    <div class="rv-where">${ev.venue ? esc(ev.venue) : ''}${ev.start_time && ev.end_time ? ` · ${timeSpanHtml('span', ev.start_time)} – ${timeSpanHtml('span', ev.end_time)}` : ''}</div>
+    <div class="rv-where">${ev.venue ? esc(ev.venue) : ''}${ev.start_time && ev.end_time ? ` · ${timeSpanHtml('span', ev.start_time)} – ${timeSpanHtml('span', ev.end_time)}` : ''}${venueMapLink ? ` · <a href="${esc(venueMapLink)}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
   </div>`;
 
   const answeredHtml = status !== 'pending' ? `
@@ -22515,6 +22660,10 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueEventsBulkCreate(req, env);
       if (url.pathname === '/league/events/duplicate' && req.method === 'POST')
         return await handleLeagueEventDuplicate(req, env);
+      if (url.pathname === '/league/venues' && req.method === 'POST')
+        return await handleLeagueVenueCreate(req, env);
+      if (url.pathname === '/league/venues/delete' && req.method === 'POST')
+        return await handleLeagueVenueDelete(req, env);
       if (url.pathname === '/league/season/publish' && req.method === 'POST')
         return await handleLeagueSeasonPublish(req, env);
       // Signup/login/dashboard pages — pure UI on top of the routes above.

@@ -81,6 +81,13 @@ export const ERROR_I18N = {
   EVENT_DATE_EXISTS: { fr: 'Un match existe déjà à cette date dans ta ligue.', en: 'An event already exists for this date in your league.' },
   BULK_EVENTS_RECURRENCE_REQUIRED: { fr: 'Indique un nombre de matchs ou une date de fin après la date de départ.', en: 'Provide an occurrence count or an end date after the start date.' },
   EVENT_ID_REQUIRED: { fr: "L'identifiant du match est requis.", en: 'event_id is required.' },
+  VENUE_UNKNOWN: { fr: "Ce lieu n'appartient pas à ta ligue.", en: "venue_id must be one of this league's own saved venues." },
+  VENUE_NAME_REQUIRED: { fr: 'Le nom du lieu est requis.', en: 'name is required.' },
+  VENUE_NAME_TOO_LONG: { fr: 'Le nom du lieu est trop long.', en: 'Name is too long.' },
+  VENUE_MAP_LINK_INVALID: { fr: 'Le lien de la carte doit être une adresse http(s) valide.', en: 'map_link must be a valid http(s) link.' },
+  VENUE_ID_REQUIRED: { fr: "L'identifiant du lieu est requis.", en: 'id is required.' },
+  VENUE_NOT_FOUND: { fr: 'Lieu introuvable.', en: 'Venue not found.' },
+  ROUTE_BLOCKED_VENUES: { fr: 'Cette route ne peut pas gérer les lieux de cette ligue.', en: 'This route cannot manage venues for this league.' },
   // Live-testing bug fix (Bug 6 sweep): the event-status page's admin
   // IN/OUT override was reaching these 4 without an errorKey at all --
   // window.__errorText() falls back to the raw English `error` string

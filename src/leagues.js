@@ -708,7 +708,28 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
     return { ok: false, error: 'end_time must be in HH:MM format.', errorKey: 'END_TIME_FORMAT' };
   }
 
-  const venue = String(body.venue || '').trim() || null;
+  let venue = String(body.venue || '').trim() || null;
+  // Live-testing task (batch 6), Part 9: reusable venues. venue_id is
+  // optional -- when given, it must be one of THIS league's own saved
+  // venues (never another league's, never SMBHL's -- venues.league_id
+  // is checked explicitly, the same scoping every other league-owned
+  // row uses). The venue's own name is copied into events.venue as a
+  // denormalized snapshot, so every existing read site (schedule,
+  // public page, comms, reminder/confirmation emails -- ~90 of them,
+  // none touched by this task) keeps working unchanged, whether or not
+  // it knows venue_id exists. A caller that still sends only free-text
+  // `venue` (no venue_id) behaves byte-for-byte as before this task.
+  let venueId = null;
+  if (body.venue_id) {
+    const venueRow = await env.DB.prepare(
+      'SELECT id, name FROM venues WHERE id = ? AND league_id = ?'
+    ).bind(String(body.venue_id).trim(), leagueId).first();
+    if (!venueRow) {
+      return { ok: false, error: "venue_id must be one of this league's own saved venues.", errorKey: 'VENUE_UNKNOWN' };
+    }
+    venueId = venueRow.id;
+    venue = venueRow.name;
+  }
 
   const season = String(body.season || '').trim() || (leagueData && leagueData.current_season);
   if (!season) {
@@ -730,13 +751,13 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
   }
 
   await env.DB.prepare(
-    `INSERT INTO events (id, season, week, date, venue, state, start_time, end_time, league_id)
-     VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)`
-  ).bind(eventId, season, week, date, venue, startTime || null, endTime || null, leagueId).run();
+    `INSERT INTO events (id, season, week, date, venue, venue_id, state, start_time, end_time, league_id)
+     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)`
+  ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId).run();
 
   return {
     ok: true,
-    event: { id: eventId, season, week, date, venue, state: 'open', start_time: startTime || null, end_time: endTime || null }
+    event: { id: eventId, season, week, date, venue, venue_id: venueId, state: 'open', start_time: startTime || null, end_time: endTime || null }
   };
 }
 
@@ -841,7 +862,7 @@ export async function handleLeagueEventsBulkCreate(req, env) {
   const results = [];
   let date = startDate;
   for (let i = 0; i < occurrences; i++) {
-    const created = await createLeagueEventRow(env, leagueId, { date, venue: body.venue, start_time: body.start_time, end_time: body.end_time, season: body.season }, leagueData);
+    const created = await createLeagueEventRow(env, leagueId, { date, venue: body.venue, venue_id: body.venue_id, start_time: body.start_time, end_time: body.end_time, season: body.season }, leagueData);
     if (created.ok) {
       results.push({ status: 'created', event: created.event });
     } else {
@@ -899,13 +920,130 @@ export async function handleLeagueEventDuplicate(req, env) {
 
   const leagueData = await getLeagueDataJson(env, leagueId);
   const result = await createLeagueEventRow(env, leagueId, {
-    date: body.date, venue: source.venue, start_time: source.start_time, end_time: source.end_time, season: source.season
+    date: body.date, venue: source.venue, venue_id: source.venue_id, start_time: source.start_time, end_time: source.end_time, season: source.season
   }, leagueData);
   if (!result.ok) {
     const status = result.errorKey === 'EVENT_DATE_EXISTS' ? 409 : 400;
     return Response.json(result, { status });
   }
   return Response.json({ ok: true, league_id: leagueId, event: result.event });
+}
+
+/* ---------- Reusable venues (Part 9, batch 6, live-testing task) ----------
+ * A league defines a venue ONCE (name, optional address, optional map
+ * link) in Settings, then selects it at event-creation time instead of
+ * retyping the same free-text venue for every game -- createLeagueEventRow
+ * above (venue_id resolution) is the write side; getLeagueVenues/
+ * getVenueMapLinksById below are the shared read side, used by both
+ * Settings (the management list) and the schedule/public/event-detail
+ * pages (the select-or-freetext dropdown, and the map-link lookup for
+ * events that used it). Deliberately create+list+delete only, no edit
+ * route -- a wrong venue is fixed by deleting and re-adding (its name
+ * still gets denormalized into any event already created against it, so
+ * nothing breaks), a smaller surface than a full edit form for this
+ * first version.
+ */
+async function createLeagueVenueRow(env, leagueId, body) {
+  const name = String(body.name || '').trim();
+  if (!name) return { ok: false, error: 'name is required.', errorKey: 'VENUE_NAME_REQUIRED' };
+  if (name.length > 120) return { ok: false, error: 'Name is too long.', errorKey: 'VENUE_NAME_TOO_LONG' };
+  const address = String(body.address || '').trim() || null;
+  const mapLink = String(body.map_link || '').trim() || null;
+  if (mapLink && !/^https?:\/\//i.test(mapLink)) {
+    return { ok: false, error: 'map_link must be a valid http(s) link.', errorKey: 'VENUE_MAP_LINK_INVALID' };
+  }
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO venues (id, league_id, name, address, map_link, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(id, leagueId, name, address, mapLink, new Date().toISOString()).run();
+  return { ok: true, venue: { id, name, address, map_link: mapLink } };
+}
+
+export async function handleLeagueVenueCreate(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot create venues for SMBHL.', errorKey: 'ROUTE_BLOCKED_VENUES' }, { status: 403 });
+  }
+
+  const result = await createLeagueVenueRow(env, leagueId, body);
+  if (!result.ok) return Response.json(result, { status: 400 });
+  return Response.json({ ok: true, league_id: leagueId, venue: result.venue });
+}
+
+export async function handleLeagueVenueDelete(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot delete venues for SMBHL.', errorKey: 'ROUTE_BLOCKED_VENUES' }, { status: 403 });
+  }
+
+  const venueId = String(body.id || '').trim();
+  if (!venueId) return Response.json({ ok: false, error: 'id is required.', errorKey: 'VENUE_ID_REQUIRED' }, { status: 400 });
+  const existing = await env.DB.prepare('SELECT id FROM venues WHERE id = ? AND league_id = ?').bind(venueId, leagueId).first();
+  if (!existing) return Response.json({ ok: false, error: 'Venue not found.', errorKey: 'VENUE_NOT_FOUND' }, { status: 404 });
+
+  // Deleting a venue never touches any event that already referenced it
+  // -- that event's own events.venue text snapshot (its real source of
+  // truth for display, see createLeagueEventRow's own comment) is
+  // untouched, and its events.venue_id simply stops resolving to a real
+  // row -- the map-link lookup below just won't find one, same as any
+  // other free-text event that never had a venue_id to begin with.
+  await env.DB.prepare('DELETE FROM venues WHERE id = ? AND league_id = ?').bind(venueId, leagueId).run();
+  return Response.json({ ok: true, league_id: leagueId, id: venueId });
+}
+
+export async function getLeagueVenues(env, leagueId) {
+  return (await env.DB.prepare(
+    'SELECT id, name, address, map_link FROM venues WHERE league_id = ? ORDER BY name'
+  ).bind(leagueId).all()).results || [];
+}
+
+// Batch-resolves a set of events.venue_id values to their venue's
+// map_link, one query -- used wherever a page renders several events at
+// once (schedule list, public page's upcoming list) so showing a map
+// link never costs one query per event. Returns a Map(venue_id ->
+// map_link); an id with no row, or a row with no map_link, is simply
+// absent from the map (caller falls back to no link, same as any
+// free-text event).
+export async function getVenueMapLinksById(env, leagueId, venueIds) {
+  const ids = [...new Set((venueIds || []).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = (await env.DB.prepare(
+    `SELECT id, map_link FROM venues WHERE league_id = ? AND id IN (${placeholders})`
+  ).bind(leagueId, ...ids).all()).results || [];
+  const map = new Map();
+  for (const r of rows) if (r.map_link) map.set(r.id, r.map_link);
+  return map;
 }
 
 /* ---------- POST /league/season/publish ----------
