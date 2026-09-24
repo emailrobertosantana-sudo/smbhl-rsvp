@@ -501,6 +501,79 @@ export async function handleLeagueContactCreate(req, env) {
   return Response.json({ ok: true, league_id: leagueId, contact: result.contact });
 }
 
+/* ---------- POST /league/contacts/update (live-testing task, batch 6,
+ * Part 5) ----------
+ * The roster list showed Role and Goalie columns but offered no way to
+ * change either after creation -- especially painful right after a
+ * bulk import, where every row lands as 'roster'/not-a-goalie by
+ * construction (parseBulkText, roster page's own script, has no
+ * column for either), with no path forward except deleting and
+ * re-adding. Same two INDEPENDENT axes as the "add a player" form
+ * already uses (createLeagueContactRow's own comment) -- role
+ * (roster/sub_skater) and is_goalie (gated on sportHasGoalie), each
+ * settable on its own, for every team structure. Partial update: only
+ * the fields actually present in the body are touched, so the
+ * roster page's own two separate inline controls (Part 5's own build)
+ * can each fire independently without one clobbering the other.
+ */
+export async function handleLeagueContactUpdate(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update contacts for SMBHL.', errorKey: 'ROUTE_BLOCKED_CONTACTS' }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const playerId = String(body.player_id || '').trim();
+  if (!playerId) {
+    return Response.json({ ok: false, error: 'player_id is required.', errorKey: 'PLAYER_ID_REQUIRED' }, { status: 400 });
+  }
+  // Scoped by league_id in the same WHERE clause as the UPDATE below --
+  // never trust player_id alone (it's globally unique by construction,
+  // league_ids.js, but a belt-and-suspenders league_id check here
+  // matches every other league-scoped write in this file).
+  const existing = await env.DB.prepare('SELECT player_id FROM contacts WHERE player_id = ? AND league_id = ?').bind(playerId, leagueId).first();
+  if (!existing) {
+    return Response.json({ ok: false, error: 'Player not found.', errorKey: 'PLAYER_NOT_FOUND' }, { status: 404 });
+  }
+
+  const updates = [];
+  const params = [];
+  if (body.role !== undefined) {
+    const role = String(body.role || '').trim();
+    if (!['roster', 'sub_skater'].includes(role)) {
+      return Response.json({ ok: false, error: 'role must be roster or sub_skater.', errorKey: 'INVALID_ROLE' }, { status: 400 });
+    }
+    updates.push('role = ?'); params.push(role);
+  }
+  if (body.is_goalie !== undefined) {
+    const cfg = await getLeagueSeasonConfig(env, leagueId);
+    if (!sportHasGoalie(cfg.sportType)) {
+      return Response.json({ ok: false, error: 'This league has no goalie position.', errorKey: 'NO_GOALIE_POSITION' }, { status: 400 });
+    }
+    updates.push('is_goalie = ?'); params.push(body.is_goalie === true ? 1 : 0);
+  }
+  if (!updates.length) {
+    return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
+  }
+
+  params.push(playerId, leagueId);
+  await env.DB.prepare(`UPDATE contacts SET ${updates.join(', ')} WHERE player_id = ? AND league_id = ?`).bind(...params).run();
+
+  const row = await env.DB.prepare('SELECT role, is_goalie FROM contacts WHERE player_id = ?').bind(playerId).first();
+  return Response.json({ ok: true, player_id: playerId, role: row.role, is_goalie: !!row.is_goalie });
+}
+
 /* ---------- POST /league/contacts/bulk (Part 6, live-testing task) ----------
  * Bulk roster import: an admin pastes a block of text (from a
  * spreadsheet) into the roster page, which parses it CLIENT-SIDE into

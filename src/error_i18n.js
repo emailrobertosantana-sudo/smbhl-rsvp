@@ -91,6 +91,8 @@ export const ERROR_I18N = {
   EVENT_NOT_FOUND: { fr: 'Match introuvable.', en: 'Event not found.' },
   EVENT_LOCKED: { fr: "Ce match n'accepte plus de changements.", en: 'This event is locked.' },
   PLAYER_NOT_FOUND: { fr: 'Joueur introuvable.', en: 'Player not found.' },
+  PLAYER_ID_REQUIRED: { fr: "L'identifiant du joueur est requis.", en: 'player_id is required.' },
+  NO_GOALIE_POSITION: { fr: "Cette ligue n'a pas de poste de gardien.", en: 'This league has no goalie position.' },
   ADMIN_INVITE_SUBS_FIELDS_REQUIRED: { fr: 'Des champs requis sont manquants.', en: 'event_id, team, and need (goalie|skater) are required.' },
   TEAM_UNKNOWN: { fr: 'Équipe inconnue pour cette ligue.', en: 'Unknown team for this league.' },
   SEASON_NAME_REQUIRED: { fr: 'Le nom de la saison est requis.', en: 'season_name is required.' },

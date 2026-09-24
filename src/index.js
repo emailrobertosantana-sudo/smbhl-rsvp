@@ -7,7 +7,7 @@ import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateT
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -4498,14 +4498,26 @@ async function handleLeagueRosterPage(req, env, url) {
     ...(showTeams ? [`<button type="button" class="ro-f" data-filter="unassigned" aria-pressed="false"><span data-i18n="filterUnassigned">Sans équipe</span> ${unassignedCount}</button>`] : [])
   ].join('');
 
+  // Live-testing task (batch 6), Part 5: Role and Goalie used to be
+  // static text -- no way to change either after creation, especially
+  // painful right after a bulk import (every row lands as
+  // 'roster'/not-a-goalie by construction, parseBulkText has no
+  // column for either) with no path forward except deleting and
+  // re-adding. Both are now small clickable toggle buttons, POSTing to
+  // /league/contacts/update (leagues.js) -- same two INDEPENDENT axes
+  // as the "add a player" form already uses (role: roster/sub_skater;
+  // is_goalie: gated on showGoalieAxis), each settable on its own.
   const rows = contacts.map(c => {
     const roleKey = c.role === 'roster' ? 'roleRoster' : 'roleSub';
+    const nextRole = c.role === 'roster' ? 'sub_skater' : 'roster';
     const filterAttr = c.role !== 'roster' ? 'subs' : c.preferred_team ? `team:${c.preferred_team}` : 'unassigned';
+    const roleBtn = `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-toggle-role="${esc(c.player_id)}" data-next-role="${nextRole}"><span data-i18n="${roleKey}">${esc(I18N_ROSTER.fr[roleKey])}</span></button>`;
+    const goalieBtn = `<button type="button" class="nl-btn ${c.is_goalie ? 'nl-btn--primary' : 'nl-btn--secondary'} nl-btn--sm" data-toggle-goalie="${esc(c.player_id)}" data-next-goalie="${c.is_goalie ? '0' : '1'}"><span data-i18n="${c.is_goalie ? 'axisGoalie' : 'axisPlayer'}">${esc(c.is_goalie ? I18N_ROSTER.fr.axisGoalie : I18N_ROSTER.fr.axisPlayer)}</span></button>`;
     return `<tr data-row-filter="${esc(filterAttr)}">
       <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}</td>
       ${showTeams ? `<td>${c.preferred_team ? esc(c.preferred_team) : `<span class="nl-help" data-i18n="teamUnassigned">Non assigné</span>`}</td>` : ''}
-      <td><span data-i18n="${roleKey}">${esc(I18N_ROSTER.fr[roleKey])}</span></td>
-      ${showGoalieAxis ? `<td>${c.is_goalie ? `<span data-i18n="axisGoalie">Gardien</span>` : ''}</td>` : ''}
+      <td>${roleBtn}</td>
+      ${showGoalieAxis ? `<td>${goalieBtn}</td>` : ''}
     </tr>`;
   }).join('');
 
@@ -4877,6 +4889,63 @@ document.querySelectorAll('.ro-f').forEach(function(btn) {
   });
 });
 function showErr(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
+// Live-testing task (batch 6), Part 5: inline role/goalie editing.
+async function toggleRosterField(playerId, body) {
+  var res = await fetch('/league/contacts/update', {
+    method: 'POST', credentials: 'same-origin',
+    headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+    body: JSON.stringify(Object.assign({ player_id: playerId }, body))
+  });
+  var data = await res.json().catch(function() { return {}; });
+  if (!res.ok || !data.ok) throw new Error(window.__errorText(data.errorKey, data.error));
+  return data;
+}
+document.querySelectorAll('[data-toggle-role]').forEach(function(btn) {
+  btn.addEventListener('click', async function() {
+    var playerId = btn.getAttribute('data-toggle-role');
+    var nextRole = btn.getAttribute('data-next-role');
+    btn.disabled = true;
+    document.getElementById('formErr').style.display = 'none';
+    try {
+      await toggleRosterField(playerId, { role: nextRole });
+      var dict = window.__pageDict();
+      var isRoster = nextRole === 'roster';
+      btn.querySelector('span').textContent = isRoster ? dict.roleRoster : dict.roleSub;
+      btn.querySelector('span').setAttribute('data-i18n', isRoster ? 'roleRoster' : 'roleSub');
+      btn.setAttribute('data-next-role', isRoster ? 'sub_skater' : 'roster');
+      // The row's own filter tab (subs vs team/unassigned) depends on
+      // role -- a page reload keeps this simple and always correct,
+      // rather than re-deriving preferred_team-vs-subs bucketing here.
+      window.location.reload();
+    } catch (e) {
+      showErr(String(e.message));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
+document.querySelectorAll('[data-toggle-goalie]').forEach(function(btn) {
+  btn.addEventListener('click', async function() {
+    var playerId = btn.getAttribute('data-toggle-goalie');
+    var nextGoalie = btn.getAttribute('data-next-goalie') === '1';
+    btn.disabled = true;
+    document.getElementById('formErr').style.display = 'none';
+    try {
+      await toggleRosterField(playerId, { is_goalie: nextGoalie });
+      var dict = window.__pageDict();
+      var span = btn.querySelector('span');
+      span.textContent = nextGoalie ? dict.axisGoalie : dict.axisPlayer;
+      span.setAttribute('data-i18n', nextGoalie ? 'axisGoalie' : 'axisPlayer');
+      btn.setAttribute('data-next-goalie', nextGoalie ? '0' : '1');
+      btn.classList.toggle('nl-btn--primary', nextGoalie);
+      btn.classList.toggle('nl-btn--secondary', !nextGoalie);
+    } catch (e) {
+      showErr(String(e.message));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
 async function submitContact() {
   document.getElementById('formErr').style.display = 'none';
   var name = document.getElementById('r_name').value.trim();
@@ -22315,6 +22384,11 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueContactCreate(req, env);
       if (url.pathname === '/league/contacts/bulk' && req.method === 'POST')
         return await handleLeagueContactsBulkCreate(req, env);
+      // Live-testing task (batch 6), Part 5: inline role/goalie editing
+      // on the roster list -- see handleLeagueContactUpdate's own
+      // comment (leagues.js).
+      if (url.pathname === '/league/contacts/update' && req.method === 'POST')
+        return await handleLeagueContactUpdate(req, env, url);
       if (url.pathname === '/league/events' && req.method === 'POST')
         return await handleLeagueEventCreate(req, env);
       if (url.pathname === '/league/events/bulk' && req.method === 'POST')
