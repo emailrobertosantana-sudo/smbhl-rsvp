@@ -208,14 +208,13 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       // ---- Step 5: the skater RSVPs via their own real magic link,
       // marking OUT. Nordiques drops to 0 confirmed skaters (need 1),
       // which immediately queues an automatic sub-invite to the
-      // eligible skater sub -- zero admin action. Whether it's actually
-      // SENT within this same request depends on afterQuiet()'s
-      // hardcoded 23:00-07:00 local-clock delay -- a pre-existing,
-      // out-of-scope bug documented in this task's final report and
-      // already reflected in 5 other tests' known flake tonight -- so
-      // this assertion checks the real, deterministic ground truth (the
-      // outbox row itself: correctly targeted, correctly league-scoped)
-      // rather than coupling to wall-clock-dependent delivery timing.
+      // eligible skater sub -- zero admin action. Live-testing task
+      // (batch 2), Part 16: this used to be wall-clock-dependent --
+      // afterQuiet()'s hardcoded 23:00-07:00 local delay silently
+      // deferred even a delayMin: 0 "send now" enqueue, so this only
+      // sent synchronously outside quiet hours. maybeInviteSubsForShortage
+      // now passes skipQuietHours: true (enqueue's own comment has the
+      // full root-cause writeup), so this is deterministic at any hour.
       const skaterSubId = (await env.DB.prepare('SELECT player_id FROM contacts WHERE league_id = ? AND email = ?').bind(leagueId, 'skatersub@part11.com').first()).player_id;
       const rsvpToken = await computeRsvpToken(RSVP_SECRET, `lr:${leagueId}:${eventId}:${skaterId}:${skaterSalt}`);
       const { sentMails: rsvpMails, result: rsvpRes } = await withMailMock(async () =>
@@ -233,16 +232,15 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       ).bind(eventId, skaterSubId).first();
       expect(skaterInviteRow).toBeTruthy();
       expect(skaterInviteRow.league_id).toBe(leagueId); // queued under THIS league, never SMBHL's
-      if (rsvpMails.length > 0) { // sent synchronously (i.e. not currently quiet hours)
-        expect(rsvpMails[0].to).toEqual(['skatersub@part11.com']);
-        // Bug 1 fix (live-testing): From is now the league's own slug
-        // under mail.notreligue.ca -- Reply-To (unchanged) is the real
-        // admin email.
-        expect(rsvpMails[0].from).toContain('mail.notreligue.ca');
-        expect(rsvpMails[0].from).not.toContain('part11.admin@example.com');
-        expect(rsvpMails[0].from).not.toContain('smbhl.com');
-        expect(rsvpMails[0].reply_to).toBe('part11.admin@example.com');
-      }
+      expect(rsvpMails.length).toBe(1);
+      expect(rsvpMails[0].to).toEqual(['skatersub@part11.com']);
+      // Bug 1 fix (live-testing): From is now the league's own slug
+      // under mail.notreligue.ca -- Reply-To (unchanged) is the real
+      // admin email.
+      expect(rsvpMails[0].from).toContain('mail.notreligue.ca');
+      expect(rsvpMails[0].from).not.toContain('part11.admin@example.com');
+      expect(rsvpMails[0].from).not.toContain('smbhl.com');
+      expect(rsvpMails[0].reply_to).toBe('part11.admin@example.com');
 
       // ---- Step 6 (Part 3): the admin views the event-detail page,
       // sees the goalie still pending, and corrects a DIFFERENT
@@ -274,13 +272,12 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       ).bind(eventId, goalieSubId).first();
       expect(goalieInviteRow).toBeTruthy();
       expect(goalieInviteRow.league_id).toBe(leagueId);
-      if (adminMails.length > 0) {
-        expect(adminMails[0].to).toEqual(['goaliesub@part11.com']);
-        // Bug 1 fix (live-testing): From is now the league's own slug
-        // under mail.notreligue.ca; Reply-To is the real admin email.
-        expect(adminMails[0].from).toContain('mail.notreligue.ca');
-        expect(adminMails[0].reply_to).toBe('part11.admin@example.com');
-      }
+      expect(adminMails.length).toBe(1);
+      expect(adminMails[0].to).toEqual(['goaliesub@part11.com']);
+      // Bug 1 fix (live-testing): From is now the league's own slug
+      // under mail.notreligue.ca; Reply-To is the real admin email.
+      expect(adminMails[0].from).toContain('mail.notreligue.ca');
+      expect(adminMails[0].reply_to).toBe('part11.admin@example.com');
 
       const statusPageRes = await SELF.fetch(`${BASE}/league/events/status?e=${encodeURIComponent(eventId)}`, { headers: { cookie } });
       const statusJson = await statusPageRes.json();

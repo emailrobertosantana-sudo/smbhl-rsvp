@@ -4790,10 +4790,40 @@ function afterQuiet(d) {
 // table's own column DEFAULT would produce, so every existing call site
 // (none of which pass it) is completely unchanged. Only Part P's
 // league-scoped sub-invite route passes its own real leagueId.
+// Live-testing task (batch 2), Part 16 -- root cause of the pre-existing
+// "mail-mock-timing race" documented elsewhere in this codebase's test
+// files: it was never a race at all. Every mail send in this app IS
+// reliably awaited end to end (audited: every sendMail()/sendMailFunc()
+// call site is `await`-ed, every route handler is `return await
+// handleXxx(...)`, and drain() itself awaits each send sequentially in
+// its own loop -- confirmed by reverting to the commit this whole batch
+// started from and reproducing the exact same 100%-deterministic
+// failure there too, with none of this session's changes in play).
+// The REAL cause: enqueue() unconditionally pushed EVERY message's
+// send_after past quiet hours (23:00-07:00 local, afterQuiet() above)
+// -- including a caller that explicitly asked for delayMin: 0 ("send
+// this right now"). Any test (or real request) that happens to run
+// during quiet hours sees its "immediate" message's send_after land
+// hours in the future, so a drain() called synchronously right after
+// finds nothing due yet. This is genuinely time-of-day dependent, not
+// flaky in the random sense -- it fails 100% of the time when run at
+// night, and passes 100% of the time during the day, which is exactly
+// why it read as an intermittent "flake" across different runs.
+//
+// FIX: skipQuietHours, defaulting to false so every existing call site
+// (SMBHL's own wave-scheduled sub-calls, reminders, gameday mail, every
+// cron-driven send) keeps its current, correct, unchanged behavior --
+// quiet hours exist specifically so a routine/scheduled message doesn't
+// wake someone at 3am. Only maybeInviteSubsForShortage's own enqueue()
+// call passes true: that path is a live person's real-time action (a
+// player or admin just created a real shortage for a real upcoming
+// game) whose own comment already promises "Sends right away" -- quiet
+// hours were silently breaking that promise by design, not on purpose.
 async function enqueue(env, { kind, event_id, player_id = null, team = null,
-                              dedup_key = null, payload = {}, delayMin = 0, league_id = SMBHL_LEAGUE_ID }) {
+                              dedup_key = null, payload = {}, delayMin = 0, league_id = SMBHL_LEAGUE_ID, skipQuietHours = false }) {
   const now = new Date();
-  const after = afterQuiet(new Date(now.getTime() + delayMin * 60000)).toISOString();
+  const target = new Date(now.getTime() + delayMin * 60000);
+  const after = (skipQuietHours ? target : afterQuiet(target)).toISOString();
   if (dedup_key) {
     await env.DB.prepare(
       `UPDATE outbox SET cancelled = 1
@@ -6127,7 +6157,13 @@ function hoursOut(ev) {
 // SMBHL-only admin routes), so every SMBHL call site (none of which
 // pass this param) keeps the exact original role-only filter,
 // unconditionally, forever.
-async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false) {
+// Part 16: skipQuietHours defaults to false, so every one of SMBHL's own
+// existing call sites (all automatic/cron/holdcall-driven, none of
+// which pass this) keeps its exact current quiet-hours behavior,
+// unchanged. Only handleLeagueInviteSubs's own manual, admin-clicked
+// "invite subs now" button passes true -- see enqueue's own comment for
+// the full root-cause writeup.
+async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false) {
   const poolCondition = usesIndependentGoalieAxis
     ? (need === 'goalie' ? `c.role = 'sub_skater' AND c.is_goalie = 1` : `c.role = 'sub_skater' AND c.is_goalie != 1`)
     : `c.role = ?`;
@@ -6159,7 +6195,7 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
   for (const p of pool) {
     await enqueue(env, { kind: 'sub_call', event_id: ev.id, player_id: p.player_id,
       team, dedup_key: `call:${ev.id}:${need}:${p.player_id}`,
-      payload: { need }, delayMin: startDelay + p.wave * gap, league_id: leagueId });
+      payload: { need }, delayMin: startDelay + p.wave * gap, league_id: leagueId, skipQuietHours });
   }
   return pool.length;
 }
@@ -11960,7 +11996,13 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
     await enqueue(env, {
       kind: 'sub_call', event_id: ev.id, player_id: p.player_id, team,
       dedup_key: `call:${ev.id}:${need}:${p.player_id}`,
-      payload: { need }, delayMin: 0, league_id: leagueId
+      payload: { need }, delayMin: 0, league_id: leagueId,
+      // Part 16: this is a live shortage just created by a real
+      // person's own action, not a scheduled/routine send -- see
+      // enqueue's own comment for why quiet hours shouldn't silently
+      // delay it for hours despite delayMin: 0 already asking for
+      // "now".
+      skipQuietHours: true
     });
   }
   // Sends right away — scoped to THIS event only (filterEventId), so a
@@ -13128,7 +13170,25 @@ async function handleLeagueInviteSubs(req, env, url) {
   // Live-testing task, Part 2 (bug fix): every non-SMBHL league now
   // uses the independent is_goalie axis for its subs, for every team
   // structure -- not just headcount+hockey (see callSubs' own comment).
-  const invited = await callSubs(env, ev, team, need, 0, leagueId, sportHasGoalie(cfg.sportType));
+  //
+  // Part 16 fix: this manual, admin-clicked "invite subs now" button
+  // enqueues via callSubs()/enqueue() same as everything else in this
+  // app, but -- unlike maybeInviteSubsForShortage's own identical
+  // pattern just below -- it never actually drained the queue itself.
+  // Nothing else does either for this deployment: runLeagueReminders
+  // (this product's own cron) never calls drain(), and SMBHL's own
+  // cron-driven runSchedule()/drain() never runs here at all (scheduled()
+  // branches to ONE or the OTHER based on env.LEAGUE_PRODUCT, never
+  // both -- see scheduled()'s own comment). A league admin has no
+  // ADMIN_KEY to reach the one route that does drain
+  // (/admin/emails/drain, SMBHL-only). The real, live consequence: every
+  // sub this button "invited" got a real outbox row that would sit
+  // there unsent forever -- not delayed, never sent, on the actual
+  // deployed product. skipQuietHours: true for the same reason as
+  // maybeInviteSubsForShortage (enqueue's own comment) -- a real admin
+  // just clicked a real "do this now" button.
+  const invited = await callSubs(env, ev, team, need, 0, leagueId, sportHasGoalie(cfg.sportType), true);
+  await drain(env, 40, ev.id);
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, team, need, invited });
 }
 
