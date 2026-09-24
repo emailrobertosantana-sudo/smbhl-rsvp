@@ -104,28 +104,43 @@ describe('Part 5 (live-testing task): goalie flag driven by sport capability, av
       expect(byId[skater.player_id].is_goalie).toBe(0);
     });
 
-    it("a fixed-mode SUB keeps deriving is_goalie from role ('sub_goalie') -- the independent axis doesn't apply to subs there, avoiding two disagreeing controls for the same thing", async () => {
+    // Superseded by the live-testing task's Part 2 bug fix: role
+    // 'sub_goalie' duplicated the independent Goalie/Player axis for a
+    // sub specifically (two controls for the same thing, able to
+    // disagree -- exactly what was reported broken). Role is now
+    // exactly 2 options (roster/sub_skater) for every team structure,
+    // and is_goalie is the ONE place goalie-ness is asked, for a
+    // regular OR a sub alike -- see createLeagueContactRow's own
+    // comment (leagues.js) and part37's own regression suite.
+    it("a fixed-mode SUB's goalie-ness is now the SAME independent is_goalie axis a regular uses -- 'sub_goalie' is no longer a valid role at all", async () => {
       const { cookie, csrfToken } = await signup('fixed.goalie.sub@example.com', '203.0.127.003');
       await createLeague(cookie, csrfToken, { name: 'Fixed Goalie Sub League', teamNames: ['A', 'B'], tracksStats: true });
 
-      // No is_goalie sent at all -- exactly what the roster page's own
-      // client script now does for a sub role in fixed/weekly_draw
-      // mode (goalieAxisVisible() is false, so is_goalie is omitted).
-      const subGoalieByRole = await addPlayer(cookie, csrfToken, 'Fixed Sub By Role', { role: 'sub_goalie' });
-      const subSkaterByRole = await addPlayer(cookie, csrfToken, 'Fixed Sub Skater By Role', { role: 'sub_skater' });
+      const rejected = await SELF.fetch('http://example.com/league/contacts', {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+        body: JSON.stringify({ name: 'Rejected Sub Goalie', role: 'sub_goalie' })
+      });
+      expect(rejected.status).toBe(400);
+      expect((await rejected.json()).errorKey).toBe('INVALID_ROLE');
 
-      const rows = await env.DB.prepare('SELECT player_id, is_goalie FROM contacts WHERE player_id IN (?, ?)').bind(subGoalieByRole.player_id, subSkaterByRole.player_id).all();
+      const subGoalie = await addPlayer(cookie, csrfToken, 'Fixed Sub Goalie Axis', { role: 'sub_skater', is_goalie: true });
+      const subSkater = await addPlayer(cookie, csrfToken, 'Fixed Sub Skater Axis', { role: 'sub_skater', is_goalie: false });
+
+      const rows = await env.DB.prepare('SELECT player_id, role, is_goalie FROM contacts WHERE player_id IN (?, ?)').bind(subGoalie.player_id, subSkater.player_id).all();
       const byId = Object.fromEntries(rows.results.map(r => [r.player_id, r]));
-      expect(byId[subGoalieByRole.player_id].is_goalie).toBe(1);
-      expect(byId[subSkaterByRole.player_id].is_goalie).toBe(0);
+      expect(byId[subGoalie.player_id].role).toBe('sub_skater');
+      expect(byId[subGoalie.player_id].is_goalie).toBe(1);
+      expect(byId[subSkater.player_id].is_goalie).toBe(0);
     });
 
-    it("fixed mode's roster page hides the goalie axis field when a sub role is selected, and shows it for 'roster' -- served script assertion", async () => {
+    it("fixed mode's roster page shows the goalie axis field regardless of which role is selected -- no more role-gating (that was the bug)", async () => {
       const { cookie, csrfToken } = await signup('fixed.goalie.script@example.com', '203.0.127.004');
       await createLeague(cookie, csrfToken, { name: 'Fixed Goalie Script League', teamNames: ['A', 'B'], tracksStats: true });
       const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
-      expect(html).toContain('GOALIE_AXIS_ROLE_GATED = true');
-      expect(html).toContain('r_goalie_field');
+      expect(html).toContain('id="r_goalie_field"');
+      expect(html).toContain('id="r_goalie_radio"');
+      expect(html).not.toContain('GOALIE_AXIS_ROLE_GATED');
+      expect(html).not.toContain('roleSubGoalie');
     });
   });
 
@@ -172,7 +187,7 @@ describe('Part 5 (live-testing task): goalie flag driven by sport capability, av
       await createLeague(cookie, csrfToken, { name: 'Headcount Goalie Unaffected League', tracksStats: true, teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 });
       const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
       expect(html).toContain('id="r_goalie_radio"');
-      expect(html).toContain('GOALIE_AXIS_ROLE_GATED = false');
+      expect(html).toContain('id="r_goalie_field"');
     });
   });
 });

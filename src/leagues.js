@@ -307,10 +307,20 @@ export async function handleLeagueEvents(req, env, url) {
  * inventing a parallel model — see peopleAction's 'new' action and
  * handleTeamsAdd in index.js for the shape this mirrors.
  *
- * role: 'roster' | 'sub_skater' | 'sub_goalie' — the same three values the
- * contacts table itself already uses everywhere else in this app (a
- * generic "roster/sub" the task suggested would be a 4th, inconsistent
- * vocabulary layered on top of the real one).
+ * role: 'roster' | 'sub_skater' — exactly two values. Used to also
+ * accept 'sub_goalie' (mirroring SMBHL's own legacy 3-value scheme,
+ * which this route can never reach or affect -- see the SMBHL block
+ * below), but that duplicated the independent Goalie/Player axis
+ * (is_goalie) for this product specifically: a sub's goalie-ness ended
+ * up askable in two places (this 3rd role value, and the roster page's
+ * own separate goalie toggle) that could disagree. Live-testing task,
+ * Part 2 (bug fix): retired 'sub_goalie' as a role value for this
+ * route entirely -- is_goalie alone carries goalie-ness now, for a
+ * regular OR a sub, independently of role, matching the product's own
+ * intended two-axis design. migrate-035.sql backfills any existing
+ * non-SMBHL contact that had role='sub_goalie' to role='sub_skater' +
+ * is_goalie=1 (the exact status quo that role value already implied),
+ * so no existing league's real goalie coverage changes.
  *
  * Validation decisions:
  *   - name: required, at least first+last (2 words), <=60 chars — same
@@ -352,8 +362,8 @@ async function createLeagueContactRow(env, leagueId, body) {
   }
 
   const role = String(body.role || 'roster').trim();
-  if (!['roster', 'sub_skater', 'sub_goalie'].includes(role)) {
-    return { ok: false, error: 'role must be roster, sub_skater, or sub_goalie.', errorKey: 'INVALID_ROLE' };
+  if (!['roster', 'sub_skater'].includes(role)) {
+    return { ok: false, error: 'role must be roster or sub_skater.', errorKey: 'INVALID_ROLE' };
   }
 
   let email = String(body.email || '').trim();
@@ -385,7 +395,14 @@ async function createLeagueContactRow(env, leagueId, body) {
   phone = phone ? (phone.replace(/[^\d+().\s-]/g, '').trim() || null) : null;
 
   const position = String(body.position || '').toUpperCase().trim() || null;
-  let isGoalie = (role === 'sub_goalie' || position === 'G') ? 1 : 0;
+  // Live-testing task, Part 2 (bug fix): used to default from
+  // role === 'sub_goalie' or position === 'G' -- both retired as
+  // goalie signals for this route (role can never be 'sub_goalie'
+  // anymore, and position was never sent by the roster page's own
+  // form to begin with). is_goalie is now set ONLY from the explicit
+  // body.is_goalie boolean below, defaulting to 0 (not a goalie) when
+  // absent or when this sport has no goalie capability at all.
+  let isGoalie = 0;
 
   // Part 1 fix: the roster had no team assignment at all, so shortage
   // detection could never see real per-team roster sizes. `team` is
@@ -407,23 +424,14 @@ async function createLeagueContactRow(env, leagueId, body) {
       return { ok: false, error: `team must be one of: ${validTeams.join(', ')}`, errorKey: 'TEAM_UNKNOWN' };
     }
   }
-  // Part 5: for a headcount league whose sport has a goalie role,
-  // Regular/Sub (role) and Goalie/Player (is_goalie) are two
-  // INDEPENDENT axes -- role alone (roster/sub_skater, never
-  // sub_goalie for this mode -- see the roster page's own 2-option
-  // picker) can no longer imply is_goalie, so an explicit
-  // body.is_goalie boolean is accepted instead.
-  //
-  // Live-testing task, Part 5 follow-up: generalized from
-  // headcount-only to any team structure whose sport has the goalie
-  // capability (sportHasGoalie, not a hardcoded team_structure/sport
-  // name check) -- the roster page now also renders this control for
-  // 'fixed'/'weekly_draw' regulars (see its own comment on
-  // goalieAxisRoleGated), and only sends an explicit body.is_goalie
-  // when that control is actually visible. When it's omitted (every
-  // pre-existing caller, and fixed/weekly_draw subs whose goalie-ness
-  // is already the role choice itself), isGoalie keeps its
-  // role/position-derived default from above, completely unchanged.
+  // Part 5/Part 2: Regular/Sub (role) and Goalie/Player (is_goalie) are
+  // two INDEPENDENT axes, for every team structure, for a regular or a
+  // sub alike -- gated on the sport's own capability (sportHasGoalie),
+  // not a hardcoded team_structure/sport name check, so this stays
+  // inert the moment a non-goalie sport exists. When is_goalie is
+  // omitted from the request (a caller not using the roster page's own
+  // form, or a sport with no goalie capability), it stays the default
+  // 0 set above -- never a goalie, not an error.
   if (sportHasGoalie(cfg.sportType) && body.is_goalie !== undefined) {
     isGoalie = body.is_goalie === true ? 1 : 0;
   }

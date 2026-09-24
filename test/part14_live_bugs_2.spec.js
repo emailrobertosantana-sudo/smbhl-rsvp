@@ -194,8 +194,11 @@ describe('Live-testing issues, round 2', () => {
       const { cookie, csrfToken } = await signup('bugs2.randomdraw.goalies@example.com', '203.0.117.009');
       await createLeague(cookie, csrfToken, { name: 'Random Draw Goalie League', teamNames: ['Red', 'Blue'], tracksStats: true, teamStructure: 'weekly_draw' });
       const eventId = await createEvent(cookie, csrfToken, '2099-08-15');
-      const g1 = await addPlayer(cookie, csrfToken, 'Goalie One', { role: 'sub_goalie' });
-      const g2 = await addPlayer(cookie, csrfToken, 'Goalie Two', { role: 'sub_goalie' });
+      // Live-testing task, Part 2 (bug fix): 'sub_goalie' is no longer
+      // a valid role value -- goalie-ness is the independent is_goalie
+      // flag now, for a regular or a sub alike.
+      const g1 = await addPlayer(cookie, csrfToken, 'Goalie One', { is_goalie: true });
+      const g2 = await addPlayer(cookie, csrfToken, 'Goalie Two', { is_goalie: true });
       const s1 = await addPlayer(cookie, csrfToken, 'Skater One');
       const s2 = await addPlayer(cookie, csrfToken, 'Skater Two');
       for (const p of [g1, g2, s1, s2]) await setStatus(cookie, csrfToken, eventId, p, 'in');

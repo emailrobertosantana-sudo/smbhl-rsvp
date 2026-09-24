@@ -49,7 +49,10 @@ describe('Team structure, Part 2: roster page', () => {
       expect(html).toContain('id="r_team"');
       expect(html).toContain('data-filter="team:Otters"');
       expect(html).toContain('data-filter="unassigned"');
-      expect(html).toContain('roleSubGoalie');
+      // Live-testing task, Part 2 (bug fix): role is now exactly 2
+      // options everywhere -- see part37's own regression suite for the
+      // full "two independent axes" redesign this superseded.
+      expect(html).not.toContain('roleSubGoalie');
       expect(html).not.toContain('data-i18n="weeklyDrawNote"');
     });
   });
@@ -92,7 +95,13 @@ describe('Team structure, Part 2: roster page', () => {
   });
 
   describe('WEEKLY_DRAW MODE', () => {
-    it('shows no team column or select, but a real note explaining teams are assigned per game, and keeps the full 3-option role picker', async () => {
+    // Superseded by the live-testing task's Part 2 bug fix: the 3-option
+    // role picker (roster/sub_skater/sub_goalie) duplicated the
+    // independent Goalie/Player axis and was reported broken (two
+    // controls for the same thing, able to disagree). Role is now
+    // exactly 2 options for every team structure; is_goalie alone
+    // carries goalie-ness, always shown, for a regular or a sub alike.
+    it('shows no team column or select, but a real note explaining teams are assigned per game, and a 2-option role picker with the always-visible goalie axis', async () => {
       const { cookie, csrfToken } = await signup('ts.roster.weekly@example.com', '203.0.113.994');
       await createLeague(cookie, csrfToken, { name: 'Roster Weekly League', teamNames: ['Red', 'Blue', 'Green'], tracksStats: true, teamStructure: 'weekly_draw' });
       const res = await SELF.fetch('http://example.com/league/roster', { headers: { cookie } });
@@ -101,7 +110,9 @@ describe('Team structure, Part 2: roster page', () => {
       expect(html).not.toContain('id="r_team"');
       expect(html).not.toContain('data-filter="team:');
       expect(html).toContain('data-i18n="weeklyDrawNote"');
-      expect(html).toContain('data-i18n="roleSubGoalie"'); // weekly_draw keeps the real skater/goalie split
+      expect(html).not.toContain('roleSubGoalie');
+      expect(html).toContain('data-i18n="roleSub"');
+      expect(html).toContain('id="r_goalie_radio"');
     });
 
     it('adding a player in weekly_draw mode stores no preferred_team at all', async () => {

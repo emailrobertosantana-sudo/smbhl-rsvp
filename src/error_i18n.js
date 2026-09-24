@@ -70,7 +70,7 @@ export const ERROR_I18N = {
   ROUTE_BLOCKED_CONTACTS: { fr: 'Cette route ne peut pas créer de contacts pour cette ligue.', en: 'This route cannot create contacts for this league.' },
   FULL_NAME_REQUIRED: { fr: 'Le nom complet (prénom et nom) est requis.', en: 'Full name (first and last) is required.' },
   NAME_TOO_LONG: { fr: 'Le nom est trop long.', en: 'Name is too long.' },
-  INVALID_ROLE: { fr: 'Le rôle doit être régulier, sub joueur ou sub gardien.', en: 'role must be roster, sub_skater, or sub_goalie.' },
+  INVALID_ROLE: { fr: 'Le rôle doit être régulier ou remplaçant.', en: 'role must be roster or sub_skater.' },
   CONTACT_EMAIL_EXISTS: { fr: 'Un contact avec ce courriel existe déjà dans ta ligue.', en: 'A contact with this email already exists in your league.' },
   BULK_CONTACTS_REQUIRED: { fr: 'Aucun joueur à importer.', en: 'No contacts provided.' },
   ROUTE_BLOCKED_EVENTS: { fr: 'Cette route ne peut pas créer de matchs pour cette ligue.', en: 'This route cannot create events for this league.' },

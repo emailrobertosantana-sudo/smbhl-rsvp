@@ -165,20 +165,25 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       const skaterId = skaterJson.player_id;
       const skaterSalt = (await env.DB.prepare('SELECT token_salt FROM contacts WHERE player_id = ?').bind(skaterId).first()).token_salt;
 
+      // Live-testing task, Part 2 (bug fix): 'position: G' no longer
+      // implies is_goalie, and role 'sub_goalie' is no longer a valid
+      // role at all -- goalie-ness is now always the independent
+      // is_goalie flag, for a regular or a sub alike (see
+      // createLeagueContactRow's own comment, leagues.js).
       const goalieRes = await SELF.fetch(`${BASE}/league/contacts`, {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ name: 'Canadiens Goalie One', team: 'Canadiens', position: 'G' })
+        body: JSON.stringify({ name: 'Canadiens Goalie One', team: 'Canadiens', is_goalie: true })
       });
       expect(goalieRes.status).toBe(200);
       const goalieId = (await goalieRes.json()).contact.player_id;
 
       await SELF.fetch(`${BASE}/league/contacts`, {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ name: 'Part 11 Skater Sub', email: 'skatersub@part11.com', role: 'sub_skater' })
+        body: JSON.stringify({ name: 'Part 11 Skater Sub', email: 'skatersub@part11.com', role: 'sub_skater', is_goalie: false })
       });
       await SELF.fetch(`${BASE}/league/contacts`, {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ name: 'Part 11 Goalie Sub', email: 'goaliesub@part11.com', role: 'sub_goalie' })
+        body: JSON.stringify({ name: 'Part 11 Goalie Sub', email: 'goaliesub@part11.com', role: 'sub_skater', is_goalie: true })
       });
 
       // Roster page (Part 1/2) reflects real team assignments AND this

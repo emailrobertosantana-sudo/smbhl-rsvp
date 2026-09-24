@@ -2949,25 +2949,19 @@ async function handleLeagueRosterPage(req, env, url) {
   // so this stays inert the moment a non-goalie sport exists, without
   // this page needing to know anything else about that future sport.
   //
-  // Live-testing task, Part 5 follow-up: this same capability also
-  // applies to 'fixed' and 'weekly_draw' now, not just 'headcount' --
-  // teamState() (fixed-mode shortage detection, index.js) and
-  // handleLeagueRandomAssignEventTeams (weekly_draw's auto-draw) both
-  // already read contacts.is_goalie today, for every team structure,
-  // but until now the roster page never rendered any control to set it
-  // outside headcount mode -- every non-headcount league's goalie
-  // shortage detection has been silently inert since this became a
-  // multi-tenant product (SMBHL sets is_goalie through its own
-  // separate season_hub tooling, not this page). For 'fixed'/
-  // 'weekly_draw' specifically, the axis is only shown for role
-  // 'roster' -- a sub's goalie-ness is already asked via the existing
-  // 3-value role radio (sub_skater vs sub_goalie), so showing a SECOND
-  // independent control for the same thing on a sub would be
-  // redundant and invite the two to disagree; 'headcount' has no
-  // sub_goalie role value at all, so it keeps showing the axis
-  // regardless of role, as before.
+  // Live-testing task, Part 2 (bug fix): this used to also be
+  // role-gated for 'fixed'/'weekly_draw' (hidden for a sub, on the
+  // reasoning that a 3-value role radio -- roster/sub_skater/
+  // sub_goalie -- already asked a sub's goalie-ness). Real bug report:
+  // that left the SAME goalie question asked in two places at once for
+  // a regular player (the role radio's own 3rd option, plus this
+  // axis), and the two could disagree. Fixed at the root: role is now
+  // EXACTLY TWO options everywhere (roster/sub_skater -- see
+  // createLeagueContactRow's own comment, leagues.js), and is_goalie is
+  // the ONE place goalie-ness is ever asked, for every team structure,
+  // for both a regular and a sub alike. No more role-gating here at
+  // all -- the axis shows whenever the sport supports it, full stop.
   const showGoalieAxis = sportHasGoalie(seasonCfg.sportType);
-  const goalieAxisRoleGated = teamStructure !== 'headcount';
 
   const subCount = contacts.filter(c => c.role !== 'roster').length;
   const unassignedCount = contacts.filter(c => c.role === 'roster' && !c.preferred_team).length;
@@ -2980,7 +2974,7 @@ async function handleLeagueRosterPage(req, env, url) {
       filterAll: 'Tous', filterSubs: 'Remplaçants', filterUnassigned: 'Sans équipe',
       colPlayer: 'Joueur', colTeam: 'Équipe', colRole: 'Rôle',
       fullName: 'Nom complet', emailOpt: 'Courriel (optionnel)', phoneOpt: 'Téléphone (optionnel)',
-      role: 'Rôle', roleRoster: 'Régulier', roleSubSkater: 'Remplaçant — joueur', roleSubGoalie: 'Remplaçant — gardien', roleSub: 'Remplaçant',
+      role: 'Rôle', roleRoster: 'Régulier', roleSub: 'Remplaçant',
       teamOpt: 'Équipe (optionnel)', teamUnassigned: 'Non assigné', addBtn: 'Ajouter', cancel: 'Annuler',
       players: 'Joueurs', unassigned: 'Non assigné', noPlayers: "Aucun joueur pour l'instant.",
       weeklyDrawNote: "Les équipes sont assignées à chaque match, pas ici — voir la page d'un match.",
@@ -3004,7 +2998,7 @@ async function handleLeagueRosterPage(req, env, url) {
       filterAll: 'All', filterSubs: 'Subs', filterUnassigned: 'Unassigned',
       colPlayer: 'Player', colTeam: 'Team', colRole: 'Role',
       fullName: 'Full name', emailOpt: 'Email (optional)', phoneOpt: 'Phone (optional)',
-      role: 'Role', roleRoster: 'Regular', roleSubSkater: 'Sub — skater', roleSubGoalie: 'Sub — goalie', roleSub: 'Sub',
+      role: 'Role', roleRoster: 'Regular', roleSub: 'Sub',
       teamOpt: 'Team (optional)', teamUnassigned: 'Unassigned', addBtn: 'Add', cancel: 'Cancel',
       players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.',
       weeklyDrawNote: 'Teams are assigned per game, not here — see a game’s own page.',
@@ -3034,7 +3028,7 @@ async function handleLeagueRosterPage(req, env, url) {
   ].join('');
 
   const rows = contacts.map(c => {
-    const roleKey = c.role === 'sub_skater' ? 'roleSubSkater' : c.role === 'sub_goalie' ? 'roleSubGoalie' : 'roleRoster';
+    const roleKey = c.role === 'roster' ? 'roleRoster' : 'roleSub';
     const filterAttr = c.role !== 'roster' ? 'subs' : c.preferred_team ? `team:${c.preferred_team}` : 'unassigned';
     return `<tr data-row-filter="${esc(filterAttr)}">
       <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}</td>
@@ -3111,12 +3105,18 @@ async function handleLeagueRosterPage(req, env, url) {
       </div>
       <div class="nl-field">
         <span class="nl-label" data-i18n="role">Rôle</span>
-        <div class="ro-radio" id="r_role_radio" style="${teamStructure === 'headcount' ? 'grid-template-columns:1fr 1fr' : ''}">
+        <!-- Live-testing task, Part 2 (bug fix): role is now EXACTLY
+             two options for every team structure -- Régulier/Remplaçant
+             -- matching headcount's own long-standing 2-option shape.
+             Goalie-ness used to be a 3rd role value for fixed/weekly_draw
+             (sub_skater vs sub_goalie), duplicating the independent
+             Goalie/Player axis below it; that 3rd value is retired
+             entirely (see createLeagueContactRow's own comment,
+             leagues.js) -- is_goalie alone carries goalie-ness now, for
+             a regular or a sub alike, in every team structure. -->
+        <div class="ro-radio" id="r_role_radio" style="grid-template-columns:1fr 1fr">
           <label class="on" data-value="roster"><span data-i18n="roleRoster">Régulier</span></label>
-          ${teamStructure === 'headcount'
-            ? `<label data-value="sub_skater"><span data-i18n="roleSub">Remplaçant</span></label>`
-            : `<label data-value="sub_skater"><span data-i18n="roleSubSkater">Remplaçant — joueur</span></label>
-          <label data-value="sub_goalie"><span data-i18n="roleSubGoalie">Remplaçant — gardien</span></label>`}
+          <label data-value="sub_skater"><span data-i18n="roleSub">Remplaçant</span></label>
         </div>
       </div>
       ${showGoalieAxis ? `<div class="nl-field" id="r_goalie_field">
@@ -3169,36 +3169,18 @@ ${tabbar}`;
 
   const script = `
 ${nlAuthScript(I18N_ROSTER)}
-// Part 5 follow-up: for 'fixed'/'weekly_draw', the goalie axis only
-// applies to role 'roster' -- a sub's goalie-ness is already the
-// sub_goalie/sub_skater role choice itself (see this page's own
-// server-side comment on goalieAxisRoleGated). Toggling role hides the
-// axis and resets it back to "player" so a forgotten-checked "Gardien"
-// from an earlier role never gets silently submitted for a sub.
-var GOALIE_AXIS_ROLE_GATED = ${goalieAxisRoleGated};
-function goalieAxisVisible() {
-  var field = document.getElementById('r_goalie_field');
-  if (!field) return false;
-  return !GOALIE_AXIS_ROLE_GATED || r_role === 'roster';
-}
-function updateGoalieAxisVisibility() {
-  var field = document.getElementById('r_goalie_field');
-  if (!field) return;
-  if (goalieAxisVisible()) {
-    field.style.display = '';
-  } else {
-    field.style.display = 'none';
-    r_goalie = false;
-    document.querySelectorAll('#r_goalie_radio label').forEach(function(x) { x.classList.toggle('on', x.getAttribute('data-value') === 'player'); });
-  }
-}
+// Live-testing task, Part 2 (bug fix): the goalie axis used to hide
+// itself for a sub role (role-gated), since goalie-ness used to also
+// be a 3rd role value (sub_goalie) -- that duplication is exactly what
+// was reported broken (two controls for the same thing, able to
+// disagree) and is now retired. The axis is simply always visible
+// whenever showGoalieAxis is true, for every role, no gating at all.
 var r_role = 'roster';
 document.querySelectorAll('#r_role_radio label').forEach(function(l) {
   l.addEventListener('click', function() {
     document.querySelectorAll('#r_role_radio label').forEach(function(x) { x.classList.remove('on'); });
     l.classList.add('on');
     r_role = l.getAttribute('data-value');
-    updateGoalieAxisVisibility();
   });
 });
 var r_goalie = false;
@@ -3209,7 +3191,6 @@ document.querySelectorAll('#r_goalie_radio label').forEach(function(l) {
     r_goalie = l.getAttribute('data-value') === 'goalie';
   });
 });
-updateGoalieAxisVisibility();
 function toggleRosterPanel() {
   document.getElementById('ro_panel').classList.toggle('open');
 }
@@ -3356,7 +3337,7 @@ async function submitContact() {
     var res = await fetch('/league/contacts', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined, is_goalie: ${showGoalieAxis ? '(goalieAxisVisible() ? r_goalie : undefined)' : 'undefined'} })
+      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined, is_goalie: ${showGoalieAxis ? 'r_goalie' : 'undefined'} })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
@@ -5601,17 +5582,24 @@ function hoursOut(ev) {
 // league-scoped caller (Part P) would pull SUB CANDIDATES FROM EVERY
 // LEAGUE, including SMBHL's real subs — a real cross-league data leak
 // this fixes, not a hypothetical one.
-// isHeadcountHockeyPool: Part 5 -- a headcount+hockey league's subs
-// never get role='sub_goalie' at all (that 3-value role scheme belongs
-// to fixed/weekly_draw's own 3-option role picker); Goalie/Player is a
-// separate, independent is_goalie flag for this mode instead. Every
-// pre-existing caller (SMBHL's own flows, all of which never pass this
-// param) keeps the exact original role-only filter.
-async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, isHeadcountHockeyPool = false) {
-  const poolCondition = isHeadcountHockeyPool
+// usesIndependentGoalieAxis: originally Part 5's "isHeadcountHockeyPool"
+// (headcount+hockey only) -- generalized in the live-testing task's
+// Part 2 bug fix to every non-SMBHL league whose sport has the goalie
+// capability, matching the roster page's own retirement of role
+// 'sub_goalie' as a role value for the whole league product, not just
+// headcount (see createLeagueContactRow's own comment, leagues.js): a
+// sub's goalie-ness is now ALWAYS the independent is_goalie flag, for
+// every team structure this product has. SMBHL is a hardcoded,
+// permanent exception here -- its own legacy tooling still writes and
+// reads role='sub_goalie' directly (season_hub.js and this file's own
+// SMBHL-only admin routes), so every SMBHL call site (none of which
+// pass this param) keeps the exact original role-only filter,
+// unconditionally, forever.
+async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false) {
+  const poolCondition = usesIndependentGoalieAxis
     ? (need === 'goalie' ? `c.role = 'sub_skater' AND c.is_goalie = 1` : `c.role = 'sub_skater' AND c.is_goalie != 1`)
     : `c.role = ?`;
-  const poolBinds = isHeadcountHockeyPool ? [] : [need === 'goalie' ? 'sub_goalie' : 'sub_skater'];
+  const poolBinds = usesIndependentGoalieAxis ? [] : [need === 'goalie' ? 'sub_goalie' : 'sub_skater'];
   const pool = (await env.DB.prepare(
     `SELECT c.player_id FROM contacts c
       WHERE ${poolCondition} AND c.league_id = ? AND c.opted_out = 0 AND c.dormant = 0 AND c.email IS NOT NULL
@@ -11235,21 +11223,21 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
   });
   if (recent) return { invited: 0, reason: 'recently-invited' };
 
-  // Part 5: a headcount+hockey league's subs never get role='sub_goalie'
-  // at all -- that 3-value role scheme belongs to fixed/weekly_draw's
-  // own 3-option role picker (see the roster page's own comment).
-  // Headcount subs are always role='sub_skater', with Goalie/Player as
-  // a SEPARATE, independent is_goalie flag -- so a goalie-need pool for
-  // this mode has to match on is_goalie=1 AND role='sub_skater'
-  // instead of the old role='sub_goalie' filter, or it would silently
-  // find zero eligible subs for every headcount league forever.
-  // Fixed/weekly_draw are completely unaffected -- they keep the exact
-  // original role-only filter.
-  const isHeadcountHockeyPool = cfg.teamStructure === 'headcount' && cfg.sportType === 'hockey';
-  const poolCondition = isHeadcountHockeyPool
+  // Live-testing task, Part 2 (bug fix): 'sub_goalie' is retired as a
+  // role value for every non-SMBHL league's subs, for every team
+  // structure -- Goalie/Player is now always the SEPARATE, independent
+  // is_goalie flag instead (see createLeagueContactRow's own comment,
+  // leagues.js), so a goalie-need pool has to match on is_goalie=1 AND
+  // role='sub_skater' instead of the old role='sub_goalie' filter, or
+  // it would silently find zero eligible subs forever. SMBHL is a
+  // hardcoded, permanent exception -- its own legacy tooling still
+  // writes and reads role='sub_goalie' directly, so its own call sites
+  // keep the exact original role-only filter, unconditionally.
+  const usesIndependentGoalieAxis = leagueId !== SMBHL_LEAGUE_ID && sportHasGoalie(cfg.sportType);
+  const poolCondition = usesIndependentGoalieAxis
     ? (need === 'goalie' ? `role = 'sub_skater' AND is_goalie = 1` : `role = 'sub_skater' AND is_goalie != 1`)
     : `role = ?`;
-  const poolBinds = isHeadcountHockeyPool ? [] : [need === 'goalie' ? 'sub_goalie' : 'sub_skater'];
+  const poolBinds = usesIndependentGoalieAxis ? [] : [need === 'goalie' ? 'sub_goalie' : 'sub_skater'];
   const pool = (await env.DB.prepare(
     `SELECT player_id FROM contacts
       WHERE ${poolCondition} AND league_id = ? AND opted_out = 0 AND dormant = 0 AND email IS NOT NULL
@@ -12416,7 +12404,10 @@ async function handleLeagueInviteSubs(req, env, url) {
     return Response.json({ ok: false, error: 'Unknown team for this league.', errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
   }
 
-  const invited = await callSubs(env, ev, team, need, 0, leagueId, cfg.teamStructure === 'headcount' && cfg.sportType === 'hockey');
+  // Live-testing task, Part 2 (bug fix): every non-SMBHL league now
+  // uses the independent is_goalie axis for its subs, for every team
+  // structure -- not just headcount+hockey (see callSubs' own comment).
+  const invited = await callSubs(env, ev, team, need, 0, leagueId, sportHasGoalie(cfg.sportType));
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, team, need, invited });
 }
 
