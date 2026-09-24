@@ -68,7 +68,7 @@ export function stubDom() {
     closest: () => el(),
   });
   return {
-    window: { location: { search: '' }, addEventListener: () => {}, NotreLigue: {} },
+    window: { location: { search: '' }, addEventListener: () => {}, dispatchEvent: () => {}, NotreLigue: {} },
     document: {
       getElementById: () => el(),
       querySelectorAll: () => [],

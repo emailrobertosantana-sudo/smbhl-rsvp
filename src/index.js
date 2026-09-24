@@ -11300,7 +11300,27 @@ function renderContacts(d) {
     const teamBadge = p.current_team
       ? '<span class="team-badge ' + esc(p.current_team) + '">' + esc(p.current_team) + '</span>'
       : '<span style="color:var(--soft);font-size:12px;">—</span>';
-    const em = '<input type="email" class="contact-input" data-em="' + esc(p.player_id) + '" value="' + esc(p.email || '') + '" placeholder="user@domain.com" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+    // Live-testing task (batch 6), Part 1: this used to be type="email" --
+    // editing a contact's email silently saved the OLD value, every
+    // time, only for email, never for phone. wire()'s own change
+    // handlers below are structurally identical (confirmed by directly
+    // firing both against the real page's own script: given a fresh
+    // i.value at 'change' time, both send it correctly) -- the JS logic
+    // was never the bug. type="email" is Chrome's strongest autofill
+    // heuristic signal, and autocomplete="off" alone does not reliably
+    // suppress it, especially with no name/id attribute for Chrome to
+    // otherwise key off of: on blur, Chrome can silently overwrite
+    // .value with an autofill suggestion BEFORE the 'change' handler
+    // ever runs -- no JS can detect or prevent that, since i.value is
+    // already wrong by the time this code sees it. type="tel" (phone,
+    // right below) never triggers this same aggressive behavior, which
+    // is exactly why phone always worked. Fixed by matching phone's own
+    // successful shape: a plain type that doesn't invite autofill,
+    // inputmode="email" keeps the mobile email keyboard without
+    // re-enabling desktop autofill targeting. The existing JS-side
+    // regex validation (wire(), below) is unchanged and was never
+    // the problem.
+    const em = '<input type="text" inputmode="email" class="contact-input" data-em="' + esc(p.player_id) + '" value="' + esc(p.email || '') + '" placeholder="user@domain.com" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
     const ph = '<input type="tel" class="contact-input" data-ph="' + esc(p.player_id) + '" value="' + esc(p.phone || '') + '" placeholder="(514) 000-0000" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
     const acts = '<span class="st-icon" id="st-' + esc(p.player_id) + '" style="font-size:14px;color:var(--green);opacity:0;transition:opacity .2s;margin-right:6px;">✓</span>' +
       backupBtn +
@@ -11322,7 +11342,9 @@ function renderContacts(d) {
       '<option value="' + esc(tm) + '"' + (p.preferred_team === tm ? ' selected' : '') + '>' + esc(tm) + '</option>'
     ).join('');
     const pref = '<select class="contact-input" data-pref="' + esc(p.player_id) + '" title="' + esc(t('colPrefTeam')) + '" style="width:100%;font-size:12px;padding:4px 6px;">' + opts + '</select>';
-    const em = '<input type="email" class="contact-input" data-em="' + esc(p.player_id) + '" value="' + esc(p.email || '') + '" placeholder="' + (currentLang === 'en' ? 'email' : 'courriel') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+    // See rowRoster's own em/ph comment above for the root cause --
+    // same fix, same reasoning, this is just a different role's row.
+    const em = '<input type="text" inputmode="email" class="contact-input" data-em="' + esc(p.player_id) + '" value="' + esc(p.email || '') + '" placeholder="' + (currentLang === 'en' ? 'email' : 'courriel') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
     const ph = '<input type="tel" class="contact-input" data-ph="' + esc(p.player_id) + '" value="' + esc(p.phone || '') + '" placeholder="' + (currentLang === 'en' ? 'phone' : 'téléphone') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
     const roleToggleBtnText = p.role === 'sub_goalie' ? t('btnToSkater') : t('btnToGoalie');
     const acts = '<button class="mini" data-mv="' + esc(p.player_id) + '" data-to="' +
@@ -11361,7 +11383,9 @@ function renderContacts(d) {
       prevRoleBadge = '<span class="pos-badge pos-F">' + esc(t('prevSubPlayer')) + '</span>';
     }
 
-    const em = '<input type="email" class="contact-input" data-em="' + esc(p.player_id) + '" value="' + esc(p.email || '') + '" placeholder="' + (currentLang === 'en' ? 'email' : 'courriel') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
+    // See rowRoster's own em/ph comment above for the root cause --
+    // same fix, same reasoning, this is just a different role's row.
+    const em = '<input type="text" inputmode="email" class="contact-input" data-em="' + esc(p.player_id) + '" value="' + esc(p.email || '') + '" placeholder="' + (currentLang === 'en' ? 'email' : 'courriel') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
     const ph = '<input type="tel" class="contact-input" data-ph="' + esc(p.player_id) + '" value="' + esc(p.phone || '') + '" placeholder="' + (currentLang === 'en' ? 'phone' : 'téléphone') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
     const acts = '<button class="mini in" data-restore="' + esc(p.player_id) + '" data-name="' + esc(p.name) + '" title="' + esc(t('btnRestore')) + '">' + esc(t('btnRestore')) + '</button> ' +
       '<button class="mini out" data-purge="' + esc(p.player_id) + '" data-name="' + esc(p.name) + '" title="🗑️">🗑️</button>';
