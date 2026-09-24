@@ -2941,6 +2941,31 @@ async function handleLeagueCommsData(req, env, url) {
   });
 }
 
+// Live-testing task (batch 4), Part 3: manual drain, shared into the
+// league product's own Comms module -- mirrors SMBHL's own (now-fixed,
+// Part 1) "trigger immediate delivery" button. Session+
+// checkLeagueAccess-gated, same as every other league-admin write
+// route -- and critically, scoped: drain(env, N, null, leagueId) only
+// ever touches THIS league's own outbox rows (drain()'s own
+// filterLeagueId parameter, added for exactly this), never another
+// league's or SMBHL's. Honest reporting, same as Part 1's fix: the
+// real due/sent/failed counts are returned as-is, never wrapped in a
+// blanket "success".
+async function handleLeagueCommsDrain(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const res = await drain(env, 50, null, leagueId);
+  return Response.json({ ok: true, drain: res });
+}
+
 // Cadence is deliberately READ-ONLY here -- editing already lives on
 // the settings page (reminders section, auto-draw section); this view
 // answers "what's actually scheduled to happen and what already did",
@@ -2967,12 +2992,15 @@ async function handleLeagueCommsPage(req, env, url) {
       cad72: 'Rappel 72 h (sans réponse)', cad24: 'Rappel 24 h (sans réponse)', cad12: 'Détails 12 h (confirmés)',
       cadAutoDraw: 'Tirage automatique des équipes',
       on: 'Activé', off: 'Désactivé',
-      cadAutoDrawHours: (h) => `${h} h avant le match`,
+      cadAutoDrawHoursSuffix: ' h avant le match',
       editCadence: 'Modifier dans Paramètres',
       activityTitle: 'Activité récente',
       colType: 'Type', colRecipient: 'Destinataire', colEvent: 'Match', colStatus: 'Statut', colWhen: 'Quand', colReason: 'Raison',
       emptyState: "Aucune activité pour l'instant -- les envois apparaîtront ici.",
-      statusSent: 'Envoyé', statusFailed: 'Échec', statusSkipped: 'Ignoré', statusPending: 'En attente'
+      statusSent: 'Envoyé', statusFailed: 'Échec', statusSkipped: 'Ignoré', statusPending: 'En attente',
+      btnDrain: '⚡ Envoyer maintenant', drainConfirm: "Déclencher l'envoi immédiat des courriels en attente pour cette ligue ?",
+      drainNonePending: 'Rien était en attente -- déjà à jour.',
+      drainSentSuffix: 'envoyé(s).', drainFailedSuffix: 'échec(s).'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navComms: 'Comms', navSettings: 'Settings', logout: 'Log out',
@@ -2983,12 +3011,15 @@ async function handleLeagueCommsPage(req, env, url) {
       cad72: '72h reminder (no reply)', cad24: '24h reminder (no reply)', cad12: '12h details (confirmed)',
       cadAutoDraw: 'Automatic team draw',
       on: 'On', off: 'Off',
-      cadAutoDrawHours: (h) => `${h}h before the game`,
+      cadAutoDrawHoursSuffix: 'h before the game',
       editCadence: 'Edit in Settings',
       activityTitle: 'Recent activity',
       colType: 'Type', colRecipient: 'Recipient', colEvent: 'Game', colStatus: 'Status', colWhen: 'When', colReason: 'Reason',
       emptyState: 'No activity yet -- sends will appear here.',
-      statusSent: 'Sent', statusFailed: 'Failed', statusSkipped: 'Skipped', statusPending: 'Pending'
+      statusSent: 'Sent', statusFailed: 'Failed', statusSkipped: 'Skipped', statusPending: 'Pending',
+      btnDrain: '⚡ Send now', drainConfirm: 'Trigger immediate delivery of pending emails for this league?',
+      drainNonePending: 'Nothing was pending -- already up to date.',
+      drainSentSuffix: 'sent.', drainFailedSuffix: 'failed.'
     }
   };
 
@@ -3006,7 +3037,11 @@ async function handleLeagueCommsPage(req, env, url) {
   </section>
 
   <section class="nl-card nl-card--pad-lg">
-    <div class="h3" data-i18n="activityTitle">Activité récente</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div class="h3" data-i18n="activityTitle">Activité récente</div>
+      <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="btn-comms-drain" data-i18n="btnDrain" onclick="drainNow()">⚡ Envoyer maintenant</button>
+    </div>
+    <div id="comms-drain-msg" class="nl-help" style="margin-top:6px"></div>
     <div id="comms-activity" style="margin-top:12px;overflow-x:auto"></div>
   </section>
 
@@ -3047,7 +3082,7 @@ function renderCadence(c) {
     [d.cad24, c.reminder24hEnabled],
     [d.cad12, c.reminder12hEnabled]
   ];
-  if (c.isWeeklyDraw) rows.push([d.cadAutoDraw, c.autoDrawEnabled, c.autoDrawEnabled ? d.cadAutoDrawHours(c.autoDrawHoursBefore) : '']);
+  if (c.isWeeklyDraw) rows.push([d.cadAutoDraw, c.autoDrawEnabled, c.autoDrawEnabled ? (c.autoDrawHoursBefore + d.cadAutoDrawHoursSuffix) : '']);
   document.getElementById('comms-cadence').innerHTML = rows.map(function(r) {
     return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);">' +
       '<span>' + r[0] + (r[2] ? ' <span class="nl-help" style="display:inline">(' + r[2] + ')</span>' : '') + '</span>' +
@@ -3079,7 +3114,7 @@ function renderActivity(activity) {
     '<th style="padding:8px 10px;border-bottom:2px solid var(--line);">' + d.colReason + '</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
-(async function loadComms() {
+async function loadComms() {
   try {
     var res = await fetch('/league/comms/data', { credentials: 'same-origin' });
     var data = await res.json();
@@ -3088,7 +3123,37 @@ function renderActivity(activity) {
     renderCadence(data.cadence);
     renderActivity(data.activity);
   } catch (e) {}
-})();
+}
+loadComms();
+async function drainNow() {
+  var d = window.__pageDict();
+  if (!confirm(d.drainConfirm)) return;
+  var btn = document.getElementById('btn-comms-drain');
+  var msg = document.getElementById('comms-drain-msg');
+  btn.disabled = true;
+  msg.textContent = '';
+  try {
+    var res = await fetch('/league/comms/drain', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader())
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { msg.textContent = window.__errorText(data.errorKey, data.error); btn.disabled = false; return; }
+    var dr = data.drain || { due: 0, sent: 0, failed: 0 };
+    if (dr.due === 0) {
+      msg.textContent = d.drainNonePending;
+    } else if (dr.failed > 0) {
+      msg.textContent = dr.sent + ' ' + d.drainSentSuffix + ' ' + dr.failed + ' ' + d.drainFailedSuffix;
+    } else {
+      msg.textContent = dr.sent + ' ' + d.drainSentSuffix;
+    }
+    await loadComms();
+  } catch (e) {
+    msg.textContent = window.__errorText('NETWORK_ERROR');
+  } finally {
+    btn.disabled = false;
+  }
+}
 `;
 
   return new Response(nlDocument({ title: `Communications — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
@@ -6137,17 +6202,24 @@ async function runHoldCall(env, m) {
 // outbox, so a player's own RSVP action can't have the side effect of
 // also flushing unrelated pending mail (SMBHL's or another league's) that
 // simply happened to also be due at that moment.
-async function drain(env, limit = 40, filterEventId = null) {
+// Live-testing task (batch 4), Part 3: filterLeagueId added -- the
+// league-product Comms view's own manual "drain now" button
+// (handleLeagueCommsDrain) needs to drain ONLY the calling league's
+// own pending rows, never another league's or SMBHL's. WHERE-clause
+// building generalized from the old event-id-only ternary to a small
+// composable list so every existing call site (no filter at all, or
+// filterEventId alone) produces the exact same SQL as before --
+// filterLeagueId is purely additive.
+async function drain(env, limit = 40, filterEventId = null, filterLeagueId = null) {
   const now = new Date().toISOString();
+  const conditions = ['sent_at IS NULL', 'cancelled = 0', 'send_after <= ?'];
+  const params = [now];
+  if (filterEventId) { conditions.push('event_id = ?'); params.push(filterEventId); }
+  if (filterLeagueId) { conditions.push('league_id = ?'); params.push(filterLeagueId); }
+  params.push(limit);
   const due = (await env.DB.prepare(
-    filterEventId
-      ? `SELECT * FROM outbox
-          WHERE sent_at IS NULL AND cancelled = 0 AND send_after <= ? AND event_id = ?
-          ORDER BY id LIMIT ?`
-      : `SELECT * FROM outbox
-          WHERE sent_at IS NULL AND cancelled = 0 AND send_after <= ?
-          ORDER BY id LIMIT ?`
-  ).bind(...(filterEventId ? [now, filterEventId, limit] : [now, limit])).all()).results || [];
+    `SELECT * FROM outbox WHERE ${conditions.join(' AND ')} ORDER BY id LIMIT ?`
+  ).bind(...params).all()).results || [];
 
   let sent = 0, failed = 0;
   const highlightsCache = new Map();
@@ -12878,6 +12950,24 @@ async function runLeagueReminders(env) {
           }
         }
       }
+    }
+
+    // Live-testing task (batch 4), Part 3: cron-level safety net for
+    // this league's own outbox rows (sub-call invites -- the only
+    // league-product path that uses outbox at all). Both call sites
+    // that enqueue into it already drain synchronously in the same
+    // request (maybeInviteSubsForShortage, handleLeagueInviteSubs), so
+    // this is normally a cheap SELECT that finds nothing -- but if
+    // that request crashed or timed out after enqueue() and before its
+    // own drain() call, the message previously had no fallback at all
+    // (this cron never touched outbox, and there was no manual
+    // fallback either, per the prior investigation this task is
+    // closing). This cron (every 15 minutes) and the new manual
+    // "drain now" button (handleLeagueCommsDrain) are now the two
+    // safety nets, matching SMBHL's own cron+manual pair.
+    const safetyDrain = await drain(env, 40, null, leagueRow.id);
+    if (safetyDrain.sent > 0 || safetyDrain.failed > 0) {
+      log.push(`${leagueRow.id} safety-drain sent=${safetyDrain.sent} failed=${safetyDrain.failed}`);
     }
   }
   return log;
@@ -21524,6 +21614,9 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueCommsPage(req, env, url);
       if (url.pathname === '/league/comms/data' && req.method === 'GET')
         return await handleLeagueCommsData(req, env, url);
+      // Live-testing task (batch 4), Part 3: manual drain, shared.
+      if (url.pathname === '/league/comms/drain' && req.method === 'POST')
+        return await handleLeagueCommsDrain(req, env, url);
 
       // Live-testing task (batch 2), Part 12: hard delete (privacy/Law
       // 25). Status is read-only (for the settings page's own gate UI --
