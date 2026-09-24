@@ -795,6 +795,18 @@ window.__errorText = function(errorKey, fallback, vars) {
       var k = el.getAttribute('data-i18n');
       if (dict[k] != null) el.innerHTML = dict[k];
     });
+    // Live-testing task (batch 5), Part 1/3: placeholders are attribute
+    // text, not innerHTML -- [data-i18n] alone never touched them, so a
+    // server-rendered French placeholder (e.g. the hard-delete
+    // confirmation keyword, or a season-name example) silently stayed
+    // French even after the visible label switched to English. Same
+    // dict, same lookup, just a different DOM property -- matches the
+    // data-i18n-ph convention already used on the league-comms/board
+    // pages' own applyLanguage().
+    document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
+      var k = el.getAttribute('data-i18n-ph');
+      if (dict[k] != null) el.placeholder = dict[k];
+    });
     // Live-testing task (batch 2), Part 6: dates/times are dynamic data,
     // not a static dictionary string, so they can't go through the
     // [data-i18n] lookup above -- the server pre-renders BOTH
@@ -1431,7 +1443,7 @@ async function submitReset() {
 // inertly inside the JS dict. Same lesson as the public page's earlier
 // bug this session already found and fixed (an unrelated string
 // leaking into every response broke an existing test).
-function buildDashI18n({ state, needsSeason, unverified }) {
+function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
   const fr = { logout: 'Se déconnecter', navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres' };
   const en = { logout: 'Log out', navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings' };
   if (state === 'none') {
@@ -1463,6 +1475,7 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       hardDeleteLocked: 'Débloqué le',
       hardDeleteEligible: 'La suppression définitive est débloquée.',
       hardDeleteConfirmLabel: 'Tape "SUPPRIMER" suivi du nom de ta ligue pour confirmer',
+      hardDeleteConfirmPh: `SUPPRIMER ${leagueName || ''}`,
       hardDeleteBtn: 'Supprimer définitivement'
     });
     Object.assign(en, {
@@ -1485,6 +1498,7 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       hardDeleteLocked: 'Unlocks on',
       hardDeleteEligible: 'Permanent deletion is unlocked.',
       hardDeleteConfirmLabel: 'Type "DELETE" followed by your league\'s name to confirm',
+      hardDeleteConfirmPh: `DELETE ${leagueName || ''}`,
       hardDeleteBtn: 'Permanently delete'
     });
     if (needsSeason) {
@@ -1554,8 +1568,26 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       Object.assign(en, { notVerified: 'Your email is not yet verified.', resendBtn: 'Resend email' });
     }
   } else if (state === 'deactivated') {
-    Object.assign(fr, { deactivatedOn: 'Cette ligue a été désactivée le' });
-    Object.assign(en, { deactivatedOn: 'This league was deactivated on' });
+    Object.assign(fr, {
+      deactivatedOn: 'Cette ligue a été désactivée le',
+      hardDeleteTitle: 'Supprimer définitivement la ligue',
+      hardDeleteDesc: "Efface pour de bon toutes les données de la ligue (parties, joueurs, présences, etc.). Aucune récupération possible. Nécessite que la ligue soit déjà désactivée depuis 15 jours.",
+      hardDeleteLocked: 'Débloqué le',
+      hardDeleteEligible: 'La suppression définitive est débloquée.',
+      hardDeleteConfirmLabel: 'Tape "SUPPRIMER" suivi du nom de ta ligue pour confirmer',
+      hardDeleteConfirmPh: `SUPPRIMER ${leagueName || ''}`,
+      hardDeleteBtn: 'Supprimer définitivement'
+    });
+    Object.assign(en, {
+      deactivatedOn: 'This league was deactivated on',
+      hardDeleteTitle: 'Permanently delete this league',
+      hardDeleteDesc: 'Permanently erases all of this league\'s data (games, players, attendance, etc). This cannot be undone. Requires the league to have been deactivated for 15 days already.',
+      hardDeleteLocked: 'Unlocks on',
+      hardDeleteEligible: 'Permanent deletion is unlocked.',
+      hardDeleteConfirmLabel: 'Type "DELETE" followed by your league\'s name to confirm',
+      hardDeleteConfirmPh: `DELETE ${leagueName || ''}`,
+      hardDeleteBtn: 'Permanently delete'
+    });
   }
   return { fr, en };
 }
@@ -1697,7 +1729,7 @@ async function handleDashboardPage(req, env, url) {
   ).bind(leagueRow.id).all()).results.map(r => r.email) : [];
 
   const dashState = leagueRow && leagueRow.deactivated_at ? 'deactivated' : leagueRow ? 'active' : 'none';
-  const I18N_DASH = buildDashI18n({ state: dashState, needsSeason: !currentSeason, unverified: !verified });
+  const I18N_DASH = buildDashI18n({ state: dashState, needsSeason: !currentSeason, unverified: !verified, leagueName: leagueRow ? leagueRow.name : '' });
 
   let bodyHtml;
 
@@ -1726,7 +1758,7 @@ async function handleDashboardPage(req, env, url) {
     <div id="hardDeleteErr" class="nl-error" style="display:none"></div>
     <div class="nl-field">
       <label class="nl-label" for="hard_delete_confirm" data-i18n="hardDeleteConfirmLabel">Tape "SUPPRIMER" suivi du nom de ta ligue pour confirmer</label>
-      <input class="nl-input" id="hard_delete_confirm" type="text" placeholder="SUPPRIMER ${esc(leagueRow.name)}" autocomplete="off">
+      <input class="nl-input" id="hard_delete_confirm" type="text" data-i18n-ph="hardDeleteConfirmPh" placeholder="SUPPRIMER ${esc(leagueRow.name)}" autocomplete="off">
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="hard_delete_submit" data-i18n="hardDeleteBtn" onclick="submitHardDelete()" disabled style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);">Supprimer définitivement</button></div>
   </section>
@@ -1919,7 +1951,7 @@ async function handleDashboardPage(req, env, url) {
     <div id="hardDeleteErr" class="nl-error" style="display:none"></div>
     <div class="nl-field">
       <label class="nl-label" for="hard_delete_confirm" data-i18n="hardDeleteConfirmLabel">Tape "SUPPRIMER" suivi du nom de ta ligue pour confirmer</label>
-      <input class="nl-input" id="hard_delete_confirm" type="text" placeholder="SUPPRIMER ${esc(leagueRow.name)}" autocomplete="off">
+      <input class="nl-input" id="hard_delete_confirm" type="text" data-i18n-ph="hardDeleteConfirmPh" placeholder="SUPPRIMER ${esc(leagueRow.name)}" autocomplete="off">
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="hard_delete_submit" data-i18n="hardDeleteBtn" onclick="submitHardDelete()" disabled style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);">Supprimer définitivement</button></div>
   </section>
@@ -22508,6 +22540,7 @@ export {
   drain,
   afterQuiet,
   runSchedule,
+  buildDashI18n,
   notifyAdminGoalieCancel,
   getTeamMessages,
   addTeamMessage,
