@@ -2712,7 +2712,7 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
   .pb-glist { display: flex; flex-direction: column; }
   .pb-g { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #22252c; gap: var(--space-3); }
   .pb-g-d { display: flex; flex-direction: column; }
-  .pb-g-d b { font: 700 15px/20px var(--font-display); font-stretch: 118%; }
+  .pb-g-d b { font: 700 15px/20px var(--font-display); font-stretch: 118%; white-space: nowrap; }
   .pb-g-d span { font-size: 13px; color: #a3a6ad; }
   .pb-g-venue { font-size: 14px; color: #a3a6ad; }
   .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
@@ -2770,7 +2770,7 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
   .pb-glist { display: flex; flex-direction: column; }
   .pb-g { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #f2f2f2; gap: var(--space-3); }
   .pb-g-d { display: flex; flex-direction: column; }
-  .pb-g-d b { font-weight: 600; font-size: 15px; }
+  .pb-g-d b { font-weight: 600; font-size: 15px; white-space: nowrap; }
   .pb-g-d span { font-size: 13px; color: #666666; }
   .pb-g-venue { font-size: 14px; color: #666666; }
   .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
@@ -5008,9 +5008,18 @@ async function handleLeagueSchedulePage(req, env, url) {
   .sc-top { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--space-3); flex-wrap: wrap; }
   .sc-top h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; }
   .sc-list { display: flex; flex-direction: column; gap: var(--space-2); }
-  .sc-game { display: grid; grid-template-columns: 96px 1fr auto auto; align-items: center; gap: var(--space-4); min-height: 64px; text-decoration: none; color: inherit; padding: var(--space-3) var(--space-4); }
-  .sc-when b { display: block; font: 700 18px/22px var(--font-display); font-stretch: 118%; }
-  .sc-when span { font-size: 13px; color: var(--ink-muted); }
+  .sc-game { display: grid; grid-template-columns: 112px 1fr auto auto; align-items: center; gap: var(--space-4); min-height: 64px; text-decoration: none; color: inherit; padding: var(--space-3) var(--space-4); }
+  /* Live-testing task (batch 6), Part 4: dates broke mid-date ("Thu
+     Sep" / "17") -- this column was a fixed 96px (72px on mobile,
+     below), too narrow for the longest real date this format
+     produces (French month abbreviations go up to 5 letters --
+     "juill" -- so "mer 28 juill" is the actual longest case, not just
+     the common short ones), and nothing stopped it from wrapping at
+     the word boundary. white-space: nowrap is the real fix (a date is
+     one unit, never meant to wrap); the wider column on top of that
+     avoids the text visually overflowing into the next column instead. */
+  .sc-when b { display: block; font: 700 18px/22px var(--font-display); font-stretch: 118%; white-space: nowrap; }
+  .sc-when span { font-size: 13px; color: var(--ink-muted); white-space: nowrap; }
   .sc-venue { font-size: 14px; color: var(--ink-muted); }
   .sc-chevron { color: var(--ink-muted); font-size: 20px; }
   .sc-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); max-width: 420px; }
@@ -5018,7 +5027,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   .sc-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
   .sc-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
   @media (min-width: 900px) { .sc-panel { display: flex; } }
-  @media (max-width: 640px) { .sc-game { grid-template-columns: 72px 1fr auto; } .sc-game .sc-chevron { display: none; } }
+  @media (max-width: 640px) { .sc-game { grid-template-columns: 92px 1fr auto; } .sc-game .sc-chevron { display: none; } }
   .sc-needs-season { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 2px solid var(--primary); }
   .sc-needs-season h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
   /* Live-testing task (batch 2), Part 6: two fixes for this row.
