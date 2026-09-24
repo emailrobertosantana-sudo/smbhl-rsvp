@@ -5075,11 +5075,31 @@ async function sendMail(env, to, subject, text, html = null, attachments = null,
 /* ---------- quiet hours ---------- */
 
 const QUIET_FROM = 23, QUIET_TO = 7;
-function afterQuiet(d) {
+// Live-testing task (batch 4), Part 2: SMBHL bug -- the Comms
+// quiet-hours card read and wrote quiet_hours_enabled/_start/_end
+// (email_cadence_settings, via getEmailSettings below), but this
+// function used to unconditionally apply the hardcoded QUIET_FROM/
+// QUIET_TO constants and never looked at those settings at all.
+// Toggling the card in the UI changed nothing about real send timing.
+//
+// QUIET_FROM/QUIET_TO remain as the FALLBACK when a stored setting is
+// missing or malformed (never NaN/undefined -- Number.isFinite guards
+// below), and DEFAULT_EMAIL_SETTINGS.quiet_hours_enabled was changed
+// from false to true alongside this fix (see that object's own
+// comment) so that an account with no saved settings row at all --
+// every league today, and SMBHL unless an operator already saved this
+// card at some point -- resolves to the exact same enabled/23/7
+// behavior this function already had unconditionally. Byte-identical
+// today; only changes for an operator who deliberately sets it.
+async function afterQuiet(env, d) {
+  const settings = await getEmailSettings(env.DB);
+  if (!settings.quiet_hours_enabled) return new Date(d);
+  const from = Number.isFinite(settings.quiet_hours_start) ? settings.quiet_hours_start : QUIET_FROM;
+  const to = Number.isFinite(settings.quiet_hours_end) ? settings.quiet_hours_end : QUIET_TO;
   let t = new Date(d);
   for (let i = 0; i < 24; i++) {
     const p = localParts(t);
-    if (p.hour >= QUIET_TO && p.hour < QUIET_FROM) return t;
+    if (p.hour >= to && p.hour < from) return t;
     t = new Date(t.getTime() + 30 * 60000);
   }
   return t;
@@ -5124,7 +5144,7 @@ async function enqueue(env, { kind, event_id, player_id = null, team = null,
                               dedup_key = null, payload = {}, delayMin = 0, league_id = SMBHL_LEAGUE_ID, skipQuietHours = false }) {
   const now = new Date();
   const target = new Date(now.getTime() + delayMin * 60000);
-  const after = (skipQuietHours ? target : afterQuiet(target)).toISOString();
+  const after = (skipQuietHours ? target : await afterQuiet(env, target)).toISOString();
   if (dedup_key) {
     await env.DB.prepare(
       `UPDATE outbox SET cancelled = 1
@@ -6896,7 +6916,15 @@ const DEFAULT_EMAIL_SETTINGS = {
   r24_hours: 24,
   r24_hour_of_day: 18,
   gameday_morning_hours: 2,
-  quiet_hours_enabled: false,
+  // Live-testing task (batch 4), Part 2: was `false`, but nothing ever
+  // read this field, so the REAL behavior (afterQuiet's own hardcoded
+  // QUIET_FROM/QUIET_TO, unconditionally applied) was always "enabled,
+  // 23, 7" regardless of what this said. Now that afterQuiet() actually
+  // reads it, the default has to match the behavior it's replacing --
+  // `true` here is what makes every account with no saved settings row
+  // (every league today, and SMBHL unless an operator already saved
+  // this card) see byte-identical send timing to before this fix.
+  quiet_hours_enabled: true,
   quiet_hours_start: 23,
   quiet_hours_end: 7
 };
@@ -22117,6 +22145,7 @@ async function handleFetch(req, env, ctx) {
 export {
   body,
   drain,
+  afterQuiet,
   runSchedule,
   notifyAdminGoalieCancel,
   getTeamMessages,
