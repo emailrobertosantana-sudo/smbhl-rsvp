@@ -224,10 +224,10 @@ describe('Part 9 (live-testing task): scheduled auto-draw, admin-toggleable, off
     expect((await clampedRes.json()).settings.autoDrawHoursBefore).toBe(72);
   });
 
-  it("the dashboard only shows the auto-draw section for weekly_draw leagues, never fixed or headcount", async () => {
+  it("the settings page only shows the auto-draw section for weekly_draw leagues, never fixed or headcount (moved from the dashboard, live-testing task Part 1)", async () => {
     const weeklyDraw = await signup('autodraw.dashboard.weekly@example.com', '203.0.131.007');
     await createWeeklyDrawLeagueWithSeason(weeklyDraw.cookie, weeklyDraw.csrfToken, 'Auto Draw Dashboard Weekly League');
-    const weeklyHtml = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie: weeklyDraw.cookie } })).text();
+    const weeklyHtml = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie: weeklyDraw.cookie } })).text();
     expect(weeklyHtml).toContain('id="auto_draw_switch"');
 
     const fixed = await signup('autodraw.dashboard.fixed@example.com', '203.0.131.008');
@@ -235,7 +235,7 @@ describe('Part 9 (live-testing task): scheduled auto-draw, admin-toggleable, off
       method: 'POST', headers: { cookie: fixed.cookie, 'content-type': 'application/json', 'x-csrf-token': fixed.csrfToken },
       body: JSON.stringify({ name: 'Auto Draw Dashboard Fixed League', teamNames: ['A', 'B'], tracksStats: true })
     });
-    const fixedHtml = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie: fixed.cookie } })).text();
+    const fixedHtml = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie: fixed.cookie } })).text();
     expect(fixedHtml).not.toContain('id="auto_draw_switch"');
 
     const headcount = await signup('autodraw.dashboard.headcount@example.com', '203.0.131.009');
@@ -243,7 +243,7 @@ describe('Part 9 (live-testing task): scheduled auto-draw, admin-toggleable, off
       method: 'POST', headers: { cookie: headcount.cookie, 'content-type': 'application/json', 'x-csrf-token': headcount.csrfToken },
       body: JSON.stringify({ name: 'Auto Draw Dashboard Headcount League', teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10, tracksStats: true })
     });
-    const headcountHtml = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie: headcount.cookie } })).text();
+    const headcountHtml = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie: headcount.cookie } })).text();
     expect(headcountHtml).not.toContain('id="auto_draw_switch"');
   });
 

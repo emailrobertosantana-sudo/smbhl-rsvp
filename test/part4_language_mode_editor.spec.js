@@ -37,15 +37,15 @@ async function signupAndCreateLeague(email, ip) {
   return { cookie, csrfToken, leagueId };
 }
 
-describe('Part 4: language exposure display + working editor on the dashboard', () => {
+describe('Part 4: language exposure display + working editor (moved to the settings page, live-testing task Part 1)', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     await applyRealSchema(env);
   });
 
-  it("the dashboard shows the league's current language exposure, defaulting to 'both' selected", async () => {
+  it("the settings page shows the league's current language exposure, defaulting to 'both' selected", async () => {
     const a = await signupAndCreateLeague('part4.display@example.com', '203.0.113.681');
-    const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie: a.cookie } });
+    const res = await SELF.fetch('http://example.com/league/settings', { headers: { cookie: a.cookie } });
     const html = await res.text();
     expect(html).toContain('id="lang_mode_select"');
     expect(html).toContain('<option value="both" data-i18n="langBoth" selected>');
@@ -65,8 +65,8 @@ describe('Part 4: language exposure display + working editor on the dashboard', 
     const row = await env.DB.prepare('SELECT language_mode FROM leagues WHERE id = ?').bind(a.leagueId).first();
     expect(row.language_mode).toBe('fr');
 
-    // The dashboard itself now reflects the change on next load.
-    const dashHtml = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie: a.cookie } })).text();
+    // The settings page itself now reflects the change on next load.
+    const dashHtml = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie: a.cookie } })).text();
     expect(dashHtml).toContain('<option value="fr" data-i18n="langFrOnly" selected>');
 
     // And Part 4's original foundation behavior (public page toggle

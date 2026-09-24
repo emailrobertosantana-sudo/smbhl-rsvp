@@ -6,7 +6,7 @@ import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmail
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateStructure } from './leagues.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -1372,8 +1372,8 @@ async function submitReset() {
 // bug this session already found and fixed (an unrelated string
 // leaking into every response broke an existing test).
 function buildDashI18n({ state, needsSeason, unverified }) {
-  const fr = { logout: 'Se déconnecter', navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire' };
-  const en = { logout: 'Log out', navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule' };
+  const fr = { logout: 'Se déconnecter', navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres' };
+  const en = { logout: 'Log out', navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings' };
   if (state === 'none') {
     Object.assign(fr, { dashTitle: 'Tableau de bord', noLeagueYet: "Tu n'as pas encore de ligue." });
     Object.assign(en, { dashTitle: 'Dashboard', noLeagueYet: "You don't have a league yet." });
@@ -1387,20 +1387,6 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.",
       weeklyDrawTeamsDesc: 'Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.',
       coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteBtn: 'Inviter',
-      langExposure: 'Langue exposée aux joueurs',
-      langExposureDesc: 'Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.',
-      langBoth: 'Les deux (FR/EN)', langFrOnly: 'Français seulement', langEnOnly: 'Anglais seulement',
-      save: 'Enregistrer', langSaved: 'Enregistré !',
-      remindersTitle: 'Rappels automatiques', remindersDesc: 'Envoyés automatiquement à tes joueurs avant chaque match.',
-      reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder72Desc: "Envoyé aux joueurs qui n'ont pas encore répondu.",
-      reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder24Desc: 'Même chose, plus proche du match.',
-      reminder12Label: 'Détails 12 h avant (joueurs confirmés)', reminder12Desc: 'Heure, lieu, et un lien pour se désister si besoin.',
-      remindersSaved: 'Enregistré !',
-      autoDrawTitle: 'Tirage automatique des équipes',
-      autoDrawDesc: "Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.",
-      autoDrawEnableLabel: 'Activer le tirage automatique',
-      autoDrawEnableDesc: 'Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.',
-      autoDrawHoursLabel: 'Heures avant le match',
       deactivateLeague: 'Désactiver la ligue',
       deactivateDesc: "Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.",
       deactivateConfirmLabel: 'Tape le nom de ta ligue pour confirmer',
@@ -1415,20 +1401,6 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
       coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteBtn: 'Invite',
-      langExposure: 'Language exposed to players',
-      langExposureDesc: "Controls whether your players' public page and RSVP page show a FR/EN toggle, or a single fixed language.",
-      langBoth: 'Both (FR/EN)', langFrOnly: 'French only', langEnOnly: 'English only',
-      save: 'Save', langSaved: 'Saved!',
-      remindersTitle: 'Automatic reminders', remindersDesc: 'Sent automatically to your players before each game.',
-      reminder72Label: '72h reminder (no reply yet)', reminder72Desc: "Sent to players who haven't answered yet.",
-      reminder24Label: '24h reminder (no reply yet)', reminder24Desc: 'Same thing, closer to the game.',
-      reminder12Label: '12h game details (confirmed players)', reminder12Desc: 'Time, venue, and a link to drop out if needed.',
-      remindersSaved: 'Saved!',
-      autoDrawTitle: 'Automatic team draw',
-      autoDrawDesc: 'Automatically forms teams a set number of hours before each game -- off by default, like every other automation.',
-      autoDrawEnableLabel: 'Enable automatic draw',
-      autoDrawEnableDesc: 'The manual "Draw teams" button always stays available regardless.',
-      autoDrawHoursLabel: 'Hours before the game',
       deactivateLeague: 'Deactivate league',
       deactivateDesc: 'This deactivates your league. Your data is kept, but management access is blocked.',
       deactivateConfirmLabel: "Type your league's name to confirm",
@@ -1503,6 +1475,7 @@ const DASH_ICON_HOME = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColo
 const DASH_ICON_PLAYERS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-4 3-6 7-6s7 2 7 6"/></svg>';
 const DASH_ICON_SCHEDULE = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="14" height="13" rx="1"/><path d="M3 8h14M7 2v4M13 2v4"/></svg>';
 const DASH_ICON_CHECK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 10.5l4 4 8-9"/></svg>';
+const DASH_ICON_SETTINGS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2.2M10 15.3v2.2M17.5 10h-2.2M4.7 10H2.5M15.1 4.9l-1.6 1.6M6.5 13.5l-1.6 1.6M15.1 15.1l-1.6-1.6M6.5 6.5L4.9 4.9"/></svg>';
 
 // Admin desktop/phone chrome (design system Part 3): nl-header with the
 // real Accueil/Joueurs/Horaire nav on desktop, collapsing to a fixed
@@ -1511,22 +1484,27 @@ const DASH_ICON_CHECK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentCol
 // own two layouts exactly (this same header/tabbar pair is reused by
 // the roster/schedule pages below, all three sharing one active-tab
 // state).
+// Live-testing task, Part 1: added a 4th nav entry (settings) -- the
+// per-key French fallback label lookup used to be a nested ternary
+// (fine for 3 keys, unreadable for 4+), switched to a plain map.
+const DASH_NAV_LABEL_FR = { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres' };
 function dashChrome(leagueName, active) {
   const nav = [
     { key: 'home', href: '/dashboard', icon: DASH_ICON_HOME, i18n: 'navHome' },
     { key: 'roster', href: '/league/roster', icon: DASH_ICON_PLAYERS, i18n: 'navRoster' },
-    { key: 'schedule', href: '/league/schedule', icon: DASH_ICON_SCHEDULE, i18n: 'navSchedule' }
+    { key: 'schedule', href: '/league/schedule', icon: DASH_ICON_SCHEDULE, i18n: 'navSchedule' },
+    { key: 'settings', href: '/league/settings', icon: DASH_ICON_SETTINGS, i18n: 'navSettings' }
   ];
   const header = `<header class="nl-header">
   <span class="nl-brand" style="max-width:280px">${esc(leagueName)}</span>
-  <nav class="nl-nav">${nav.map(n => `<a href="${n.href}"${n.key === active ? ' aria-current="page"' : ''} data-i18n="${n.i18n}">${esc(n.i18n === 'navHome' ? 'Accueil' : n.i18n === 'navRoster' ? 'Joueurs' : 'Horaire')}</a>`).join('')}</nav>
+  <nav class="nl-nav">${nav.map(n => `<a href="${n.href}"${n.key === active ? ' aria-current="page"' : ''} data-i18n="${n.i18n}">${esc(DASH_NAV_LABEL_FR[n.i18n])}</a>`).join('')}</nav>
   <div class="spacer"></div>
   <div class="nl-lang" role="group" aria-label="Langue / Language">
     <button type="button" id="btn-lang-fr" aria-pressed="true" onclick="window.__setLang('fr')">FR</button>
     <button type="button" id="btn-lang-en" aria-pressed="false" onclick="window.__setLang('en')">EN</button>
   </div>
 </header>`;
-  const tabbar = `<nav class="nl-tabbar">${nav.map(n => `<a href="${n.href}"${n.key === active ? ' aria-current="page"' : ''}>${n.icon}<span data-i18n="${n.i18n}">${esc(n.i18n === 'navHome' ? 'Accueil' : n.i18n === 'navRoster' ? 'Joueurs' : 'Horaire')}</span></a>`).join('')}</nav>`;
+  const tabbar = `<nav class="nl-tabbar">${nav.map(n => `<a href="${n.href}"${n.key === active ? ' aria-current="page"' : ''}>${n.icon}<span data-i18n="${n.i18n}">${esc(DASH_NAV_LABEL_FR[n.i18n])}</span></a>`).join('')}</nav>`;
   return { header, tabbar };
 }
 
@@ -1773,54 +1751,6 @@ async function handleDashboardPage(req, env, url) {
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>
   </section>` : ''}
   <section class="nl-card nl-card--pad-lg">
-    <div class="h3" data-i18n="langExposure">Langue exposée aux joueurs</div>
-    <p class="nl-help" data-i18n="langExposureDesc">Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.</p>
-    <div id="langModeErr" class="nl-error" style="display:none"></div>
-    <div id="langModeOk" class="nl-ok" style="display:none"></div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
-      <select id="lang_mode_select" class="nl-select" style="max-width:220px">
-        <option value="both" data-i18n="langBoth" ${(leagueRow.language_mode || 'both') === 'both' ? 'selected' : ''}>Les deux (FR/EN)</option>
-        <option value="fr" data-i18n="langFrOnly" ${leagueRow.language_mode === 'fr' ? 'selected' : ''}>Français seulement</option>
-        <option value="en" data-i18n="langEnOnly" ${leagueRow.language_mode === 'en' ? 'selected' : ''}>Anglais seulement</option>
-      </select>
-      <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="lang_mode_save" data-i18n="save" onclick="submitLanguageMode()">Enregistrer</button>
-    </div>
-  </section>
-  <section class="nl-card nl-card--pad-lg">
-    <div class="h3" data-i18n="remindersTitle">Rappels automatiques</div>
-    <p class="nl-help" data-i18n="remindersDesc">Envoyés automatiquement à tes joueurs avant chaque match.</p>
-    <div id="remindersErr" class="nl-error" style="display:none"></div>
-    <div id="remindersOk" class="nl-ok" style="display:none"></div>
-    <div class="nl-toggle" style="margin-top:8px">
-      <div><div class="nl-label" data-i18n="reminder72Label">Rappel 72 h avant (sans réponse)</div><div class="nl-help" data-i18n="reminder72Desc">Envoyé aux joueurs qui n'ont pas encore répondu.</div></div>
-      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_72h_enabled ? 'true' : 'false'}" id="reminder_72h_switch" onclick="toggleReminderSwitch(this,'reminder72h')"></button>
-    </div>
-    <div class="nl-toggle">
-      <div><div class="nl-label" data-i18n="reminder24Label">Rappel 24 h avant (sans réponse)</div><div class="nl-help" data-i18n="reminder24Desc">Même chose, plus proche du match.</div></div>
-      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_24h_enabled ? 'true' : 'false'}" id="reminder_24h_switch" onclick="toggleReminderSwitch(this,'reminder24h')"></button>
-    </div>
-    <div class="nl-toggle">
-      <div><div class="nl-label" data-i18n="reminder12Label">Détails 12 h avant (joueurs confirmés)</div><div class="nl-help" data-i18n="reminder12Desc">Heure, lieu, et un lien pour se désister si besoin.</div></div>
-      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="reminder_12h_switch" onclick="toggleReminderSwitch(this,'reminder12h')"></button>
-    </div>
-  </section>
-  ${leagueRow.team_structure === 'weekly_draw' ? `
-  <section class="nl-card nl-card--pad-lg">
-    <div class="h3" data-i18n="autoDrawTitle">Tirage automatique des équipes</div>
-    <p class="nl-help" data-i18n="autoDrawDesc">Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.</p>
-    <div id="autoDrawErr" class="nl-error" style="display:none"></div>
-    <div id="autoDrawOk" class="nl-ok" style="display:none"></div>
-    <div class="nl-toggle" style="margin-top:8px">
-      <div><div class="nl-label" data-i18n="autoDrawEnableLabel">Activer le tirage automatique</div><div class="nl-help" data-i18n="autoDrawEnableDesc">Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.</div></div>
-      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.auto_draw_enabled ? 'true' : 'false'}" id="auto_draw_switch" onclick="toggleReminderSwitch(this,'autoDrawEnabled')"></button>
-    </div>
-    <div class="nl-field" style="margin-top:8px;max-width:220px;">
-      <label class="nl-label" for="auto_draw_hours" data-i18n="autoDrawHoursLabel">Heures avant le match</label>
-      <input class="nl-input" id="auto_draw_hours" type="number" min="1" max="72" value="${esc(String(leagueRow.auto_draw_hours_before || 24))}">
-    </div>
-    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="auto_draw_hours_save" data-i18n="save" onclick="submitAutoDrawHours()">Enregistrer</button></div>
-  </section>` : ''}
-  <section class="nl-card nl-card--pad-lg">
     <div class="h3" data-i18n="coAdmins">Co-administrateurs</div>
     <div class="nl-list" style="margin:12px 0">
       ${adminEmails.map(e => `<div class="nl-row"><span class="grow">${esc(e)}</span></div>`).join('')}
@@ -1998,78 +1928,7 @@ async function submitDeactivate() {
     err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
 }
-async function submitLanguageMode() {
-  var err = document.getElementById('langModeErr');
-  var ok = document.getElementById('langModeOk');
-  err.style.display = 'none'; ok.style.display = 'none';
-  var languageMode = document.getElementById('lang_mode_select').value;
-  var btn = document.getElementById('lang_mode_save');
-  btn.disabled = true;
-  try {
-    var res = await fetch('/league/language-mode', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ languageMode: languageMode })
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
-    ok.textContent = window.__pageDict().langSaved;
-    ok.style.display = 'block';
-    btn.disabled = false;
-  } catch (e) {
-    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
-  }
-}
-// Part 2 (automated reminders task): each switch POSTs its own new
-// state independently the moment it's clicked (no separate "save"
-// button) -- matches the toggle's own instant-feedback convention
-// (nl-switch), and each of the 3 keys is optional/independent server-
-// side (handleLeagueUpdateReminderSettings), so one switch's request
-// never has to know or resend the other two's current state.
-async function toggleReminderSwitch(btn, bodyKey) {
-  var err = document.getElementById('remindersErr');
-  var ok = document.getElementById('remindersOk');
-  err.style.display = 'none'; ok.style.display = 'none';
-  var next = btn.getAttribute('aria-checked') !== 'true';
-  btn.disabled = true;
-  try {
-    var res = await fetch('/league/reminders/settings', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify(Object.fromEntries([[bodyKey, next]]))
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
-    btn.setAttribute('aria-checked', String(next));
-    ok.textContent = window.__pageDict().remindersSaved;
-    ok.style.display = 'block';
-  } catch (e) {
-    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block';
-  }
-  btn.disabled = false;
-}
-async function submitAutoDrawHours() {
-  var err = document.getElementById('autoDrawErr');
-  var ok = document.getElementById('autoDrawOk');
-  err.style.display = 'none'; ok.style.display = 'none';
-  var hours = document.getElementById('auto_draw_hours').value;
-  var btn = document.getElementById('auto_draw_hours_save');
-  btn.disabled = true;
-  try {
-    var res = await fetch('/league/reminders/settings', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ autoDrawHoursBefore: Number(hours) })
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
-    ok.textContent = window.__pageDict().remindersSaved;
-    ok.style.display = 'block';
-  } catch (e) {
-    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block';
-  }
-  btn.disabled = false;
-}`;
+`;
 
   return new Response(nlDocument({ title: leagueRow ? `Tableau de bord — ${leagueRow.name}` : 'Tableau de bord', description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
@@ -2394,7 +2253,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const lang = forcedLang || 'fr';
   const t = I18N_PUBLIC[lang];
 
-  const teamDot = i => ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length];
+  const teamDot = i => resolveTeamColor(leagueRow.team_colors, i);
 
   const heroHtml = nextEvent ? `<div class="pb-hero" style="background:${esc(fillColor)}">
     <div class="overline" style="color:rgba(255,255,255,.65)" data-i18n="nextGame">${esc(t.nextGame)}</div>
@@ -2557,6 +2416,405 @@ var PB_FORCED_LANG = ${JSON.stringify(forcedLang)};
 // endpoint exists to actually change it from here).
 const ROSTER_TEAM_DOTS = ['#8b4a1c', '#0b7f71', '#1f6feb', '#c2255c', '#6d3fae', '#b8860b', '#0f766e', '#a3123a'];
 
+// Live-testing task, Part 1: leagues.team_colors (migrate-032.sql) is
+// an optional JSON array parallel to team_names -- a custom colour at
+// index i wins for that team; anything missing/invalid/absent falls
+// back to the exact same positional ROSTER_TEAM_DOTS palette every
+// team-colour render site already used before this task, so a league
+// that never sets a custom colour looks byte-for-byte identical to
+// before. One helper, reused everywhere a team gets a colour (roster
+// page, public page, settings page's own preview) instead of each site
+// re-deriving it slightly differently.
+function resolveTeamColor(teamColorsRaw, i) {
+  if (teamColorsRaw) {
+    try {
+      const parsed = JSON.parse(teamColorsRaw);
+      if (Array.isArray(parsed) && parsed[i] && /^#[0-9a-fA-F]{6}$/.test(parsed[i])) return parsed[i];
+    } catch (_) {}
+  }
+  return ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length];
+}
+
+// Live-testing task, Part 1: the consolidated settings page. Pulls
+// together everything that previously had no single home (or was
+// scattered on the dashboard) -- identity, teams (the missing
+// post-signup editing surface flagged as a gap in the prior task),
+// the league-level team-structure/roster-limits default, language
+// mode, and reminders/auto-draw (both MOVED here from the dashboard,
+// not duplicated -- see handleDashboardPage's own comment on what was
+// removed). Session+checkLeagueAccess-gated, same as every other
+// league-admin page.
+async function handleLeagueSettingsPage(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return Response.redirect(url.origin + '/login', 302);
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
+
+  const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueSlug = await getOrCreateLeagueSlug(env, leagueRow);
+  const teamStructure = leagueRow.team_structure || 'fixed';
+  const isHeadcount = teamStructure === 'headcount';
+  let teamNames = [];
+  try { teamNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
+  if (isHeadcount) teamNames = [];
+
+  const { header, tabbar } = dashChrome(leagueRow.name, 'settings');
+
+  const I18N_SETTINGS = {
+    fr: {
+      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter',
+      title: 'Paramètres',
+      identityTitle: 'Identité de la ligue', lblLeagueName: 'Nom de la ligue',
+      lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée -- ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
+      lblColor: 'Couleur de la ligue', lblTracksStats: 'Suivre les statistiques', save: 'Enregistrer', saved: 'Enregistré !',
+      teamsTitle: 'Équipes', teamsDesc: "Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue -- republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).",
+      teamsHeadcountNote: "Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.",
+      addTeam: 'Ajouter une équipe', removeTeam: 'Retirer', lblTeamName: 'Nom', lblTeamColor: 'Couleur',
+      structureTitle: 'Structure par défaut de la ligue',
+      structureDesc: "Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées -- seules les nouvelles saisons utiliseront ce changement.",
+      structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
+      structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
+      structureWeeklyTitle: 'Équipes qui changent', structureWeeklyDesc: 'De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.',
+      lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
+      lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.',
+      langExposure: 'Langue exposée aux joueurs',
+      langExposureDesc: 'Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.',
+      langBoth: 'Les deux (FR/EN)', langFrOnly: 'Français seulement', langEnOnly: 'Anglais seulement',
+      remindersTitle: 'Rappels automatiques', remindersDesc: 'Envoyés automatiquement à tes joueurs avant chaque match.',
+      reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder72Desc: "Envoyé aux joueurs qui n'ont pas encore répondu.",
+      reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder24Desc: 'Même chose, plus proche du match.',
+      reminder12Label: 'Détails 12 h avant (joueurs confirmés)', reminder12Desc: 'Heure, lieu, et un lien pour se désister si besoin.',
+      autoDrawTitle: 'Tirage automatique des équipes',
+      autoDrawDesc: "Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.",
+      autoDrawEnableLabel: 'Activer le tirage automatique',
+      autoDrawEnableDesc: 'Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.',
+      autoDrawHoursLabel: 'Heures avant le match'
+    },
+    en: {
+      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
+      title: 'Settings',
+      identityTitle: 'League identity', lblLeagueName: 'League name',
+      lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed -- that guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
+      lblColor: 'League colour', lblTracksStats: 'Track stats', save: 'Save', saved: 'Saved!',
+      teamsTitle: 'Teams', teamsDesc: "Rename your teams and pick their colour. A change here updates the league's default team list -- republish the current season for it to show up everywhere (players, games, public page).",
+      teamsHeadcountNote: 'This league has no fixed teams -- nothing to name here.',
+      addTeam: 'Add a team', removeTeam: 'Remove', lblTeamName: 'Name', lblTeamColor: 'Colour',
+      structureTitle: "League's default structure",
+      structureDesc: "Change your league's default structure. Already-published seasons are never affected -- only new seasons will use this change.",
+      structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
+      structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
+      structureWeeklyTitle: 'Teams shuffle', structureWeeklyDesc: 'Fresh teams every game — we can even build them for you, automatically.',
+      lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
+      lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately.",
+      langExposure: 'Language exposed to players',
+      langExposureDesc: "Controls whether your players' public page and RSVP page show a FR/EN toggle, or a single fixed language.",
+      langBoth: 'Both (FR/EN)', langFrOnly: 'French only', langEnOnly: 'English only',
+      remindersTitle: 'Automatic reminders', remindersDesc: 'Sent automatically to your players before each game.',
+      reminder72Label: '72h reminder (no reply yet)', reminder72Desc: "Sent to players who haven't answered yet.",
+      reminder24Label: '24h reminder (no reply yet)', reminder24Desc: 'Same thing, closer to the game.',
+      reminder12Label: '12h game details (confirmed players)', reminder12Desc: 'Time, venue, and a link to drop out if needed.',
+      autoDrawTitle: 'Automatic team draw',
+      autoDrawDesc: 'Automatically forms teams a set number of hours before each game -- off by default, like every other automation.',
+      autoDrawEnableLabel: 'Enable automatic draw',
+      autoDrawEnableDesc: 'The manual "Draw teams" button always stays available regardless.',
+      autoDrawHoursLabel: 'Hours before the game'
+    }
+  };
+
+  const teamRowsHtml = teamNames.map((t, i) => `<div class="se-team-row" data-idx="${i}">
+      <input class="nl-input" type="text" value="${esc(t)}" data-team-name>
+      <input type="color" class="se-color" value="${esc(resolveTeamColor(leagueRow.team_colors, i))}" data-team-color>
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="removeTeam" onclick="this.closest('.se-team-row').remove()">Retirer</button>
+    </div>`).join('');
+
+  const bodyHtml = `${dashStyles()}<style>
+  .se-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+  .se-main h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; }
+  .se-team-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .se-team-row input[data-team-name] { flex: 1; }
+  .se-color { width: 44px; height: 40px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); padding: 2px; cursor: pointer; }
+  .se-slug-display { font: 500 14px/20px var(--font-sans); color: var(--ink-muted); background: var(--surface-sunken); padding: 10px 12px; border-radius: var(--radius-md); word-break: break-all; }
+</style>${header}
+<main class="dash-main se-main">
+  <h1 data-i18n="title">Paramètres</h1>
+
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="identityTitle">Identité de la ligue</div>
+    <div id="identityErr" class="nl-error" style="display:none"></div>
+    <div id="identityOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-field" style="margin-top:8px">
+      <label class="nl-label" for="se_name" data-i18n="lblLeagueName">Nom de la ligue</label>
+      <input class="nl-input" id="se_name" type="text" value="${esc(leagueRow.name)}">
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" data-i18n="lblSlug">Adresse publique</label>
+      <div class="se-slug-display">${esc(url.origin)}/${esc(leagueSlug)}</div>
+      <p class="nl-help" data-i18n="slugHelp">L'adresse de ta ligue est fixée à la création et ne peut pas être changée -- ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.</p>
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" for="se_color" data-i18n="lblColor">Couleur de la ligue</label>
+      <input type="color" class="se-color" id="se_color" value="${esc(leagueRow.color || '#b3122e')}">
+    </div>
+    <div class="nl-toggle">
+      <div><div class="nl-label" data-i18n="lblTracksStats">Suivre les statistiques</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_stats ? 'true' : 'false'}" id="se_stats_switch" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="identity_save" data-i18n="save" onclick="submitIdentity()">Enregistrer</button></div>
+  </section>
+
+  ${!isHeadcount ? `
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="teamsTitle">Équipes</div>
+    <p class="nl-help" data-i18n="teamsDesc">Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue -- republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).</p>
+    <div id="teamsErr" class="nl-error" style="display:none"></div>
+    <div id="teamsOk" class="nl-ok" style="display:none"></div>
+    <div id="se_teams_list" style="margin-top:12px">${teamRowsHtml}</div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="addTeam" onclick="addTeamRow()">Ajouter une équipe</button>
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="teams_save" data-i18n="save" onclick="submitTeams()">Enregistrer</button>
+    </div>
+  </section>` : `
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="teamsTitle">Équipes</div>
+    <p class="nl-help" data-i18n="teamsHeadcountNote">Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.</p>
+  </section>`}
+
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="structureTitle">Structure par défaut de la ligue</div>
+    <p class="nl-help" data-i18n="structureDesc">Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées -- seules les nouvelles saisons utiliseront ce changement.</p>
+    <div id="structureErr" class="nl-error" style="display:none"></div>
+    <div id="structureOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-field" style="margin-top:8px">
+      <div class="su-structure" id="se_structure_radio">
+        <label class="su-structure-opt${teamStructure === 'headcount' ? '' : ' on'}" data-value="fixed">
+          <input type="radio" name="se_structure" value="fixed" ${teamStructure === 'headcount' || teamStructure === 'weekly_draw' ? '' : 'checked'}>
+          <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue classique.</span></span>
+        </label>
+        <label class="su-structure-opt${teamStructure === 'headcount' ? ' on' : ''}" data-value="headcount">
+          <input type="radio" name="se_structure" value="headcount" ${teamStructure === 'headcount' ? 'checked' : ''}>
+          <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de qui embarque — parfait pour une partie improvisée.</span></span>
+        </label>
+        <label class="su-structure-opt${teamStructure === 'weekly_draw' ? ' on' : ''}" data-value="weekly_draw">
+          <input type="radio" name="se_structure" value="weekly_draw" ${teamStructure === 'weekly_draw' ? 'checked' : ''}>
+          <span><span class="t" data-i18n="structureWeeklyTitle">Équipes qui changent</span><span class="d" data-i18n="structureWeeklyDesc">De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.</span></span>
+        </label>
+      </div>
+    </div>
+    <div id="se_headcount_fields" style="${isHeadcount ? '' : 'display:none'}">
+      <div class="su-two">
+        <div class="nl-field">
+          <label class="nl-label" for="se_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
+          <input class="nl-input" id="se_min_players" type="number" min="1" value="${esc(String(leagueRow.min_players || 8))}">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="se_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
+          <input class="nl-input" id="se_max_players" type="number" min="1" value="${esc(String(leagueRow.max_players || 12))}">
+        </div>
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="se_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
+        <input class="nl-input" id="se_min_goalies" type="number" min="0" value="${esc(String(leagueRow.min_goalies || 0))}">
+        <p class="nl-help" data-i18n="minGoaliesHelp">Laisse à 0 si tu ne veux pas suivre les gardiens séparément.</p>
+      </div>
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="structure_save" data-i18n="save" onclick="submitStructure()">Enregistrer</button></div>
+  </section>
+
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="langExposure">Langue exposée aux joueurs</div>
+    <p class="nl-help" data-i18n="langExposureDesc">Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.</p>
+    <div id="langModeErr" class="nl-error" style="display:none"></div>
+    <div id="langModeOk" class="nl-ok" style="display:none"></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+      <select id="lang_mode_select" class="nl-select" style="max-width:220px">
+        <option value="both" data-i18n="langBoth" ${(leagueRow.language_mode || 'both') === 'both' ? 'selected' : ''}>Les deux (FR/EN)</option>
+        <option value="fr" data-i18n="langFrOnly" ${leagueRow.language_mode === 'fr' ? 'selected' : ''}>Français seulement</option>
+        <option value="en" data-i18n="langEnOnly" ${leagueRow.language_mode === 'en' ? 'selected' : ''}>Anglais seulement</option>
+      </select>
+      <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="lang_mode_save" data-i18n="save" onclick="submitLanguageMode()">Enregistrer</button>
+    </div>
+  </section>
+
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="remindersTitle">Rappels automatiques</div>
+    <p class="nl-help" data-i18n="remindersDesc">Envoyés automatiquement à tes joueurs avant chaque match.</p>
+    <div id="remindersErr" class="nl-error" style="display:none"></div>
+    <div id="remindersOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-toggle" style="margin-top:8px">
+      <div><div class="nl-label" data-i18n="reminder72Label">Rappel 72 h avant (sans réponse)</div><div class="nl-help" data-i18n="reminder72Desc">Envoyé aux joueurs qui n'ont pas encore répondu.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_72h_enabled ? 'true' : 'false'}" id="reminder_72h_switch" onclick="toggleReminderSwitch(this,'reminder72h')"></button>
+    </div>
+    <div class="nl-toggle">
+      <div><div class="nl-label" data-i18n="reminder24Label">Rappel 24 h avant (sans réponse)</div><div class="nl-help" data-i18n="reminder24Desc">Même chose, plus proche du match.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_24h_enabled ? 'true' : 'false'}" id="reminder_24h_switch" onclick="toggleReminderSwitch(this,'reminder24h')"></button>
+    </div>
+    <div class="nl-toggle">
+      <div><div class="nl-label" data-i18n="reminder12Label">Détails 12 h avant (joueurs confirmés)</div><div class="nl-help" data-i18n="reminder12Desc">Heure, lieu, et un lien pour se désister si besoin.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="reminder_12h_switch" onclick="toggleReminderSwitch(this,'reminder12h')"></button>
+    </div>
+  </section>
+  ${teamStructure === 'weekly_draw' ? `
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="autoDrawTitle">Tirage automatique des équipes</div>
+    <p class="nl-help" data-i18n="autoDrawDesc">Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.</p>
+    <div id="autoDrawErr" class="nl-error" style="display:none"></div>
+    <div id="autoDrawOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-toggle" style="margin-top:8px">
+      <div><div class="nl-label" data-i18n="autoDrawEnableLabel">Activer le tirage automatique</div><div class="nl-help" data-i18n="autoDrawEnableDesc">Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.auto_draw_enabled ? 'true' : 'false'}" id="auto_draw_switch" onclick="toggleReminderSwitch(this,'autoDrawEnabled')"></button>
+    </div>
+    <div class="nl-field" style="margin-top:8px;max-width:220px;">
+      <label class="nl-label" for="auto_draw_hours" data-i18n="autoDrawHoursLabel">Heures avant le match</label>
+      <input class="nl-input" id="auto_draw_hours" type="number" min="1" max="72" value="${esc(String(leagueRow.auto_draw_hours_before || 24))}">
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="auto_draw_hours_save" data-i18n="save" onclick="submitAutoDrawHours()">Enregistrer</button></div>
+  </section>` : ''}
+</main>
+${tabbar}`;
+
+  const script = `
+${nlAuthScript(I18N_SETTINGS)}
+async function submitIdentity() {
+  var err = document.getElementById('identityErr'); var ok = document.getElementById('identityOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var btn = document.getElementById('identity_save'); btn.disabled = true;
+  try {
+    var res = await fetch('/league/settings/identity', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({
+        name: document.getElementById('se_name').value.trim(),
+        color: document.getElementById('se_color').value,
+        tracksStats: document.getElementById('se_stats_switch').getAttribute('aria-checked') === 'true'
+      })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block'; btn.disabled = false;
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
+function addTeamRow() {
+  var list = document.getElementById('se_teams_list');
+  var row = document.createElement('div'); row.className = 'se-team-row';
+  var nameInput = document.createElement('input'); nameInput.className = 'nl-input'; nameInput.type = 'text'; nameInput.setAttribute('data-team-name', '');
+  var colorInput = document.createElement('input'); colorInput.type = 'color'; colorInput.className = 'se-color'; colorInput.value = '#b3122e'; colorInput.setAttribute('data-team-color', '');
+  var removeBtn = document.createElement('button'); removeBtn.type = 'button'; removeBtn.className = 'nl-btn nl-btn--ghost nl-btn--sm';
+  removeBtn.textContent = window.__pageDict().removeTeam;
+  removeBtn.onclick = function() { row.remove(); };
+  row.appendChild(nameInput); row.appendChild(colorInput); row.appendChild(removeBtn);
+  list.appendChild(row);
+}
+async function submitTeams() {
+  var err = document.getElementById('teamsErr'); var ok = document.getElementById('teamsOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var rows = document.querySelectorAll('#se_teams_list .se-team-row');
+  var teamNames = []; var teamColors = [];
+  rows.forEach(function(r) {
+    teamNames.push(r.querySelector('[data-team-name]').value.trim());
+    teamColors.push(r.querySelector('[data-team-color]').value);
+  });
+  var btn = document.getElementById('teams_save'); btn.disabled = true;
+  try {
+    var res = await fetch('/league/settings/teams', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ teamNames: teamNames, teamColors: teamColors })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block'; btn.disabled = false;
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
+document.querySelectorAll('#se_structure_radio label').forEach(function(l) {
+  l.addEventListener('click', function() {
+    document.querySelectorAll('#se_structure_radio label').forEach(function(x) { x.classList.remove('on'); });
+    l.classList.add('on');
+    document.getElementById('se_headcount_fields').style.display = l.getAttribute('data-value') === 'headcount' ? '' : 'none';
+  });
+});
+async function submitStructure() {
+  var err = document.getElementById('structureErr'); var ok = document.getElementById('structureOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var structure = document.querySelector('#se_structure_radio input:checked').value;
+  var payload = { team_structure: structure };
+  if (structure === 'headcount') {
+    payload.min_players = Number(document.getElementById('se_min_players').value);
+    payload.max_players = Number(document.getElementById('se_max_players').value);
+    payload.min_goalies = Number(document.getElementById('se_min_goalies').value);
+  }
+  var btn = document.getElementById('structure_save'); btn.disabled = true;
+  try {
+    var res = await fetch('/league/settings/structure', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
+    window.location.reload();
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
+async function submitLanguageMode() {
+  var err = document.getElementById('langModeErr'); var ok = document.getElementById('langModeOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var languageMode = document.getElementById('lang_mode_select').value;
+  var btn = document.getElementById('lang_mode_save'); btn.disabled = true;
+  try {
+    var res = await fetch('/league/language-mode', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ languageMode: languageMode })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block'; btn.disabled = false;
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
+async function toggleReminderSwitch(btn, bodyKey) {
+  var err = document.getElementById('remindersErr'); var ok = document.getElementById('remindersOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var next = btn.getAttribute('aria-checked') !== 'true';
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/reminders/settings', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(Object.fromEntries([[bodyKey, next]]))
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    btn.setAttribute('aria-checked', String(next));
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
+  } catch (e) { err.style.display = 'block'; err.textContent = window.__errorText('NETWORK_ERROR'); }
+  btn.disabled = false;
+}
+async function submitAutoDrawHours() {
+  var err = document.getElementById('autoDrawErr'); var ok = document.getElementById('autoDrawOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var hours = document.getElementById('auto_draw_hours').value;
+  var btn = document.getElementById('auto_draw_hours_save'); btn.disabled = true;
+  try {
+    var res = await fetch('/league/reminders/settings', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ autoDrawHoursBefore: Number(hours) })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
+  } catch (e) { err.style.display = 'block'; err.textContent = window.__errorText('NETWORK_ERROR'); }
+  btn.disabled = false;
+}`;
+
+  return new Response(nlDocument({ title: `${I18N_SETTINGS.fr.title} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
 async function handleLeagueRosterPage(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
@@ -2566,7 +2824,7 @@ async function handleLeagueRosterPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, team_colors FROM leagues WHERE id = ?').bind(leagueId).first();
 
   const contacts = (await env.DB.prepare(
     'SELECT player_id, name, email, phone, role, preferred_team, is_goalie FROM contacts WHERE league_id = ? ORDER BY name'
@@ -2615,7 +2873,7 @@ async function handleLeagueRosterPage(req, env, url) {
 
   const I18N_ROSTER = {
     fr: {
-      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', logout: 'Se déconnecter',
+      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter',
       title: 'Joueurs', addPlayer: 'Ajouter un joueur',
       filterAll: 'Tous', filterSubs: 'Remplaçants', filterUnassigned: 'Sans équipe',
       colPlayer: 'Joueur', colTeam: 'Équipe', colRole: 'Rôle',
@@ -2639,7 +2897,7 @@ async function handleLeagueRosterPage(req, env, url) {
       bulkResultSkippedInvalid: 'Ignoré — invalide', bulkResultSkippedDupeBatch: 'Ignoré — doublon dans la liste'
     },
     en: {
-      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
+      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
       title: 'Players', addPlayer: 'Add a player',
       filterAll: 'All', filterSubs: 'Subs', filterUnassigned: 'Unassigned',
       colPlayer: 'Player', colTeam: 'Team', colRole: 'Role',
@@ -2668,7 +2926,7 @@ async function handleLeagueRosterPage(req, env, url) {
 
   const filterPills = [
     `<button type="button" class="ro-f" data-filter="all" aria-pressed="true"><span data-i18n="filterAll">Tous</span> ${contacts.length}</button>`,
-    ...(showTeams ? teamNames.map((t, i) => `<button type="button" class="ro-f" data-filter="team:${esc(t)}" aria-pressed="false"><span class="nl-dot" style="background:${ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length]}"></span>${esc(t)} ${teamCounts[i]}</button>`) : []),
+    ...(showTeams ? teamNames.map((t, i) => `<button type="button" class="ro-f" data-filter="team:${esc(t)}" aria-pressed="false"><span class="nl-dot" style="background:${resolveTeamColor(leagueRow.team_colors, i)}"></span>${esc(t)} ${teamCounts[i]}</button>`) : []),
     `<button type="button" class="ro-f" data-filter="subs" aria-pressed="false"><span data-i18n="filterSubs">Remplaçants</span> ${subCount}</button>`,
     ...(showTeams ? [`<button type="button" class="ro-f" data-filter="unassigned" aria-pressed="false"><span data-i18n="filterUnassigned">Sans équipe</span> ${unassignedCount}</button>`] : [])
   ].join('');
@@ -3028,7 +3286,7 @@ async function handleLeagueSchedulePage(req, env, url) {
 
   const I18N_SCHEDULE = {
     fr: {
-      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', logout: 'Se déconnecter',
+      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter',
       title: 'Horaire', createEvent: 'Créer un match',
       date: 'Date', startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
       venueOpt: 'Lieu (optionnel)', createBtn: 'Créer le match', cancel: 'Annuler',
@@ -3045,7 +3303,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       bulkCreateResultSummary: '{created} match(s) créé(s), {skipped} ignoré(s) (déjà existant).'
     },
     en: {
-      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
+      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
       title: 'Schedule', createEvent: 'Create an event',
       date: 'Date', startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
       venueOpt: 'Venue (optional)', createBtn: 'Create the event', cancel: 'Cancel',
@@ -3316,7 +3574,7 @@ async function handleLeagueEventDetailPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, team_colors FROM leagues WHERE id = ?').bind(leagueId).first();
   const eventId = url.searchParams.get('e');
   const ev = eventId ? await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
     .bind(eventId, leagueId).first() : null;
@@ -3325,8 +3583,8 @@ async function handleLeagueEventDetailPage(req, env, url) {
 
   if (!ev) {
     const I18N_404 = {
-      fr: { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', logout: 'Se déconnecter', notFound: 'Match introuvable', backToSchedule: 'Horaire' },
-      en: { navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out', notFound: 'Event not found', backToSchedule: 'Schedule' }
+      fr: { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter', notFound: 'Match introuvable', backToSchedule: 'Horaire' },
+      en: { navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out', notFound: 'Event not found', backToSchedule: 'Schedule' }
     };
     const bodyHtml404 = `${dashStyles()}${header}
 <main class="dash-main">
@@ -3357,7 +3615,7 @@ ${tabbar}`;
 
   const I18N_DETAIL = {
     fr: {
-      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', logout: 'Se déconnecter',
+      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter',
       backToSchedule: 'Horaire', short: 'Manque', complete: 'Complet',
       confirmed: 'confirmés', openSpots: 'places libres', noReply: 'sans réponse',
       inviteGoalie: 'Inviter un gardien', inviteSkater: 'Inviter des joueurs',
@@ -3374,7 +3632,7 @@ ${tabbar}`;
       assignTo: 'Assigner à…', assign: 'Assigner', randomDraw: 'Tirage aléatoire'
     },
     en: {
-      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', logout: 'Log out',
+      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
       backToSchedule: 'Schedule', short: 'Short', complete: 'Full',
       confirmed: 'confirmed', openSpots: 'open spots', noReply: 'no reply',
       inviteGoalie: 'Invite a goalie', inviteSkater: 'Invite players',
@@ -3461,7 +3719,7 @@ ${tabbar}`;
     teamCards.push(`
     <section class="nl-card nl-card--pad-lg${st.short ? ' nl-card--short' : ''} ev-team"${isHeadcount ? ' style="grid-column:1/-1"' : ''}>
       <div class="ev-th">
-        <h2>${isHeadcount ? `<span data-i18n="poolTitle">Joueurs</span>` : `<span class="nl-dot" style="background:${ROSTER_TEAM_DOTS[i % ROSTER_TEAM_DOTS.length]}"></span>${esc(team)}`}</h2>
+        <h2>${isHeadcount ? `<span data-i18n="poolTitle">Joueurs</span>` : `<span class="nl-dot" style="background:${resolveTeamColor(leagueRow.team_colors, i)}"></span>${esc(team)}`}</h2>
         ${st.short
           ? `<span class="nl-badge nl-badge--short">${BADGE_ICON_ALERT}<span data-i18n="short">Manque</span> ${Math.max(openGoalies, 0) + Math.max(openSkaters, 0)}</span>`
           : `<span class="nl-badge nl-badge--in">${BADGE_ICON_CHECK}<span data-i18n="complete">Complet</span></span>`}
@@ -19775,6 +20033,15 @@ async function handleFetch(req, env, ctx) {
       // switches on the dashboard's own reminder-settings card.
       if (url.pathname === '/league/reminders/settings' && req.method === 'POST')
         return await handleLeagueUpdateReminderSettings(req, env, url);
+      // Live-testing task, Part 1: the consolidated settings page's own
+      // write routes -- identity (name/colour/stats), team names/colours,
+      // and the league-level team-structure/roster-limits default.
+      if (url.pathname === '/league/settings/identity' && req.method === 'POST')
+        return await handleLeagueUpdateIdentity(req, env, url);
+      if (url.pathname === '/league/settings/teams' && req.method === 'POST')
+        return await handleLeagueUpdateTeams(req, env, url);
+      if (url.pathname === '/league/settings/structure' && req.method === 'POST')
+        return await handleLeagueUpdateStructure(req, env, url);
       // Part 2: admin-initiated manual "send now" trigger (same UI
       // pattern as the existing manual sub-invite button) -- sends the
       // same non-responder reminder outside the automatic 72h/24h
@@ -19836,6 +20103,9 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueSchedulePage(req, env, url);
       if (url.pathname === '/league/events/detail' && req.method === 'GET')
         return await handleLeagueEventDetailPage(req, env, url);
+      // Live-testing task, Part 1: consolidated settings page.
+      if ((url.pathname === '/league/settings' || url.pathname === '/league/settings/') && req.method === 'GET')
+        return await handleLeagueSettingsPage(req, env, url);
 
       if (url.pathname === '/admin' || url.pathname === '/admin/')
         return Response.redirect(url.origin + '/admin/board', 302);

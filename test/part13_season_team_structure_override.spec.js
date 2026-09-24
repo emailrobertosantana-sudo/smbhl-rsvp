@@ -99,13 +99,22 @@ describe('Season-level team-structure override', () => {
       expect(cfg.teamStructure).toBe('headcount');
     });
 
-    it('a plain re-publish using only {season_name} (the legacy shape every pre-existing caller uses) stores no config.teamStructure at all', async () => {
+    // Superseded by the live-testing settings-page task: config.teamStructure
+    // is now ALWAYS written (the season's real effective value, override or
+    // inherited), not left unset for a plain {season_name} publish. This
+    // closes a real, dormant retroactive-alteration bug -- leaving it unset
+    // meant a LATER, unrelated edit to the league's own team_structure
+    // (now possible via the new settings page) would silently reach back
+    // and change how this already-published season resolves. Freezing the
+    // real value at publish time is what makes "changing league-level
+    // settings must not alter existing seasons" true by construction.
+    it('a plain re-publish using only {season_name} stores its real effective team_structure, frozen at publish time', async () => {
       const { cookie, csrfToken } = await signup('season.legacy.shape@example.com', '203.0.116.003');
       const league = await createLeague(cookie, csrfToken, { name: 'Legacy Shape League', teamNames: ['A', 'B'], tracksStats: true });
       await publishSeason(cookie, csrfToken, { season_name: 'Legacy Season' });
       const stored = await env.SHEETS_KV.get(`data_json:${league.id}`);
       const parsed = JSON.parse(stored);
-      expect(parsed.seasons[0].config.teamStructure).toBeUndefined();
+      expect(parsed.seasons[0].config.teamStructure).toBe('fixed');
     });
   });
 

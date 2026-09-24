@@ -882,13 +882,25 @@ export async function handleLeagueSeasonPublish(req, env) {
   // changing its permanent signup-time default). body.team_structure is
   // OPTIONAL and absent from every pre-existing caller (the dashboard's
   // "start your first season" form, every test written before this
-  // task) -- when it's not given, seasonTeamStructure stays null,
-  // config.teamStructure is never set below, and getSeasonConfig's own
-  // resolution (withLeagueBrandingDefault, season_config.js) falls
-  // through to the league's own leagues.team_structure exactly as it
-  // already did before this feature existed. That's what keeps every
-  // pre-existing league/season completely unaffected -- this whole
-  // block is purely additive on top of the untouched original path.
+  // task).
+  //
+  // Live-testing task (settings page, Part 1) fix: config.teamStructure
+  // used to only be written when THIS request explicitly overrode it,
+  // which meant a plain publish left it unset -- and getSeasonConfig's
+  // own resolution (withLeagueBrandingDefault, season_config.js) then
+  // fell through to the league's CURRENT leagues.team_structure at every
+  // read, not the value that was actually true when this season was
+  // published. That was a real, dormant retroactive-alteration bug:
+  // once the new settings page made leagues.team_structure editable
+  // after the fact, an unrelated later edit to the league's default
+  // would silently reach back and change how an already-published
+  // season resolves. Now config.teamStructure is ALWAYS set below to
+  // this season's real effective value (whatever it resolves to right
+  // now, override or inherited) -- a true snapshot at publish time, so
+  // no future league-level change can ever retroactively alter it
+  // again. This changes stored shape going forward only; it does not
+  // rewrite any season already published before this fix (see
+  // handleLeagueUpdateStructure's own backfill for those).
   let seasonTeamStructure = null;
   if (body.team_structure !== undefined && body.team_structure !== null && String(body.team_structure).trim() !== '') {
     const val = String(body.team_structure).trim();
@@ -1009,9 +1021,7 @@ export async function handleLeagueSeasonPublish(req, env) {
     }
   }
 
-  if (seasonTeamStructure) {
-    config.teamStructure = seasonTeamStructure;
-  }
+  config.teamStructure = effectiveStructure;
 
   const newSeasonEntry = {
     name: seasonName,
@@ -1635,5 +1645,245 @@ export async function handleLeagueUpdateReminderSettings(req, env, url) {
       autoDrawEnabled: !!row.auto_draw_enabled,
       autoDrawHoursBefore: row.auto_draw_hours_before
     }
+  });
+}
+
+/* ---------- consolidated settings page routes (live-testing task, Part 1) ---------- */
+
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+// Freezes every season that doesn't already carry its own
+// config.teamStructure to `currentTeamStructure` -- the value they've
+// actually been resolving to all along (see getSeasonConfig's own
+// fallback-to-league-default behavior). Called BEFORE leagues.team_structure
+// is actually changed, with the OLD value, so every existing season keeps
+// resolving exactly as it did before the edit -- only a season published
+// AFTER this edit (which always freezes its own real value now, per the
+// handleLeagueSeasonPublish fix above) picks up the new default. A no-op
+// (and cheap) for a league with no seasons yet, or where every season
+// already has an explicit value of its own.
+async function freezeExistingSeasonsTeamStructure(env, leagueId, currentTeamStructure) {
+  const data = await getLeagueDataJson(env, leagueId);
+  const seasons = Array.isArray(data.seasons) ? data.seasons : [];
+  let changed = false;
+  for (const season of seasons) {
+    if (season && season.config && season.config.teamStructure === undefined) {
+      season.config.teamStructure = currentTeamStructure;
+      changed = true;
+    }
+  }
+  if (changed) {
+    await putLeagueDataJson(env, leagueId, data);
+  }
+}
+
+// League identity: name, colour, stats tracking. Slug is deliberately
+// NOT editable here (or anywhere) -- immutable post-creation, per
+// migrate-027's own posture (see resolveLeagueIdBySlug's comment) --
+// the settings page shows it read-only with an explanation instead.
+export async function handleLeagueUpdateIdentity(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update SMBHL.', errorKey: 'ROUTE_BLOCKED_SETTINGS' }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const updates = [];
+  const params = [];
+  if (body.name !== undefined) {
+    const name = String(body.name || '').trim();
+    if (!name) {
+      return Response.json({ ok: false, error: 'League name is required.', errorKey: 'LEAGUE_NAME_REQUIRED' }, { status: 400 });
+    }
+    updates.push('name = ?'); params.push(name);
+  }
+  if (body.color !== undefined) {
+    const color = String(body.color || '').trim();
+    if (!HEX_COLOR_RE.test(color)) {
+      return Response.json({ ok: false, error: 'Colour must be a hex value like #b3122e.', errorKey: 'INVALID_COLOR' }, { status: 400 });
+    }
+    updates.push('color = ?'); params.push(color);
+  }
+  if (typeof body.tracksStats === 'boolean') {
+    updates.push('tracks_stats = ?'); params.push(body.tracksStats ? 1 : 0);
+  }
+  if (!updates.length) {
+    return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
+  }
+  params.push(leagueId);
+  await env.DB.prepare(`UPDATE leagues SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
+
+  const row = await env.DB.prepare('SELECT name, color, tracks_stats FROM leagues WHERE id = ?').bind(leagueId).first();
+  return Response.json({ ok: true, settings: { name: row.name, color: row.color, tracksStats: !!row.tracks_stats } });
+}
+
+// Team names and colours -- the missing post-signup editing surface
+// (flagged as a gap in the prior task). Only meaningful for 'fixed' and
+// 'weekly_draw' (headcount has no real team names, only the internal
+// HEADCOUNT_TEAM_NAME sentinel -- see that constant's own comment).
+// Renaming a team here updates leagues.team_names (the league's own
+// default, read by the dashboard tile and by any FUTURE season
+// published after this edit) -- it does NOT retroactively change any
+// ALREADY-PUBLISHED season's own team list, since handleLeagueSeasonPublish
+// always snapshots seasonTeamNames into that season's own config.teams
+// at publish time (unconditionally, unrelated to this task). A rename
+// takes visible effect on player-facing pages (roster, events, public
+// page) once the current season is republished -- same "league default
+// vs season override" posture the dashboard's own season-management
+// section already uses for team_structure, not a new paradigm.
+export async function handleLeagueUpdateTeams(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update SMBHL.', errorKey: 'ROUTE_BLOCKED_SETTINGS' }, { status: 403 });
+  }
+
+  const leagueRow = await env.DB.prepare('SELECT team_structure FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow || leagueRow.team_structure === 'headcount') {
+    return Response.json({ ok: false, error: 'This league has no team names to edit.', errorKey: 'NO_TEAMS_TO_EDIT' }, { status: 400 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const teamNames = Array.isArray(body.teamNames)
+    ? body.teamNames.map(t => String(t || '').trim()).filter(Boolean)
+    : [];
+  if (teamNames.length < 2) {
+    return Response.json({ ok: false, error: 'At least 2 team names are required.', errorKey: 'MIN_TEAM_NAMES' }, { status: 400 });
+  }
+
+  let teamColors = null;
+  if (Array.isArray(body.teamColors)) {
+    teamColors = teamNames.map((_, i) => {
+      const c = String(body.teamColors[i] || '').trim();
+      return HEX_COLOR_RE.test(c) ? c : null;
+    });
+    if (teamColors.every(c => c === null)) teamColors = null;
+  }
+
+  await env.DB.prepare('UPDATE leagues SET team_names = ?, team_colors = ? WHERE id = ?')
+    .bind(JSON.stringify(teamNames), teamColors ? JSON.stringify(teamColors) : null, leagueId).run();
+
+  return Response.json({ ok: true, teamNames, teamColors });
+}
+
+// League-level team structure default + headcount roster limits.
+// CRITICAL safety property (the task's own explicit requirement):
+// changing this must NOT retroactively alter any already-published
+// season's resolved config -- freezeExistingSeasonsTeamStructure (above)
+// is called with the OLD value BEFORE the league row is updated, so
+// every existing season keeps resolving exactly as before. Roster
+// limits (min/max/min_goalies) don't need the same freeze: they're
+// only meaningful for 'headcount', and handleLeagueSeasonPublish
+// already unconditionally snapshots them into every published
+// headcount season's own config at publish time (Bug 3 fix, this
+// file) -- so they were never dynamically re-read from the league row
+// once a season exists, unlike team_structure was.
+export async function handleLeagueUpdateStructure(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update SMBHL.', errorKey: 'ROUTE_BLOCKED_SETTINGS' }, { status: 403 });
+  }
+
+  const leagueRow = await env.DB.prepare('SELECT team_structure, team_names, min_players, max_players, min_goalies FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) {
+    return Response.json({ ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' }, { status: 404 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const updates = [];
+  const params = [];
+  let newStructure = leagueRow.team_structure;
+
+  if (body.team_structure !== undefined) {
+    const val = String(body.team_structure || '').trim();
+    if (!['fixed', 'headcount', 'weekly_draw'].includes(val)) {
+      return Response.json({ ok: false, error: "team_structure must be 'fixed', 'headcount', or 'weekly_draw'.", errorKey: 'INVALID_TEAM_STRUCTURE' }, { status: 400 });
+    }
+    // Switching TO 'fixed'/'weekly_draw' from 'headcount' needs real
+    // team names on file -- the same minimum the signup wizard itself
+    // already enforces -- since this league may never have collected
+    // any (a headcount-since-signup league has only the sentinel).
+    if (val !== 'headcount') {
+      let existingNames = [];
+      try { existingNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
+      if (!Array.isArray(existingNames) || existingNames.filter(Boolean).length < 2) {
+        return Response.json({ ok: false, error: 'This league has no team names on file yet -- set them in the Teams section first.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
+      }
+    }
+    newStructure = val;
+    updates.push('team_structure = ?'); params.push(val);
+  }
+
+  if (newStructure === 'headcount') {
+    const minPlayers = body.min_players !== undefined ? Number(body.min_players) : leagueRow.min_players;
+    const maxPlayers = body.max_players !== undefined ? Number(body.max_players) : leagueRow.max_players;
+    if (body.min_players !== undefined || body.max_players !== undefined || body.team_structure !== undefined) {
+      if (!Number.isFinite(minPlayers) || !Number.isFinite(maxPlayers) || minPlayers < 1) {
+        return Response.json({ ok: false, error: 'A minimum and maximum player count are required.', errorKey: 'HEADCOUNT_LIMITS_REQUIRED' }, { status: 400 });
+      }
+      if (maxPlayers < minPlayers) {
+        return Response.json({ ok: false, error: 'The maximum must be at least the minimum.', errorKey: 'HEADCOUNT_MAX_TOO_LOW' }, { status: 400 });
+      }
+      updates.push('min_players = ?', 'max_players = ?'); params.push(minPlayers, maxPlayers);
+    }
+    if (body.min_goalies !== undefined) {
+      const minG = Number(body.min_goalies);
+      if (!Number.isFinite(minG) || minG < 0) {
+        return Response.json({ ok: false, error: 'Minimum goalies must be zero or more.', errorKey: 'HEADCOUNT_MIN_GOALIES_INVALID' }, { status: 400 });
+      }
+      const effectiveMax = body.max_players !== undefined ? Number(body.max_players) : leagueRow.max_players;
+      if (Number.isFinite(effectiveMax) && minG > effectiveMax) {
+        return Response.json({ ok: false, error: "Minimum goalies can't be more than the maximum player count.", errorKey: 'HEADCOUNT_MIN_GOALIES_TOO_HIGH' }, { status: 400 });
+      }
+      updates.push('min_goalies = ?'); params.push(minG);
+    }
+  }
+
+  if (!updates.length) {
+    return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
+  }
+
+  // Freeze BEFORE writing the new team_structure -- see this function's
+  // own comment. Only needed when team_structure is actually changing.
+  if (body.team_structure !== undefined && newStructure !== leagueRow.team_structure) {
+    await freezeExistingSeasonsTeamStructure(env, leagueId, leagueRow.team_structure || 'fixed');
+  }
+
+  params.push(leagueId);
+  await env.DB.prepare(`UPDATE leagues SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
+
+  const row = await env.DB.prepare('SELECT team_structure, min_players, max_players, min_goalies FROM leagues WHERE id = ?').bind(leagueId).first();
+  return Response.json({
+    ok: true,
+    settings: { teamStructure: row.team_structure, minPlayers: row.min_players, maxPlayers: row.max_players, minGoalies: row.min_goalies }
   });
 }

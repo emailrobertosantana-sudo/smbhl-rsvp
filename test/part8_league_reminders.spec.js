@@ -144,13 +144,13 @@ describe('Part 2: per-league automated reminders', () => {
     expect(row.reminder_12h_enabled).toBe(0);
   });
 
-  it('the dashboard shows the 3 real switches reflecting current state', async () => {
+  it('the settings page shows the 3 real switches reflecting current state (moved from the dashboard, live-testing task Part 1)', async () => {
     const { cookie, csrfToken } = await signupAndCreateLeague('reminders.dashboard@example.com', '203.0.113.953', 'Dashboard Reminders League', ['A', 'B']);
     await SELF.fetch('http://example.com/league/reminders/settings', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ reminder24h: false })
     });
-    const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
+    const res = await SELF.fetch('http://example.com/league/settings', { headers: { cookie } });
     const html = await res.text();
     expect(html).toContain('id="reminder_72h_switch"');
     expect(html).toContain('id="reminder_24h_switch"');
