@@ -413,6 +413,54 @@ export function nlEmailButton(url, label, color = '#16181d') {
 </tr></table>`;
 }
 
+// Live-testing task (batch 3), Part 1: the ONE shared mechanism every
+// email in this app assembles through once it has built separate FR
+// and EN content -- reconciles what used to be three diverging
+// bilingual patterns (buildVerificationEmail's own lang-dictionary
+// switch, renderLeagueReminderEmail/renderLeagueLogisticsEmail's own
+// dicts+langs-array+join, and body()'s own hand-rolled per-case
+// if/else) into one. Every caller still builds its own fr/en content
+// -- this only decides WHICH of it ships and how 'both' stitches the
+// two together, so it works whether the caller's html is already
+// wrapped or still bare inner content (callers pass whichever shape
+// they need wrapped later, unchanged).
+//
+// languageMode: 'fr' | 'en' | anything else (including 'both', null,
+// undefined) treated as 'both' -- the safe default matching every
+// league's pre-language_mode behavior and SMBHL's own permanent,
+// only-ever value (see getLeagueConfig's own comment, season_config.js,
+// for why SMBHL can never reach 'fr'/'en' here).
+// fr/en: { subject, text, html }.
+// bothSubject: optional override for the combined subject in 'both'
+// mode -- several existing templates predate this mechanism with
+// their own subject convention (body()'s sub_call case, historically
+// FR-only even in 'both' mode) that must stay byte-for-byte unchanged;
+// omitted, this defaults to "fr.subject / en.subject", already the
+// exact convention every other existing bilingual template used.
+// htmlSeparator: optional override for the <hr> joining fr.html and
+// en.html in 'both' mode -- defaults to the convention most bilingual
+// templates in this app already use (buildInviteEmail,
+// buildPasswordResetEmail, renderLeagueReminderEmail/
+// renderLeagueLogisticsEmail); a caller whose own pre-existing markup
+// used a different rule (body()'s sub_call case: a slightly different
+// color/margin) passes its own to stay byte-for-byte unchanged.
+// textSeparator: optional override for the plain-text join between
+// fr.text and en.text -- defaults to '---' (buildInviteEmail,
+// buildPasswordResetEmail, renderLeagueReminderEmail/
+// renderLeagueLogisticsEmail's own convention); body()'s legacy
+// sub_call case uses a bare em dash instead and passes its own.
+export function assembleBilingualEmail(languageMode, { fr, en, bothSubject, htmlSeparator, textSeparator }) {
+  if (languageMode === 'fr') return { subject: fr.subject, text: fr.text, html: fr.html };
+  if (languageMode === 'en') return { subject: en.subject, text: en.text, html: en.html };
+  const hSep = htmlSeparator != null ? htmlSeparator : '<hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">';
+  const tSep = textSeparator != null ? textSeparator : '---';
+  return {
+    subject: bothSubject != null ? bothSubject : `${fr.subject} / ${en.subject}`,
+    text: `${fr.text}\n\n${tSep}\n\n${en.text}`,
+    html: `${fr.html}\n${hSep}\n${en.html}`
+  };
+}
+
 // footerHtml gets the language-switch link inlined by the caller
 // (each template's own two languages know their own toggle URL/label);
 // this just provides the shared structural wrapper.

@@ -11,7 +11,7 @@
 // command was not run as part of this task (see the final report).
 
 import { hmac, same } from './crypto_utils.js';
-import { nlEmailWrap, nlEmailButton, nlDocument } from './design_system.js';
+import { nlEmailWrap, nlEmailButton, nlDocument, assembleBilingualEmail } from './design_system.js';
 import { ERROR_I18N } from './error_i18n.js';
 
 /* ---------- password hashing ---------- */
@@ -318,36 +318,47 @@ export async function verifyEmailToken(env, token) {
 // every other lang fallback in this app (nlAuthScript etc). Kept as a
 // small pure function so tests can assert on subject/link content
 // without going through an HTTP round trip.
+// Live-testing task (batch 3), Part 1: reconciled onto the same shared
+// assembler every bilingual/single-language email in this app now
+// goes through (design_system.js) -- this function's own behavior is
+// unchanged (lang is always exactly 'fr' or 'en' here, from
+// users.signup_lang; the assembler's 'both' branch is never reached
+// for a verification email, since no league exists yet to have chosen
+// it -- see sendVerificationEmail's own comment for why signup_lang,
+// not language_mode, is this email's correct source).
 function buildVerificationEmail(verificationLink, lang = 'fr') {
-  const isEn = lang === 'en';
-  const subject = isEn ? 'Confirm your email' : 'Confirme ton courriel';
-  const text = isEn
-    ? `Welcome! Confirm your email by clicking this link:
+  const fr = {
+    subject: 'Confirme ton courriel',
+    text: `Bienvenue ! Confirme ton courriel en cliquant sur ce lien :
 ${verificationLink}
 
-This link expires in 24 hours. If you didn't create an account, you can ignore this email.`
-    : `Bienvenue ! Confirme ton courriel en cliquant sur ce lien :
+Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.`,
+    html: `
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Confirme ton courriel</h1>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Bienvenue ! Clique sur le bouton ci-dessous pour activer ton compte.</p>
+    ${nlEmailButton(verificationLink, 'Confirmer mon courriel')}
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.</p>`
+  };
+  const en = {
+    subject: 'Confirm your email',
+    text: `Welcome! Confirm your email by clicking this link:
 ${verificationLink}
 
-Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.`;
-  const bodyHtml = isEn
-    ? `
+This link expires in 24 hours. If you didn't create an account, you can ignore this email.`,
+    html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Confirm your email</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Welcome! Click the button below to activate your account.</p>
     ${nlEmailButton(verificationLink, 'Confirm my email')}
     <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>`
-    : `
-    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Confirme ton courriel</h1>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Bienvenue ! Clique sur le bouton ci-dessous pour activer ton compte.</p>
-    ${nlEmailButton(verificationLink, 'Confirmer mon courriel')}
-    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.</p>`;
+  };
+  const assembled = assembleBilingualEmail(lang, { fr, en });
   const html = nlEmailWrap({
     brandName: 'Notre Ligue',
     barColor: '#16181d',
-    bodyHtml,
-    footerHtml: isEn ? 'Sent by Notre Ligue' : 'Envoyé par Notre Ligue'
+    bodyHtml: assembled.html,
+    footerHtml: lang === 'en' ? 'Sent by Notre Ligue' : 'Envoyé par Notre Ligue'
   });
-  return { subject, text, html };
+  return { subject: assembled.subject, text: assembled.text, html };
 }
 
 // Generates a fresh token/link for userId and sends it via the injected
@@ -420,41 +431,73 @@ async function verifyPasswordResetToken(env, token) {
   return { ok: true, userId };
 }
 
+// Live-testing task (batch 3), Part 1: password reset (and any other
+// "admin account" email not already tied to one specific league at
+// send time, per the task's explicit "including admin account emails
+// ... NOT the admin's personal signup_lang" instruction) uses the
+// language_mode of the league this account most recently administers
+// -- the SAME "most recently created league" convention
+// resolveSessionLeagueId (leagues.js) already uses for "which league
+// is this session acting on" when no explicit league_id is given, so
+// an admin of several leagues gets a predictable, consistent answer
+// rather than an arbitrary one. An account that administers no league
+// yet (or ever -- a genuinely possible state for a brand-new signup
+// who verified but never created one) falls back to 'fr', matching
+// every other Quebec-first default in this app (e.g.
+// buildVerificationEmail's own lang='fr' default) -- never signup_lang,
+// which the task explicitly rules out for this class of email.
+async function resolveAccountEmailLanguageMode(env, userId) {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT l.language_mode FROM league_admins la JOIN leagues l ON l.id = la.league_id
+        WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
+    ).bind(userId).first();
+    return (row && row.language_mode) || 'fr';
+  } catch (_) {
+    return 'fr';
+  }
+}
+
 // Design system Part 5: same rebuild as buildVerificationEmail above
 // (real design system, black product bar/button, bilingual single
 // send) -- see that function's own comment for why this is safe to
-// touch (exclusively the new account system, never SMBHL).
-function buildPasswordResetEmail(resetLink) {
-  const subject = 'Réinitialise ton mot de passe / Reset your password';
-  const text =
-`Tu as demandé à réinitialiser ton mot de passe. Clique sur ce lien pour en choisir un nouveau :
+// touch (exclusively the new account system, never SMBHL). languageMode
+// added in the live-testing task (batch 3), Part 1 -- see
+// resolveAccountEmailLanguageMode's own comment above for how the
+// caller resolves it.
+function buildPasswordResetEmail(resetLink, languageMode = 'both') {
+  const fr = {
+    subject: 'Réinitialise ton mot de passe',
+    text: `Tu as demandé à réinitialiser ton mot de passe. Clique sur ce lien pour en choisir un nouveau :
 ${resetLink}
 
-Ce lien expire dans 1 heure. Si tu n'as pas demandé ceci, ignore ce courriel -- ton mot de passe actuel reste inchangé.
-
----
-
-You requested a password reset. Click this link to choose a new password:
-${resetLink}
-
-This link expires in 1 hour. If you didn't request this, you can ignore this email -- your current password stays unchanged.`;
-  const bodyHtml = `
+Ce lien expire dans 1 heure. Si tu n'as pas demandé ceci, ignore ce courriel -- ton mot de passe actuel reste inchangé.`,
+    html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Réinitialise ton mot de passe</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Tu as demandé à réinitialiser ton mot de passe. Clique sur le bouton ci-dessous pour en choisir un nouveau.</p>
     ${nlEmailButton(resetLink, 'Choisir un nouveau mot de passe')}
-    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 1 heure. Si tu n'as pas demandé ceci, ignore ce courriel -- ton mot de passe actuel reste inchangé.</p>
-    <hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 1 heure. Si tu n'as pas demandé ceci, ignore ce courriel -- ton mot de passe actuel reste inchangé.</p>`
+  };
+  const en = {
+    subject: 'Reset your password',
+    text: `You requested a password reset. Click this link to choose a new password:
+${resetLink}
+
+This link expires in 1 hour. If you didn't request this, you can ignore this email -- your current password stays unchanged.`,
+    html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Reset your password</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">You requested a password reset. Click the button below to choose a new one.</p>
     ${nlEmailButton(resetLink, 'Choose a new password')}
-    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 1 hour. If you didn't request this, you can ignore this email -- your current password stays unchanged.</p>`;
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 1 hour. If you didn't request this, you can ignore this email -- your current password stays unchanged.</p>`
+  };
+  const assembled = assembleBilingualEmail(languageMode, { fr, en });
   const html = nlEmailWrap({
     brandName: 'Notre Ligue',
     barColor: '#16181d',
-    bodyHtml,
-    footerHtml: 'Envoyé par Notre Ligue'
+    bodyHtml: assembled.html,
+    footerHtml: languageMode === 'en' ? 'Sent by Notre Ligue' : 'Envoyé par Notre Ligue'
   });
-  return { subject, text, html };
+  return { subject: assembled.subject, text: assembled.text, html };
 }
 
 // Fixed window, same shape as checkSignupRateLimit (and deliberately reuses
@@ -513,7 +556,8 @@ export async function handleRequestPasswordReset(req, env, sendMailFunc = null) 
     const resetLink = `${publicUrl}/reset-password?token=${encodeURIComponent(token)}`;
     if (typeof sendMailFunc === 'function') {
       try {
-        const { subject, text, html } = buildPasswordResetEmail(resetLink);
+        const languageMode = await resolveAccountEmailLanguageMode(env, user.id);
+        const { subject, text, html } = buildPasswordResetEmail(resetLink, languageMode);
         await sendMailFunc(env, email, subject, text, html);
       } catch (err) {
         console.error(`[auth] Failed to send password reset email to ${email}: ${err.message}`);

@@ -365,7 +365,19 @@ export function getLeagueConfig(config) {
     fromEmail: raw.fromEmail || DEFAULT_SEASON_CONFIG.league.fromEmail,
     replyToEmail: raw.replyToEmail || DEFAULT_SEASON_CONFIG.league.replyToEmail,
     siteUrl: raw.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl,
-    faviconUrl: raw.faviconUrl || DEFAULT_SEASON_CONFIG.league.faviconUrl
+    faviconUrl: raw.faviconUrl || DEFAULT_SEASON_CONFIG.league.faviconUrl,
+    // Live-testing task (batch 3), Part 1: this narrow branding
+    // projection previously dropped languageMode the same way
+    // normalizeSeasonConfig once silently dropped it (see that
+    // function's own comment) -- body()'s shared email switch reads it
+    // from here. SMBHL's own path never has a real languageMode on its
+    // KV-sourced `raw.league` (SMBHL is not part of the language_mode
+    // system at all -- it's a leagues-table-only column, and SMBHL's
+    // season config is read from the legacy data_json KV blob, which
+    // has no such field), so this always falls through to the same
+    // 'both' DEFAULT_SEASON_CONFIG already had -- SMBHL's own output is
+    // provably unaffected by construction, not by a runtime check.
+    languageMode: raw.languageMode || DEFAULT_SEASON_CONFIG.league.languageMode
   };
 }
 

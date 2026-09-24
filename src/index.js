@@ -2,7 +2,7 @@ import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
-import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton } from './design_system.js';
+import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail } from './design_system.js';
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
@@ -5153,6 +5153,20 @@ function body(kind, { ev, name, team, link, payload, leagueCfg = null }) {
     : whenLine(ev);
   const sign = `\n\n—\n${league.name} · ${siteHost}`;
   const matchInfo = payload && payload.fixtureText ? payload.fixtureText : '';
+  // Live-testing task (batch 3), Part 1: league.languageMode
+  // (getLeagueConfig's own comment has the full "why this is always
+  // 'both' for SMBHL by construction" writeup). Only 'sub_call' is
+  // genuinely reachable by league-product code among this switch's
+  // cases (audited every enqueue() call site in the codebase: every
+  // other kind here -- chase/gameday/friday_board/gameday_morning/
+  // notice/assigned/released/team_short/created/summary/
+  // season_recap[_prompt] -- is enqueued only from SMBHL's own cron
+  // (runSchedule) or SMBHL-only routes (teamPost, rsvpGet/rsvpPost,
+  // /admin/season-recap/send), so they're intentionally left
+  // rendering exactly as before -- SMBHL's own real code paths never
+  // pass a non-'both' languageMode anyway, but there was no reachable
+  // case to even prove that against for these kinds.
+  const languageMode = league.languageMode || 'both';
 
   switch (kind) {
     case 'invite': {
@@ -5517,29 +5531,28 @@ We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}
     case 'sub_call': {
       const g = payload.need === 'goalie';
       const again = payload.reminder ? ' (rappel / reminder)' : '';
-      const subj = `${tFR(team)} cherche ${g ? 'un gardien' : 'un joueur'}${again}`;
-      const text =
+
+      const subjFr = `${tFR(team)} cherche ${g ? 'un gardien' : 'un joueur'}${again}`;
+      const subjEn = `${team} needs ${g ? 'a goalie' : 'a skater'}${payload.reminder ? ' (reminder)' : ''}`;
+
+      const textFr =
 `${tFR(team)} cherche ${g ? 'un gardien' : 'un joueur'} ${w.fr}.
 
 Disponible ?   OUI : ${payload.yes}
                NON : ${payload.no}
 
 Si la place est déjà prise, tu restes sur la liste d'attente pour les autres équipes.
-Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.
-
-—
-
-${team} needs ${g ? 'a goalie' : 'a skater'} ${w.en}.
+Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.`;
+      const textEn =
+`${team} needs ${g ? 'a goalie' : 'a skater'} ${w.en}.
 
 Available?   YES: ${payload.yes}
              NO:  ${payload.no}
 
 If the spot is taken you stay on the waitlist for the other teams.
-Want off the sub list? Just reply to this email.${sign}`;
+Want off the sub list? Just reply to this email.`;
 
-      const html = wrapEmail(
-        subj,
-        `<p style="font-size:16px; margin:0 0 16px;">
+      const htmlFr = `<p style="font-size:16px; margin:0 0 16px;">
           <b>${esc(tFR(team))}</b> cherche ${g ? 'un gardien' : 'un joueur'} <b>${esc(w.fr)}</b>.
         </p>
         <p style="font-size:15px; font-weight:600; margin:0 0 10px;">Disponible ?</p>
@@ -5552,11 +5565,8 @@ Want off the sub list? Just reply to this email.${sign}`;
         </p>
         <p style="font-size:12px; color:#94a3b8; margin:0 0 16px;">
           Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.
-        </p>
-
-        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-
-        <p style="font-size:15px; margin:0 0 16px; color:#334155;">
+        </p>`;
+      const htmlEn = `<p style="font-size:15px; margin:0 0 16px; color:#334155;">
           <b>${esc(team)}</b> needs ${g ? 'a goalie' : 'a skater'} <b>${esc(w.en)}</b>.
         </p>
         <p style="font-size:14px; font-weight:600; margin:0 0 10px; color:#334155;">Available?</p>
@@ -5569,10 +5579,30 @@ Want off the sub list? Just reply to this email.${sign}`;
         </p>
         <p style="font-size:12px; color:#94a3b8; margin:0;">
           Want off the sub list? Just reply to this email.
-        </p>`
-      );
+        </p>`;
 
-      return { subject: subj, text, html };
+      // Live-testing task (batch 3), Part 1: languageMode determines
+      // which block(s) render, via the one shared assembler every
+      // bilingual email in this app now goes through (design_system.js).
+      // 'both' (SMBHL's only possible value, by construction -- see
+      // this function's own top comment) is byte-for-byte the same
+      // stacked FR-then-EN shape as before this task -- bothSubject:
+      // subjFr preserves this case's own historical FR-only subject
+      // even in 'both' mode, unlike most other bilingual templates.
+      // sign is appended once, after assembly, regardless of mode --
+      // it's this app's plain-text signature line, not per-language
+      // content.
+      const assembled = assembleBilingualEmail(languageMode, {
+        fr: { subject: subjFr, text: textFr, html: htmlFr },
+        en: { subject: subjEn, text: textEn, html: htmlEn },
+        bothSubject: subjFr,
+        // This case's own original separators -- distinct from what
+        // the assembler defaults to for every other bilingual template
+        // (28px/#e3e3e0 html hr, '---' text).
+        htmlSeparator: '<hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">',
+        textSeparator: '—'
+      });
+      return { subject: assembled.subject, text: `${assembled.text}${sign}`, html: wrapEmail(assembled.subject, assembled.html) };
     }
 
     case 'team_short': {
@@ -12093,27 +12123,42 @@ function leagueReminderDict(lang, { firstName, dayLabel, ev, team }) {
 // kind: 'reminder_72h' | 'reminder_24h'. Bilingual single send (FR
 // then EN) unless the league forces one language -- same convention
 // as the account-level emails (design system Part 5).
+// Live-testing task (batch 3), Part 1: reconciled onto the same shared
+// assembler (design_system.js) every other bilingual email in this app
+// now goes through, replacing this function's own former
+// dicts+langs-array+join pattern -- output is unchanged (same content,
+// same '---'/28px separators, already the assembler's own defaults,
+// which were modeled on this function's pre-existing convention).
+// forcedLang (this function's own long-standing param name, unchanged
+// so its 2 existing call sites need no update): null renders both
+// languages, 'fr'/'en' renders exactly one.
 function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, dayLabel, ev, inLink, outLink, forcedLang }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
-  const langs = forcedLang ? [forcedLang] : ['fr', 'en'];
-  const dicts = langs.map(l => leagueReminderDict(l, { firstName, dayLabel, ev }));
   const subjKey = kind === 'reminder_72h' ? 'r72Subject' : 'r24Subject';
   const headKey = kind === 'reminder_72h' ? 'r72Headline' : 'r24Headline';
   const bodyKey = kind === 'reminder_72h' ? 'r72Body' : 'r24Body';
-  const subject = dicts.map(d => d[subjKey]).join(' / ');
-  const bodyHtml = dicts.map((d, i) => `
-    ${i > 0 ? '<hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">' : ''}
+  const toContent = l => {
+    const d = leagueReminderDict(l, { firstName, dayLabel, ev });
+    return {
+      subject: d[subjKey],
+      text: `${d[headKey]}\n${d[bodyKey]}\n${d.btnIn}: ${inLink}\n${d.btnOut}: ${outLink}`,
+      html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d[headKey]}</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${d[bodyKey]}</p>
     ${nlEmailButton(inLink, d.btnIn, barColor)}
-    <p style="margin:16px 0 0;text-align:center;font-size:15px;line-height:22px;"><a href="${outLink}" style="color:#16181d;font-weight:700;">${d.btnOut}</a></p>
-  `).join('');
-  const text = dicts.map(d => `${d[headKey]}\n${d[bodyKey]}\n${d.btnIn}: ${inLink}\n${d.btnOut}: ${outLink}`).join('\n\n---\n\n');
+    <p style="margin:16px 0 0;text-align:center;font-size:15px;line-height:22px;"><a href="${outLink}" style="color:#16181d;font-weight:700;">${d.btnOut}</a></p>`,
+      poweredBy: d.poweredBy
+    };
+  };
+  const fr = toContent('fr');
+  const en = toContent('en');
+  const assembled = assembleBilingualEmail(forcedLang || 'both', { fr, en });
+  const footerDict = forcedLang === 'en' ? en : fr;
   const html = nlEmailWrap({
-    brandName: leagueName, barColor, bodyHtml,
-    footerHtml: `${dicts[0].poweredBy} pour ${esc(leagueName)}`
+    brandName: leagueName, barColor, bodyHtml: assembled.html,
+    footerHtml: `${footerDict.poweredBy} pour ${esc(leagueName)}`
   });
-  return { subject, text, html };
+  return { subject: assembled.subject, text: assembled.text, html };
 }
 
 // kind: 'logistics_12h'. Confirmed players only -- informs, does not
@@ -12121,23 +12166,31 @@ function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, d
 // matching this app's own established "secondary action = text link"
 // convention rather than a second bulletproof button (guidelines/
 // 30-emails.md: one button per email).
+// Live-testing task (batch 3), Part 1: reconciled onto the same shared
+// assembler as renderLeagueReminderEmail above -- see its own comment.
 function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
-  const langs = forcedLang ? [forcedLang] : ['fr', 'en'];
-  const dicts = langs.map(l => leagueReminderDict(l, { firstName, dayLabel, ev, team }));
-  const subject = dicts.map(d => d.logisticsSubject).join(' / ');
-  const bodyHtml = dicts.map((d, i) => `
-    ${i > 0 ? '<hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">' : ''}
+  const toContent = l => {
+    const d = leagueReminderDict(l, { firstName, dayLabel, ev, team });
+    return {
+      subject: d.logisticsSubject,
+      text: `${d.logisticsHeadline}\n${d.logisticsBody}\n${d.optOut}: ${optOutLink}`,
+      html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.logisticsHeadline}</h1>
     <p style="margin:0 0 20px;font-size:16px;line-height:25px;">${d.logisticsBody}</p>
-    <p style="margin:0;font-size:13px;line-height:19px;color:#55585f;"><a href="${optOutLink}" style="color:#55585f;">${d.optOut}</a></p>
-  `).join('');
-  const text = dicts.map(d => `${d.logisticsHeadline}\n${d.logisticsBody}\n${d.optOut}: ${optOutLink}`).join('\n\n---\n\n');
+    <p style="margin:0;font-size:13px;line-height:19px;color:#55585f;"><a href="${optOutLink}" style="color:#55585f;">${d.optOut}</a></p>`,
+      poweredBy: d.poweredBy
+    };
+  };
+  const fr = toContent('fr');
+  const en = toContent('en');
+  const assembled = assembleBilingualEmail(forcedLang || 'both', { fr, en });
+  const footerDict = forcedLang === 'en' ? en : fr;
   const html = nlEmailWrap({
-    brandName: leagueName, barColor, bodyHtml,
-    footerHtml: `${dicts[0].poweredBy} pour ${esc(leagueName)}`
+    brandName: leagueName, barColor, bodyHtml: assembled.html,
+    footerHtml: `${footerDict.poweredBy} pour ${esc(leagueName)}`
   });
-  return { subject, text, html };
+  return { subject: assembled.subject, text: assembled.text, html };
 }
 
 // The distinct late-reversal admin alert (12h opt-out only) -- a real
@@ -12146,19 +12199,38 @@ function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLab
 // glance from a routine shortage notice: this one means "someone who
 // was IN just dropped, 12 hours out," the least-recoverable shortage
 // scenario, not just "not everyone has answered yet."
-function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, team, dayLabel, ev, dashboardLink }) {
+// Live-testing task (batch 3), Part 1: languageMode added -- this is a
+// league-scoped operational alert (about that league's own event), so
+// it follows the league's language_mode like every other league email,
+// not a fixed bilingual send. dayLabelFr/dayLabelEn let the caller
+// (which resolves the actual day label via reminderDayLabel) pass a
+// pre-formatted label per language, since that formatting itself needs
+// to know which language(s) to build.
+function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, team, dayLabelFr, dayLabelEn, ev, dashboardLink, languageMode = 'both' }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
-  const subject = `${team}: ${playerName} vient de se désister · 12 h avant le match / just dropped out, 12h before the game`;
-  const bodyHtml = `
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Désistement tardif · Late reversal</td></tr></table>
+  const dFr = dayLabelFr || formatEventDate(ev.date, 'fr', 'short');
+  const dEn = dayLabelEn || formatEventDate(ev.date, 'en', 'short');
+  const fr = {
+    subject: `${team}: ${playerName} vient de se désister · 12 h avant le match`,
+    text: `${playerName} (${team}) vient de se désister 12 heures avant le match (${dFr}). L'invitation aux remplaçants a été lancée automatiquement. ${dashboardLink}`,
+    html: `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Désistement tardif</td></tr></table>
     <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(playerName)} ne joue plus</h1>
-    <p style="margin:0 0 8px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> était confirmé${'·'}e pour <b>${esc(team)}</b> et vient de changer sa réponse à 12 heures du match (${esc(dayLabel || formatEventDate(ev.date, 'fr', 'short'))}). On a lancé l'invitation aux remplaçants automatiquement.</p>
-    <p style="margin:0 0 24px;font-size:15px;line-height:23px;color:#55585f;"><b>${esc(playerName)}</b> was confirmed for <b>${esc(team)}</b> and just changed their answer 12 hours before the game (${esc(dayLabel || formatEventDate(ev.date, 'en', 'short'))}). Subs have already been invited automatically.</p>
-    ${nlEmailButton(dashboardLink, 'Voir le match · View the game', barColor)}
-  `;
-  const text = `${playerName} (${team}) just dropped out 12h before the game (${dayLabel || formatEventDate(ev.date, 'en', 'short')}). Subs invited automatically. ${dashboardLink}`;
-  const html = nlEmailWrap({ brandName: leagueName, barColor, bodyHtml, footerHtml: 'Notre Ligue' });
-  return { subject, text, html };
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> était confirmé${'·'}e pour <b>${esc(team)}</b> et vient de changer sa réponse à 12 heures du match (${esc(dFr)}). On a lancé l'invitation aux remplaçants automatiquement.</p>
+    ${nlEmailButton(dashboardLink, 'Voir le match', barColor)}`
+  };
+  const en = {
+    subject: `${team}: ${playerName} just dropped out, 12h before the game`,
+    text: `${playerName} (${team}) just dropped out 12h before the game (${dEn}). Subs invited automatically. ${dashboardLink}`,
+    html: `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Late reversal</td></tr></table>
+    <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(playerName)} is no longer playing</h1>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> was confirmed for <b>${esc(team)}</b> and just changed their answer 12 hours before the game (${esc(dEn)}). Subs have already been invited automatically.</p>
+    ${nlEmailButton(dashboardLink, 'View the game', barColor)}`
+  };
+  const assembled = assembleBilingualEmail(languageMode, { fr, en });
+  const html = nlEmailWrap({ brandName: leagueName, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' });
+  return { subject: assembled.subject, text: assembled.text, html };
 }
 
 // Sends the distinct late-reversal alert to every current admin of
@@ -12167,18 +12239,20 @@ function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, tea
 // league's creator, since a co-admin invited later should hear about
 // this too.
 async function sendLateReversalAdminAlert(env, leagueId, ev, contact) {
-  const leagueRow = await env.DB.prepare('SELECT name, color FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow) return;
   const admins = (await env.DB.prepare(
     `SELECT u.email FROM league_admins la JOIN users u ON u.id = la.user_id WHERE la.league_id = ?`
   ).bind(leagueId).all()).results || [];
   if (!admins.length) return;
 
-  const dayLabel = reminderDayLabel(ev.date, 'fr');
+  const languageMode = leagueRow.language_mode || 'both';
+  const dayLabelFr = reminderDayLabel(ev.date, 'fr');
+  const dayLabelEn = reminderDayLabel(ev.date, 'en');
   const dashboardLink = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
   const mail = renderLateReversalAdminAlert({
     leagueName: leagueRow.name, leagueColor: leagueRow.color,
-    playerName: contact.name, team: contact.preferred_team || '', dayLabel, ev, dashboardLink
+    playerName: contact.name, team: contact.preferred_team || '', dayLabelFr, dayLabelEn, ev, dashboardLink, languageMode
   });
   for (const admin of admins) {
     try {

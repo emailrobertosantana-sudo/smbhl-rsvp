@@ -21,7 +21,7 @@ import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
-import { nlEmailWrap, nlEmailButton, leagueFillColor } from './design_system.js';
+import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail } from './design_system.js';
 import { hasCapability } from './super_admin.js';
 
 /* ---------- league-scoped authorization ----------
@@ -1430,38 +1430,44 @@ export async function verifyInviteToken(env, token) {
 // contrast-safe color (leagueFillColor()), same rule as the RSVP/
 // public pages. Bilingual single send (FR then EN), matching every
 // other transactional email in this app.
-function buildInviteEmail(leagueName, inviteLink, leagueColor = '#b3122e') {
+// Live-testing task (batch 3), Part 1: languageMode ('fr' | 'en' |
+// 'both', default 'both') -- the confirmed-broken bug report for this
+// task ("most emails currently render BOTH languages stacked ...
+// regardless of any setting ... confirmed live on the co-admin
+// invitation email"). Uses the one shared assembler every bilingual
+// email in this app now goes through (design_system.js).
+function buildInviteEmail(leagueName, inviteLink, leagueColor = '#b3122e', languageMode = 'both') {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
-  const subject = `Invitation à co-administrer ${leagueName} / Invitation to co-admin ${leagueName}`;
-  const text =
-`Tu as été invité(e) à devenir co-administrateur(-trice) de la ligue ${leagueName}. Clique sur ce lien pour accepter :
+  const fr = {
+    subject: `Invitation à co-administrer ${leagueName}`,
+    text: `Tu as été invité(e) à devenir co-administrateur(-trice) de la ligue ${leagueName}. Clique sur ce lien pour accepter :
 ${inviteLink}
 
-Ce lien expire dans 48 heures. Si tu ne connais pas cette ligue, ignore ce courriel.
-
----
-
-You've been invited to become a co-admin of the ${leagueName} league. Click this link to accept:
-${inviteLink}
-
-This link expires in 48 hours. If you don't recognize this league, you can ignore this email.`;
-  const bodyHtml = `
+Ce lien expire dans 48 heures. Si tu ne connais pas cette ligue, ignore ce courriel.`,
+    html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Invitation à co-administrer</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Tu as été invité(e) à devenir co-administrateur(-trice) de <b>${nlEmailWrapEsc(leagueName)}</b>.</p>
     ${nlEmailButton(inviteLink, 'Accepter l’invitation', barColor)}
-    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 48 heures. Si tu ne connais pas cette ligue, ignore ce courriel.</p>
-    <hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 48 heures. Si tu ne connais pas cette ligue, ignore ce courriel.</p>`
+  };
+  const en = {
+    subject: `Invitation to co-admin ${leagueName}`,
+    text: `You've been invited to become a co-admin of the ${leagueName} league. Click this link to accept:
+${inviteLink}
+
+This link expires in 48 hours. If you don't recognize this league, you can ignore this email.`,
+    html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Co-admin invitation</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">You've been invited to become a co-admin of <b>${nlEmailWrapEsc(leagueName)}</b>.</p>
     ${nlEmailButton(inviteLink, 'Accept the invitation', barColor)}
-    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 48 hours. If you don't recognize this league, you can ignore this email.</p>`;
-  const html = nlEmailWrap({
-    brandName: leagueName,
-    barColor,
-    bodyHtml,
-    footerHtml: `Envoyé par Notre Ligue pour ${nlEmailWrapEsc(leagueName)}`
-  });
-  return { subject, text, html };
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 48 hours. If you don't recognize this league, you can ignore this email.</p>`
+  };
+  const assembled = assembleBilingualEmail(languageMode, { fr, en });
+  const footerHtml = languageMode === 'en'
+    ? `Sent by Notre Ligue for ${nlEmailWrapEsc(leagueName)}`
+    : `Envoyé par Notre Ligue pour ${nlEmailWrapEsc(leagueName)}`;
+  const html = nlEmailWrap({ brandName: leagueName, barColor, bodyHtml: assembled.html, footerHtml });
+  return { subject: assembled.subject, text: assembled.text, html };
 }
 function nlEmailWrapEsc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -1534,7 +1540,7 @@ export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null
       // this call previously did. cfg.league.color (design system
       // Part 1) is also the email's own header bar/button color.
       const cfg = await getLeagueSeasonConfig(env, leagueId);
-      const { subject, text, html } = buildInviteEmail(leagueRow.name, inviteLink, cfg.league.color);
+      const { subject, text, html } = buildInviteEmail(leagueRow.name, inviteLink, cfg.league.color, cfg.league.languageMode);
       await sendMailFunc(env, email, subject, text, html, null, cfg.league);
     } catch (err) {
       console.error(`[leagues] Failed to send admin invite to ${email}: ${err.message}`);
