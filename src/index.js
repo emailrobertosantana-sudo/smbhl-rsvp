@@ -18154,8 +18154,20 @@ async function handleLeagueMessageSave(req, env) {
   return Response.json({ ok: true, event_id: eventId, message });
 }
 
+// Live-testing task (batch 4), Part 1: was drain(env, 50, true) --
+// drain()'s third parameter is filterEventId, a string ANDed into the
+// query as `event_id = ?`. Passing the boolean `true` filtered for
+// `event_id = true`, which no real row ever has (event_id is always a
+// date or UUID string), so this always matched zero rows and silently
+// reported success ({sent: 0, failed: 0}) whether or not anything was
+// actually pending -- confirmed by inserting a genuinely due outbox
+// row and calling the real handler directly: it returned
+// {due: 0, sent: 0, failed: 0} even though a due row existed.
+// SMBHL's own cron-driven drain (runSchedule's own `await drain(env)`
+// call, no third argument) was never affected -- this bug was isolated
+// entirely to the manual "drain now" button.
 async function handleEmailsDrain(req, env) {
-  const res = await drain(env, 50, true);
+  const res = await drain(env, 50);
   return Response.json({ ok: true, drain: res });
 }
 
@@ -19722,9 +19734,18 @@ async function emailsPage(env = null, isAuthed = false) {
     btn.disabled = true;
     btn.textContent = isEn ? 'Sending...' : 'Envoi en cours...';
     try {
-      await api('/admin/emails/drain', { method: 'POST' });
+      const res = await api('/admin/emails/drain', { method: 'POST' });
       await load();
-      alert(isEn ? 'Outbox queue successfully drained!' : 'File d\u2019envois vidée avec succès !');
+      const d = (res && res.drain) || { due: 0, sent: 0, failed: 0 };
+      let msg;
+      if (d.due === 0) {
+        msg = isEn ? "Nothing was pending -- the queue is already empty." : "Rien n’était en attente -- la file est déjà vide.";
+      } else if (d.failed > 0) {
+        msg = isEn ? (d.sent + " sent, " + d.failed + " failed.") : (d.sent + " envoyé(s), " + d.failed + " échec(s).");
+      } else {
+        msg = isEn ? (d.sent + " email(s) sent.") : (d.sent + " courriel(s) envoyé(s).");
+      }
+      alert(msg);
     } catch (e) {
       alert((isEn ? 'Error: ' : 'Erreur: ') + e.message);
     } finally {
