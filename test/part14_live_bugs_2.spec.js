@@ -73,19 +73,22 @@ describe('Live-testing issues, round 2', () => {
   });
 
   describe('Issue 1: deactivate confirmation guidance', () => {
+    // Live-testing task (batch 5), Part 7: the deactivate section moved
+    // from the dashboard to Settings -- same markup, same guidance,
+    // just a different page (checked here instead of /dashboard).
     it('shows a translated label and a placeholder matching the real league name', async () => {
       const { cookie, csrfToken } = await signup('bugs2.deactivate.guidance@example.com', '203.0.117.001');
       await createLeague(cookie, csrfToken, { name: "L'Équipe Spéciale", teamNames: ['A', 'B'], tracksStats: true });
-      const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
+      const res = await SELF.fetch('http://example.com/league/settings', { headers: { cookie } });
       const html = await res.text();
       expect(html).toContain('data-i18n="deactivateConfirmLabel"');
       expect(html).toContain('placeholder="L&#39;Équipe Spéciale"');
     });
 
-    it('a different league\'s dashboard shows ITS OWN name as the placeholder, not a generic one', async () => {
+    it('a different league\'s Settings page shows ITS OWN name as the placeholder, not a generic one', async () => {
       const { cookie, csrfToken } = await signup('bugs2.deactivate.guidance2@example.com', '203.0.117.002');
       await createLeague(cookie, csrfToken, { name: 'Totally Different League Name', teamNames: ['A', 'B'], tracksStats: true });
-      const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
+      const res = await SELF.fetch('http://example.com/league/settings', { headers: { cookie } });
       const html = await res.text();
       expect(html).toContain('placeholder="Totally Different League Name"');
     });

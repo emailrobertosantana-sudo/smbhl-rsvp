@@ -76,9 +76,9 @@ describe('Part 9: multi-admin invite flow', () => {
     await applyRealSchema(env);
   });
 
-  it('the dashboard shows the current co-admins and an invite form', async () => {
+  it('the co-admins list and invite form are on the Settings page (live-testing task, batch 5, Part 7 -- moved from the dashboard)', async () => {
     const a = await signupAndCreateLeague('part9.dash@example.com', '203.0.113.481', 'Part 9 Dashboard League', ['Red', 'Blue']);
-    const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie: a.cookie } });
+    const res = await SELF.fetch('http://example.com/league/settings', { headers: { cookie: a.cookie } });
     const html = await res.text();
     expect(html).toContain('part9.dash@example.com');
     expect(html).toContain('id="invite_email"');

@@ -83,7 +83,9 @@ describe('Part 3: real FR/EN toggle on every session-authenticated admin page', 
   it('the dashboard has a real, working toggle with genuine English content (design system, ScreenDashboard)', async () => {
     const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
     const html = await res.text();
-    assertRealToggleNl(html, ['Players', 'Schedule', 'Co-admins', 'Log out']);
+    // 'Co-admins' moved to Settings in batch 5 Part 7 -- 'Public page'
+    // is still a real, always-rendered dashboard tile.
+    assertRealToggleNl(html, ['Players', 'Schedule', 'Public page', 'Log out']);
   });
 
   it('the roster page has a real, working toggle with genuine English content (design system, ScreenRoster)', async () => {

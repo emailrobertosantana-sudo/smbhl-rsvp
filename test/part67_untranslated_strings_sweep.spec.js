@@ -84,18 +84,19 @@ describe('Part 3 (live-testing task, batch 5): hardcoded untranslated strings sw
     expect(en.seasonNamePh).not.toContain('Saison');
   });
 
-  it('buildDashI18n: the co-admin invite email placeholder now translates (was a bare French literal, never wired)', () => {
-    const { fr, en } = buildDashI18n({ state: 'active', needsSeason: false, leagueName: 'Sweep League' });
-    expect(fr.inviteEmailPh).toBe('courriel@exemple.com');
-    expect(en.inviteEmailPh).toBe('email@example.com');
+  it('the co-admin invite email placeholder translates on the Settings page (was a bare French literal, never wired; moved off the dashboard in batch 5 Part 7)', async () => {
+    const { cookie, csrfToken } = await signup('sweep.inviteph@example.com', '203.0.182.004');
+    await createLeague(cookie, csrfToken, { name: 'Sweep Invite League', teamNames: ['X', 'Y'] });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    expect(html).toContain('id="invite_email" type="email" data-i18n-ph="inviteEmailPh"');
+    expect(html).toContain('placeholder="courriel@exemple.com"');
   });
 
-  it('the served dashboard HTML wires data-i18n-ph on the season-name input (needsSeason state) and the invite-email input', async () => {
+  it('the served dashboard HTML wires data-i18n-ph on the season-name input (needsSeason state)', async () => {
     const { cookie, csrfToken } = await signup('sweep.needsseason@example.com', '203.0.182.001');
     await createLeague(cookie, csrfToken, { name: 'Sweep NeedsSeason League', teamNames: ['X', 'Y'] });
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
     expect(html).toContain('id="season_name" type="text" data-i18n-ph="seasonNamePh"');
-    expect(html).toContain('id="invite_email" type="email" data-i18n-ph="inviteEmailPh"');
   });
 
   it('the served dashboard HTML wires data-i18n-ph on the season-mgmt-name input once a season already exists', async () => {

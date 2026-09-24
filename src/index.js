@@ -1482,25 +1482,19 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsPerGame: 'Nouvelles équipes chaque match', noFixedTeams: 'Aucune équipe fixe',
       noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.",
       weeklyDrawTeamsDesc: 'Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.',
-      coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteEmailPh: 'courriel@exemple.com', inviteBtn: 'Inviter',
       // Live-testing task (batch 5), Part 6: the dashboard's own
       // ongoing "what's still worth doing" checklist -- computed from
       // real state (no players yet, team names still the generic
       // default, roster limits never set), not a one-time flag, so it
       // naturally disappears once each is genuinely addressed.
-      nextStepsTitle: 'Prochaines étapes', nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif",
-      deactivateLeague: 'Désactiver la ligue',
-      deactivateDesc: "Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.",
-      deactivateConfirmLabel: 'Tape le nom de ta ligue pour confirmer',
-      deactivateBtn: 'Désactiver',
-      hardDeleteTitle: 'Supprimer définitivement la ligue',
-      hardDeleteDesc: "Efface pour de bon toutes les données de la ligue (parties, joueurs, présences, etc.). Aucune récupération possible. Nécessite que la ligue soit déjà désactivée depuis 15 jours.",
-      hardDeleteNotDeactivated: "Désactive d'abord ta ligue ci-dessus pour débloquer la suppression définitive.",
-      hardDeleteLocked: 'Débloqué le',
-      hardDeleteEligible: 'La suppression définitive est débloquée.',
-      hardDeleteConfirmLabel: 'Tape "SUPPRIMER" suivi du nom de ta ligue pour confirmer',
-      hardDeleteConfirmPh: `SUPPRIMER ${leagueName || ''}`,
-      hardDeleteBtn: 'Supprimer définitivement'
+      nextStepsTitle: 'Prochaines étapes', nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif"
+      // Live-testing task (batch 5), Part 7: coAdmins/invite*/
+      // deactivate*/hardDelete* used to live here too -- moved to
+      // I18N_SETTINGS alongside the sections that use them (see
+      // handleLeagueSettingsPage). The 'deactivated' state's own dict
+      // branch below still has its own hardDelete* keys -- that
+      // section is the one genuine exception that stays on the
+      // dashboard (see this function's own comment for why).
     });
     Object.assign(en, {
       noSeason: 'No active season',
@@ -1511,20 +1505,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsPerGame: 'Fresh teams every game', noFixedTeams: 'No fixed teams',
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
-      coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteEmailPh: 'email@example.com', inviteBtn: 'Invite',
-      nextStepsTitle: 'Next steps', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size',
-      deactivateLeague: 'Deactivate league',
-      deactivateDesc: 'This deactivates your league. Your data is kept, but management access is blocked.',
-      deactivateConfirmLabel: "Type your league's name to confirm",
-      deactivateBtn: 'Deactivate',
-      hardDeleteTitle: 'Permanently delete this league',
-      hardDeleteDesc: 'Permanently erases all of this league\'s data (games, players, attendance, etc). This cannot be undone. Requires the league to have been deactivated for 15 days already.',
-      hardDeleteNotDeactivated: 'Deactivate your league above first to unlock permanent deletion.',
-      hardDeleteLocked: 'Unlocks on',
-      hardDeleteEligible: 'Permanent deletion is unlocked.',
-      hardDeleteConfirmLabel: 'Type "DELETE" followed by your league\'s name to confirm',
-      hardDeleteConfirmPh: `DELETE ${leagueName || ''}`,
-      hardDeleteBtn: 'Permanently delete'
+      nextStepsTitle: 'Next steps', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size'
     });
     if (needsSeason) {
       Object.assign(fr, {
@@ -1757,10 +1738,6 @@ async function handleDashboardPage(req, env, url) {
 
   const publicUrl = leagueSlug ? `${url.origin}/${leagueSlug}` : `${url.origin}/league/public?league=${leagueRow ? leagueRow.id : ''}`;
 
-  const adminEmails = leagueRow ? (await env.DB.prepare(
-    `SELECT u.email FROM league_admins la JOIN users u ON u.id = la.user_id WHERE la.league_id = ? ORDER BY la.created_at`
-  ).bind(leagueRow.id).all()).results.map(r => r.email) : [];
-
   const dashState = leagueRow && leagueRow.deactivated_at ? 'deactivated' : leagueRow ? 'active' : 'none';
   const I18N_DASH = buildDashI18n({ state: dashState, needsSeason: !currentSeason, unverified: !verified, leagueName: leagueRow ? leagueRow.name : '' });
 
@@ -1775,6 +1752,19 @@ async function handleDashboardPage(req, env, url) {
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>`;
   } else if (dashState === 'deactivated') {
+    // Live-testing task (batch 5), Part 7: co-admin invite and
+    // deactivate moved to Settings, but the hard-delete section right
+    // below stays here -- checkLeagueAccess (leagues.js) blocks every
+    // OTHER session-gated route, including Settings, once a league is
+    // deactivated (test/part56_hard_delete.spec.js's own regression
+    // test locks this in: "the hard-delete UI is reachable on the
+    // dashboard once a league is deactivated -- not stranded behind
+    // the deactivated-league gate"). This is genuinely the one page
+    // still reachable at that point, so it's the only place this
+    // section can live -- not duplication, since the OTHER copy (the
+    // "not yet eligible" advance notice on Settings) is only ever
+    // visible while a league is still active, and this one only once
+    // it's deactivated -- never both at once for the same league.
     const { header } = dashChrome(leagueRow.name, 'home');
     bodyHtml = `${dashStyles()}${header}
 <main class="dash-main">
@@ -1978,40 +1968,6 @@ async function handleDashboardPage(req, env, url) {
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>
   </section>` : ''}
-  <section class="nl-card nl-card--pad-lg">
-    <div class="h3" data-i18n="coAdmins">Co-administrateurs</div>
-    <div class="nl-list" style="margin:12px 0">
-      ${adminEmails.map(e => `<div class="nl-row"><span class="grow">${esc(e)}</span></div>`).join('')}
-    </div>
-    <div id="inviteErr" class="nl-error" style="display:none"></div>
-    <div id="inviteOk" class="nl-ok" style="display:none"></div>
-    <div class="nl-field">
-      <label class="nl-label" for="invite_email" data-i18n="inviteLabel">Inviter un(e) co-administrateur(-trice)</label>
-      <input class="nl-input" id="invite_email" type="email" data-i18n-ph="inviteEmailPh" placeholder="courriel@exemple.com">
-    </div>
-    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="invite_submit" data-i18n="inviteBtn" onclick="submitInvite()">Inviter</button></div>
-  </section>
-  <section class="nl-card nl-card--pad-lg" style="border-color:var(--danger,#b3122e)">
-    <div class="h3" data-i18n="deactivateLeague">Désactiver la ligue</div>
-    <p class="nl-help" data-i18n="deactivateDesc">Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.</p>
-    <div id="deactivateErr" class="nl-error" style="display:none"></div>
-    <div class="nl-field">
-      <label class="nl-label" for="deactivate_confirm" data-i18n="deactivateConfirmLabel">Tape le nom de ta ligue pour confirmer</label>
-      <input class="nl-input" id="deactivate_confirm" type="text" placeholder="${esc(leagueRow.name)}" autocomplete="off">
-    </div>
-    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="deactivate_submit" data-i18n="deactivateBtn" onclick="submitDeactivate()" style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);">Désactiver</button></div>
-  </section>
-  <section class="nl-card nl-card--pad-lg" style="border-color:var(--danger,#b3122e)">
-    <div class="h3" data-i18n="hardDeleteTitle">Supprimer définitivement la ligue</div>
-    <p class="nl-help" data-i18n="hardDeleteDesc">Efface pour de bon toutes les données de la ligue (parties, joueurs, présences, etc.). Aucune récupération possible. Nécessite que la ligue soit déjà désactivée depuis 15 jours.</p>
-    <p id="hardDeleteStatus" class="nl-help"></p>
-    <div id="hardDeleteErr" class="nl-error" style="display:none"></div>
-    <div class="nl-field">
-      <label class="nl-label" for="hard_delete_confirm" data-i18n="hardDeleteConfirmLabel">Tape "SUPPRIMER" suivi du nom de ta ligue pour confirmer</label>
-      <input class="nl-input" id="hard_delete_confirm" type="text" data-i18n-ph="hardDeleteConfirmPh" placeholder="SUPPRIMER ${esc(leagueRow.name)}" autocomplete="off">
-    </div>
-    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="hard_delete_submit" data-i18n="hardDeleteBtn" onclick="submitHardDelete()" disabled style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);">Supprimer définitivement</button></div>
-  </section>
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>
 ${tabbar}`;
@@ -2139,50 +2095,13 @@ async function submitSeasonMgmt() {
     err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
 }
-async function submitInvite() {
-  var err = document.getElementById('inviteErr');
-  var ok = document.getElementById('inviteOk');
-  err.style.display = 'none'; ok.style.display = 'none';
-  var email = document.getElementById('invite_email').value.trim();
-  if (!email) { err.textContent = window.__errorText('EMAIL_REQUIRED_CLIENT'); err.style.display = 'block'; return; }
-  var btn = document.getElementById('invite_submit');
-  btn.disabled = true;
-  try {
-    var res = await fetch('/league/admins/invite', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ email: email })
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
-    var isFr = (window.__currentLang || 'fr') === 'fr';
-    ok.textContent = isFr ? ('Invitation envoyée à ' + email + '.') : ('Invitation sent to ' + email + '.');
-    ok.style.display = 'block';
-    document.getElementById('invite_email').value = '';
-    btn.disabled = false;
-  } catch (e) {
-    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
-  }
-}
-async function submitDeactivate() {
-  var err = document.getElementById('deactivateErr');
-  err.style.display = 'none';
-  var confirmName = document.getElementById('deactivate_confirm').value;
-  var btn = document.getElementById('deactivate_submit');
-  btn.disabled = true;
-  try {
-    var res = await fetch('/league/deactivate', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ confirmName: confirmName })
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
-    window.location.reload();
-  } catch (e) {
-    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
-  }
-}
+// Live-testing task (batch 5), Part 7: submitInvite/submitDeactivate
+// moved to the Settings page's own script, alongside the sections that
+// use them (now removed from here). loadHardDeleteStatus/
+// submitHardDelete stay -- the dashboard's 'deactivated' state still
+// has its own hard-delete section, the only page reachable once a
+// league is actually deactivated (Settings is not -- see this
+// function's own top-of-file comment).
 async function loadHardDeleteStatus() {
   var statusEl = document.getElementById('hardDeleteStatus');
   var btn = document.getElementById('hard_delete_submit');
@@ -3849,6 +3768,12 @@ async function handleLeagueSettingsPage(req, env, url) {
   const currentSeasonEntry = (leagueData.seasons || []).find(s => s && s.name === leagueData.current_season) || null;
   const currentSeasonTeams = currentSeasonEntry && Array.isArray(currentSeasonEntry.config?.teams) ? currentSeasonEntry.config.teams : [];
 
+  // Live-testing task (batch 5), Part 7: co-admins list, moved here
+  // from the dashboard alongside the invite section below.
+  const adminEmails = (await env.DB.prepare(
+    `SELECT u.email FROM league_admins la JOIN users u ON u.id = la.user_id WHERE la.league_id = ? ORDER BY la.created_at`
+  ).bind(leagueId).all()).results.map(r => r.email);
+
   const { header, tabbar } = dashChrome(leagueRow.name, 'settings');
 
   const I18N_SETTINGS = {
@@ -3894,7 +3819,21 @@ async function handleLeagueSettingsPage(req, env, url) {
       autoDrawDesc: "Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.",
       autoDrawEnableLabel: 'Activer le tirage automatique',
       autoDrawEnableDesc: 'Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.',
-      autoDrawHoursLabel: 'Heures avant le match'
+      autoDrawHoursLabel: 'Heures avant le match',
+      // Live-testing task (batch 5), Part 7: co-admin invite,
+      // deactivate, and the "not yet eligible" hard-delete notice moved
+      // here from the dashboard (see handleDashboardPage's own comment
+      // for why the ACTIONABLE hard-delete section, reachable only once
+      // a league is already deactivated, could NOT move here too --
+      // Settings itself is unreachable at that point).
+      coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteEmailPh: 'courriel@exemple.com', inviteBtn: 'Inviter',
+      deactivateLeague: 'Désactiver la ligue',
+      deactivateDesc: "Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.",
+      deactivateConfirmLabel: 'Tape le nom de ta ligue pour confirmer',
+      deactivateBtn: 'Désactiver',
+      hardDeleteTitle: 'Supprimer définitivement la ligue',
+      hardDeleteDesc: "Efface pour de bon toutes les données de la ligue (parties, joueurs, présences, etc.). Aucune récupération possible. Nécessite que la ligue soit déjà désactivée depuis 15 jours.",
+      hardDeleteNotDeactivated: "Désactive d'abord ta ligue ci-dessus pour débloquer la suppression définitive."
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
@@ -3938,7 +3877,15 @@ async function handleLeagueSettingsPage(req, env, url) {
       autoDrawDesc: 'Automatically forms teams a set number of hours before each game -- off by default, like every other automation.',
       autoDrawEnableLabel: 'Enable automatic draw',
       autoDrawEnableDesc: 'The manual "Draw teams" button always stays available regardless.',
-      autoDrawHoursLabel: 'Hours before the game'
+      autoDrawHoursLabel: 'Hours before the game',
+      coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteEmailPh: 'email@example.com', inviteBtn: 'Invite',
+      deactivateLeague: 'Deactivate league',
+      deactivateDesc: 'This deactivates your league. Your data is kept, but management access is blocked.',
+      deactivateConfirmLabel: "Type your league's name to confirm",
+      deactivateBtn: 'Deactivate',
+      hardDeleteTitle: 'Permanently delete this league',
+      hardDeleteDesc: 'Permanently erases all of this league\'s data (games, players, attendance, etc). This cannot be undone. Requires the league to have been deactivated for 15 days already.',
+      hardDeleteNotDeactivated: 'Deactivate your league above first to unlock permanent deletion.'
     }
   };
 
@@ -4136,6 +4083,43 @@ async function handleLeagueSettingsPage(req, env, url) {
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="auto_draw_hours_save" data-i18n="save" onclick="submitAutoDrawHours()">Enregistrer</button></div>
   </section>` : ''}
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="coAdmins">Co-administrateurs</div>
+    <div class="nl-list" style="margin:12px 0">
+      ${adminEmails.map(e => `<div class="nl-row"><span class="grow">${esc(e)}</span></div>`).join('')}
+    </div>
+    <div id="inviteErr" class="nl-error" style="display:none"></div>
+    <div id="inviteOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-field">
+      <label class="nl-label" for="invite_email" data-i18n="inviteLabel">Inviter un(e) co-administrateur(-trice)</label>
+      <input class="nl-input" id="invite_email" type="email" data-i18n-ph="inviteEmailPh" placeholder="courriel@exemple.com">
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="invite_submit" data-i18n="inviteBtn" onclick="submitInvite()">Inviter</button></div>
+  </section>
+  <section class="nl-card nl-card--pad-lg" style="border-color:var(--danger,#b3122e)">
+    <div class="h3" data-i18n="deactivateLeague">Désactiver la ligue</div>
+    <p class="nl-help" data-i18n="deactivateDesc">Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.</p>
+    <div id="deactivateErr" class="nl-error" style="display:none"></div>
+    <div class="nl-field">
+      <label class="nl-label" for="deactivate_confirm" data-i18n="deactivateConfirmLabel">Tape le nom de ta ligue pour confirmer</label>
+      <input class="nl-input" id="deactivate_confirm" type="text" placeholder="${esc(leagueRow.name)}" autocomplete="off">
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="deactivate_submit" data-i18n="deactivateBtn" onclick="submitDeactivate()" style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);">Désactiver</button></div>
+  </section>
+  <!-- Live-testing task (batch 5), Part 7: this is deliberately just an
+       advance notice, not the full actionable hard-delete flow -- a
+       league reachable here is by definition still active
+       (checkLeagueAccess above already redirected away otherwise), and
+       checkHardDeleteEligibility always refuses a non-deactivated
+       league. The REAL, actionable version lives on the dashboard's own
+       'deactivated' state instead, which is the only page still
+       reachable once a league actually is deactivated -- see
+       handleDashboardPage's own comment. -->
+  <section class="nl-card nl-card--pad-lg" style="border-color:var(--danger,#b3122e)">
+    <div class="h3" data-i18n="hardDeleteTitle">Supprimer définitivement la ligue</div>
+    <p class="nl-help" data-i18n="hardDeleteDesc">Efface pour de bon toutes les données de la ligue (parties, joueurs, présences, etc.). Aucune récupération possible. Nécessite que la ligue soit déjà désactivée depuis 15 jours.</p>
+    <p class="nl-help" data-i18n="hardDeleteNotDeactivated">Désactive d'abord ta ligue ci-dessus pour débloquer la suppression définitive.</p>
+  </section>
 </main>
 ${tabbar}`;
 
@@ -4331,6 +4315,56 @@ async function submitAutoDrawHours() {
     ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
   } catch (e) { err.style.display = 'block'; err.textContent = window.__errorText('NETWORK_ERROR'); }
   btn.disabled = false;
+}
+// Live-testing task (batch 5), Part 7: moved here from the dashboard,
+// verbatim, alongside the sections that use them.
+async function submitInvite() {
+  var err = document.getElementById('inviteErr');
+  var ok = document.getElementById('inviteOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var email = document.getElementById('invite_email').value.trim();
+  if (!email) { err.textContent = window.__errorText('EMAIL_REQUIRED_CLIENT'); err.style.display = 'block'; return; }
+  var btn = document.getElementById('invite_submit');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/admins/invite', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ email: email })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    var isFr = (window.__currentLang || 'fr') === 'fr';
+    ok.textContent = isFr ? ('Invitation envoyée à ' + email + '.') : ('Invitation sent to ' + email + '.');
+    ok.style.display = 'block';
+    document.getElementById('invite_email').value = '';
+    btn.disabled = false;
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
+  }
+}
+async function submitDeactivate() {
+  var err = document.getElementById('deactivateErr');
+  err.style.display = 'none';
+  var confirmName = document.getElementById('deactivate_confirm').value;
+  var btn = document.getElementById('deactivate_submit');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/deactivate', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ confirmName: confirmName })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    // Settings itself becomes unreachable once deactivated
+    // (checkLeagueAccess) -- reloading lands back here, which then
+    // redirects to /dashboard on its own, correctly showing the
+    // deactivated state.
+    window.location.reload();
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
+  }
 }`;
 
   return new Response(nlDocument({ title: `${I18N_SETTINGS.fr.title} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {

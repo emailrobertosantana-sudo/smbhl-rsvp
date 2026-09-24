@@ -314,8 +314,11 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       const secondAdminDashRes = await SELF.fetch(`${BASE}/dashboard`, { headers: { cookie: secondAdminCookie } });
       const secondAdminDashHtml = await secondAdminDashRes.text();
       expect(secondAdminDashHtml).toContain(LEAGUE_NAME);
-      expect(secondAdminDashHtml).toContain('part11.admin@example.com');
-      expect(secondAdminDashHtml).toContain('part11.secondadmin@example.com');
+
+      // The co-admins list moved to Settings in batch 5 Part 7.
+      const secondAdminSettingsHtml = await (await SELF.fetch(`${BASE}/league/settings`, { headers: { cookie: secondAdminCookie } })).text();
+      expect(secondAdminSettingsHtml).toContain('part11.admin@example.com');
+      expect(secondAdminSettingsHtml).toContain('part11.secondadmin@example.com');
 
       // Both admins can now independently manage the same league.
       const adminCount = await env.DB.prepare('SELECT COUNT(*) AS n FROM league_admins WHERE league_id = ?').bind(leagueId).first();

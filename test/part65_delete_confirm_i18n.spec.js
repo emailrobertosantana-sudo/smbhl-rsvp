@@ -73,15 +73,13 @@ describe('Part 1 (live-testing task, batch 5): delete confirmation keyword match
     await applyRealSchema(env);
   });
 
-  it("buildDashI18n('active'): fr label says SUPPRIMER and fr placeholder starts with SUPPRIMER; en label says DELETE and en placeholder starts with DELETE", () => {
-    const { fr, en } = buildDashI18n({ state: 'active', needsSeason: false, unverified: false, leagueName: 'Ligue Test 65' });
-    expect(fr.hardDeleteConfirmLabel).toContain('SUPPRIMER');
-    expect(fr.hardDeleteConfirmPh).toBe('SUPPRIMER Ligue Test 65');
-    expect(en.hardDeleteConfirmLabel).toContain('DELETE');
-    expect(en.hardDeleteConfirmPh).toBe('DELETE Ligue Test 65');
-  });
-
-  it("buildDashI18n('deactivated') has the SAME correct hardDelete* keys -- this state used to define NONE of them at all", () => {
+  // buildDashI18n('active') no longer defines hardDeleteConfirmLabel/Ph
+  // at all -- batch 5 Part 7 moved the active-state "advance notice"
+  // hard-delete card to Settings (no confirm field there, since it's
+  // never actionable while still active) and left the real, actionable
+  // version only on the 'deactivated' state below, which is the one
+  // this fix actually needed to be correct in the first place.
+  it("buildDashI18n('deactivated') has the correct hardDelete* keys -- SUPPRIMER for fr, DELETE for en, matching each language's own label", () => {
     const { fr, en } = buildDashI18n({ state: 'deactivated', leagueName: 'Ligue Test 65' });
     expect(fr.hardDeleteConfirmLabel).toContain('SUPPRIMER');
     expect(fr.hardDeleteConfirmPh).toBe('SUPPRIMER Ligue Test 65');
@@ -92,12 +90,15 @@ describe('Part 1 (live-testing task, batch 5): delete confirmation keyword match
     expect(en.deactivatedOn).toBeTruthy();
   });
 
-  it('the deactivate confirmation has NO keyword baked into its label or placeholder in either language (Part 1.2: verified clean, no fix needed)', () => {
-    const { fr, en } = buildDashI18n({ state: 'active', leagueName: 'Ligue Test 65' });
-    expect(fr.deactivateConfirmLabel.toUpperCase()).not.toContain('SUPPRIMER');
-    expect(fr.deactivateConfirmLabel.toUpperCase()).not.toContain('DELETE');
-    expect(en.deactivateConfirmLabel.toUpperCase()).not.toContain('SUPPRIMER');
-    expect(en.deactivateConfirmLabel.toUpperCase()).not.toContain('DELETE');
+  // deactivateConfirmLabel now lives in I18N_SETTINGS, not
+  // buildDashI18n (batch 5 Part 7 moved the deactivate section to
+  // Settings) -- verified directly via HTTP against the real page.
+  it('the deactivate confirmation on Settings has NO keyword baked into its label or placeholder (Part 1.2: verified clean, no fix needed)', async () => {
+    const { cookie, csrfToken } = await signup('delconfirm.deactivatelabel@example.com', '203.0.180.004');
+    const league = await createLeague(cookie, csrfToken, { name: 'Delete Confirm League D', teamNames: ['X', 'Y'] });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    expect(html).toContain('data-i18n="deactivateConfirmLabel">Tape le nom de ta ligue pour confirmer<');
+    expect(html).toContain(`id="deactivate_confirm" type="text" placeholder="${league.name}"`);
   });
 
   it('the served dashboard HTML (deactivated-league state) wires the hard-delete input to data-i18n-ph="hardDeleteConfirmPh", not a static placeholder alone', async () => {
@@ -115,13 +116,16 @@ describe('Part 1 (live-testing task, batch 5): delete confirmation keyword match
     expect(html).toContain(`placeholder="SUPPRIMER ${league.name}"`);
   });
 
-  it('the served dashboard HTML (still-active league, advance-notice hard-delete card) wires the same data-i18n-ph attribute', async () => {
+  it('a still-active league sees only the advance-notice hard-delete card on Settings (no confirm field -- it is not actionable yet); the real one stays on the dashboard\'s deactivated state (live-testing task, batch 5, Part 7)', async () => {
     const { cookie, csrfToken } = await signup('delconfirm.active@example.com', '203.0.180.002');
-    const league = await createLeague(cookie, csrfToken, { name: 'Delete Confirm League B', teamNames: ['X', 'Y'], tracksStats: true });
+    await createLeague(cookie, csrfToken, { name: 'Delete Confirm League B', teamNames: ['X', 'Y'], tracksStats: true });
 
-    const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
-    expect(html).toContain('data-i18n-ph="hardDeleteConfirmPh"');
-    expect(html).toContain(`placeholder="SUPPRIMER ${league.name}"`);
+    const settingsHtml = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    expect(settingsHtml).toContain('data-i18n="hardDeleteNotDeactivated"');
+    expect(settingsHtml).not.toContain('id="hard_delete_confirm"');
+
+    const dashHtml = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
+    expect(dashHtml).not.toContain('id="hard_delete_confirm"'); // not reachable while still active
   });
 
   it("the shared applyLanguage() embedded in the page's own script now includes the [data-i18n-ph] swap block", async () => {
