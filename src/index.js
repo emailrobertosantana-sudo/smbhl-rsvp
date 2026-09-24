@@ -1565,6 +1565,10 @@ const DASH_ICON_PLAYERS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentC
 const DASH_ICON_SCHEDULE = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="14" height="13" rx="1"/><path d="M3 8h14M7 2v4M13 2v4"/></svg>';
 const DASH_ICON_CHECK = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 10.5l4 4 8-9"/></svg>';
 const DASH_ICON_SETTINGS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2.2M10 15.3v2.2M17.5 10h-2.2M4.7 10H2.5M15.1 4.9l-1.6 1.6M6.5 13.5l-1.6 1.6M15.1 15.1l-1.6-1.6M6.5 6.5L4.9 4.9"/></svg>';
+// Live-testing task (batch 3), Part 2: Comms nav entry -- available to
+// every league (no capability-flag gate, per the task's own explicit
+// instruction), so it's a permanent 5th nav item, not conditional.
+const DASH_ICON_COMMS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5.5a1.5 1.5 0 0 1 1.5-1.5h11a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H9l-4 3v-3H4.5A1.5 1.5 0 0 1 3 12.5z"/></svg>';
 
 // Admin desktop/phone chrome (design system Part 3): nl-header with the
 // real Accueil/Joueurs/Horaire nav on desktop, collapsing to a fixed
@@ -1576,12 +1580,13 @@ const DASH_ICON_SETTINGS = '<svg viewBox="0 0 20 20" fill="none" stroke="current
 // Live-testing task, Part 1: added a 4th nav entry (settings) -- the
 // per-key French fallback label lookup used to be a nested ternary
 // (fine for 3 keys, unreadable for 4+), switched to a plain map.
-const DASH_NAV_LABEL_FR = { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres' };
+const DASH_NAV_LABEL_FR = { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navComms: 'Comms', navSettings: 'Paramètres' };
 function dashChrome(leagueName, active) {
   const nav = [
     { key: 'home', href: '/dashboard', icon: DASH_ICON_HOME, i18n: 'navHome' },
     { key: 'roster', href: '/league/roster', icon: DASH_ICON_PLAYERS, i18n: 'navRoster' },
     { key: 'schedule', href: '/league/schedule', icon: DASH_ICON_SCHEDULE, i18n: 'navSchedule' },
+    { key: 'comms', href: '/league/comms', icon: DASH_ICON_COMMS, i18n: 'navComms' },
     { key: 'settings', href: '/league/settings', icon: DASH_ICON_SETTINGS, i18n: 'navSettings' }
   ];
   const header = `<header class="nl-header">
@@ -2795,6 +2800,302 @@ function resolveTeamColor(teamColorsRaw, i) {
 // not duplicated -- see handleDashboardPage's own comment on what was
 // removed). Session+checkLeagueAccess-gated, same as every other
 // league-admin page.
+/* ---------- Comms view (Part 2, live-testing task batch 3) ----------
+ * Brings SMBHL's existing /admin/comms concept (email activity +
+ * cadence visibility) to the league product as a SHARED module, not a
+ * copy -- see this task's own report for what SMBHL's version actually
+ * does (3 sub-tabs: cadence-editing form, outbox activity table with
+ * stat cards, manual broadcast tool). The league product's own mail
+ * pipeline is architecturally different (SMBHL sends everything
+ * through one outbox+drain() queue; the league product's automated
+ * 72h/24h/12h reminders write straight to league_reminder_log/
+ * league_team_assigned_email_log, only sub-call invites go through
+ * outbox), so this reads from all of them rather than pretending
+ * there's one queue -- exactly what the task asked for ("reuse the
+ * existing outbox, reminder log, and team-assigned email log").
+ *
+ * Available to EVERY league -- no capability-flag check anywhere in
+ * this function, deliberately (the task's own explicit instruction).
+ *
+ * Genuinely honest about failures (the task's own explicit
+ * requirement, directly motivated by two real bugs found earlier in
+ * this session): league_mail_failure_log (migrate-040.sql) now
+ * captures a reminder/team-assigned-followup send that previously only
+ * ever reached console.error and nowhere a league admin could see it
+ * -- see sendLeagueReminderKind's and maybeSendTeamAssignedFollowup's
+ * own comments for exactly what changed. Outbox-based failures
+ * (sub-call invites) already had their own `error` column (drain()'s
+ * catch block already wrote it); this is the first time any
+ * league-facing page actually surfaces it.
+ */
+async function handleLeagueCommsData(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  const leagueRow = await env.DB.prepare(
+    `SELECT name, team_structure, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled,
+            auto_draw_enabled, auto_draw_hours_before
+       FROM leagues WHERE id = ?`
+  ).bind(leagueId).first();
+  if (!leagueRow) return Response.json({ ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' }, { status: 404 });
+
+  const ACTIVITY_LIMIT = 100;
+
+  // sub-call invites (outbox) -- already-honest failure tracking via
+  // its own `error` column.
+  const outboxRows = (await env.DB.prepare(
+    `SELECT o.kind, o.event_id, o.player_id, c.name AS player_name, o.sent_at, o.cancelled, o.error, o.created_at, e.date AS event_date
+       FROM outbox o
+       LEFT JOIN contacts c ON c.player_id = o.player_id
+       LEFT JOIN events e ON e.id = o.event_id
+      WHERE o.league_id = ? ORDER BY o.id DESC LIMIT ?`
+  ).bind(leagueId, ACTIVITY_LIMIT).all()).results || [];
+
+  // 72h/24h/12h automated waves -- one row per (event, kind) already
+  // sent; recipient_count is how many succeeded.
+  const reminderRows = (await env.DB.prepare(
+    `SELECT r.kind, r.event_id, r.sent_at, r.recipient_count, e.date AS event_date
+       FROM league_reminder_log r LEFT JOIN events e ON e.id = r.event_id
+      WHERE r.league_id = ? ORDER BY r.sent_at DESC LIMIT ?`
+  ).bind(leagueId, ACTIVITY_LIMIT).all()).results || [];
+
+  // Late-draw team-assigned catch-up follow-ups (no league_id column
+  // of its own -- joined through events, same as everywhere else this
+  // table is touched).
+  const teamAssignedRows = (await env.DB.prepare(
+    `SELECT t.event_id, t.player_id, c.name AS player_name, t.sent_at, e.date AS event_date
+       FROM league_team_assigned_email_log t
+       JOIN events e ON e.id = t.event_id
+       LEFT JOIN contacts c ON c.player_id = t.player_id
+      WHERE e.league_id = ? ORDER BY t.sent_at DESC LIMIT ?`
+  ).bind(leagueId, ACTIVITY_LIMIT).all()).results || [];
+
+  // Every failure this task's own fix now actually records (see this
+  // function's own top comment).
+  const failureRows = (await env.DB.prepare(
+    `SELECT event_id, player_id, kind, error, failed_at FROM league_mail_failure_log
+      WHERE league_id = ? ORDER BY failed_at DESC LIMIT ?`
+  ).bind(leagueId, ACTIVITY_LIMIT).all()).results || [];
+
+  const activity = [];
+  for (const o of outboxRows) {
+    activity.push({
+      kind: o.kind, eventId: o.event_id, eventDate: o.event_date,
+      recipient: o.player_name || o.player_id || null,
+      status: o.cancelled ? 'skipped' : o.error ? 'failed' : o.sent_at ? 'sent' : 'pending',
+      reason: o.error || null,
+      at: o.sent_at || o.created_at
+    });
+  }
+  for (const r of reminderRows) {
+    activity.push({
+      kind: r.kind, eventId: r.event_id, eventDate: r.event_date,
+      recipient: `${r.recipient_count} destinataire(s) / recipient(s)`,
+      status: 'sent',
+      reason: null,
+      at: r.sent_at
+    });
+  }
+  for (const t of teamAssignedRows) {
+    activity.push({
+      kind: 'team_assigned', eventId: t.event_id, eventDate: t.event_date,
+      recipient: t.player_name || t.player_id || null,
+      status: 'sent',
+      reason: null,
+      at: t.sent_at
+    });
+  }
+  for (const f of failureRows) {
+    activity.push({
+      kind: f.kind, eventId: f.event_id, eventDate: null,
+      recipient: f.player_id || null,
+      status: 'failed',
+      reason: f.error,
+      at: f.failed_at
+    });
+  }
+  activity.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+
+  const stats = { sent: 0, failed: 0, skipped: 0, pending: 0 };
+  for (const a of activity) {
+    if (stats[a.status] !== undefined) stats[a.status]++;
+  }
+
+  return Response.json({
+    ok: true,
+    league: { name: leagueRow.name },
+    cadence: {
+      reminder72hEnabled: !!leagueRow.reminder_72h_enabled,
+      reminder24hEnabled: !!leagueRow.reminder_24h_enabled,
+      reminder12hEnabled: !!leagueRow.reminder_12h_enabled,
+      autoDrawEnabled: !!leagueRow.auto_draw_enabled,
+      autoDrawHoursBefore: leagueRow.auto_draw_hours_before,
+      isWeeklyDraw: leagueRow.team_structure === 'weekly_draw'
+    },
+    stats,
+    activity: activity.slice(0, ACTIVITY_LIMIT)
+  });
+}
+
+// Cadence is deliberately READ-ONLY here -- editing already lives on
+// the settings page (reminders section, auto-draw section); this view
+// answers "what's actually scheduled to happen and what already did",
+// not a second place to change it (the task's own "reuse ... rather
+// than adding new" principle applied to UI, not just data).
+async function handleLeagueCommsPage(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return Response.redirect(url.origin + '/login', 302);
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
+
+  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
+  const { header, tabbar } = dashChrome(leagueRow.name, 'comms');
+
+  const I18N_COMMS = {
+    fr: {
+      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navComms: 'Comms', navSettings: 'Paramètres', logout: 'Se déconnecter',
+      title: 'Communications',
+      subtitle: "Ce qui a été envoyé, à qui, et ce qui est prévu automatiquement.",
+      statSent: 'Envoyés', statFailed: 'Échecs', statSkipped: 'Ignorés', statPending: 'En attente',
+      cadenceTitle: 'Automatismes actifs',
+      cad72: 'Rappel 72 h (sans réponse)', cad24: 'Rappel 24 h (sans réponse)', cad12: 'Détails 12 h (confirmés)',
+      cadAutoDraw: 'Tirage automatique des équipes',
+      on: 'Activé', off: 'Désactivé',
+      cadAutoDrawHours: (h) => `${h} h avant le match`,
+      editCadence: 'Modifier dans Paramètres',
+      activityTitle: 'Activité récente',
+      colType: 'Type', colRecipient: 'Destinataire', colEvent: 'Match', colStatus: 'Statut', colWhen: 'Quand', colReason: 'Raison',
+      emptyState: "Aucune activité pour l'instant -- les envois apparaîtront ici.",
+      statusSent: 'Envoyé', statusFailed: 'Échec', statusSkipped: 'Ignoré', statusPending: 'En attente'
+    },
+    en: {
+      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navComms: 'Comms', navSettings: 'Settings', logout: 'Log out',
+      title: 'Communications',
+      subtitle: 'What was sent, to whom, and what is scheduled automatically.',
+      statSent: 'Sent', statFailed: 'Failed', statSkipped: 'Skipped', statPending: 'Pending',
+      cadenceTitle: 'Active automations',
+      cad72: '72h reminder (no reply)', cad24: '24h reminder (no reply)', cad12: '12h details (confirmed)',
+      cadAutoDraw: 'Automatic team draw',
+      on: 'On', off: 'Off',
+      cadAutoDrawHours: (h) => `${h}h before the game`,
+      editCadence: 'Edit in Settings',
+      activityTitle: 'Recent activity',
+      colType: 'Type', colRecipient: 'Recipient', colEvent: 'Game', colStatus: 'Status', colWhen: 'When', colReason: 'Reason',
+      emptyState: 'No activity yet -- sends will appear here.',
+      statusSent: 'Sent', statusFailed: 'Failed', statusSkipped: 'Skipped', statusPending: 'Pending'
+    }
+  };
+
+  const bodyHtml = `${dashStyles()}${header}
+<main class="dash-main">
+  <h1 data-i18n="title">Communications</h1>
+  <p class="nl-help" data-i18n="subtitle">Ce qui a été envoyé, à qui, et ce qui est prévu automatiquement.</p>
+
+  <div id="comms-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:8px;"></div>
+
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="cadenceTitle">Automatismes actifs</div>
+    <div id="comms-cadence" style="margin-top:10px"></div>
+    <p class="nl-help" style="margin-top:10px"><a href="/league/settings" data-i18n="editCadence">Modifier dans Paramètres</a></p>
+  </section>
+
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="activityTitle">Activité récente</div>
+    <div id="comms-activity" style="margin-top:12px;overflow-x:auto"></div>
+  </section>
+
+  <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
+</main>
+${tabbar}`;
+
+  const script = `
+${nlAuthScript(I18N_COMMS)}
+async function doLogout() {
+  await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  window.location.href = '/login';
+}
+function fmtWhen(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleString(window.__currentLang === 'en' ? 'en-CA' : 'fr-CA', { dateStyle: 'short', timeStyle: 'short' }); }
+  catch (e) { return iso; }
+}
+const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', skipped: '#55585f', pending: '#b45309' };
+function renderStats(stats) {
+  var d = window.__pageDict();
+  var items = [
+    ['statSent', stats.sent, '#0e7a4f'],
+    ['statFailed', stats.failed, '#c4153a'],
+    ['statSkipped', stats.skipped, '#55585f'],
+    ['statPending', stats.pending, '#b45309']
+  ];
+  document.getElementById('comms-stats').innerHTML = items.map(function(it) {
+    return '<div style="background:var(--surface-raised);border:1px solid var(--line);border-radius:6px;padding:12px;text-align:center;">' +
+      '<div style="font:800 24px/28px var(--font-display);color:' + it[2] + '">' + it[1] + '</div>' +
+      '<div style="font-size:11px;text-transform:uppercase;color:var(--ink-muted);font-weight:700;margin-top:2px;">' + d[it[0]] + '</div></div>';
+  }).join('');
+}
+function renderCadence(c) {
+  var d = window.__pageDict();
+  var rows = [
+    [d.cad72, c.reminder72hEnabled],
+    [d.cad24, c.reminder24hEnabled],
+    [d.cad12, c.reminder12hEnabled]
+  ];
+  if (c.isWeeklyDraw) rows.push([d.cadAutoDraw, c.autoDrawEnabled, c.autoDrawEnabled ? d.cadAutoDrawHours(c.autoDrawHoursBefore) : '']);
+  document.getElementById('comms-cadence').innerHTML = rows.map(function(r) {
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);">' +
+      '<span>' + r[0] + (r[2] ? ' <span class="nl-help" style="display:inline">(' + r[2] + ')</span>' : '') + '</span>' +
+      '<span style="font-weight:700;color:' + (r[1] ? '#0e7a4f' : 'var(--ink-muted)') + '">' + (r[1] ? d.on : d.off) + '</span></div>';
+  }).join('');
+}
+function renderActivity(activity) {
+  var d = window.__pageDict();
+  var el = document.getElementById('comms-activity');
+  if (!activity.length) { el.innerHTML = '<p class="nl-help">' + d.emptyState + '</p>'; return; }
+  var statusKey = { sent: 'statusSent', failed: 'statusFailed', skipped: 'statusSkipped', pending: 'statusPending' };
+  var rows = activity.map(function(a) {
+    return '<tr>' +
+      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);">' + esc(a.kind) + '</td>' +
+      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);">' + esc(a.recipient || '') + '</td>' +
+      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);">' + esc(a.eventDate || a.eventId || '') + '</td>' +
+      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);"><span style="font-weight:700;color:' + (STATUS_COLOR[a.status] || 'inherit') + '">' + (d[statusKey[a.status]] || esc(a.status)) + '</span></td>' +
+      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;">' + fmtWhen(a.at) + '</td>' +
+      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);color:var(--danger,#c4153a);font-size:13px;">' + esc(a.reason || '') + '</td>' +
+      '</tr>';
+  }).join('');
+  el.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:14px;min-width:640px;">' +
+    '<thead><tr style="text-align:left;">' +
+    '<th style="padding:8px 10px;border-bottom:2px solid var(--line);">' + d.colType + '</th>' +
+    '<th style="padding:8px 10px;border-bottom:2px solid var(--line);">' + d.colRecipient + '</th>' +
+    '<th style="padding:8px 10px;border-bottom:2px solid var(--line);">' + d.colEvent + '</th>' +
+    '<th style="padding:8px 10px;border-bottom:2px solid var(--line);">' + d.colStatus + '</th>' +
+    '<th style="padding:8px 10px;border-bottom:2px solid var(--line);">' + d.colWhen + '</th>' +
+    '<th style="padding:8px 10px;border-bottom:2px solid var(--line);">' + d.colReason + '</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+(async function loadComms() {
+  try {
+    var res = await fetch('/league/comms/data', { credentials: 'same-origin' });
+    var data = await res.json();
+    if (!res.ok || !data.ok) return;
+    renderStats(data.stats);
+    renderCadence(data.cadence);
+    renderActivity(data.activity);
+  } catch (e) {}
+})();
+`;
+
+  return new Response(nlDocument({ title: `Communications — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
 async function handleLeagueSettingsPage(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
@@ -12395,6 +12696,15 @@ async function maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, 
     ).bind(ev.id, playerId, new Date().toISOString()).run();
   } catch (err) {
     console.error(`[team-assigned-followup] failed to send to ${playerId}: ${err.message}`);
+    // Live-testing task (batch 3), Part 2: see sendLeagueReminderKind's
+    // own identical comment -- same gap, same fix. Not inserted into
+    // league_team_assigned_email_log itself: that table's PRIMARY KEY
+    // is this function's own "already sent" dedup gate (line above),
+    // and a failed attempt must stay retryable on the next shortage/
+    // draw event, unlike a real success.
+    await env.DB.prepare(
+      `INSERT INTO league_mail_failure_log (league_id, event_id, player_id, kind, error, failed_at) VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(leagueRow.id, ev.id, playerId, 'team_assigned', String(err.message || err), new Date().toISOString()).run();
   }
 }
 
@@ -12457,6 +12767,14 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
     } catch (err) {
       failed++;
       console.error(`[league-reminders] failed to send ${kind} to ${contact.player_id}: ${err.message}`);
+      // Live-testing task (batch 3), Part 2: previously console.error
+      // only -- a failed reminder left literally no trace a league
+      // admin could ever discover. league_reminder_log itself can't
+      // record this (its PRIMARY KEY doubles as the "already sent,
+      // don't resend" dedup gate -- see migrate-040.sql's own comment).
+      await env.DB.prepare(
+        `INSERT INTO league_mail_failure_log (league_id, event_id, player_id, kind, error, failed_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(leagueRow.id, ev.id, contact.player_id, kind, String(err.message || err), new Date().toISOString()).run();
     }
   }
   if (writeLog) {
@@ -21151,6 +21469,12 @@ async function handleFetch(req, env, ctx) {
       // Live-testing task, Part 1: consolidated settings page.
       if ((url.pathname === '/league/settings' || url.pathname === '/league/settings/') && req.method === 'GET')
         return await handleLeagueSettingsPage(req, env, url);
+      // Live-testing task (batch 3), Part 2: Comms view -- every
+      // league, no capability-flag gate.
+      if ((url.pathname === '/league/comms' || url.pathname === '/league/comms/') && req.method === 'GET')
+        return await handleLeagueCommsPage(req, env, url);
+      if (url.pathname === '/league/comms/data' && req.method === 'GET')
+        return await handleLeagueCommsData(req, env, url);
 
       // Live-testing task (batch 2), Part 12: hard delete (privacy/Law
       // 25). Status is read-only (for the settings page's own gate UI --
