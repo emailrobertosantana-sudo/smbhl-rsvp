@@ -16217,6 +16217,18 @@ async function financesPage(env = null, isAuthed = false) {
     .status-exempt { background:#f1f5f9; color:#64748b; }
     .tbl-inp { font:inherit; font-size:14px; padding:4px 7px; border:1px solid var(--rule2); border-radius:3px; box-sizing:border-box; }
     .tbl-inp:focus { outline:none; border-color:var(--ink); }
+    /* Finance tab regression fix: the due/paid amount inputs below use
+       step="10" so the native up/down spinner arrows move by whole
+       dollars again, not step="any"/no step at all -- but a typed
+       non-round amount (e.g. 12.50) is still a completely valid,
+       intentional value here (custom dues, partial payments), so the
+       browser's own default :invalid styling (a visible glow/outline
+       in some browsers, e.g. Firefox) is suppressed for these inputs.
+       This is purely cosmetic -- step mismatch never blocks typing or
+       reading .value, and these inputs aren't inside a <form> that
+       would block submission on it either -- but a typed valid amount
+       should never LOOK flagged as an error. */
+    .tbl-inp:invalid { box-shadow: none; outline: none; }
     .filter-btn { font:inherit; font-family:'Barlow Condensed',sans-serif; font-weight:600; font-size:14px; padding:5px 12px; border:1px solid var(--rule2); background:#fff; color:var(--soft); border-radius:3px; cursor:pointer; }
     .filter-btn.on { background:var(--ink); color:#fff; border-color:var(--ink); }
   </style>
@@ -16790,7 +16802,7 @@ async function financesPage(env = null, isAuthed = false) {
       
       const dueVal = p.total_due;
       const isCustom = p.custom_due !== null && p.custom_due !== undefined;
-      const dueInput = '<input type="number" min="0" step="0.01" data-f="due" data-pid="' + esc(p.player_id) + '" value="' + dueVal + '" class="tbl-inp" style="width:75px; text-align:center; font-weight:700;' + (isCustom ? ' border-color:var(--orange); background:#fffbeb;' : '') + '" title="' + esc(isCustom ? t('customDueTitle') : t('standardDueTitle')) + '">';
+      const dueInput = '<input type="number" min="0" step="10" inputmode="decimal" data-f="due" data-pid="' + esc(p.player_id) + '" value="' + dueVal + '" class="tbl-inp" style="width:75px; text-align:center; font-weight:700;' + (isCustom ? ' border-color:var(--orange); background:#fffbeb;' : '') + '" title="' + esc(isCustom ? t('customDueTitle') : t('standardDueTitle')) + '">';
 
       let statusBadge = '';
       if (p.status === 'paid') statusBadge = '<span class="pill status-paid">' + esc(t('statusPaid')) + '</span>';
@@ -16819,7 +16831,7 @@ async function financesPage(env = null, isAuthed = false) {
         '<td style="padding:6px;">' + roleHtml + '</td>' +
         '<td style="padding:6px; text-align:center;">' + gpDisplay + '</td>' +
         '<td style="padding:6px; text-align:center;">' + dueInput + '</td>' +
-        '<td style="padding:6px; text-align:center;"><input type="number" min="0" step="0.01" data-f="paid" data-pid="' + esc(p.player_id) + '" value="' + (p.amount_paid || 0) + '" class="tbl-inp" style="width:75px; text-align:center;"></td>' +
+        '<td style="padding:6px; text-align:center;"><input type="number" min="0" step="10" inputmode="decimal" data-f="paid" data-pid="' + esc(p.player_id) + '" value="' + (p.amount_paid || 0) + '" class="tbl-inp" style="width:75px; text-align:center;"></td>' +
         '<td style="padding:6px; text-align:right;">' + outDisplay + '</td>' +
         '<td style="padding:6px; text-align:center;">' + statusBadge + '</td>' +
         '<td style="padding:6px;"><input type="text" data-f="notes" data-pid="' + esc(p.player_id) + '" value="' + esc(p.notes || '') + '" placeholder="' + esc(t('notePlaceholder')) + '" class="tbl-inp" style="width:100%; max-width:160px;"></td>' +

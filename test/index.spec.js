@@ -1515,6 +1515,20 @@ describe("SMBHL Worker", () => {
 			expect(html).toContain("Dû ($)");
 			expect(html).toContain("Payé ($)");
 			expect(html).not.toContain("Ajust. (+/-)");
+			// Regression lock: the due/paid amount arrows must step by whole
+			// dollars (10), not cents (0.01) -- a prior regression made the
+			// up/down spinner arrows on these fields increment by 0.01,
+			// requiring dozens of clicks to reach a normal amount. Typing an
+			// exact, non-round amount (e.g. 12.50) must still work -- step
+			// only constrains the native spinner arrows and stepMismatch
+			// validity, never what can be typed or read via .value, and
+			// .tbl-inp:invalid is explicitly suppressed above so a typed
+			// non-multiple-of-10 amount never even LOOKS flagged.
+			expect(html).toContain('step="10" inputmode="decimal" data-f="due"');
+			expect(html).toContain('step="10" inputmode="decimal" data-f="paid"');
+			expect(html).not.toContain('step="0.01" data-f="due"');
+			expect(html).not.toContain('step="0.01" data-f="paid"');
+			expect(html).toContain('.tbl-inp:invalid { box-shadow: none; outline: none; }');
 			// Verified bilingual engine support
 			expect(html).toContain("I18N_FINANCES");
 			expect(html).toContain("Total Billed");
