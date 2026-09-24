@@ -9,6 +9,7 @@ import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, e
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateStructure } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
+import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -1455,7 +1456,14 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       deactivateLeague: 'Désactiver la ligue',
       deactivateDesc: "Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.",
       deactivateConfirmLabel: 'Tape le nom de ta ligue pour confirmer',
-      deactivateBtn: 'Désactiver'
+      deactivateBtn: 'Désactiver',
+      hardDeleteTitle: 'Supprimer définitivement la ligue',
+      hardDeleteDesc: "Efface pour de bon toutes les données de la ligue (parties, joueurs, présences, etc.). Aucune récupération possible. Nécessite que la ligue soit déjà désactivée depuis 15 jours.",
+      hardDeleteNotDeactivated: "Désactive d'abord ta ligue ci-dessus pour débloquer la suppression définitive.",
+      hardDeleteLocked: 'Débloqué le',
+      hardDeleteEligible: 'La suppression définitive est débloquée.',
+      hardDeleteConfirmLabel: 'Tape "SUPPRIMER" suivi du nom de ta ligue pour confirmer',
+      hardDeleteBtn: 'Supprimer définitivement'
     });
     Object.assign(en, {
       noSeason: 'No active season',
@@ -1470,7 +1478,14 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       deactivateLeague: 'Deactivate league',
       deactivateDesc: 'This deactivates your league. Your data is kept, but management access is blocked.',
       deactivateConfirmLabel: "Type your league's name to confirm",
-      deactivateBtn: 'Deactivate'
+      deactivateBtn: 'Deactivate',
+      hardDeleteTitle: 'Permanently delete this league',
+      hardDeleteDesc: 'Permanently erases all of this league\'s data (games, players, attendance, etc). This cannot be undone. Requires the league to have been deactivated for 15 days already.',
+      hardDeleteNotDeactivated: 'Deactivate your league above first to unlock permanent deletion.',
+      hardDeleteLocked: 'Unlocks on',
+      hardDeleteEligible: 'Permanent deletion is unlocked.',
+      hardDeleteConfirmLabel: 'Type "DELETE" followed by your league\'s name to confirm',
+      hardDeleteBtn: 'Permanently delete'
     });
     if (needsSeason) {
       Object.assign(fr, {
@@ -1881,6 +1896,17 @@ async function handleDashboardPage(req, env, url) {
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="deactivate_submit" data-i18n="deactivateBtn" onclick="submitDeactivate()" style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);">Désactiver</button></div>
   </section>
+  <section class="nl-card nl-card--pad-lg" style="border-color:var(--danger,#b3122e)">
+    <div class="h3" data-i18n="hardDeleteTitle">Supprimer définitivement la ligue</div>
+    <p class="nl-help" data-i18n="hardDeleteDesc">Efface pour de bon toutes les données de la ligue (parties, joueurs, présences, etc.). Aucune récupération possible. Nécessite que la ligue soit déjà désactivée depuis 15 jours.</p>
+    <p id="hardDeleteStatus" class="nl-help"></p>
+    <div id="hardDeleteErr" class="nl-error" style="display:none"></div>
+    <div class="nl-field">
+      <label class="nl-label" for="hard_delete_confirm" data-i18n="hardDeleteConfirmLabel">Tape "SUPPRIMER" suivi du nom de ta ligue pour confirmer</label>
+      <input class="nl-input" id="hard_delete_confirm" type="text" placeholder="SUPPRIMER ${esc(leagueRow.name)}" autocomplete="off">
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="hard_delete_submit" data-i18n="hardDeleteBtn" onclick="submitHardDelete()" disabled style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);">Supprimer définitivement</button></div>
+  </section>
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>
 ${tabbar}`;
@@ -2046,6 +2072,46 @@ async function submitDeactivate() {
     err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
 }
+async function loadHardDeleteStatus() {
+  var statusEl = document.getElementById('hardDeleteStatus');
+  var btn = document.getElementById('hard_delete_submit');
+  if (!statusEl || !btn) return;
+  try {
+    var res = await fetch('/league/hard-delete/status', { credentials: 'same-origin' });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { statusEl.textContent = ''; return; }
+    if (data.status === 'not_deactivated') {
+      statusEl.textContent = window.__pageDict().hardDeleteNotDeactivated;
+      btn.disabled = true;
+    } else if (data.status === 'locked') {
+      statusEl.textContent = window.__pageDict().hardDeleteLocked + ' ' + new Date(data.unlockAt).toLocaleDateString();
+      btn.disabled = true;
+    } else if (data.status === 'eligible') {
+      statusEl.textContent = window.__pageDict().hardDeleteEligible;
+      btn.disabled = false;
+    }
+  } catch (e) {}
+}
+async function submitHardDelete() {
+  var err = document.getElementById('hardDeleteErr');
+  err.style.display = 'none';
+  var confirmPhrase = document.getElementById('hard_delete_confirm').value;
+  var btn = document.getElementById('hard_delete_submit');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/hard-delete', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ confirmPhrase: confirmPhrase })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    window.location.href = '/login';
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
+  }
+}
+if (document.getElementById('hardDeleteStatus')) loadHardDeleteStatus();
 `;
 
   return new Response(nlDocument({ title: leagueRow ? `Tableau de bord — ${leagueRow.name}` : 'Tableau de bord', description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
@@ -7623,6 +7689,7 @@ function superAdminPage(isAuthed = false) {
           <th style="padding:8px 6px">Page publique</th>
           <th style="padding:8px 6px">Palier / Tier</th>
           <th style="padding:8px 6px">Indicateurs / Flags</th>
+          <th style="padding:8px 6px">Suppression / Deletion</th>
         </tr>
       </thead>
       <tbody id="sa-tbody"></tbody>
@@ -7653,6 +7720,7 @@ function renderRow(l) {
     '<td style="padding:8px 6px">' + (l.publicPageEnabled ? 'Oui / Yes' : 'Non / No') + (l.deactivatedAt ? ' (désactivée / deactivated)' : '') + '</td>' +
     '<td style="padding:8px 6px"><select class="sa-tier" data-league="' + l.id + '">' + planTierOptionsHtml(l.planTier) + '</select></td>' +
     '<td style="padding:8px 6px">' + flagsHtml + '</td>' +
+    '<td style="padding:8px 6px">' + (l.id === 'smbhl' ? '' : '<button type="button" class="sa-harddelete" data-league="' + l.id + '" data-name="' + esc(l.name).replace(/"/g, '&quot;') + '" style="color:var(--danger,#b3122e)">Supprimer / Delete</button>') + '</td>' +
     '</tr>';
 }
 
@@ -7725,6 +7793,32 @@ $('sa-tbody').addEventListener('change', async e => {
       $('sa-err').textContent = 'Erreur / Error: ' + err.message;
       await load();
     }
+    return;
+  }
+});
+
+$('sa-tbody').addEventListener('click', async e => {
+  const delBtn = e.target.closest('.sa-harddelete');
+  if (!delBtn) return;
+  const leagueId = delBtn.dataset.league;
+  const leagueName = delBtn.dataset.name;
+  try {
+    const statusRes = await fetch('/super-admin/leagues/hard-delete/status?leagueId=' + encodeURIComponent(leagueId), { headers: { 'x-admin': K } });
+    const statusData = await statusRes.json();
+    if (statusData.status === 'not_deactivated') { alert('Cette ligue doit être désactivée d\\'abord. / This league must be deactivated first.'); return; }
+    if (statusData.status === 'locked') { alert('Verrouillé jusqu\\'au / Locked until: ' + statusData.unlockAt); return; }
+    if (statusData.status === 'protected') { alert('Cette ligue ne peut pas être supprimée. / This league cannot be deleted.'); return; }
+    const phrase = prompt('Tape "SUPPRIMER ' + leagueName + '" pour confirmer / Type "DELETE ' + leagueName + '" to confirm:');
+    if (!phrase) return;
+    const res = await fetch('/super-admin/leagues/hard-delete', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-admin': K },
+      body: JSON.stringify({ leagueId, confirmPhrase: phrase })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    $('sa-err').textContent = '';
+    await load();
+  } catch (err) {
+    $('sa-err').textContent = 'Erreur / Error: ' + err.message;
   }
 });
 
@@ -20828,6 +20922,23 @@ async function handleFetch(req, env, ctx) {
       if ((url.pathname === '/league/settings' || url.pathname === '/league/settings/') && req.method === 'GET')
         return await handleLeagueSettingsPage(req, env, url);
 
+      // Live-testing task (batch 2), Part 12: hard delete (privacy/Law
+      // 25). Status is read-only (for the settings page's own gate UI --
+      // deactivated-first / 15-day-locked / eligible); the actual delete
+      // is POST /league/hard-delete.
+      if (url.pathname === '/league/hard-delete/status' && req.method === 'GET') {
+        const session = await checkUserSession(req, env);
+        if (!session) return leagueAccessResponse('unauthenticated');
+        const leagueId = await resolveSessionLeagueId(req, env, url);
+        if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+        const link = await env.DB.prepare('SELECT 1 FROM league_admins WHERE user_id = ? AND league_id = ?').bind(session.userId, leagueId).first();
+        if (!link) return leagueAccessResponse('forbidden');
+        const elig = await checkHardDeleteEligibility(env, leagueId);
+        return Response.json({ ok: true, status: elig.status, unlockAt: elig.unlockAt || null, unlockDays: HARD_DELETE_UNLOCK_DAYS });
+      }
+      if (url.pathname === '/league/hard-delete' && req.method === 'POST')
+        return await handleLeagueHardDelete(req, env, url);
+
       // Live-testing task (batch 2), Part 11: super-admin layer. Gated by
       // checkAdminAuth exactly like /admin/board (same key, see
       // super_admin.js's top comment for why) -- a session-authenticated
@@ -20862,6 +20973,22 @@ async function handleFetch(req, env, ctx) {
           }
         }
         return Response.json({ ok: true });
+      }
+      // Part 12: hard delete, super-admin entry point. Same eligibility
+      // rules (deactivated first, 15-day unlock, SMBHL structurally
+      // exempt) and same performLeagueHardDelete core as the league
+      // admin's own /league/hard-delete -- see hard_delete.js.
+      if (url.pathname === '/super-admin/leagues/hard-delete/status' && req.method === 'GET') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const leagueId = url.searchParams.get('leagueId') || '';
+        const elig = await checkHardDeleteEligibility(env, leagueId);
+        return Response.json({ ok: true, status: elig.status, unlockAt: elig.unlockAt || null, unlockDays: HARD_DELETE_UNLOCK_DAYS });
+      }
+      if (url.pathname === '/super-admin/leagues/hard-delete' && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        return await handleSuperAdminLeagueHardDelete(req, env);
       }
 
       if (url.pathname === '/admin' || url.pathname === '/admin/')
