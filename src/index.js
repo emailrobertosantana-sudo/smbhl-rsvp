@@ -1483,6 +1483,12 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.",
       weeklyDrawTeamsDesc: 'Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.',
       coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteEmailPh: 'courriel@exemple.com', inviteBtn: 'Inviter',
+      // Live-testing task (batch 5), Part 6: the dashboard's own
+      // ongoing "what's still worth doing" checklist -- computed from
+      // real state (no players yet, team names still the generic
+      // default, roster limits never set), not a one-time flag, so it
+      // naturally disappears once each is genuinely addressed.
+      nextStepsTitle: 'Prochaines étapes', nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif",
       deactivateLeague: 'Désactiver la ligue',
       deactivateDesc: "Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.",
       deactivateConfirmLabel: 'Tape le nom de ta ligue pour confirmer',
@@ -1506,6 +1512,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
       coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteEmailPh: 'email@example.com', inviteBtn: 'Invite',
+      nextStepsTitle: 'Next steps', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size',
       deactivateLeague: 'Deactivate league',
       deactivateDesc: 'This deactivates your league. Your data is kept, but management access is blocked.',
       deactivateConfirmLabel: "Type your league's name to confirm",
@@ -1837,6 +1844,29 @@ async function handleDashboardPage(req, env, url) {
       </section>
     </div>` : '';
 
+    // Live-testing task (batch 5), Part 6: once a season exists, the
+    // dashboard used to show NOTHING guidance-shaped at all -- straight
+    // from the "Pour bien partir" checklist to a settings-page-style
+    // pile of cards. This is the ongoing version of that same idea:
+    // genuinely useful next steps, computed from what's actually still
+    // default/unset, not a one-time flag -- it naturally disappears
+    // once everything below has a real answer, and reappears if the
+    // gap comes back (e.g. every player removed again).
+    const defaultTeamNamePattern = /^(Équipe|Team) \d+$/;
+    const stillDefaultTeamNames = !dashIsHeadcount && teamNames.length > 0 && teamNames.every(t => defaultTeamNamePattern.test(t));
+    const nextStepsItems = !needsSeason ? [
+      playerCount === 0 ? { key: 'nsAddPlayers', href: '/league/roster', fr: 'Ajouter des joueurs' } : null,
+      stillDefaultTeamNames ? { key: 'nsNameTeams', href: '/onboarding/season?step=2', fr: 'Nommer tes équipes' } : null,
+      (!dashIsHeadcount && !dashHasRosterLimits) ? { key: 'nsRosterLimits', href: '/onboarding/season?step=1', fr: "Définir l'effectif" } : null
+    ].filter(Boolean) : [];
+    const nextStepsHtml = nextStepsItems.length ? `
+    <section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
+      <div class="h3" data-i18n="nextStepsTitle">Prochaines étapes</div>
+      <div class="dash-check" style="margin-top:12px">
+        ${nextStepsItems.map(it => `<div class="dash-ck"><span class="b n"></span><a href="${it.href}" data-i18n="${it.key}">${esc(it.fr)}</a></div>`).join('')}
+      </div>
+    </section>` : '';
+
     bodyHtml = `${dashStyles()}${header}
 <main class="dash-main">
   <div class="dash-top">
@@ -1858,6 +1888,7 @@ async function handleDashboardPage(req, env, url) {
     <div style="margin-top:10px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="resendBtn" data-i18n="resendBtn" onclick="resendVerification()">Renvoyer le courriel</button></div>
   </section>` : ''}
   ${startGridHtml}
+  ${nextStepsHtml}
   <div class="dash-tiles">
     <section class="nl-card nl-card--pad-lg dash-tile">
       <div class="overline" data-i18n="${dashIsWeeklyDraw ? 'teamsPerGame' : 'teams'}">${dashIsWeeklyDraw ? 'Nouvelles équipes chaque match' : 'Équipes'}</div>
@@ -2041,7 +2072,13 @@ async function submitSeason() {
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { el.textContent = window.__errorText(data.errorKey, data.error); el.style.display = 'block'; btn.disabled = false; return; }
-    window.location.reload();
+    // Live-testing task (batch 5), Part 6: this used to reload the
+    // dashboard right here -- landing the user straight back on a page
+    // that, now that a season exists, immediately offered a "Saisons"
+    // card to create ANOTHER season, with no sense of what to do next.
+    // The real next steps (roster size, team names, reminders, stats)
+    // now get asked in flow instead, one screen, same voice as signup.
+    window.__navWithLang('/onboarding/season');
   } catch (e) {
     el.textContent = window.__errorText('NETWORK_ERROR'); el.style.display = 'block'; btn.disabled = false;
   }
@@ -2189,6 +2226,299 @@ if (document.getElementById('hardDeleteStatus')) loadHardDeleteStatus();
 `;
 
   return new Response(nlDocument({ title: leagueRow ? `Tableau de bord — ${leagueRow.name}` : 'Tableau de bord', description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
+// Live-testing task (batch 5), Part 6 (BIG): onboarding used to die
+// right after the first season was created -- submitSeason() just
+// reloaded the dashboard, which (now that a season exists) offered a
+// "Saisons" card to create ANOTHER season, with no sense of what to
+// do next, while the questions that actually matter to run a league
+// (roster size, team names, reminder cadences, stats tracking) sat
+// buried in Settings, undiscovered unless a user went looking.
+//
+// This is that continuation: same visual chrome/voice as the signup
+// wizard (signupStyles/signupHeader/su-* classes, not the dashboard's
+// own settings-page look), a handful of short steps instead of one
+// big form ("Few choices, lots of air" -- the design system's own
+// principle), skippable at every step, pre-filled with whatever's
+// already set so re-visiting or resuming never loses work. Every
+// field here posts to the SAME existing /league/settings/*,
+// /league/season/teams and /league/reminders/settings routes the
+// Settings page already uses -- no new backend, no new columns, and
+// everything set here stays just as editable in Settings afterward
+// (this is about WHEN to ask, not where the data lives).
+//
+// Team-structure-aware step list: a headcount league has no team
+// names to confirm, so it gets 3 steps (roster, reminders, stats)
+// instead of 4 (roster, teams, reminders, stats) -- computed once,
+// server-side, from the league's own already-fixed team_structure
+// (chosen once at signup, never changed after).
+function onboardingStepsFor(teamStructure) {
+  return teamStructure === 'headcount' ? ['roster', 'reminders', 'stats'] : ['roster', 'teams', 'reminders', 'stats'];
+}
+
+function onboardingStepper(current, total) {
+  const dots = Array.from({ length: total }, (_, i) => i + 1)
+    .map(i => `<i class="${i < current ? 'done' : i === current ? 'on' : ''}"></i>`).join('');
+  return `<div class="nl-steps" role="progressbar" aria-valuemin="1" aria-valuemax="${total}" aria-valuenow="${current}">${dots}</div>`;
+}
+
+function buildOnboardingI18n() {
+  const fr = {
+    skip: 'Passer pour l\'instant', next: 'Continuer', finish: 'Aller au tableau de bord', saveErr: 'Une erreur est survenue. Réessaie.',
+    rosterTitle: 'Combien de joueurs?', rosterSubTeam: 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.',
+    rosterSubEvent: 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs. Laisse vide si tu n\'es pas prêt à décider.',
+    lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
+    lblMinGoalies: 'Minimum de gardiens (optionnel)', lblMaxGoalies: 'Maximum de gardiens (optionnel)',
+    teamsTitle: 'Confirme les noms des équipes', teamsSubDefault: 'Choisis les vrais noms de tes équipes -- tu pourras les changer plus tard dans Paramètres.',
+    teamsSubWeekly: 'Ces équipes changent à chaque match, mais leurs noms restent les mêmes toute la saison. Tu peux garder « Équipe 1, 2… » et revenir plus tard.',
+    remindersTitle: 'Rappels automatiques', remindersSub: 'Déjà activés par défaut -- désactive ceux que tu ne veux pas.',
+    reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder12Label: 'Détails 12 h avant (confirmés)',
+    statsTitle: 'Suivre les statistiques?', statsSub: 'Buts, passes, gardiens. Tu pourras l\'activer plus tard dans Paramètres.',
+    lblStats: 'Suivre les statistiques?'
+  };
+  const en = {
+    skip: 'Skip for now', next: 'Continue', finish: 'Go to dashboard', saveErr: 'Something went wrong. Please try again.',
+    rosterTitle: 'How many players?', rosterSubTeam: 'These numbers apply to each team. Leave blank if you\'re not ready to decide.',
+    rosterSubEvent: 'These numbers apply to each game, across every player. Leave blank if you\'re not ready to decide.',
+    lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
+    lblMinGoalies: 'Minimum goalies (optional)', lblMaxGoalies: 'Maximum goalies (optional)',
+    teamsTitle: 'Confirm your team names', teamsSubDefault: 'Pick the real names of your teams -- you can change them later in Settings.',
+    teamsSubWeekly: 'These teams change every game, but their names stay the same all season. You can keep "Team 1, 2…" and come back later.',
+    remindersTitle: 'Automated reminders', remindersSub: 'Already on by default -- turn off the ones you don\'t want.',
+    reminder72Label: '72h reminder (no reply yet)', reminder24Label: '24h reminder (no reply yet)', reminder12Label: '12h details (confirmed players)',
+    statsTitle: 'Track stats?', statsSub: 'Goals, assists, goalies. You can turn it on later in Settings.',
+    lblStats: 'Track stats?'
+  };
+  return { fr, en };
+}
+
+async function handleOnboardingSeasonPage(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return Response.redirect(url.origin + '/login', 302);
+
+  const leagueRow = await env.DB.prepare(
+    `SELECT l.* FROM leagues l JOIN league_admins la ON la.league_id = l.id
+      WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
+  ).bind(session.userId).first();
+  if (!leagueRow || leagueRow.deactivated_at) return Response.redirect(url.origin + '/dashboard', 302);
+
+  const leagueData = await getLeagueDataJson(env, leagueRow.id);
+  const currentSeason = leagueData ? leagueData.current_season : null;
+  // This screen only makes sense right after a season exists -- with
+  // no season yet, send the admin back to the real first step
+  // (creating one) instead of a confusing empty onboarding shell.
+  if (!currentSeason) return Response.redirect(url.origin + '/dashboard', 302);
+
+  // Safety guard: republishing a season (handleLeagueSeasonPublish's
+  // own "edit in place" behavior, reused by the roster/teams steps
+  // below to make their changes apply to THIS season, not just future
+  // ones) unconditionally resets that season's standings/games to
+  // zero. Fine for the season this screen is normally reached
+  // for (freshly created, zero games by construction), but this route
+  // is also reachable by direct URL/bookmark at any later time -- once
+  // real games exist, the roster/teams steps must still update the
+  // league's own persistent defaults, just without touching the
+  // current season's frozen (and now real) standings.
+  const currentSeasonEntry = (leagueData && Array.isArray(leagueData.seasons))
+    ? leagueData.seasons.find(s => s && s.name === currentSeason) : null;
+  const seasonHasGames = !!(currentSeasonEntry && Number(currentSeasonEntry.games) > 0);
+
+  const teamStructure = leagueRow.team_structure || 'fixed';
+  const steps = onboardingStepsFor(teamStructure);
+  const requested = Number(url.searchParams.get('step')) || 1;
+  const stepIndex = Math.min(Math.max(requested, 1), steps.length) - 1;
+  const step = steps[stepIndex];
+  const stepNum = stepIndex + 1;
+  const isLast = stepNum === steps.length;
+  const nextStepNum = stepNum + 1;
+
+  const { fr, en } = buildOnboardingI18n();
+  let teamNames = [];
+  try { teamNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
+
+  let stepHtml = '';
+  if (step === 'roster') {
+    const isTeamShaped = teamStructure === 'fixed';
+    stepHtml = `
+  <div class="su-title">
+    <h1 data-i18n="rosterTitle">Combien de joueurs?</h1>
+    <p class="nl-help" data-i18n="${isTeamShaped ? 'rosterSubTeam' : 'rosterSubEvent'}">${isTeamShaped ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs. Laisse vide si tu n\'es pas prêt à décider.'}</p>
+  </div>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div class="su-two">
+    <div class="nl-field">
+      <label class="nl-label" for="ob_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
+      <input class="nl-input" id="ob_min_players" type="number" min="1" value="${esc(leagueRow.min_players != null ? String(leagueRow.min_players) : '')}">
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" for="ob_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
+      <input class="nl-input" id="ob_max_players" type="number" min="1" value="${esc(leagueRow.max_players != null ? String(leagueRow.max_players) : '')}">
+    </div>
+  </div>
+  <div class="su-two">
+    <div class="nl-field">
+      <label class="nl-label" for="ob_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
+      <input class="nl-input" id="ob_min_goalies" type="number" min="0" value="${esc(leagueRow.min_goalies != null ? String(leagueRow.min_goalies) : '')}">
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" for="ob_max_goalies" data-i18n="lblMaxGoalies">Maximum de gardiens (optionnel)</label>
+      <input class="nl-input" id="ob_max_goalies" type="number" min="0" value="${esc(leagueRow.max_goalies != null ? String(leagueRow.max_goalies) : '')}">
+    </div>
+  </div>`;
+  } else if (step === 'teams') {
+    const isWeekly = teamStructure === 'weekly_draw';
+    stepHtml = `
+  <div class="su-title">
+    <h1 data-i18n="teamsTitle">Confirme les noms des équipes</h1>
+    <p class="nl-help" data-i18n="${isWeekly ? 'teamsSubWeekly' : 'teamsSubDefault'}">${isWeekly ? 'Ces équipes changent à chaque match, mais leurs noms restent les mêmes toute la saison. Tu peux garder « Équipe 1, 2… » et revenir plus tard.' : 'Choisis les vrais noms de tes équipes -- tu pourras les changer plus tard dans Paramètres.'}</p>
+  </div>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div class="su-teams" id="ob_teams">
+    ${teamNames.map((t, i) => `<div class="su-team-in"><span class="n">${i + 1}</span><input class="nl-input" data-idx="${i}" value="${esc(t)}"></div>`).join('')}
+  </div>`;
+  } else if (step === 'reminders') {
+    stepHtml = `
+  <div class="su-title">
+    <h1 data-i18n="remindersTitle">Rappels automatiques</h1>
+    <p class="nl-help" data-i18n="remindersSub">Déjà activés par défaut -- désactive ceux que tu ne veux pas.</p>
+  </div>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div class="nl-toggle">
+    <div class="nl-label" data-i18n="reminder72Label">Rappel 72 h avant (sans réponse)</div>
+    <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_72h_enabled ? 'true' : 'false'}" id="ob_reminder_72h" onclick="obToggle(this)"></button>
+  </div>
+  <div class="nl-toggle">
+    <div class="nl-label" data-i18n="reminder24Label">Rappel 24 h avant (sans réponse)</div>
+    <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_24h_enabled ? 'true' : 'false'}" id="ob_reminder_24h" onclick="obToggle(this)"></button>
+  </div>
+  <div class="nl-toggle">
+    <div class="nl-label" data-i18n="reminder12Label">Détails 12 h avant (confirmés)</div>
+    <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="ob_reminder_12h" onclick="obToggle(this)"></button>
+  </div>`;
+  } else if (step === 'stats') {
+    stepHtml = `
+  <div class="su-title">
+    <h1 data-i18n="statsTitle">Suivre les statistiques?</h1>
+    <p class="nl-help" data-i18n="statsSub">Buts, passes, gardiens. Tu pourras l'activer plus tard dans Paramètres.</p>
+  </div>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div class="nl-toggle">
+    <div class="nl-label" data-i18n="lblStats">Suivre les statistiques?</div>
+    <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_stats ? 'true' : 'false'}" id="ob_stats" onclick="obToggle(this)"></button>
+  </div>`;
+  }
+
+  const bodyHtml = `${signupStyles()}${signupHeader(leagueRow.name)}
+<main class="su-body">
+  <div class="su-prog">
+    ${onboardingStepper(stepNum, steps.length)}
+  </div>
+  ${stepHtml}
+</main>
+<div class="su-bottom">
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="ob_submit" data-i18n="${isLast ? 'finish' : 'next'}" onclick="obSubmit()">${isLast ? 'Aller au tableau de bord' : 'Continuer'}</button>
+  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="skip" onclick="window.location.href='/dashboard'">Passer pour l'instant</button>
+</div>`;
+
+  const script = `
+${nlAuthScript({ fr, en })}
+var OB_STEP = ${JSON.stringify(step)};
+var OB_IS_LAST = ${isLast ? 'true' : 'false'};
+var OB_NEXT_URL = ${isLast ? 'null' : JSON.stringify(`/onboarding/season?step=${nextStepNum}`)};
+var OB_SEASON_NAME = ${JSON.stringify(currentSeason)};
+var OB_SEASON_HAS_GAMES = ${seasonHasGames ? 'true' : 'false'};
+function obToggle(btn) {
+  btn.setAttribute('aria-checked', String(btn.getAttribute('aria-checked') !== 'true'));
+}
+function showErr(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
+async function obSave(path, payload) {
+  var res = await fetch(path, {
+    method: 'POST', credentials: 'same-origin',
+    headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+    body: JSON.stringify(payload)
+  });
+  var data = await res.json().catch(function() { return {}; });
+  if (!res.ok || !data.ok) throw new Error((data && data.error) || 'save failed');
+}
+async function obSubmit() {
+  document.getElementById('formErr').style.display = 'none';
+  var btn = document.getElementById('ob_submit');
+  btn.disabled = true;
+  try {
+    if (OB_STEP === 'roster') {
+      // team_structure is deliberately omitted from the /league/settings/
+      // structure call -- it's chosen once at signup and never changed
+      // here; the backend derives roster-limit validation from the
+      // league's own already-stored structure when this field is absent
+      // (see handleLeagueUpdateStructure), which also avoids its
+      // unrelated team-names re-validation.
+      //
+      // TWO calls, deliberately: /league/settings/structure persists the
+      // league-level DEFAULT for future seasons, but a season's own
+      // roster limits are frozen into its config at publish time
+      // (handleLeagueSeasonPublish's own comment) and never re-read from
+      // the league row afterward -- so without also re-publishing the
+      // CURRENT season by its own name (its established "edit in place"
+      // behavior, same as the dashboard's own "Saisons" section), the
+      // limits set here would only ever apply to a season that doesn't
+      // exist yet, not the one this admin is actually setting up right
+      // now.
+      var payload = {};
+      var mp = document.getElementById('ob_min_players').value;
+      var xp = document.getElementById('ob_max_players').value;
+      var mg = document.getElementById('ob_min_goalies').value;
+      var xg = document.getElementById('ob_max_goalies').value;
+      if (mp !== '') payload.min_players = Number(mp);
+      if (xp !== '') payload.max_players = Number(xp);
+      if (mg !== '') payload.min_goalies = Number(mg);
+      if (xg !== '') payload.max_goalies = Number(xg);
+      if (Object.keys(payload).length) {
+        await obSave('/league/settings/structure', payload);
+        // Skipped once real games exist -- see OB_SEASON_HAS_GAMES's own
+        // comment server-side: republishing resets standings to zero,
+        // which is only safe for a season that doesn't have any yet.
+        if (!OB_SEASON_HAS_GAMES) {
+          await obSave('/league/season/publish', Object.assign({ season_name: OB_SEASON_NAME }, payload));
+        }
+      }
+    } else if (OB_STEP === 'teams') {
+      var inputs = document.querySelectorAll('#ob_teams input');
+      var teamNames = Array.prototype.map.call(inputs, function(i) { return i.value.trim(); }).filter(Boolean);
+      if (teamNames.length >= 2) {
+        // Same two-call reasoning as roster above: /league/settings/teams
+        // persists the league-level default team names. /league/season/
+        // teams patches the CURRENT season's own team list + standings
+        // directly -- it refuses (TEAM_HAS_GAMES/TEAM_HAS_PLAYERS) rather
+        // than silently dropping a team with real recorded data, so it's
+        // always safe to call, unlike a full republish above.
+        await obSave('/league/settings/teams', { teamNames: teamNames, teamColors: teamNames.map(function() { return '#b3122e'; }) });
+        await obSave('/league/season/teams', { season_name: OB_SEASON_NAME, teamNames: teamNames });
+      }
+    } else if (OB_STEP === 'reminders') {
+      await obSave('/league/reminders/settings', {
+        reminder72h: document.getElementById('ob_reminder_72h').getAttribute('aria-checked') === 'true',
+        reminder24h: document.getElementById('ob_reminder_24h').getAttribute('aria-checked') === 'true',
+        reminder12h: document.getElementById('ob_reminder_12h').getAttribute('aria-checked') === 'true'
+      });
+    } else if (OB_STEP === 'stats') {
+      // Partial update -- handleLeagueUpdateIdentity only touches fields
+      // actually present in the body, so this leaves name/color/theme/
+      // publicPageEnabled completely untouched.
+      await obSave('/league/settings/identity', {
+        tracksStats: document.getElementById('ob_stats').getAttribute('aria-checked') === 'true'
+      });
+    }
+    window.location.href = OB_IS_LAST ? '/dashboard' : OB_NEXT_URL;
+  } catch (e) {
+    showErr(window.__pageDict().saveErr);
+    btn.disabled = false;
+  }
+}`;
+
+  return new Response(nlDocument({ title: `Bienvenue — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -21923,6 +22253,10 @@ async function handleFetch(req, env, ctx) {
         return new Response(renderResetPasswordPage(url.searchParams.get('token')), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/dashboard' || url.pathname === '/dashboard/') && req.method === 'GET')
         return await handleDashboardPage(req, env, url);
+      // Live-testing task (batch 5), Part 6: continuation of onboarding
+      // right after a league's first season is created.
+      if ((url.pathname === '/onboarding/season' || url.pathname === '/onboarding/season/') && req.method === 'GET')
+        return await handleOnboardingSeasonPage(req, env, url);
       // League-admin UI pages (Parts R-V — see the task report).
       if ((url.pathname === '/league/roster' || url.pathname === '/league/roster/') && req.method === 'GET')
         return await handleLeagueRosterPage(req, env, url);
