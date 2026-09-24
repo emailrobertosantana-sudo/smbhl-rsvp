@@ -34,9 +34,10 @@
 // firing the real wire() change handler with a controlled i.value
 // sends exactly that value, for both email and phone, proving this
 // wasn't secretly a JS bug in disguise.
-import { SELF } from 'cloudflare:test';
-import { describe, it, expect } from 'vitest';
+import { env, SELF } from 'cloudflare:test';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { extractInlineScripts, assertNoSyntaxError, runScript } from './support/inline_scripts.js';
+import { applyRealSchema } from './support/real_schema.js';
 
 // A capturing DOM stub, local to this file (not the shared helper --
 // the shared stubDom()'s addEventListener is a deliberate no-op for
@@ -65,6 +66,16 @@ async function fetchContactsPage() {
 }
 
 describe('Part 1 (live-testing task, batch 6): SMBHL contact email edits now save', () => {
+  // Schema-drift guard task: /admin/contacts's page shell renders
+  // without real DB content (auth happens client-side against
+  // ADMIN_KEY), but the guard still requires a real migrated schema to
+  // exist before serving ANY request, same as any real deployment
+  // always has. Matches the convention 130+ other test files already
+  // use.
+  beforeAll(async () => {
+    await applyRealSchema(env);
+  });
+
   it('the served page no longer uses type="email" for the contact email inputs -- type="text" inputmode="email" instead', async () => {
     const html = await fetchContactsPage();
     expect(html).not.toContain('type="email" class="contact-input"');

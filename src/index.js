@@ -61,6 +61,7 @@ import {
   getTeamColour,
   sportHasGoalie
 } from './season_config.js';
+import { checkSchemaOnce, formatSchemaDriftMessage } from './schema_guard.js';
 
 /* SMBHL attendance
    Signed links, RSVP endpoint, bilingual page, own-team view.
@@ -22630,6 +22631,22 @@ export default {
 async function handleFetch(req, env, ctx) {
     const url = new URL(req.url);
     try {
+      // Schema-drift guard (built after the Sept 24 production incident --
+      // see src/schema_guard.js's own header for the full story). Runs
+      // once per isolate (memoized), before any routing, against
+      // whichever env.DB this specific deployment is bound to -- so the
+      // same check automatically covers production and demo alike, with
+      // nothing to remember to run separately. Fails loudly with the
+      // exact missing table/column rather than letting broken code run
+      // silently against a database it doesn't match.
+      if (env.DB) {
+        const schemaCheck = await checkSchemaOnce(env);
+        if (!schemaCheck.ok) {
+          const message = formatSchemaDriftMessage(schemaCheck.missing);
+          console.error('[schema-guard]', message);
+          return new Response(message, { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+        }
+      }
       if (env.DEMO_ENV === 'true' && url.pathname === '/robots.txt' && req.method === 'GET') {
         return new Response('User-agent: *\nDisallow: /\n', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
       }

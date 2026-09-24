@@ -20,9 +20,20 @@
 // own "Get Started" button leading to /signup, instead of an immediate
 // redirect.
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { applyRealSchema } from './support/real_schema.js';
 
 describe('Part 0: domain-aware GET /', () => {
+  // Schema-drift guard task: every real request now passes through a
+  // schema check before routing (src/schema_guard.js) -- this file
+  // never needed real data before (it only tests hostname-based
+  // routing, not DB content), but the guard still requires a real
+  // migrated schema to exist, same as any other real deployment would
+  // always have. Matches the convention 130+ other test files already
+  // use.
+  beforeAll(async () => {
+    await applyRealSchema(env);
+  });
   it("SMBHL's own hostname (smbhl.com, or any subdomain of it like rsvp.smbhl.com) keeps its exact original redirect to https://smbhl.com", async () => {
     const res = await SELF.fetch('https://rsvp.smbhl.com/', { redirect: 'manual' });
     expect(res.status).toBe(302);

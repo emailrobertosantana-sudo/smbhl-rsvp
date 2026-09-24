@@ -6,7 +6,10 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
-    "test": "vitest"
+    "test": "vitest",
+    "schema:manifest": "node scripts/generate_schema_manifest.js",
+    "schema:check:demo": "node scripts/check_schema_remote.js notreligue-demo --remote --env demo",
+    "schema:check:production": "node scripts/check_schema_remote.js smbhl-rsvp --remote"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.0.0",
