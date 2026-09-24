@@ -3273,7 +3273,7 @@ async function handleLeagueRosterPage(req, env, url) {
         </div>
         <div style="display:flex;gap:8px;">
           <button type="button" class="nl-btn nl-btn--primary" id="ro_bulk_confirm" data-i18n="bulkConfirmBtn" onclick="bulkConfirm()">Confirmer l'import</button>
-          <button type="button" class="nl-btn nl-btn--ghost" data-i18n="cancel" onclick="toggleBulkImport()">Annuler</button>
+          <button type="button" class="nl-btn nl-btn--ghost" data-i18n="cancel" onclick="cancelBulkImport()">Annuler</button>
         </div>
       </div>
     </div>
@@ -3329,6 +3329,24 @@ function toggleRosterPanel() {
 // combination of two people's data.
 function toggleBulkImport() {
   document.getElementById('ro_bulk_overlay').classList.toggle('open');
+}
+// Live-testing task (batch 2), Part 3: "Annuler" used to just call
+// toggleBulkImport() -- the exact same toggle the "Importer d'un
+// tableur" button opens it with -- which only ever hides the overlay,
+// never clears anything. Reopening later showed the previous attempt's
+// pasted text and stale preview table still sitting there. A real
+// cancel has to return to a genuinely clean state: empty textarea, no
+// preview visible, no leftover table rows, and the confirmed-rows
+// buffer reset so a stale BULK_ROWS array from the cancelled attempt
+// can never get confirmed by mistake.
+function cancelBulkImport() {
+  document.getElementById('ro_bulk_text').value = '';
+  document.getElementById('ro_bulk_preview').style.display = 'none';
+  document.getElementById('ro_bulk_tbody').innerHTML = '';
+  document.getElementById('ro_bulk_summary').textContent = '';
+  document.getElementById('bulkErr').style.display = 'none';
+  BULK_ROWS = [];
+  document.getElementById('ro_bulk_overlay').classList.remove('open');
 }
 var BULK_HEADER_WORDS = ['name', 'nom', 'full name', 'nom complet', 'email', 'e-mail', 'courriel', 'phone', 'téléphone', 'telephone', 'tel'];
 function parseBulkText(text) {
