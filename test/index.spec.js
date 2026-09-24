@@ -4210,6 +4210,11 @@ describe("SMBHL Worker", () => {
 			expect(backupEmail.text).toContain('SMBHL Automation');
 			expect(backupEmail.html).toContain('SMBHL — Sauvegarde Automatique');
 			expect(backupEmail.html).toContain('smbhl.com');
+			// Live-testing task, Part 9: this email's <head> must opt out of
+			// client auto dark-mode (see review.js's own comment on this
+			// template for the full reasoning).
+			expect(backupEmail.html).toContain('<meta name="color-scheme" content="light">');
+			expect(backupEmail.html).toContain('<meta name="supported-color-schemes" content="light">');
 		});
 
 		it("handleReviewPublish's backup email uses a non-SMBHL season's own league identity, not SMBHL's", async () => {

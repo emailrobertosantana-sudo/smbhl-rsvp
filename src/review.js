@@ -2710,6 +2710,8 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
   <title>${escH(subject)}</title>
 </head>
 <body style="margin:0; padding:16px 8px; background-color:#f4f5f8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#16181d; line-height:1.5;">
@@ -3357,6 +3359,8 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
   <title>${subj}</title>
 </head>
 <body style="margin:0; padding:16px 8px; background-color:#f4f5f8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#16181d; line-height:1.5;">

@@ -4512,7 +4512,7 @@ function formatInviteDate(ev) {
   };
 }
 
-function emailWrap(title, contentHtml, leagueCfg = null) {
+export function emailWrap(title, contentHtml, leagueCfg = null) {
   const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
   const siteHost = String(league.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
   return `<!DOCTYPE html>
@@ -4520,6 +4520,13 @@ function emailWrap(title, contentHtml, leagueCfg = null) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <!-- Live-testing task, Part 9: same dark-mode fix as
+       nlEmailWrap (design_system.js) -- every color here is already a
+       fixed, explicit hex value, but several email clients still apply
+       their own automatic dark-mode inversion unless a template
+       explicitly opts out. These two meta tags are that opt-out. -->
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
   <title>${esc(title)}</title>
 </head>
 <body style="margin:0; padding:16px 8px; background-color:#f4f5f8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#16181d; line-height:1.5;">

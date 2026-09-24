@@ -416,10 +416,28 @@ export function nlEmailButton(url, label, color = '#16181d') {
 // footerHtml gets the language-switch link inlined by the caller
 // (each template's own two languages know their own toggle URL/label);
 // this just provides the shared structural wrapper.
+// Live-testing task, Part 9: every color in this email is already a
+// fixed, explicit hex value (never var(--...) -- that CSS-variable
+// scheme, TOKENS_CSS above, is exclusively for the in-app .nl-scoped
+// pages this module also builds, and is never injected into an email's
+// own HTML). The dark-mode washing-out/low-contrast rendering reported
+// in real inbox testing isn't this template choosing a color that
+// flips -- it's several email clients (Gmail, Outlook.com, some
+// versions of Apple Mail) applying their OWN automatic "smart" dark
+// -mode content rewriting to any email that doesn't explicitly opt out,
+// which can invert one element's background (e.g. the thin colour bar
+// below, or a button's fill) without correspondingly adjusting its own
+// text/foreground -- exactly the washed-out look and the unexplained
+// pale strip reported. The standard, correct fix is these two meta
+// tags: they tell every client that supports them "this email's colors
+// are intentional, don't auto-invert them," which is what "explicit,
+// fixed colors" actually requires in an email (a client can still
+// silently override anything with no CSS mechanism to stop it -- this
+// is the one lever that exists).
 export function nlEmailWrap({ brandName, barColor = '#16181d', bodyHtml, footerHtml }) {
   return `<!DOCTYPE html>
 <html lang="fr">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"></head>
 <body style="margin:0;padding:24px 0;background:#f4f4f2;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
 <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="width:560px;background:#ffffff;border-radius:6px;border:1px solid #e3e3e0;font-family:Archivo,Arial,Helvetica,sans-serif;color:#16181d;">
