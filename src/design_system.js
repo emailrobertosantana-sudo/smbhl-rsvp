@@ -400,9 +400,16 @@ function nlEmailEsc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
+// Live-testing task, Part 8: this used to be `padding:16px 0` --
+// vertical padding only, no horizontal inset at all, so the label text
+// sat flush against the button's left/right edges in real inbox
+// testing. 16px 24px matches the app's own .nl-btn horizontal padding
+// (--space-5, design_system.js's own CSS variable block) for visual
+// consistency between the email and the in-app buttons it's meant to
+// echo.
 export function nlEmailButton(url, label, color = '#16181d') {
   return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
-  <td style="background:${nlEmailEsc(color)};border-radius:4px;text-align:center;"><a href="${nlEmailEsc(url)}" style="display:block;padding:16px 0;font:700 17px/20px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;text-decoration:none;">${nlEmailEsc(label)}</a></td>
+  <td style="background:${nlEmailEsc(color)};border-radius:4px;text-align:center;"><a href="${nlEmailEsc(url)}" style="display:block;padding:16px 24px;font:700 17px/20px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;text-decoration:none;">${nlEmailEsc(label)}</a></td>
 </tr></table>`;
 }
 

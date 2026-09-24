@@ -3164,7 +3164,13 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-panel.open { display: flex; }
   .ro-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
   .ro-radio { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--space-2); }
-  .ro-radio label { display: flex; align-items: center; justify-content: center; height: 44px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); font: 600 13px/1 var(--font-sans); cursor: pointer; text-align: center; padding: 0 4px; }
+  /* Live-testing task, Part 8: 4px of horizontal padding was tight
+     enough that a label's text sat nearly flush against the pill's
+     edges, confirmed in real testing on these role buttons. space-3
+     (12px) matches this compact pill's own smaller scale, proportionate
+     without eating into the 3-column grid's already-narrow columns the
+     way the full nl-btn's 24px would. */
+  .ro-radio label { display: flex; align-items: center; justify-content: center; height: 44px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); font: 600 13px/1 var(--font-sans); cursor: pointer; text-align: center; padding: 0 var(--space-3); }
   .ro-radio input { position: absolute; opacity: 0; pointer-events: none; }
   .ro-radio label.on { border: 2px solid var(--primary); background: var(--primary-tint); color: var(--primary); }
   @media (min-width: 900px) { .ro-panel { display: flex; } }
