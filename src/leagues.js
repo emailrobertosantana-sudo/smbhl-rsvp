@@ -750,14 +750,21 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
     return { ok: false, error: 'An event already exists for this date in your league.', errorKey: 'EVENT_DATE_EXISTS' };
   }
 
+  // Live-testing task (batch 6), Part 10: per-event opt-out of the
+  // automated 72h/24h/12h reminder waves (runLeagueReminders, index.js
+  // -- checks this same column before sending). Defaults to armed (1),
+  // exactly the behavior every event already had before this column
+  // existed -- a caller has to explicitly opt out, never the reverse.
+  const autoRemindersEnabled = body.auto_reminders_enabled === false ? 0 : 1;
+
   await env.DB.prepare(
-    `INSERT INTO events (id, season, week, date, venue, venue_id, state, start_time, end_time, league_id)
-     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)`
-  ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId).run();
+    `INSERT INTO events (id, season, week, date, venue, venue_id, state, start_time, end_time, league_id, auto_reminders_enabled)
+     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`
+  ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId, autoRemindersEnabled).run();
 
   return {
     ok: true,
-    event: { id: eventId, season, week, date, venue, venue_id: venueId, state: 'open', start_time: startTime || null, end_time: endTime || null }
+    event: { id: eventId, season, week, date, venue, venue_id: venueId, state: 'open', start_time: startTime || null, end_time: endTime || null, auto_reminders_enabled: !!autoRemindersEnabled }
   };
 }
 
@@ -862,7 +869,7 @@ export async function handleLeagueEventsBulkCreate(req, env) {
   const results = [];
   let date = startDate;
   for (let i = 0; i < occurrences; i++) {
-    const created = await createLeagueEventRow(env, leagueId, { date, venue: body.venue, venue_id: body.venue_id, start_time: body.start_time, end_time: body.end_time, season: body.season }, leagueData);
+    const created = await createLeagueEventRow(env, leagueId, { date, venue: body.venue, venue_id: body.venue_id, start_time: body.start_time, end_time: body.end_time, season: body.season, auto_reminders_enabled: body.auto_reminders_enabled }, leagueData);
     if (created.ok) {
       results.push({ status: 'created', event: created.event });
     } else {
@@ -920,13 +927,60 @@ export async function handleLeagueEventDuplicate(req, env) {
 
   const leagueData = await getLeagueDataJson(env, leagueId);
   const result = await createLeagueEventRow(env, leagueId, {
-    date: body.date, venue: source.venue, venue_id: source.venue_id, start_time: source.start_time, end_time: source.end_time, season: source.season
+    date: body.date, venue: source.venue, venue_id: source.venue_id, start_time: source.start_time, end_time: source.end_time, season: source.season,
+    auto_reminders_enabled: source.auto_reminders_enabled === 0 ? false : true
   }, leagueData);
   if (!result.ok) {
     const status = result.errorKey === 'EVENT_DATE_EXISTS' ? 409 : 400;
     return Response.json(result, { status });
   }
   return Response.json({ ok: true, league_id: leagueId, event: result.event });
+}
+
+/* ---------- POST /league/events/reminders (Part 10, batch 6, live-testing
+ * task) ----------
+ * Changes a SINGLE event's own automated-reminder opt-out after the fact
+ * -- the event detail page's own toggle (created-with-warning is the
+ * OTHER half of this, in createLeagueEventRow above; this is "visible/
+ * changeable afterward" from the task's own wording). Session+
+ * checkLeagueAccess-gated, SMBHL-blocked, scoped to this league's own
+ * event only, same shape as every other single-field update route.
+ */
+export async function handleLeagueEventUpdateReminders(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+
+  const eventId = String(body.event_id || '').trim();
+  if (!eventId) {
+    return Response.json({ ok: false, error: 'event_id is required.', errorKey: 'EVENT_ID_REQUIRED' }, { status: 400 });
+  }
+  const existing = await env.DB.prepare('SELECT id FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  if (!existing) {
+    return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  }
+
+  const enabled = body.auto_reminders_enabled !== false;
+  await env.DB.prepare('UPDATE events SET auto_reminders_enabled = ? WHERE id = ? AND league_id = ?')
+    .bind(enabled ? 1 : 0, eventId, leagueId).run();
+
+  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, auto_reminders_enabled: enabled });
 }
 
 /* ---------- Reusable venues (Part 9, batch 6, live-testing task) ----------

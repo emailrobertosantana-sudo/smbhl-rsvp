@@ -1,0 +1,23 @@
+-- Migration 042: per-event automated-reminder opt-out (batch 6, Part 10
+-- of the live-testing task).
+--
+-- Apply with:
+--   npx wrangler d1 execute notreligue-demo --remote --file=./migrate-042.sql
+--
+-- WHAT THIS DOES: adds `events.auto_reminders_enabled INTEGER NOT NULL
+-- DEFAULT 1` -- purely additive, no existing column, row, index, or query
+-- is touched. Every existing event (and every event created by anything
+-- that doesn't yet know this column exists) defaults to 1 (armed), which
+-- is exactly the automated-reminder behavior every event already had
+-- before this migration -- runLeagueReminders (index.js) is updated in the
+-- SAME deploy to skip an event only when this is explicitly 0, so nothing
+-- about the cron's existing behavior changes for a single event unless an
+-- admin has deliberately opted it out via the new UI this task adds.
+--
+-- Not applied to SMBHL: runLeagueReminders already excludes SMBHL's own
+-- league_id entirely (WHERE id != SMBHL_LEAGUE_ID) before this column is
+-- ever consulted, and SMBHL's own legacy event creation/editing never
+-- writes to this column -- it stays at its harmless default (1) for
+-- SMBHL's rows, inert.
+
+ALTER TABLE events ADD COLUMN auto_reminders_enabled INTEGER NOT NULL DEFAULT 1;

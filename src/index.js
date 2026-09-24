@@ -7,7 +7,7 @@ import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateT
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -5147,10 +5147,34 @@ async function handleLeagueSchedulePage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
   const events = (await env.DB.prepare(
     'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time FROM events WHERE league_id = ? ORDER BY date DESC, week DESC'
   ).bind(leagueId).all()).results || [];
+
+  // Live-testing task (batch 6), Part 10: warn before arming automated
+  // emails -- an admin creating an event with reminders enabled AND real
+  // player emails on file is about to trigger the cron-driven 72h/24h/
+  // 12h waves (runLeagueReminders) without ever being told so up front.
+  // Only shown when it would actually do something: no warning when
+  // every reminder is off, or when nobody on the roster has a real
+  // email to reach at all (both cases where arming does nothing).
+  const armedKindsFr = [];
+  const armedKindsEn = [];
+  if (leagueRow.reminder_72h_enabled) { armedKindsFr.push('Rappel 72 h avant'); armedKindsEn.push('72h reminder'); }
+  if (leagueRow.reminder_24h_enabled) { armedKindsFr.push('Rappel 24 h avant'); armedKindsEn.push('24h reminder'); }
+  if (leagueRow.reminder_12h_enabled) { armedKindsFr.push('Détails 12 h avant'); armedKindsEn.push('12h game details'); }
+  const reminderEmailCountRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS c FROM contacts WHERE league_id = ? AND role = 'roster' AND email IS NOT NULL AND email != ''`
+  ).bind(leagueId).first();
+  const reminderEmailCount = reminderEmailCountRow ? Number(reminderEmailCountRow.c) || 0 : 0;
+  const showReminderWarning = armedKindsFr.length > 0 && reminderEmailCount > 0;
+  const reminderWarningFr = showReminderWarning
+    ? `Ce match enverra automatiquement : ${armedKindsFr.join(' · ')}. Jusqu'à ${reminderEmailCount} joueur(s) avec un courriel enregistré recevront ces envois.`
+    : '';
+  const reminderWarningEn = showReminderWarning
+    ? `This game will automatically send: ${armedKindsEn.join(' · ')}. Up to ${reminderEmailCount} player(s) with an email on file will receive them.`
+    : '';
   // Live-testing task (batch 6), Part 9: reusable venues -- `venues`
   // populates the create-event form's select-or-freetext control;
   // `venueMapLinks` resolves each listed event's own venue_id (if any)
@@ -5175,6 +5199,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       venueOpt: 'Lieu (optionnel)', createBtn: 'Créer le match', cancel: 'Annuler',
       venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun -- texte libre ci-dessous',
       viewOnMap: 'Voir sur la carte',
+      remindersOptOutLabel: 'Ne pas envoyer les rappels automatiques pour ce match',
       noEvents: "Aucun match pour l'instant.",
       stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
       needsSeasonTitle: "Lance ta saison d'abord",
@@ -5194,6 +5219,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       venueOpt: 'Venue (optional)', createBtn: 'Create the event', cancel: 'Cancel',
       venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None -- free text below',
       viewOnMap: 'View on map',
+      remindersOptOutLabel: "Don't send automated reminders for this game",
       noEvents: 'No events yet.',
       stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled',
       needsSeasonTitle: 'Start your season first',
@@ -5250,6 +5276,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   .sc-when b { display: block; font: 700 18px/22px var(--font-display); font-stretch: 118%; white-space: nowrap; }
   .sc-when span { font-size: 13px; color: var(--ink-muted); white-space: nowrap; }
   .sc-venue { font-size: 14px; color: var(--ink-muted); }
+  .sc-reminder-warn { background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-3); }
   .sc-chevron { color: var(--ink-muted); font-size: 20px; }
   .sc-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); max-width: 420px; }
   .sc-panel.open { display: flex; }
@@ -5324,6 +5351,13 @@ async function handleLeagueSchedulePage(req, env, url) {
         <label class="nl-label" for="e_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
         <input class="nl-input" id="e_venue" type="text">
       </div>
+      ${showReminderWarning ? `<div class="sc-reminder-warn">
+        <p class="nl-help" style="margin:0" data-date-fr="${esc(reminderWarningFr)}" data-date-en="${esc(reminderWarningEn)}">${esc(reminderWarningFr)}</p>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px;">
+          <input type="checkbox" id="e_reminders_optout">
+          <span data-i18n="remindersOptOutLabel">Ne pas envoyer les rappels automatiques pour ce match</span>
+        </label>
+      </div>` : ''}
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="e_submit" data-i18n="createBtn" onclick="submitEvent()">Créer le match</button>
         <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleSchedulePanel()">Annuler</button>
@@ -5367,6 +5401,13 @@ async function handleLeagueSchedulePage(req, env, url) {
         <label class="nl-label" for="be_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
         <input class="nl-input" id="be_venue" type="text">
       </div>
+      ${showReminderWarning ? `<div class="sc-reminder-warn">
+        <p class="nl-help" style="margin:0" data-date-fr="${esc(reminderWarningFr)}" data-date-en="${esc(reminderWarningEn)}">${esc(reminderWarningFr)}</p>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px;">
+          <input type="checkbox" id="be_reminders_optout">
+          <span data-i18n="remindersOptOutLabel">Ne pas envoyer les rappels automatiques pour ce match</span>
+        </label>
+      </div>` : ''}
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="be_submit" data-i18n="bulkCreateSubmit" onclick="submitBulkEvents()">Créer la série</button>
         <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleBulkPanel()">Annuler</button>
@@ -5394,6 +5435,13 @@ async function submitEvent() {
   // which case the select isn't even rendered).
   var venueSelect = document.getElementById('e_venue_select');
   var venueId = venueSelect ? venueSelect.value : '';
+  // Live-testing task (batch 6), Part 10: opt out of the automated
+  // reminder waves for just this event -- the checkbox only exists when
+  // the warning itself is shown (reminders genuinely armed and would
+  // reach someone), so an absent element means "nothing to opt out of,"
+  // not "opted in."
+  var optOutEl = document.getElementById('e_reminders_optout');
+  var autoRemindersEnabled = optOutEl ? !optOutEl.checked : true;
   if (!date) { showErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
   var btn = document.getElementById('e_submit');
   btn.disabled = true;
@@ -5401,7 +5449,7 @@ async function submitEvent() {
     var res = await fetch('/league/events', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined })
+      body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined, auto_reminders_enabled: autoRemindersEnabled })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
@@ -5431,6 +5479,8 @@ async function submitBulkEvents() {
   var venue = document.getElementById('be_venue').value.trim();
   var venueSelect = document.getElementById('be_venue_select');
   var venueId = venueSelect ? venueSelect.value : '';
+  var optOutEl = document.getElementById('be_reminders_optout');
+  var autoRemindersEnabled = optOutEl ? !optOutEl.checked : true;
   if (!startDate) { showBulkErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
   var btn = document.getElementById('be_submit');
   btn.disabled = true;
@@ -5443,7 +5493,8 @@ async function submitBulkEvents() {
         occurrences: (occurrences && !endDate) ? Number(occurrences) : undefined,
         endDate: endDate || undefined,
         start_time: start_time || undefined, end_time: end_time || undefined,
-        venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined
+        venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined,
+        auto_reminders_enabled: autoRemindersEnabled
       })
     });
     var data = await res.json().catch(function() { return {}; });
@@ -5561,6 +5612,7 @@ ${tabbar}`;
       statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu',
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Envoyer un rappel maintenant',
+      remindersEnabledLabel: 'Rappels automatiques pour ce match',
       remindSentOne: 'Rappel envoyé à 1 joueur.', remindSentMany: 'Rappel envoyé à {n} joueurs.', remindSentNone: "Tout le monde a déjà répondu, rien à envoyer.",
       remindSendFailed: "Échec de l'envoi à {n} joueur(s). Réessaie plus tard ou contacte le soutien si le problème persiste.",
       remindSentPartial: 'Rappel envoyé à {sent} joueur(s), mais {failed} envoi(s) ont échoué.',
@@ -5579,6 +5631,7 @@ ${tabbar}`;
       statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply',
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Send a reminder now',
+      remindersEnabledLabel: 'Automated reminders for this game',
       remindSentOne: 'Reminder sent to 1 player.', remindSentMany: 'Reminder sent to {n} players.', remindSentNone: 'Everyone has already answered, nothing to send.',
       remindSendFailed: 'Failed to send to {n} player(s). Try again later, or contact support if this keeps happening.',
       remindSentPartial: 'Reminder sent to {sent} player(s), but {failed} send(s) failed.',
@@ -5740,6 +5793,11 @@ ${tabbar}`;
   <div>
     <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="remind_now_btn" data-i18n="remindNow" onclick="sendReminderNow(this)">Envoyer un rappel maintenant</button>
     <p id="remindNowMsg" class="nl-help" style="display:none;margin-top:8px;"></p>
+    <div class="nl-toggle" style="margin-top:10px;max-width:360px">
+      <div><div class="nl-label" data-i18n="remindersEnabledLabel">Rappels automatiques pour ce match</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${ev.auto_reminders_enabled ? 'true' : 'false'}" id="ev_reminders_switch" onclick="toggleEventReminders(this)"></button>
+    </div>
+    <p id="evRemindersMsg" class="nl-help" style="display:none;margin-top:4px;"></p>
   </div>
   ${unassignedHtml}
   <div class="ev-teams">${teamCards.join('')}</div>
@@ -5844,6 +5902,29 @@ async function sendReminderNow(btn) {
     msg.className = 'nl-error';
     msg.textContent = window.__errorText('NETWORK_ERROR');
     msg.style.display = 'block';
+  }
+  btn.disabled = false;
+}
+// Live-testing task (batch 6), Part 10: "visible/changeable afterward"
+// -- the other half of the event-creation warning's opt-out, right on
+// this event's own page. Saves immediately on click, same pattern as
+// Settings' toggleReminderSwitch, not part of a larger form/save button.
+async function toggleEventReminders(btn) {
+  var msg = document.getElementById('evRemindersMsg');
+  msg.style.display = 'none';
+  var next = btn.getAttribute('aria-checked') !== 'true';
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/events/reminders', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, auto_reminders_enabled: next })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { msg.textContent = window.__errorText(data.errorKey, data.error); msg.style.display = 'block'; btn.disabled = false; return; }
+    btn.setAttribute('aria-checked', String(next));
+  } catch (e) {
+    msg.textContent = window.__errorText('NETWORK_ERROR'); msg.style.display = 'block';
   }
   btn.disabled = false;
 }
@@ -13966,8 +14047,13 @@ async function runLeagueReminders(env) {
   ).bind(SMBHL_LEAGUE_ID).all()).results || [];
 
   for (const leagueRow of leagues) {
+    // Live-testing task (batch 6), Part 10: an event created (or later
+    // toggled) with auto_reminders_enabled = 0 is skipped entirely here
+    // -- the per-event opt-out this part adds. Every pre-existing event
+    // defaults to 1 (migrate-042.sql), so this filter changes nothing
+    // for an event nobody has ever opted out.
     const events = (await env.DB.prepare(
-      `SELECT * FROM events WHERE league_id = ? AND state = 'open' AND start_time IS NOT NULL`
+      `SELECT * FROM events WHERE league_id = ? AND state = 'open' AND start_time IS NOT NULL AND auto_reminders_enabled = 1`
     ).bind(leagueRow.id).all()).results || [];
 
     for (const ev of events) {
@@ -22664,6 +22750,8 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueVenueCreate(req, env);
       if (url.pathname === '/league/venues/delete' && req.method === 'POST')
         return await handleLeagueVenueDelete(req, env);
+      if (url.pathname === '/league/events/reminders' && req.method === 'POST')
+        return await handleLeagueEventUpdateReminders(req, env);
       if (url.pathname === '/league/season/publish' && req.method === 'POST')
         return await handleLeagueSeasonPublish(req, env);
       // Signup/login/dashboard pages — pure UI on top of the routes above.
