@@ -279,22 +279,60 @@ Values still hardcoded to SMBHL specifics rather than driven by season config or
 
 ## 10. Deploying & Verifying
 
-Before deploying, run the syntax check:
+**Built after the Sept 24 production incident**: 22 migrations had been applied to the demo database but never to production, so a deploy shipped code that depended on a column production's schema didn't have, and broke SMBHL's live admin. This checklist — and the schema-drift guard described below it — exist so that can't happen silently again.
 
-```powershell
-cd C:\Projects\smbhl-rsvp
-node check.js
+### Deploy checklist
+
+1. **Syntax check:**
+   ```powershell
+   node check.js
+   ```
+2. **Full test suite** (must be green):
+   ```powershell
+   npm test -- --run
+   ```
+3. **Schema check** — *optional, but do it*:
+   ```powershell
+   npm run schema:check:demo         # before deploying to demo
+   npm run schema:check:production   # before deploying to production
+   ```
+   Read-only. Tells you exactly which migrations are pending, before you deploy anything. This is a script — it only helps if you remember to run it. The **runtime guard** below is the part that can't be skipped.
+4. **Deploy:**
+   ```powershell
+   npx wrangler deploy              # production — smbhl-rsvp / rsvp.smbhl.com
+   npx wrangler deploy --env demo   # demo — notreligue-rsvp / rsvp.notreligue.ca
+   ```
+5. **Verify:** load the deployed site. If it 503s with `Schema drift detected`, see below — don't just retry the deploy, it won't help.
+
+### The schema-drift guard
+
+Every real request now passes through `src/schema_guard.js` before any routing. On the first request per isolate, it checks (via `PRAGMA table_info`, read-only) that the database this deployment is actually bound to has every table/column the code expects, cached for that isolate's lifetime. If something's missing, **every request 503s** with the exact gap named, e.g.:
+
+```
+table "outbox" has no column named "league_id"
 ```
 
-Deploy the worker to Cloudflare:
+**To fix:** apply the named migration(s) — `npx wrangler d1 execute <db-name> --remote --file=./migrate-NNN.sql` (never `--file=./test/support/base_schema_v1.sql`, see below) — then the guard clears itself on the very next request. No redeploy needed.
 
+**After adding a new `migrate-NNN.sql` file:**
 ```powershell
-npx wrangler deploy              # production — smbhl-rsvp / rsvp.smbhl.com
-npx wrangler deploy --env demo   # demo — notreligue-rsvp / rsvp.notreligue.ca
+npm run schema:manifest   # regenerates src/schema_manifest.js from the real .sql files
+npm test -- --run         # test/schema_manifest.spec.js fails loudly if you skip this step
 ```
 
-Run the automated test suite (155 tests):
+### ⚠️ `test/support/base_schema_v1.sql` — never run this against a live database
 
+This is the app's *original* base schema (before any `migrate-*.sql` file existed). It opens with `DROP TABLE` and is **test-only** — replayed by the test suite and by `scripts/generate_schema_manifest.js`, nothing else. It used to live at the repo root as `schema.sql`, right next to every real migration file with an identically-phrased "apply this remotely" comment; it was moved and rewritten specifically to stop that pattern-match. If you're ever setting up a database from scratch for real, use the numbered `migrate-*.sql` chain in order, not this file.
+
+### Cloudflare Access — SMBHL's admin gate
+
+`rsvp.smbhl.com/admin/*` is protected by **two independent layers**:
+
+1. **A Cloudflare Access policy**, configured in the Cloudflare dashboard (Zero Trust → Access → Applications) — **not in this repo, not in `wrangler.jsonc`, not carried by any deploy.** It must stay configured permanently; nothing here recreates it if it's ever removed. Requests that fail it never reach the Worker at all.
+2. **`checkAdminAuth`** (`src/admin_auth.js`), the Worker's own `ADMIN_KEY` gate — genuinely independent of layer 1, verified by `test/cloudflare_access_independence.spec.js`: it never reads any Access-shaped header or cookie, so it would still correctly reject an unauthenticated request even if Access were somehow removed.
+
+**To verify Access is still actually in place** (this can't be part of `npm test` — Access sits at Cloudflare's edge, outside what an in-process test can observe; this needs a real external request):
 ```powershell
-npm test -- --run
+npm run check:cloudflare-access
 ```
+A healthy result redirects (302) to `<team>.cloudflareaccess.com/cdn-cgi/access/login/...` with a `Www-Authenticate: Cloudflare-Access` header — Access's own challenge, never reaching the Worker. If you instead see the Worker's own response (the admin page shell, or a plain 403), Access may have been removed from the dashboard — check there directly; layer 2 (`checkAdminAuth`) is likely still holding, but layer 1 needs attention.
