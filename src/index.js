@@ -664,8 +664,15 @@ function signupStyles() {
   .su-structure-opt { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3); border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); cursor: pointer; }
   .su-structure-opt.on { border: 2px solid var(--primary); background: var(--primary-tint); }
   .su-structure-opt input { margin-top: 3px; flex: none; }
-  .su-structure-opt .t { font-weight: 600; font-size: 15px; }
-  .su-structure-opt .d { font-size: 13px; color: var(--ink-muted); margin-top: 2px; }
+  .su-structure-opt .t { font-weight: 600; font-size: 15px; display: block; }
+  /* Live-testing bug fix (Part 4): .t/.d are both inline <span>s by
+     default -- margin-top on .d had no effect on an inline element
+     (vertical margins are a no-op for inline boxes), so the label and
+     description ran together with no space or line break at all.
+     display:block makes each start its own line, so margin-top
+     actually separates them, per the design system's own reference
+     spacing. */
+  .su-structure-opt .d { font-size: 13px; color: var(--ink-muted); margin-top: 2px; display: block; }
   .su-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
   @media (min-width: 640px) { .su-body { padding-top: var(--space-7); } }
 </style>`;
@@ -1538,8 +1545,11 @@ function dashStyles() {
   .su-structure-opt { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3); border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); cursor: pointer; }
   .su-structure-opt.on { border: 2px solid var(--primary); background: var(--primary-tint); }
   .su-structure-opt input { margin-top: 3px; flex: none; }
-  .su-structure-opt .t { font-weight: 600; font-size: 15px; }
-  .su-structure-opt .d { font-size: 13px; color: var(--ink-muted); margin-top: 2px; }
+  .su-structure-opt .t { font-weight: 600; font-size: 15px; display: block; }
+  /* Live-testing bug fix (Part 4): see signupStyles()'s own identical
+     fix -- .t/.d are inline <span>s by default, so margin-top on .d
+     had no effect and the label/description ran together. */
+  .su-structure-opt .d { font-size: 13px; color: var(--ink-muted); margin-top: 2px; display: block; }
   .su-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
   @media (min-width: 640px) { .nl-tabbar { display: none; } }
   @media (max-width: 639px) { .nl-nav { display: none; } .dash-main { padding-bottom: 76px; } .dash-grid { grid-template-columns: 1fr; } }
@@ -1716,7 +1726,14 @@ async function handleDashboardPage(req, env, url) {
     <div class="nl-field">
       <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>
       <div class="su-structure" id="season_structure_radio">
-        <label class="su-structure-opt${leagueRow.team_structure === 'headcount' ? '' : ' on'}" data-value="fixed">
+        <!-- Live-testing bug fix (Part 3): this used to check only for
+             NOT headcount -- true for BOTH fixed and weekly_draw, so a
+             weekly_draw league showed two cards on at once (this one
+             AND its own, below) even though only one radio was ever
+             really checked. A precise, positive fixed-only check
+             matches the checked attribute right below it exactly, for
+             every value. -->
+        <label class="su-structure-opt${leagueRow.team_structure === 'fixed' || !leagueRow.team_structure ? ' on' : ''}" data-value="fixed">
           <input type="radio" name="season_structure" value="fixed" ${leagueRow.team_structure === 'headcount' || leagueRow.team_structure === 'weekly_draw' ? '' : 'checked'}>
           <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue classique.</span></span>
         </label>
@@ -2690,7 +2707,11 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div id="structureOk" class="nl-ok" style="display:none"></div>
     <div class="nl-field" style="margin-top:8px">
       <div class="su-structure" id="se_structure_radio">
-        <label class="su-structure-opt${teamStructure === 'headcount' ? '' : ' on'}" data-value="fixed">
+        <!-- Live-testing bug fix (Part 3): see the season-management
+             radio's own identical fix, above -- a precise, positive
+             fixed-only check instead of the overly-broad NOT-headcount
+             one, which showed this card as on for weekly_draw too. -->
+        <label class="su-structure-opt${teamStructure === 'fixed' ? ' on' : ''}" data-value="fixed">
           <input type="radio" name="se_structure" value="fixed" ${teamStructure === 'headcount' || teamStructure === 'weekly_draw' ? '' : 'checked'}>
           <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue classique.</span></span>
         </label>
