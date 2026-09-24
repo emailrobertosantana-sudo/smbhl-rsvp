@@ -3023,7 +3023,7 @@ async function handleLeagueCommsBroadcast(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return leagueAccessResponse(access);
   if (leagueId === SMBHL_LEAGUE_ID) {
-    return Response.json({ ok: false, error: 'This route cannot broadcast for SMBHL.', errorKey: 'ROUTE_BLOCKED_BROADCAST' }, { status: 403 });
+    return Response.json({ ok: false, error: 'This route cannot broadcast for this league.', errorKey: 'ROUTE_BLOCKED_BROADCAST' }, { status: 403 });
   }
 
   const leagueRow = await env.DB.prepare('SELECT name, color, team_structure, team_names, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
