@@ -922,7 +922,7 @@ function renderSignupStep2() {
   </div>
   <div class="nl-toggle">
     <div><div class="nl-label" data-i18n="lblStats">Suivre les statistiques?</div><div class="nl-help" data-i18n="statsHelp">Buts, passes, gardiens. Tu pourras l'activer plus tard.</div></div>
-    <button type="button" class="nl-switch" role="switch" aria-checked="true" id="su_stats_switch" onclick="toggleStats()"></button>
+    <button type="button" class="nl-switch" role="switch" aria-checked="false" id="su_stats_switch" onclick="toggleStats()"></button>
   </div>
   <div class="nl-field">
     <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>

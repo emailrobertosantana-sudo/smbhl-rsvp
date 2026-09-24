@@ -1227,7 +1227,19 @@ export async function handleLeagueCreate(req, env) {
 
     const body = await req.json().catch(() => ({}));
     const name = String(body.name || '').trim();
-    const tracksStats = body.tracksStats !== false; // defaults to true, matching season_config.js's own default
+    // Live-testing task (batch 5), Part 2: this used to default to true
+    // when the field was omitted, matching SMBHL's own legacy
+    // DEFAULT_SEASON_CONFIG.tracksStats -- but SMBHL is one mature,
+    // stats-tracking league, not a template for what a brand-new
+    // pickup/weekly_draw league wants. The signup wizard's own toggle
+    // already asks explicitly (visible label + description on step 2);
+    // this is just the fallback for a caller that omits the field
+    // entirely. Flipped to default OFF, matching the wizard's own new
+    // default -- most pickup and weekly_draw leagues don't want stats
+    // overhead, and it stays one settings toggle away either way.
+    // Existing leagues' stored tracks_stats values are untouched -- this
+    // only affects the INSERT below, at league creation.
+    const tracksStats = body.tracksStats === true;
     const divisionLabel = body.divisionLabel ? String(body.divisionLabel).trim() : null;
 
     // Team-structure task: chosen once at signup, never changed after
