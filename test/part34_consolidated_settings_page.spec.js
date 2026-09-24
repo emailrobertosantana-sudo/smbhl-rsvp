@@ -90,7 +90,7 @@ describe('Part 1 (live-testing task): consolidated settings page', () => {
       });
       expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json.settings).toEqual({ name: 'Renamed Identity League', color: '#2a5fa8', tracksStats: false });
+      expect(json.settings).toEqual({ name: 'Renamed Identity League', color: '#2a5fa8', tracksStats: false, publicTheme: 'arene' });
 
       const row = await env.DB.prepare('SELECT name, color, tracks_stats FROM leagues WHERE id = ?').bind(league.id).first();
       expect(row.name).toBe('Renamed Identity League');

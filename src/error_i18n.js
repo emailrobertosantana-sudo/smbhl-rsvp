@@ -110,6 +110,7 @@ export const ERROR_I18N = {
   ROUTE_BLOCKED_SETTINGS: { fr: 'Cette route ne peut pas modifier les paramètres de cette ligue.', en: 'This route cannot update this league.' },
   INVALID_COLOR: { fr: 'La couleur doit être une valeur hexadécimale comme #b3122e.', en: 'Colour must be a hex value like #b3122e.' },
   NO_TEAMS_TO_EDIT: { fr: "Cette ligue n'a pas de noms d'équipe à modifier.", en: 'This league has no team names to edit.' },
+  INVALID_PUBLIC_THEME: { fr: "Le thème doit être 'arene' ou 'clean'.", en: "Theme must be 'arene' or 'clean'." },
   ALREADY_ADMIN: { fr: 'Cette personne est déjà administratrice de cette ligue.', en: 'This person is already an admin of this league.' },
   LEAGUE_GONE: { fr: "Cette ligue n'existe plus.", en: 'League no longer exists.' },
   LOGIN_AS_EMAIL: { fr: 'Connecte-toi en tant que {email} pour accepter cette invitation.', en: 'Please log in as {email} to accept this invite.' },

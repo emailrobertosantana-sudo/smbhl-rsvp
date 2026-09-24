@@ -1717,14 +1717,27 @@ export async function handleLeagueUpdateIdentity(req, env, url) {
   if (typeof body.tracksStats === 'boolean') {
     updates.push('tracks_stats = ?'); params.push(body.tracksStats ? 1 : 0);
   }
+  // Live-testing task, Part 2: public site theme. Only 'arene' and
+  // 'clean' actually render (see PUBLIC_THEME_ARENE_CSS's own comment
+  // in index.js for why Classique/Quartier were deliberately deferred
+  // rather than shipped half-built) -- anything else is rejected here
+  // rather than silently stored and never rendering the way the admin
+  // expects.
+  if (body.publicTheme !== undefined) {
+    const themeVal = String(body.publicTheme || '').trim();
+    if (!['arene', 'clean'].includes(themeVal)) {
+      return Response.json({ ok: false, error: "Theme must be 'arene' or 'clean'.", errorKey: 'INVALID_PUBLIC_THEME' }, { status: 400 });
+    }
+    updates.push('public_theme = ?'); params.push(themeVal);
+  }
   if (!updates.length) {
     return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
   }
   params.push(leagueId);
   await env.DB.prepare(`UPDATE leagues SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
 
-  const row = await env.DB.prepare('SELECT name, color, tracks_stats FROM leagues WHERE id = ?').bind(leagueId).first();
-  return Response.json({ ok: true, settings: { name: row.name, color: row.color, tracksStats: !!row.tracks_stats } });
+  const row = await env.DB.prepare('SELECT name, color, tracks_stats, public_theme FROM leagues WHERE id = ?').bind(leagueId).first();
+  return Response.json({ ok: true, settings: { name: row.name, color: row.color, tracksStats: !!row.tracks_stats, publicTheme: row.public_theme } });
 }
 
 // Team names and colours -- the missing post-signup editing surface

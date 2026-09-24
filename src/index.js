@@ -2133,12 +2133,137 @@ window.addEventListener('admin_lang_changed', function(e) {
 // dots use the original, undarkened palette color. Reuses
 // ROSTER_TEAM_DOTS (defined below, roster page) rather than a second
 // copy of the same palette.
+// Live-testing task, Part 2: public site themes
+// (notre-ligue-design-system/guidelines/20-public-site-themes.md).
+// The design system defines 4 themes -- Arène, Classique, Épuré,
+// Quartier -- all sharing "the same data and structure... only the
+// look changes" (the guideline's own rule #1). That's exactly what
+// makes a CSS-only swap safe here: every theme reuses the EXACT SAME
+// HTML this page already generates (heroHtml/standingsHtml/
+// upcomingHtml/teamsHtml, all built once, above) and the exact same
+// class names (.pb-hero, .pb-table, .pb-glist, .pb-tg, etc.) -- only
+// the <style> block differs per theme, so there is zero duplicated
+// data logic between themes and zero risk of one theme's CSS
+// accidentally affecting another's.
+//
+// SCOPE (documented per the task's own "stop at a clean boundary,
+// document what's done vs deferred" instruction): only 2 of the 4
+// themes are implemented and tested here -- Arène (PUBLIC_THEME_ARENE_CSS,
+// literally this page's pre-existing dark styling, unchanged, just
+// given a name) and Épuré (PUBLIC_THEME_CLEAN_CSS, new). 'arene' is
+// every league's default (migrate-033.sql), so this is a no-op for
+// every existing league unless an admin explicitly opts into 'clean'.
+// Classique and Quartier are NOT implemented: Classique's reference
+// design (components/PublicThemes/preview.html) adds a tab nav +
+// scoreboard + "top scorers" table this page has no equivalent data
+// source for yet (top scorers specifically -- standings exist, a
+// per-player points leaderboard does not), and Quartier's reference
+// adds an "organizer's note" free-text card, a genuinely new data
+// concept (nothing in leagues/seasons stores admin-authored prose
+// today) on top of loading a second webfont (Fraunces). Both are
+// real, honest feature work, not a quick reskin -- shipping them as
+// unstyled or half-working options would be worse than not offering
+// them, so the settings page's picker only lists the 2 that actually
+// work; SETTINGS_PAGE_PUBLIC_THEMES (handleLeagueSettingsPage) is the
+// single source of truth for which themes are selectable.
+const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d); color: var(--ink-inverse, #f4f4f2); min-height: 100vh; display: flex; flex-direction: column; }
+  .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+  .pb-hero { margin: var(--space-4) 0; padding: var(--space-5); background: var(--primary); border-radius: var(--radius-lg); }
+  .pb-hero-when { font: 800 28px/32px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #fff; margin-top: 6px; }
+  .pb-hero-venue { font-size: 14px; color: rgba(255,255,255,.75); margin-top: 4px; }
+  .pb-hero-pool { font: 500 15px/20px var(--font-sans); color: rgba(255,255,255,.9); margin-top: 10px; }
+  .pb-hero-pool .tnum { font: 800 20px/24px var(--font-display); font-stretch: 118%; color: #fff; }
+  .pb-main h2 { font: 800 13px/16px var(--font-display); font-stretch: 118%; letter-spacing: .1em; text-transform: uppercase; color: #a3a6ad; margin: var(--space-5) 0 var(--space-2); }
+  .pb-table { width: 100%; border-collapse: collapse; font: 500 15px/20px var(--font-sans); }
+  .pb-table th { font: 600 11px/16px var(--font-sans); color: #a3a6ad; border-bottom: 1px solid #2a2e36; padding: 8px 6px; text-align: center; }
+  .pb-table th:first-child, .pb-table td.pb-tm { text-align: left; }
+  .pb-table td { padding: 9px 6px; text-align: center; border-bottom: 1px solid #22252c; }
+  .pb-tm i { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 2px; }
+  .pb-glist { display: flex; flex-direction: column; }
+  .pb-g { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #22252c; gap: var(--space-3); }
+  .pb-g-d { display: flex; flex-direction: column; }
+  .pb-g-d b { font: 700 15px/20px var(--font-display); font-stretch: 118%; }
+  .pb-g-d span { font-size: 13px; color: #a3a6ad; }
+  .pb-g-venue { font-size: 14px; color: #a3a6ad; }
+  .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
+  .pb-tg div { height: 64px; border-radius: var(--radius-md); padding: var(--space-3); font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #fff; display: flex; align-items: flex-end; }
+  .pb-tg div i { display: none; }
+  .pb-draw-list { display: flex; flex-direction: column; gap: var(--space-3); }
+  .pb-draw-team-name { display: flex; align-items: center; gap: 8px; font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #fff; margin-bottom: 4px; }
+  .pb-draw-team-name i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .pb-draw-players { font: 500 14px/20px var(--font-sans); color: #d8dae0; }
+  /* Live-testing bug fix: the shared base stylesheet's .nl a rule
+     (design_system.js, color: var(--ink)) has HIGHER specificity
+     (.nl a = 0,1,1) than a bare .pb-foot class selector (0,1,0), so it
+     silently won regardless of this rule's own color -- in a
+     light-OS-theme browser, var(--ink) resolves to near-black
+     (#16181d), rendered on this page's own always-dark surface-hero
+     background (also #16181d, fixed in both themes -- see
+     tokens.json's own surface-hero entry), making the link invisible.
+     .nl a.pb-foot (0,2,1) reliably wins regardless of source order.
+     Color: ink-inverse's own token value (#f4f4f2, "text on
+     surface-hero only" per tokens.json -- NOT var(--ink)/var(--ink-muted),
+     both of which flip with the user's OS theme and are meant for
+     surface/surface-sunken, not this always-dark hero) at reduced
+     opacity, matching this exact page's own established pattern for
+     de-emphasized text on the hero (.pb-hero-venue's rgba(255,255,255,.75)). */
+  .nl a.pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: rgba(244,244,242,.65); text-decoration: none; }
+  .nl a.pb-foot:hover { color: rgba(244,244,242,.85); text-decoration: underline; }
+  .nl-header { border-bottom: 1px solid #2a2e36; }
+  .nl-lang button { color: #a3a6ad; }
+  .nl-lang button[aria-pressed="true"] { background: #f4f4f2; color: #16181d; }`;
+
+// "Épuré" per the guideline: white bg #ffffff, text #1a1a1a, muted
+// #666666, Inter only, a single 24x4px bar as the only signature
+// element, big whitespace, hairline tables, no colour fills (team
+// tiles become plain bordered cards with a dot, not a filled block).
+// Reuses the exact same class names/HTML as Arène -- only this block
+// differs.
+const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min-height: 100vh; display: flex; flex-direction: column; font-family: Inter, var(--font-sans); }
+  .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+  .pb-hero { margin: 40px 0 16px; padding: 0; background: none; border-radius: 0; position: relative; }
+  .pb-hero:before { content: ""; display: block; width: 24px; height: 4px; background: var(--primary, #b3122e); margin-bottom: 20px; }
+  .pb-hero-when { font: 600 30px/36px Inter, var(--font-sans); letter-spacing: -.02em; color: #1a1a1a; margin-top: 0; }
+  .pb-hero-venue { font-size: 15px; color: #666666; margin-top: 10px; }
+  .pb-hero-pool { font: 500 15px/20px Inter, var(--font-sans); color: #666666; margin-top: 10px; }
+  .pb-hero-pool .tnum { font: 700 20px/24px Inter, var(--font-sans); color: #1a1a1a; }
+  .pb-main h2 { font: 600 13px/16px Inter, var(--font-sans); letter-spacing: 0; text-transform: none; color: #666666; margin: 32px 0 8px; padding-top: 0; }
+  .pb-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .pb-table th { font: 500 12px/16px Inter, var(--font-sans); color: #666666; border-bottom: 1px solid #eeeeee; padding: 8px 6px; text-align: center; }
+  .pb-table th:first-child, .pb-table td.pb-tm { text-align: left; }
+  .pb-table td { padding: 9px 6px; text-align: center; border-bottom: 1px solid #f2f2f2; }
+  .pb-tm i { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 50%; }
+  .pb-glist { display: flex; flex-direction: column; }
+  .pb-g { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #f2f2f2; gap: var(--space-3); }
+  .pb-g-d { display: flex; flex-direction: column; }
+  .pb-g-d b { font-weight: 600; font-size: 15px; }
+  .pb-g-d span { font-size: 13px; color: #666666; }
+  .pb-g-venue { font-size: 14px; color: #666666; }
+  .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
+  .pb-tg div { height: 64px; border-radius: 8px; padding: var(--space-3); font-weight: 600; font-size: 15px; color: #1a1a1a; display: flex; align-items: center; gap: 8px; background: #ffffff !important; border: 1px solid #eeeeee; }
+  .pb-tg div i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .pb-draw-list { display: flex; flex-direction: column; gap: var(--space-3); }
+  .pb-draw-team-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; color: #1a1a1a; margin-bottom: 4px; }
+  .pb-draw-team-name i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .pb-draw-players { font-size: 14px; color: #666666; }
+  .nl a.pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: #666666; text-decoration: none; }
+  .nl a.pb-foot:hover { color: #1a1a1a; text-decoration: underline; }
+  .nl-header { border-bottom: 1px solid #eeeeee; }
+  .nl-lang { border: 1px solid #d0d0d0; }
+  .nl-lang button { color: #666666; }
+  .nl-lang button[aria-pressed="true"] { background: #1a1a1a; color: #ffffff; }`;
+
 async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const leagueId = resolvedLeagueId || url.searchParams.get('league');
   if (!leagueId) return new Response('league is required', { status: 400 });
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow) return new Response('not found', { status: 404 });
+  // Live-testing task, Part 2: only 'arene' and 'clean' actually render
+  // (see PUBLIC_THEME_ARENE_CSS's own comment) -- anything else
+  // (unset, a future 'classic'/'warm' not implemented yet, or bad data)
+  // falls back to 'arene', every league's real default.
+  const theme = leagueRow.public_theme === 'clean' ? 'clean' : 'arene';
   if (leagueRow.deactivated_at) {
     const bodyHtml410 = `<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">Cette ligue n'est plus active</h1></div>`;
     return new Response(nlDocument({ title: 'Ligue désactivée', description: '', bodyHtml: bodyHtml410 }), {
@@ -2284,9 +2409,14 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // 'headcount' has no team names to show at all (just the internal,
   // never-shown HEADCOUNT_TEAM_NAME sentinel) -- this whole section is
   // suppressed for it, not rendered with 1 tile.
+  // Live-testing task, Part 2: each tile carries its own dot (<i>) in
+  // addition to the Arène-only background fill, so a theme with "no
+  // fills" (Épuré) can drop the fill via CSS and still show the team's
+  // colour -- "team colours appear as dots everywhere" per the
+  // guideline's own rule, not just as fills.
   const teamsHtml = isHeadcount ? '' : `
   <h2 data-i18n="teams">${esc(t.teams)}</h2>
-  <div class="pb-tg">${teamNames.map((tm, i) => `<div style="background:${esc(leagueFillColor(teamDot(i)))}">${esc(tm)}</div>`).join('')}</div>`;
+  <div class="pb-tg">${teamNames.map((tm, i) => `<div style="background:${esc(leagueFillColor(teamDot(i)))}"><i style="background:${esc(teamDot(i))}"></i>${esc(tm)}</div>`).join('')}</div>`;
 
   const weeklyDrawTeamsHtml = (isWeeklyDraw && nextEvent) ? `
   <h2 data-i18n="drawnTeams">${esc(t.drawnTeams)}</h2>
@@ -2297,51 +2427,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     }).join('')}</div>` : `<p class="nl-help" data-i18n="drawnTeamsNone">${esc(t.drawnTeamsNone)}</p>`}` : '';
 
   const bodyHtml = `<style>
-  .nl { background: var(--surface-hero, #16181d); color: var(--ink-inverse, #f4f4f2); min-height: 100vh; display: flex; flex-direction: column; }
-  .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
-  .pb-hero { margin: var(--space-4) 0; padding: var(--space-5); background: var(--primary); border-radius: var(--radius-lg); }
-  .pb-hero-when { font: 800 28px/32px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #fff; margin-top: 6px; }
-  .pb-hero-venue { font-size: 14px; color: rgba(255,255,255,.75); margin-top: 4px; }
-  .pb-hero-pool { font: 500 15px/20px var(--font-sans); color: rgba(255,255,255,.9); margin-top: 10px; }
-  .pb-hero-pool .tnum { font: 800 20px/24px var(--font-display); font-stretch: 118%; color: #fff; }
-  .pb-main h2 { font: 800 13px/16px var(--font-display); font-stretch: 118%; letter-spacing: .1em; text-transform: uppercase; color: #a3a6ad; margin: var(--space-5) 0 var(--space-2); }
-  .pb-table { width: 100%; border-collapse: collapse; font: 500 15px/20px var(--font-sans); }
-  .pb-table th { font: 600 11px/16px var(--font-sans); color: #a3a6ad; border-bottom: 1px solid #2a2e36; padding: 8px 6px; text-align: center; }
-  .pb-table th:first-child, .pb-table td.pb-tm { text-align: left; }
-  .pb-table td { padding: 9px 6px; text-align: center; border-bottom: 1px solid #22252c; }
-  .pb-tm i { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 2px; }
-  .pb-glist { display: flex; flex-direction: column; }
-  .pb-g { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #22252c; gap: var(--space-3); }
-  .pb-g-d { display: flex; flex-direction: column; }
-  .pb-g-d b { font: 700 15px/20px var(--font-display); font-stretch: 118%; }
-  .pb-g-d span { font-size: 13px; color: #a3a6ad; }
-  .pb-g-venue { font-size: 14px; color: #a3a6ad; }
-  .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
-  .pb-tg div { height: 64px; border-radius: var(--radius-md); padding: var(--space-3); font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #fff; display: flex; align-items: flex-end; }
-  .pb-draw-list { display: flex; flex-direction: column; gap: var(--space-3); }
-  .pb-draw-team-name { display: flex; align-items: center; gap: 8px; font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #fff; margin-bottom: 4px; }
-  .pb-draw-team-name i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-  .pb-draw-players { font: 500 14px/20px var(--font-sans); color: #d8dae0; }
-  /* Live-testing bug fix: the shared base stylesheet's .nl a rule
-     (design_system.js, color: var(--ink)) has HIGHER specificity
-     (.nl a = 0,1,1) than a bare .pb-foot class selector (0,1,0), so it
-     silently won regardless of this rule's own color -- in a
-     light-OS-theme browser, var(--ink) resolves to near-black
-     (#16181d), rendered on this page's own always-dark surface-hero
-     background (also #16181d, fixed in both themes -- see
-     tokens.json's own surface-hero entry), making the link invisible.
-     .nl a.pb-foot (0,2,1) reliably wins regardless of source order.
-     Color: ink-inverse's own token value (#f4f4f2, "text on
-     surface-hero only" per tokens.json -- NOT var(--ink)/var(--ink-muted),
-     both of which flip with the user's OS theme and are meant for
-     surface/surface-sunken, not this always-dark hero) at reduced
-     opacity, matching this exact page's own established pattern for
-     de-emphasized text on the hero (.pb-hero-venue's rgba(255,255,255,.75)). */
-  .nl a.pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: rgba(244,244,242,.65); text-decoration: none; }
-  .nl a.pb-foot:hover { color: rgba(244,244,242,.85); text-decoration: underline; }
-  .nl-header { border-bottom: 1px solid #2a2e36; }
-  .nl-lang button { color: #a3a6ad; }
-  .nl-lang button[aria-pressed="true"] { background: #f4f4f2; color: #16181d; }
+${theme === 'clean' ? PUBLIC_THEME_CLEAN_CSS : PUBLIC_THEME_ARENE_CSS}
 </style>
 <header class="nl-header">
   <span class="nl-brand" style="max-width:280px;font-weight:700;">${esc(leagueRow.name)}</span>
@@ -2470,6 +2556,9 @@ async function handleLeagueSettingsPage(req, env, url) {
       identityTitle: 'Identité de la ligue', lblLeagueName: 'Nom de la ligue',
       lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée -- ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
       lblColor: 'Couleur de la ligue', lblTracksStats: 'Suivre les statistiques', save: 'Enregistrer', saved: 'Enregistré !',
+      lblPublicTheme: 'Thème de la page publique', themeArene: 'Arène (sombre, actuel)', themeClean: 'Épuré (blanc, minimal)',
+      themeHelp: "Deux thèmes sont offerts pour l'instant; deux autres (Classique, Quartier) s'en viennent.",
+      themePreview: 'Voir la page publique',
       teamsTitle: 'Équipes', teamsDesc: "Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue -- republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).",
       teamsHeadcountNote: "Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.",
       addTeam: 'Ajouter une équipe', removeTeam: 'Retirer', lblTeamName: 'Nom', lblTeamColor: 'Couleur',
@@ -2499,6 +2588,9 @@ async function handleLeagueSettingsPage(req, env, url) {
       identityTitle: 'League identity', lblLeagueName: 'League name',
       lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed -- that guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
       lblColor: 'League colour', lblTracksStats: 'Track stats', save: 'Save', saved: 'Saved!',
+      lblPublicTheme: 'Public page theme', themeArene: 'Arène (dark, current)', themeClean: 'Épuré (white, minimal)',
+      themeHelp: 'Two themes are available for now; two more (Classique, Quartier) are coming.',
+      themePreview: 'View the public page',
       teamsTitle: 'Teams', teamsDesc: "Rename your teams and pick their colour. A change here updates the league's default team list -- republish the current season for it to show up everywhere (players, games, public page).",
       teamsHeadcountNote: 'This league has no fixed teams -- nothing to name here.',
       addTeam: 'Add a team', removeTeam: 'Remove', lblTeamName: 'Name', lblTeamColor: 'Colour',
@@ -2557,6 +2649,15 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div class="nl-field">
       <label class="nl-label" for="se_color" data-i18n="lblColor">Couleur de la ligue</label>
       <input type="color" class="se-color" id="se_color" value="${esc(leagueRow.color || '#b3122e')}">
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" for="se_theme" data-i18n="lblPublicTheme">Thème de la page publique</label>
+      <select class="nl-select" id="se_theme" style="max-width:260px">
+        <option value="arene" data-i18n="themeArene" ${(leagueRow.public_theme || 'arene') === 'arene' ? 'selected' : ''}>Arène (sombre, actuel)</option>
+        <option value="clean" data-i18n="themeClean" ${leagueRow.public_theme === 'clean' ? 'selected' : ''}>Épuré (blanc, minimal)</option>
+      </select>
+      <p class="nl-help" data-i18n="themeHelp">Deux thèmes sont offerts pour l'instant; deux autres (Classique, Quartier) s'en viennent.</p>
+      <p class="nl-help"><a href="/${esc(leagueSlug)}" target="_blank" rel="noopener" data-i18n="themePreview">Voir la page publique</a></p>
     </div>
     <div class="nl-toggle">
       <div><div class="nl-label" data-i18n="lblTracksStats">Suivre les statistiques</div></div>
@@ -2688,7 +2789,8 @@ async function submitIdentity() {
       body: JSON.stringify({
         name: document.getElementById('se_name').value.trim(),
         color: document.getElementById('se_color').value,
-        tracksStats: document.getElementById('se_stats_switch').getAttribute('aria-checked') === 'true'
+        tracksStats: document.getElementById('se_stats_switch').getAttribute('aria-checked') === 'true',
+        publicTheme: document.getElementById('se_theme').value
       })
     });
     var data = await res.json().catch(function() { return {}; });
