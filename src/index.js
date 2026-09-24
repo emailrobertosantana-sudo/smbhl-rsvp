@@ -2349,6 +2349,17 @@ var OB_IS_LAST = ${isLast ? 'true' : 'false'};
 var OB_NEXT_URL = ${isLast ? 'null' : JSON.stringify(`/onboarding/season?step=${nextStepNum}`)};
 var OB_SEASON_NAME = ${JSON.stringify(currentSeason)};
 var OB_SEASON_HAS_GAMES = ${seasonHasGames ? 'true' : 'false'};
+// Live-testing task (batch 6), Part 3: this used to send the SAME
+// hardcoded red for every team ('#b3122e'), so a new league's teams
+// all rendered identically and matched neither their own name nor
+// each other. Reuses the exact same curated, positional palette
+// resolveTeamColor()'s own read-time fallback already uses everywhere
+// a team gets a colour (roster page, public page, settings preview)
+// -- one source of truth, so a league that never touches this step at
+// all already looked exactly like this; this fix only matters once a
+// real (even if still-default) value gets WRITTEN and stops that
+// fallback from ever running again.
+var OB_TEAM_COLORS = ${JSON.stringify(ROSTER_TEAM_DOTS)};
 function obToggle(btn) {
   btn.setAttribute('aria-checked', String(btn.getAttribute('aria-checked') !== 'true'));
 }
@@ -2413,7 +2424,7 @@ async function obSubmit() {
         // directly -- it refuses (TEAM_HAS_GAMES/TEAM_HAS_PLAYERS) rather
         // than silently dropping a team with real recorded data, so it's
         // always safe to call, unlike a full republish above.
-        await obSave('/league/settings/teams', { teamNames: teamNames, teamColors: teamNames.map(function() { return '#b3122e'; }) });
+        await obSave('/league/settings/teams', { teamNames: teamNames, teamColors: teamNames.map(function(_, idx) { return OB_TEAM_COLORS[idx % OB_TEAM_COLORS.length]; }) });
         await obSave('/league/season/teams', { season_name: OB_SEASON_NAME, teamNames: teamNames });
       }
     } else if (OB_STEP === 'reminders') {
@@ -4125,6 +4136,9 @@ ${tabbar}`;
 
   const script = `
 ${nlAuthScript(I18N_SETTINGS)}
+// Live-testing task (batch 6), Part 3: same palette/reasoning as the
+// onboarding page's own OB_TEAM_COLORS -- see that constant's comment.
+var SE_TEAM_COLORS = ${JSON.stringify(ROSTER_TEAM_DOTS)};
 async function submitIdentity() {
   var err = document.getElementById('identityErr'); var ok = document.getElementById('identityOk');
   err.style.display = 'none'; ok.style.display = 'none';
@@ -4150,7 +4164,7 @@ function addTeamRow() {
   var list = document.getElementById('se_teams_list');
   var row = document.createElement('div'); row.className = 'se-team-row';
   var nameInput = document.createElement('input'); nameInput.className = 'nl-input'; nameInput.type = 'text'; nameInput.setAttribute('data-team-name', '');
-  var colorInput = document.createElement('input'); colorInput.type = 'color'; colorInput.className = 'se-color'; colorInput.value = '#b3122e'; colorInput.setAttribute('data-team-color', '');
+  var colorInput = document.createElement('input'); colorInput.type = 'color'; colorInput.className = 'se-color'; colorInput.value = SE_TEAM_COLORS[list.children.length % SE_TEAM_COLORS.length]; colorInput.setAttribute('data-team-color', '');
   var removeBtn = document.createElement('button'); removeBtn.type = 'button'; removeBtn.className = 'nl-btn nl-btn--ghost nl-btn--sm';
   removeBtn.textContent = window.__pageDict().removeTeam;
   removeBtn.onclick = function() { row.remove(); };
