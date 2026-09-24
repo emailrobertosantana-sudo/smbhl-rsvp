@@ -2271,8 +2271,20 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
   .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .pb-hero { margin: var(--space-4) 0; padding: var(--space-5); background: var(--primary); border-radius: var(--radius-lg); }
   .pb-hero-when { font: 800 28px/32px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #fff; margin-top: 6px; }
-  .pb-hero-venue { font-size: 14px; color: rgba(255,255,255,.75); margin-top: 4px; }
-  .pb-hero-pool { font: 500 15px/20px var(--font-sans); color: rgba(255,255,255,.9); margin-top: 10px; }
+  /* Live-testing task (batch 2), Part 7: leagueFillColor() only
+     guarantees at least 4.5:1 contrast for SOLID #ffffff against its
+     own output -- a league whose color just barely clears that bar
+     leaves no headroom for a REDUCED-opacity white on top of it, so
+     this de-emphasized text could render unreadable depending on the
+     league's own chosen colour. Unlike .pb-foot/.rv-* elsewhere on
+     this app, which sit on the page's OWN fixed, always-near-black
+     surface-hero background (safe at any reasonable opacity), this
+     hero's background is the league's own DYNAMIC colour -- solid,
+     full-opacity white is the only value leagueFillColor's guarantee
+     actually covers. De-emphasis now comes from size/weight alone
+     (already true here), not opacity. */
+  .pb-hero-venue { font-size: 14px; color: #fff; margin-top: 4px; }
+  .pb-hero-pool { font: 500 15px/20px var(--font-sans); color: #fff; margin-top: 10px; }
   .pb-hero-pool .tnum { font: 800 20px/24px var(--font-display); font-stretch: 118%; color: #fff; }
   .pb-main h2 { font: 800 13px/16px var(--font-display); font-stretch: 118%; letter-spacing: .1em; text-transform: uppercase; color: #a3a6ad; margin: var(--space-5) 0 var(--space-2); }
   .pb-table { width: 100%; border-collapse: collapse; font: 500 15px/20px var(--font-sans); }
@@ -2306,8 +2318,12 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
      surface-hero only" per tokens.json -- NOT var(--ink)/var(--ink-muted),
      both of which flip with the user's OS theme and are meant for
      surface/surface-sunken, not this always-dark hero) at reduced
-     opacity, matching this exact page's own established pattern for
-     de-emphasized text on the hero (.pb-hero-venue's rgba(255,255,255,.75)). */
+     opacity -- safe here specifically because THIS element sits on the
+     page's own fixed, always-near-black surface-hero background, not
+     a per-league colour (contrast batch 2, Part 7: .pb-hero-venue sits
+     on the LEAGUE's own dynamic colour instead, so it was switched to
+     solid full-opacity white rather than reusing this same reduced-
+     opacity technique -- see that rule's own comment). */
   .nl a.pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: rgba(244,244,242,.65); text-decoration: none; }
   .nl a.pb-foot:hover { color: rgba(244,244,242,.85); text-decoration: underline; }
   .nl-header { border-bottom: 1px solid #2a2e36; }
@@ -2489,7 +2505,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const teamDot = i => resolveTeamColor(leagueRow.team_colors, i);
 
   const heroHtml = nextEvent ? `<div class="pb-hero" style="background:${esc(fillColor)}">
-    <div class="overline" style="color:rgba(255,255,255,.65)" data-i18n="nextGame">${esc(t.nextGame)}</div>
+    <div class="overline" style="color:#fff" data-i18n="nextGame">${esc(t.nextGame)}</div>
     ${dateTimeSpanHtml('div', nextEvent.date, nextEvent.start_time, 'short', 'class="pb-hero-when"')}
     ${isHeadcount ? `<div class="pb-hero-pool"><span class="tnum">${poolConfirmed}</span>${poolMax ? `<span>/${poolMax}</span>` : ''} <span data-i18n="poolConfirmed">${esc(t.poolConfirmed)}</span></div>` : ''}
     ${isHeadcount && poolGoalieMin > 0 ? `<div class="pb-hero-pool"><span class="tnum">${poolGoaliesConfirmed}</span><span>/${poolGoalieMin}</span> <span data-i18n="poolGoalies">${esc(t.poolGoalies)}</span></div>` : ''}
@@ -2617,7 +2633,18 @@ var PB_FORCED_LANG = ${JSON.stringify(forcedLang)};
 // summary -- that lives on the event status page), and team is shown
 // as plain text, not an inline-editable <select> (no update-contact
 // endpoint exists to actually change it from here).
-const ROSTER_TEAM_DOTS = ['#8b4a1c', '#0b7f71', '#1f6feb', '#c2255c', '#6d3fae', '#b8860b', '#0f766e', '#a3123a'];
+// Live-testing task (batch 2), Part 7: the previous palette "appeared
+// randomly assigned, producing poor combinations" -- it wasn't
+// literally random (always the same colour at the same position), but
+// several of its own entries failed a reasonable contrast bar against
+// one of the two real surfaces this dot renders on (the Épuré public
+// theme's white page background, and the Arène theme's near-black
+// surface-hero, #16181d): #a3123a (2.29:1 vs dark), #6d3fae (2.51:1
+// vs dark), and #8b4a1c (2.62:1 vs dark) were all well under WCAG's
+// 3:1 non-text-contrast minimum against the dark surface -- nearly
+// invisible team dots on that theme. Every colour below is verified
+// (see test/part51) to clear >=3:1 against BOTH #ffffff and #16181d.
+const ROSTER_TEAM_DOTS = ['#c0392b', '#2980b9', '#16a085', '#8e44ad', '#d35400', '#c2185b', '#4a5fc1', '#b7791f'];
 
 // Live-testing task, Part 1: leagues.team_colors (migrate-032.sql) is
 // an optional JSON array parallel to team_names -- a custom colour at
