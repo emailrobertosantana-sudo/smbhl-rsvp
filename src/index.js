@@ -689,7 +689,11 @@ function signupStyles() {
   .su-team-in { display: flex; align-items: center; gap: var(--space-2); }
   .su-team-in .n { width: 24px; font: 600 14px/1 var(--font-display); font-stretch: 118%; color: var(--ink-muted); text-align: right; flex: none; }
   .su-done { display: flex; flex-direction: column; gap: var(--space-4); }
-  .su-url { background: var(--primary-tint); border-radius: var(--radius-md); padding: var(--space-3); font: 600 15px/22px var(--font-sans); color: var(--primary); word-break: break-all; }
+  /* Live-testing task (batch 2), Part 9: same fix as the dashboard's
+     public-page URL card -- word-break: break-all wraps mid-word;
+     word-break: normal + overflow-wrap: anywhere wraps at a natural
+     boundary (/, -) first, only breaking mid-word as a last resort. */
+  .su-url { background: var(--primary-tint); border-radius: var(--radius-md); padding: var(--space-3); font: 600 15px/22px var(--font-sans); color: var(--primary); word-break: normal; overflow-wrap: anywhere; }
   .nl-error { color: var(--danger, #b3122e); font-weight: 600; font-size: 14px; }
   .su-structure { display: flex; flex-direction: column; gap: var(--space-2); }
   .su-structure-opt { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3); border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); cursor: pointer; }
@@ -1598,7 +1602,15 @@ function dashStyles() {
   .dash-tile .overline { margin-bottom: var(--space-2); }
   .dash-tile a { font: 600 14px/20px var(--font-sans); }
   .dash-share { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .dash-share code { flex: 1; min-width: 160px; font: 500 14px/20px var(--font-sans); color: var(--primary); background: var(--primary-tint); padding: 10px 12px; border-radius: var(--radius-md); word-break: break-all; }
+  /* Live-testing task (batch 2), Part 9: word-break: break-all forces a
+     line break at literally ANY character, ignoring natural break
+     points (a slash, a hyphen) -- on a real slug this wrapped
+     mid-word, unreadable. overflow-wrap: anywhere still allows a break
+     wherever there's genuinely no other way to fit the text, but
+     word-break: normal restores browsers' normal preference for
+     breaking at an existing boundary (/, -) first, so a real URL wraps
+     at a sensible spot instead of splitting a word in half. */
+  .dash-share code { flex: 1; min-width: 160px; font: 500 14px/20px var(--font-sans); color: var(--primary); background: var(--primary-tint); padding: 10px 12px; border-radius: var(--radius-md); word-break: normal; overflow-wrap: anywhere; }
   .nl-error { color: var(--danger, #b3122e); font-weight: 600; font-size: 14px; }
   .nl-ok { color: var(--success, #1c7a4a); font-weight: 600; font-size: 14px; }
   .su-structure { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -2788,7 +2800,9 @@ async function handleLeagueSettingsPage(req, env, url) {
   .se-team-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
   .se-team-row input[data-team-name] { flex: 1; }
   .se-color { width: 44px; height: 40px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); padding: 2px; cursor: pointer; }
-  .se-slug-display { font: 500 14px/20px var(--font-sans); color: var(--ink-muted); background: var(--surface-sunken); padding: 10px 12px; border-radius: var(--radius-md); word-break: break-all; }
+  /* Live-testing task (batch 2), Part 9: same fix as the dashboard's
+     public-page URL card -- see that rule's own comment. */
+  .se-slug-display { font: 500 14px/20px var(--font-sans); color: var(--ink-muted); background: var(--surface-sunken); padding: 10px 12px; border-radius: var(--radius-md); word-break: normal; overflow-wrap: anywhere; }
 </style>${header}
 <main class="dash-main se-main">
   <h1 data-i18n="title">Paramètres</h1>
