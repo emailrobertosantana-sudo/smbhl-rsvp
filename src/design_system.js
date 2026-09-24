@@ -528,11 +528,31 @@ export function nlEmailWrap({ brandName, barColor = '#16181d', bodyHtml, footerH
  * second :root block, appended after TOKENS_CSS in the same <style>,
  * wins the cascade (same specificity, later rule).
  */
+// Live-testing task (batch 5), Part 4: no favicon was served on any
+// league-product page -- nlDocument() (the shared wrapper behind
+// every page this engagement has touched: dashboard, settings,
+// signup, roster, schedule, comms, event detail, the public page)
+// never had a <link rel="icon"> at all. The design system itself
+// specifies no literal favicon asset (there's no favicon.svg or
+// pixel spec in notre-ligue-design-system/), but its own README is
+// explicit about what the ONE existing brand mark is: "There is no
+// Notre Ligue logo yet: the wordmark is 'NOTRE LIGUE' ... preceded by
+// a 10px yellow square (nl-brand--product). Leagues never get a
+// generated logo." A plain solid yellow square is also independently
+// spec'd as the system's own generic decorative shape ("Decorative
+// shapes, when needed, are solid rectangles in primary and yellow
+// with radius-sm"). Built as an inline SVG data URI (no new asset to
+// host) rather than inventing a mark the design system doesn't have.
+const NL_FAVICON_DATA_URI = 'data:image/svg+xml,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="5" fill="#ffd23f"/></svg>'
+);
+
 export function nlDocument({ title, description = '', bodyHtml, lang = 'fr', leagueColor = null }) {
   return `<!DOCTYPE html><html lang="${lang === 'en' ? 'en-CA' : 'fr-CA'}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${nlEmailEsc(title)}</title>
 ${description ? `<meta name="description" content="${nlEmailEsc(description)}">` : ''}
+<link rel="icon" href="${NL_FAVICON_DATA_URI}" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
