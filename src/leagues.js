@@ -22,6 +22,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, ma
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor } from './design_system.js';
+import { hasCapability } from './super_admin.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -1494,6 +1495,17 @@ export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null
 
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow) return Response.json({ ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' }, { status: 404 });
+
+  // Part 11 capability flag: a league already at 1+ admin needs
+  // 'multi_admin' enabled to invite another. Missing row = enabled (see
+  // super_admin.js), so this is a no-op for every league until a
+  // super-admin explicitly disables it for one.
+  const { count: adminCount } = await env.DB.prepare(
+    'SELECT COUNT(*) AS count FROM league_admins WHERE league_id = ?'
+  ).bind(leagueId).first();
+  if (adminCount >= 1 && !(await hasCapability(env, leagueId, 'multi_admin'))) {
+    return Response.json({ ok: false, error: 'This league is limited to a single admin.', errorKey: 'MULTI_ADMIN_DISABLED' }, { status: 403 });
+  }
 
   // Already an admin of this league? Nothing to invite -- a clear,
   // specific error beats silently sending a redundant invite email.

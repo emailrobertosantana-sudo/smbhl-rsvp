@@ -8,6 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateStructure } from './leagues.js';
+import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -7594,6 +7595,149 @@ function renderKeyGate(isAuthed = false) {
   </div>`;
 }
 const keyGate = renderKeyGate(false);
+
+// Live-testing task (batch 2), Part 11: super-admin layer. Same
+// key-unlock flow as boardPage/renderKeyGate above (ADMIN_KEY via
+// localStorage/cookie/header) -- see super_admin.js's own top comment
+// for why this reuses that key rather than a second secret. Fully
+// client-rendered against /super-admin/leagues/data and
+// /super-admin/leagues/update so editing a plan tier or a capability
+// flag never needs a full page reload.
+function superAdminPage(isAuthed = false) {
+  const planTierOptions = PLAN_TIERS.map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('');
+  const flagKeysJson = JSON.stringify(CAPABILITY_FLAGS.map(f => f.key));
+  const flagLabelsJson = JSON.stringify(Object.fromEntries(CAPABILITY_FLAGS.map(f => [f.key, f.label])));
+  return page('Super-admin', `
+  <h1>Super-admin</h1>
+  <p class="state">Liste de toutes les ligues -- palier et indicateurs de capacité. / List of every league -- plan tier and capability flags.</p>
+  ${renderKeyGate(isAuthed)}
+  <div id="sa-main"${isAuthed ? '' : ' style="display:none"'}>
+    <div id="sa-err" class="state"></div>
+    <table id="sa-table" style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="text-align:left;border-bottom:2px solid var(--rule)">
+          <th style="padding:8px 6px">Ligue / League</th>
+          <th style="padding:8px 6px">Slug</th>
+          <th style="padding:8px 6px">Créée / Created</th>
+          <th style="padding:8px 6px">Admins</th>
+          <th style="padding:8px 6px">Page publique</th>
+          <th style="padding:8px 6px">Palier / Tier</th>
+          <th style="padding:8px 6px">Indicateurs / Flags</th>
+        </tr>
+      </thead>
+      <tbody id="sa-tbody"></tbody>
+    </table>
+  </div>
+<script>
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+const $ = id => document.getElementById(id);
+const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const FLAG_KEYS = ${flagKeysJson};
+const FLAG_LABELS = ${flagLabelsJson};
+let leagues = [];
+
+function planTierOptionsHtml(current) {
+  return \`${planTierOptions}\`.replace('value="' + current + '"', 'value="' + current + '" selected');
+}
+
+function renderRow(l) {
+  const flagsHtml = FLAG_KEYS.map(k => {
+    const on = !!l.flags[k];
+    return '<label style="display:block;font-size:13px;white-space:nowrap"><input type="checkbox" class="sa-flag" data-league="' + l.id + '" data-flag="' + k + '"' + (on ? ' checked' : '') + '> ' + esc(FLAG_LABELS[k]) + '</label>';
+  }).join('');
+  return '<tr data-league-row="' + l.id + '" style="border-bottom:1px solid var(--rule)">' +
+    '<td style="padding:8px 6px">' + esc(l.name) + '</td>' +
+    '<td style="padding:8px 6px">' + esc(l.slug || '') + '</td>' +
+    '<td style="padding:8px 6px">' + esc((l.createdAt || '').slice(0, 10)) + '</td>' +
+    '<td style="padding:8px 6px">' + esc(l.adminCount) + '</td>' +
+    '<td style="padding:8px 6px">' + (l.publicPageEnabled ? 'Oui / Yes' : 'Non / No') + (l.deactivatedAt ? ' (désactivée / deactivated)' : '') + '</td>' +
+    '<td style="padding:8px 6px"><select class="sa-tier" data-league="' + l.id + '">' + planTierOptionsHtml(l.planTier) + '</select></td>' +
+    '<td style="padding:8px 6px">' + flagsHtml + '</td>' +
+    '</tr>';
+}
+
+function render() {
+  $('sa-tbody').innerHTML = leagues.map(renderRow).join('');
+}
+
+async function load() {
+  const res = await fetch('/super-admin/leagues/data', { headers: { 'x-admin': K } });
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  leagues = data.leagues || [];
+  render();
+}
+
+async function unlock(candidate) {
+  const prev = K;
+  K = candidate;
+  try {
+    await load();
+    localStorage.setItem('adminkey', K);
+    try { document.cookie = 'admin_key=' + encodeURIComponent(K) + '; Path=/; Max-Age=2592000; SameSite=Lax; Secure'; } catch (_) {}
+    $('gate').style.display = 'none';
+    $('sa-main').style.display = '';
+    return true;
+  } catch (err) {
+    K = prev;
+    return false;
+  }
+}
+
+$('go').addEventListener('click', async () => {
+  const v = $('key').value.trim();
+  if (!v) { $('err').textContent = 'Entre la clé / Enter the key'; return; }
+  if (!(await unlock(v))) $('err').textContent = 'Clé refusée / Key rejected';
+});
+$('key').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+
+$('sa-tbody').addEventListener('change', async e => {
+  const tierSel = e.target.closest('.sa-tier');
+  if (tierSel) {
+    const leagueId = tierSel.dataset.league;
+    const planTier = tierSel.value;
+    try {
+      const res = await fetch('/super-admin/leagues/update', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-admin': K },
+        body: JSON.stringify({ leagueId, planTier })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      $('sa-err').textContent = '';
+    } catch (err) {
+      $('sa-err').textContent = 'Erreur / Error: ' + err.message;
+      await load();
+    }
+    return;
+  }
+  const flagBox = e.target.closest('.sa-flag');
+  if (flagBox) {
+    const leagueId = flagBox.dataset.league;
+    const flagKey = flagBox.dataset.flag;
+    const enabled = flagBox.checked;
+    try {
+      const res = await fetch('/super-admin/leagues/update', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-admin': K },
+        body: JSON.stringify({ leagueId, flags: { [flagKey]: enabled } })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      $('sa-err').textContent = '';
+    } catch (err) {
+      $('sa-err').textContent = 'Erreur / Error: ' + err.message;
+      await load();
+    }
+  }
+});
+
+if (K) {
+  unlock(K);
+} else if (${isAuthed ? 'true' : 'false'}) {
+  $('gate').style.display = 'none';
+  $('sa-main').style.display = '';
+  load().catch(err => { $('sa-err').textContent = 'Erreur / Error: ' + err.message; });
+}
+</script>
+  `);
+}
 
 async function boardPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
@@ -20683,6 +20827,42 @@ async function handleFetch(req, env, ctx) {
       // Live-testing task, Part 1: consolidated settings page.
       if ((url.pathname === '/league/settings' || url.pathname === '/league/settings/') && req.method === 'GET')
         return await handleLeagueSettingsPage(req, env, url);
+
+      // Live-testing task (batch 2), Part 11: super-admin layer. Gated by
+      // checkAdminAuth exactly like /admin/board (same key, see
+      // super_admin.js's top comment for why) -- a session-authenticated
+      // league admin (checkLeagueAccess) has NO path into any of these
+      // three routes, only the ADMIN_KEY holder does.
+      if (url.pathname === '/super-admin' || url.pathname === '/super-admin/')
+        return Response.redirect(url.origin + '/super-admin/leagues', 302);
+      if ((url.pathname === '/super-admin/leagues' || url.pathname === '/super-admin/leagues/') && req.method === 'GET') {
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        return new Response(superAdminPage(isAuthed), { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname === '/super-admin/leagues/data' && req.method === 'GET') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const leagues = await listLeaguesWithMetadata(env);
+        return Response.json({ ok: true, leagues });
+      }
+      if (url.pathname === '/super-admin/leagues/update' && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const body = await req.json().catch(() => ({}));
+        const leagueId = String(body.leagueId || '');
+        if (!leagueId) return Response.json({ ok: false, error: 'leagueId is required.', errorKey: 'LEAGUE_ID_REQUIRED' }, { status: 400 });
+        if (typeof body.planTier === 'string') {
+          const result = await updateLeaguePlanTier(env, leagueId, body.planTier);
+          if (!result.ok) return Response.json(result, { status: result.errorKey === 'LEAGUE_NOT_FOUND' ? 404 : 400 });
+        }
+        if (body.flags && typeof body.flags === 'object') {
+          for (const [flagKey, enabled] of Object.entries(body.flags)) {
+            const result = await updateLeagueCapabilityFlag(env, leagueId, flagKey, !!enabled);
+            if (!result.ok) return Response.json(result, { status: result.errorKey === 'LEAGUE_NOT_FOUND' ? 404 : 400 });
+          }
+        }
+        return Response.json({ ok: true });
+      }
 
       if (url.pathname === '/admin' || url.pathname === '/admin/')
         return Response.redirect(url.origin + '/admin/board', 302);
