@@ -1917,6 +1917,107 @@ export async function handleLeagueUpdateTeams(req, env, url) {
   return Response.json({ ok: true, teamNames, teamColors });
 }
 
+/* ---------- add/remove teams on a PUBLISHED season (Part 15, live-
+ * testing task batch 2) ----------
+ * handleLeagueUpdateTeams (above) only ever writes leagues.team_names --
+ * the league-level DEFAULT a FUTURE season publish reads from
+ * (handleLeagueSeasonPublish snapshots it into that season's own
+ * config.teams at publish time, by design, so a later league-level edit
+ * never retroactively alters a season already published -- see that
+ * function's own comment). There was no route that touched an already-
+ * published season's own frozen config.teams/standings at all, which is
+ * the actual gap this task reported: an admin partway through a season
+ * who needs to add a late-joining team, or drop one that never fielded
+ * players, had no way to do either without republishing the whole
+ * season under the same name (which would also reset every other
+ * team's accumulated standings back to 0 -- not what "add a team"
+ * should ever do).
+ *
+ * DECISION -- removing a team with real data is REFUSED, not silently
+ * cascaded: a team with any rsvp row (a player ever put on it for an
+ * event in THIS season) or any recorded games (standings.gp > 0) is
+ * blocked, naming exactly why, rather than either orphaning those rsvp
+ * rows (they'd reference a team name no longer in config.teams) or
+ * silently deleting real standings history. This matches the app's
+ * existing conservative pattern elsewhere (deactivate/hard-delete both
+ * require an explicit confirm step rather than inferring intent) --
+ * "remove a team" should mean "this team turned out to be unnecessary",
+ * not "erase what already happened on it". An admin who genuinely wants
+ * to remove a team that already played games can still do so once its
+ * players are reassigned and its games are otherwise accounted for
+ * (the same standings edit tools already used for correcting scores).
+ *
+ * Adding a team is unconditional (append to config.teams, a fresh
+ * zeroed standings row) -- there's no data to lose by adding one.
+ * Every OTHER season (past or future) is untouched: this only ever
+ * rewrites the ONE seasons[] entry matching seasonName.
+ */
+export async function handleLeagueUpdateSeasonTeams(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update SMBHL.', errorKey: 'ROUTE_BLOCKED_SETTINGS' }, { status: 403 });
+  }
+
+  const leagueRow = await env.DB.prepare('SELECT team_structure FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow || leagueRow.team_structure === 'headcount') {
+    return Response.json({ ok: false, error: 'This league has no team names to edit.', errorKey: 'NO_TEAMS_TO_EDIT' }, { status: 400 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const existing = await getLeagueDataJson(env, leagueId);
+  const seasons = (Array.isArray(existing.seasons) ? existing.seasons : []).filter(Boolean);
+  const seasonName = String(body.season_name || existing.current_season || '').trim();
+  if (!seasonName) {
+    return Response.json({ ok: false, error: 'season_name is required.', errorKey: 'SEASON_NAME_REQUIRED' }, { status: 400 });
+  }
+  const idx = seasons.findIndex(s => s && s.name === seasonName);
+  if (idx < 0) {
+    return Response.json({ ok: false, error: 'No published season with that name.', errorKey: 'SEASON_NOT_FOUND' }, { status: 404 });
+  }
+
+  const season = seasons[idx];
+  const oldTeams = Array.isArray(season.config?.teams) ? season.config.teams : [];
+  const newTeams = Array.isArray(body.teamNames)
+    ? [...new Set(body.teamNames.map(t => String(t || '').trim()).filter(Boolean))]
+    : [];
+  if (newTeams.length < 2) {
+    return Response.json({ ok: false, error: 'At least 2 team names are required.', errorKey: 'MIN_TEAM_NAMES' }, { status: 400 });
+  }
+
+  const removedTeams = oldTeams.filter(t => !newTeams.includes(t));
+  const standings = Array.isArray(season.standings) ? season.standings : [];
+  for (const team of removedTeams) {
+    const stRow = standings.find(s => s && s.team === team);
+    if (stRow && Number(stRow.gp) > 0) {
+      return Response.json({ ok: false, error: `The team "${team}" has recorded games and cannot be removed.`, errorKey: 'TEAM_HAS_GAMES', team }, { status: 409 });
+    }
+    const assignedRow = await env.DB.prepare(
+      `SELECT 1 FROM rsvp r JOIN events e ON e.id = r.event_id
+        WHERE e.league_id = ? AND e.season = ? AND r.team = ? LIMIT 1`
+    ).bind(leagueId, seasonName, team).first();
+    if (assignedRow) {
+      return Response.json({ ok: false, error: `The team "${team}" still has players assigned to it and cannot be removed.`, errorKey: 'TEAM_HAS_PLAYERS', team }, { status: 409 });
+    }
+  }
+
+  const newStandings = newTeams.map(team => standings.find(s => s && s.team === team) || { team, gp: 0, w: 0, l: 0, t: 0, pts: 0, gf: 0, ga: 0 });
+
+  seasons[idx] = { ...season, config: { ...season.config, teams: newTeams }, standings: newStandings };
+  await putLeagueDataJson(env, leagueId, { ...existing, seasons });
+
+  return Response.json({ ok: true, league_id: leagueId, season_name: seasonName, teamNames: newTeams, added: newTeams.filter(t => !oldTeams.includes(t)), removed: removedTeams });
+}
+
 // League-level team structure default + roster limits (Live-testing
 // task, Part 5: min/max players AND min/max goalies, for every
 // structure -- originally headcount-only).

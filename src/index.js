@@ -7,7 +7,7 @@ import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateT
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateStructure } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -2820,6 +2820,16 @@ async function handleLeagueSettingsPage(req, env, url) {
   try { teamNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
   if (isHeadcount) teamNames = [];
 
+  // Live-testing task (batch 2), Part 15: the currently-published
+  // season's OWN frozen team list (season.config.teams), distinct from
+  // leagueRow.team_names above (the league-level DEFAULT a future
+  // season publish reads from -- see handleLeagueUpdateSeasonTeams's
+  // own comment, leagues.js). null when no season has been published
+  // yet -- that section just doesn't render.
+  const leagueData = await getLeagueDataJson(env, leagueId);
+  const currentSeasonEntry = (leagueData.seasons || []).find(s => s && s.name === leagueData.current_season) || null;
+  const currentSeasonTeams = currentSeasonEntry && Array.isArray(currentSeasonEntry.config?.teams) ? currentSeasonEntry.config.teams : [];
+
   const { header, tabbar } = dashChrome(leagueRow.name, 'settings');
 
   const I18N_SETTINGS = {
@@ -2837,6 +2847,12 @@ async function handleLeagueSettingsPage(req, env, url) {
       teamsTitle: 'Équipes', teamsDesc: "Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue -- republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).",
       teamsHeadcountNote: "Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.",
       addTeam: 'Ajouter une équipe', removeTeam: 'Retirer', lblTeamName: 'Nom', lblTeamColor: 'Couleur',
+      seasonTeamsTitle: 'Équipes de la saison en cours',
+      seasonTeamsDescPrefix: 'Ajoute ou retire une équipe pour la saison « ',
+      seasonTeamsDescSuffix: ' » sans toucher aux autres saisons ni réinitialiser le classement.',
+      seasonTeamsNoSeason: "Aucune saison publiée pour l'instant.",
+      addSeasonTeam: 'Ajouter', removeSeasonTeam: 'Retirer',
+      newTeamPlaceholder: 'Nouvelle équipe',
       structureTitle: 'Structure par défaut de la ligue',
       structureDesc: "Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées -- seules les nouvelles saisons utiliseront ce changement.",
       structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
@@ -2875,6 +2891,12 @@ async function handleLeagueSettingsPage(req, env, url) {
       teamsTitle: 'Teams', teamsDesc: "Rename your teams and pick their colour. A change here updates the league's default team list -- republish the current season for it to show up everywhere (players, games, public page).",
       teamsHeadcountNote: 'This league has no fixed teams -- nothing to name here.',
       addTeam: 'Add a team', removeTeam: 'Remove', lblTeamName: 'Name', lblTeamColor: 'Colour',
+      seasonTeamsTitle: 'Current season teams',
+      seasonTeamsDescPrefix: 'Add or remove a team for the “',
+      seasonTeamsDescSuffix: '” season without touching any other season or resetting the standings.',
+      seasonTeamsNoSeason: 'No season published yet.',
+      addSeasonTeam: 'Add', removeSeasonTeam: 'Remove',
+      newTeamPlaceholder: 'New team',
       structureTitle: "League's default structure",
       structureDesc: "Change your league's default structure. Already-published seasons are never affected -- only new seasons will use this change.",
       structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
@@ -2973,6 +2995,25 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div class="h3" data-i18n="teamsTitle">Équipes</div>
     <p class="nl-help" data-i18n="teamsHeadcountNote">Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.</p>
   </section>`}
+
+  ${!isHeadcount && currentSeasonEntry ? `
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="seasonTeamsTitle">Équipes de la saison en cours</div>
+    <p class="nl-help"><span data-i18n="seasonTeamsDescPrefix">Ajoute ou retire une équipe pour la saison «&nbsp;</span><b>${esc(currentSeasonEntry.name)}</b><span data-i18n="seasonTeamsDescSuffix">&nbsp;» sans toucher aux autres saisons ni réinitialiser le classement.</span></p>
+    <div id="seasonTeamsErr" class="nl-error" style="display:none"></div>
+    <div id="seasonTeamsOk" class="nl-ok" style="display:none"></div>
+    <div id="se_season_teams_list" style="margin-top:12px">
+      ${currentSeasonTeams.map(t => `<div class="se-season-team-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px" data-team="${esc(t)}">
+        <span style="flex:1">${esc(t)}</span>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="removeSeasonTeam" onclick="removeSeasonTeamRow(this)">Retirer</button>
+      </div>`).join('')}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <input class="nl-input" id="se_new_season_team" type="text" data-i18n-ph="newTeamPlaceholder" placeholder="Nouvelle équipe" style="flex:1;max-width:260px">
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="addSeasonTeam" onclick="addSeasonTeamRow()">Ajouter</button>
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="season_teams_save" data-i18n="save" onclick="submitSeasonTeams()">Enregistrer</button>
+    </div>
+  </section>` : ''}
 
   <section class="nl-card nl-card--pad-lg">
     <div class="h3" data-i18n="structureTitle">Structure par défaut de la ligue</div>
@@ -3132,6 +3173,44 @@ async function submitTeams() {
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     ok.textContent = window.__pageDict().saved; ok.style.display = 'block'; btn.disabled = false;
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
+function removeSeasonTeamRow(btn) {
+  btn.closest('.se-season-team-row').remove();
+}
+function addSeasonTeamRow() {
+  var input = document.getElementById('se_new_season_team');
+  var name = input.value.trim();
+  if (!name) return;
+  var list = document.getElementById('se_season_teams_list');
+  var row = document.createElement('div'); row.className = 'se-season-team-row';
+  row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+  row.setAttribute('data-team', name);
+  var span = document.createElement('span'); span.style.flex = '1'; span.textContent = name;
+  var removeBtn = document.createElement('button'); removeBtn.type = 'button'; removeBtn.className = 'nl-btn nl-btn--ghost nl-btn--sm';
+  removeBtn.textContent = window.__pageDict().removeSeasonTeam;
+  removeBtn.onclick = function() { removeSeasonTeamRow(removeBtn); };
+  row.appendChild(span); row.appendChild(removeBtn);
+  list.appendChild(row);
+  input.value = '';
+}
+async function submitSeasonTeams() {
+  var err = document.getElementById('seasonTeamsErr'); var ok = document.getElementById('seasonTeamsOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var rows = document.querySelectorAll('#se_season_teams_list .se-season-team-row');
+  var teamNames = [];
+  rows.forEach(function(r) { teamNames.push(r.getAttribute('data-team')); });
+  var btn = document.getElementById('season_teams_save'); btn.disabled = true;
+  try {
+    var res = await fetch('/league/season/teams', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ teamNames: teamNames })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error, data.team ? { team: data.team } : null); err.style.display = 'block'; btn.disabled = false; return; }
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block'; btn.disabled = false;
+    window.location.reload();
   } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
 }
 document.querySelectorAll('#se_structure_radio label').forEach(function(l) {
@@ -20866,6 +20945,12 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueUpdateIdentity(req, env, url);
       if (url.pathname === '/league/settings/teams' && req.method === 'POST')
         return await handleLeagueUpdateTeams(req, env, url);
+      // Part 15 (live-testing task, batch 2): add/remove a team on a
+      // SPECIFIC already-published season, distinct from the
+      // league-level default above -- see handleLeagueUpdateSeasonTeams's
+      // own comment (leagues.js) for why that route alone wasn't enough.
+      if (url.pathname === '/league/season/teams' && req.method === 'POST')
+        return await handleLeagueUpdateSeasonTeams(req, env, url);
       if (url.pathname === '/league/settings/structure' && req.method === 'POST')
         return await handleLeagueUpdateStructure(req, env, url);
       // Part 2: admin-initiated manual "send now" trigger (same UI
