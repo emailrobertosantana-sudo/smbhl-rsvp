@@ -2837,7 +2837,7 @@ async function handleLeagueCommsData(req, env, url) {
   if (access !== 'ok') return leagueAccessResponse(access);
 
   const leagueRow = await env.DB.prepare(
-    `SELECT name, team_structure, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled,
+    `SELECT name, team_structure, team_names, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled,
             auto_draw_enabled, auto_draw_hours_before
        FROM leagues WHERE id = ?`
   ).bind(leagueId).first();
@@ -2925,6 +2925,22 @@ async function handleLeagueCommsData(req, env, url) {
     if (stats[a.status] !== undefined) stats[a.status]++;
   }
 
+  // Live-testing task (batch 4), Part 4: broadcast targeting options.
+  // Team-name targeting is only ever offered for 'fixed' leagues --
+  // see handleLeagueCommsBroadcast's own comment for why 'headcount'
+  // (no team concept at all) and 'weekly_draw' (teams reassigned every
+  // event, not a stable audience) don't get it.
+  let teamNames = [];
+  if (leagueRow.team_structure === 'fixed') {
+    try {
+      const parsed = JSON.parse(leagueRow.team_names || '[]');
+      if (Array.isArray(parsed)) teamNames = parsed;
+    } catch (_) {}
+  }
+  const upcomingEvents = (await env.DB.prepare(
+    `SELECT id, date FROM events WHERE league_id = ? AND state = 'open' ORDER BY date LIMIT 10`
+  ).bind(leagueId).all()).results || [];
+
   return Response.json({
     ok: true,
     league: { name: leagueRow.name },
@@ -2937,7 +2953,8 @@ async function handleLeagueCommsData(req, env, url) {
       isWeeklyDraw: leagueRow.team_structure === 'weekly_draw'
     },
     stats,
-    activity: activity.slice(0, ACTIVITY_LIMIT)
+    activity: activity.slice(0, ACTIVITY_LIMIT),
+    broadcastOptions: { teamNames, upcomingEvents }
   });
 }
 
@@ -2964,6 +2981,136 @@ async function handleLeagueCommsDrain(req, env, url) {
 
   const res = await drain(env, 50, null, leagueId);
   return Response.json({ ok: true, drain: res });
+}
+
+// Live-testing task (batch 4), Part 4: broadcast/compose, shared into
+// the league product's own Comms module -- adapted from SMBHL's own
+// handleEmailsBroadcast, not copied. Session+CSRF+checkLeagueAccess-
+// gated, no capability-flag check anywhere (available to every
+// league, per the task's own explicit instruction).
+//
+// TARGETING: all/roster/subs/pending/in carry over directly, each
+// query gaining `AND c.league_id = ?` (contacts/rsvp are the same
+// tables the league product already uses everywhere else). The one
+// real gap the investigation found: SMBHL's own version hardcodes its
+// team-name dropdown (Red/Blue/White/Black). Fixed by reading the
+// league's own real team_names -- but ONLY for 'fixed'-structure
+// leagues: a 'headcount' league has no team concept to target by at
+// all (contacts.preferred_team is never set), and a 'weekly_draw'
+// league's teams are reassigned every event (rsvp.team, not a
+// permanent contacts.preferred_team) -- "team X" isn't a stable
+// audience to broadcast to for either, so team-targeting is simply
+// not offered for them. Both structures still get all/roster/subs and
+// the event-scoped pending/in targeting, which remains meaningful
+// regardless of team structure.
+//
+// CONTENT: the message itself is the admin's own single, freeform,
+// already-in-one-language text -- there is no fr/en version of it to
+// assemble (unlike every other email this app sends, which are all
+// system-authored templates with real fr/en content on both sides).
+// What DOES have real bilingual template content is the footer
+// attribution line, so that's the one piece routed through
+// assembleBilingualEmail (design_system.js) -- the message body itself
+// is inserted exactly once, never duplicated per language.
+async function handleLeagueCommsBroadcast(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot broadcast for SMBHL.', errorKey: 'ROUTE_BLOCKED_BROADCAST' }, { status: 403 });
+  }
+
+  const leagueRow = await env.DB.prepare('SELECT name, color, team_structure, team_names, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) return Response.json({ ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' }, { status: 404 });
+
+  const body = await req.json().catch(() => ({}));
+  const target = String(body.target || '').trim();
+  const eventId = String(body.event_id || '').trim();
+  const subject = String(body.subject || '').trim();
+  const message = String(body.message || '').trim();
+  if (!subject || !message) {
+    return Response.json({ ok: false, error: 'Subject and message are required.', errorKey: 'BROADCAST_FIELDS_REQUIRED' }, { status: 400 });
+  }
+
+  let teamNames = [];
+  try {
+    const parsed = JSON.parse(leagueRow.team_names || '[]');
+    if (Array.isArray(parsed)) teamNames = parsed;
+  } catch (_) {}
+
+  let recipients = [];
+  if (target === 'all') {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).bind(leagueId).all()).results || [];
+  } else if (target === 'roster') {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND role = 'roster' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).bind(leagueId).all()).results || [];
+  } else if (target === 'subs') {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND role LIKE 'sub_%' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).bind(leagueId).all()).results || [];
+  } else if (leagueRow.team_structure === 'fixed' && teamNames.includes(target)) {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND preferred_team = ? AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).bind(leagueId, target).all()).results || [];
+  } else if (target === 'pending' || target === 'in') {
+    if (!eventId) {
+      return Response.json({ ok: false, error: 'event_id is required to target by RSVP status.', errorKey: 'BROADCAST_EVENT_REQUIRED' }, { status: 400 });
+    }
+    // r.event_id alone already can't cross leagues (event ids are
+    // globally unique and league-prefixed, league_ids.js) -- c.league_id
+    // is real defense in depth, not the only thing preventing leakage.
+    recipients = (await env.DB.prepare(
+      `SELECT DISTINCT c.player_id, c.name, c.email
+         FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+        WHERE r.event_id = ? AND r.status = ? AND c.league_id = ?
+          AND c.email IS NOT NULL AND c.email != '' AND c.opted_out = 0
+        ORDER BY c.name`
+    ).bind(eventId, target, leagueId).all()).results || [];
+  } else {
+    return Response.json({ ok: false, error: 'Invalid recipient target.', errorKey: 'BROADCAST_INVALID_TARGET' }, { status: 400 });
+  }
+
+  // Real per-league send identity (Bug 1 fix, an earlier task this
+  // session) -- the league's own verified-domain from-address and its
+  // real admin's reply-to, never SMBHL's defaults.
+  const cfg = await getLeagueSeasonConfig(env, leagueId);
+  const languageMode = leagueRow.language_mode || 'both';
+  const barColor = leagueFillColor(leagueRow.color || '#b3122e');
+  const bodyHtmlCore = `<div style="font-size:15px;color:#1e293b;line-height:1.6;margin-bottom:20px;white-space:pre-line;">${esc(message)}</div>`;
+  const frFooterText = `Envoyé par l'administration de ${leagueRow.name}`;
+  const enFooterText = `Sent by ${leagueRow.name} administration`;
+  const footerAssembled = assembleBilingualEmail(languageMode, {
+    fr: { subject, text: frFooterText, html: `<div style="border-top:1px solid #e3e3e0;padding-top:12px;margin-top:16px;font-size:12px;color:#55585f;">${esc(frFooterText)}</div>` },
+    en: { subject, text: enFooterText, html: `<div style="border-top:1px solid #e3e3e0;padding-top:12px;margin-top:16px;font-size:12px;color:#55585f;">${esc(enFooterText)}</div>` },
+    bothSubject: subject
+  });
+  const text = `${message}\n\n—\n${footerAssembled.text}`;
+  const html = nlEmailWrap({
+    brandName: leagueRow.name, barColor,
+    bodyHtml: bodyHtmlCore + footerAssembled.html,
+    footerHtml: 'Notre Ligue'
+  });
+
+  let sent = 0, failed = 0;
+  for (const r of recipients) {
+    try {
+      await sendMail(env, r.email, subject, text, html, null, cfg.league);
+      sent++;
+    } catch (e) {
+      failed++;
+    }
+  }
+
+  return Response.json({ ok: true, sent_count: sent, failed_count: failed, total: recipients.length });
 }
 
 // Cadence is deliberately READ-ONLY here -- editing already lives on
@@ -3000,7 +3147,16 @@ async function handleLeagueCommsPage(req, env, url) {
       statusSent: 'Envoyé', statusFailed: 'Échec', statusSkipped: 'Ignoré', statusPending: 'En attente',
       btnDrain: '⚡ Envoyer maintenant', drainConfirm: "Déclencher l'envoi immédiat des courriels en attente pour cette ligue ?",
       drainNonePending: 'Rien était en attente -- déjà à jour.',
-      drainSentSuffix: 'envoyé(s).', drainFailedSuffix: 'échec(s).'
+      drainSentSuffix: 'envoyé(s).', drainFailedSuffix: 'échec(s).',
+      broadcastTitle: 'Composer une diffusion', broadcastDesc: 'Envoyer un message ponctuel à un groupe de joueurs.',
+      lblBcTarget: 'Destinataires', lblBcEvent: 'Match', lblBcSubject: 'Sujet', lblBcMessage: 'Message',
+      bcTargetAll: '👥 Tout le monde (réguliers et substituts)', bcTargetRoster: '🏒 Joueurs réguliers seulement', bcTargetSubs: '🧤 Substituts actifs seulement',
+      bcTargetTeamGroup: 'Par équipe', bcTargetStatusGroup: 'Par statut de présence (ce match)',
+      bcTargetPending: '⏳ Sans réponse (pending)', bcTargetIn: '✅ Confirmés (in)',
+      bcSubjectPh: 'ex. Info importante pour les séries', bcMessagePh: 'Écris ton message ici...',
+      btnBroadcast: 'Envoyer la diffusion', broadcastConfirmPrefix: 'Envoyer ce message à', broadcastConfirmSuffix: 'destinataire(s) ?',
+      broadcastNoRecipients: 'Aucun destinataire ne correspond à cette cible.',
+      broadcastSentSuffix: 'envoyé(s).', broadcastFailedSuffix: 'échec(s).'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navComms: 'Comms', navSettings: 'Settings', logout: 'Log out',
@@ -3019,7 +3175,16 @@ async function handleLeagueCommsPage(req, env, url) {
       statusSent: 'Sent', statusFailed: 'Failed', statusSkipped: 'Skipped', statusPending: 'Pending',
       btnDrain: '⚡ Send now', drainConfirm: 'Trigger immediate delivery of pending emails for this league?',
       drainNonePending: 'Nothing was pending -- already up to date.',
-      drainSentSuffix: 'sent.', drainFailedSuffix: 'failed.'
+      drainSentSuffix: 'sent.', drainFailedSuffix: 'failed.',
+      broadcastTitle: 'Compose a broadcast', broadcastDesc: 'Send a one-off message to a group of players.',
+      lblBcTarget: 'Recipients', lblBcEvent: 'Game', lblBcSubject: 'Subject', lblBcMessage: 'Message',
+      bcTargetAll: '👥 Everyone (roster & subs)', bcTargetRoster: '🏒 Roster players only', bcTargetSubs: '🧤 Active subs only',
+      bcTargetTeamGroup: 'By team', bcTargetStatusGroup: 'By RSVP status (this game)',
+      bcTargetPending: '⏳ Undecided (pending)', bcTargetIn: '✅ Confirmed (in)',
+      bcSubjectPh: 'e.g. Important playoff info', bcMessagePh: 'Write your message here...',
+      btnBroadcast: 'Send broadcast', broadcastConfirmPrefix: 'Send this message to', broadcastConfirmSuffix: 'recipient(s)?',
+      broadcastNoRecipients: 'No recipients match this target.',
+      broadcastSentSuffix: 'sent.', broadcastFailedSuffix: 'failed.'
     }
   };
 
@@ -3045,12 +3210,43 @@ async function handleLeagueCommsPage(req, env, url) {
     <div id="comms-activity" style="margin-top:12px;overflow-x:auto"></div>
   </section>
 
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="broadcastTitle">Composer une diffusion</div>
+    <p class="nl-help" data-i18n="broadcastDesc">Envoyer un message ponctuel à un groupe de joueurs.</p>
+    <div id="bc-err" class="nl-error" style="display:none"></div>
+    <div id="bc-ok" class="nl-ok" style="display:none"></div>
+    <div class="nl-field">
+      <label class="nl-label" for="bc-target" data-i18n="lblBcTarget">Destinataires</label>
+      <select class="nl-select" id="bc-target"></select>
+    </div>
+    <div class="nl-field" id="bc-event-field" style="display:none">
+      <label class="nl-label" for="bc-event" data-i18n="lblBcEvent">Match</label>
+      <select class="nl-select" id="bc-event"></select>
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" for="bc-subject" data-i18n="lblBcSubject">Sujet</label>
+      <input class="nl-input" id="bc-subject" type="text" data-i18n-ph="bcSubjectPh" placeholder="ex. Info importante pour les séries">
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" for="bc-message" data-i18n="lblBcMessage">Message</label>
+      <textarea class="nl-input" id="bc-message" rows="6" data-i18n-ph="bcMessagePh" placeholder="Écris ton message ici..." style="resize:vertical"></textarea>
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="btn-broadcast" data-i18n="btnBroadcast" onclick="sendBroadcast()">Envoyer la diffusion</button></div>
+  </section>
+
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>
 ${tabbar}`;
 
   const script = `
 ${nlAuthScript(I18N_COMMS)}
+// Live-testing task (batch 4), Part 4: this was missing -- renderActivity
+// (batch 3, Part 2) already called esc(...) with no definition anywhere
+// in scope (nlAuthScript doesn't provide one), which would throw a
+// ReferenceError the moment any real activity row existed, breaking
+// the whole page render. Found and fixed while adding the broadcast
+// form's own escaping needs.
+const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function doLogout() {
   await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
   window.location.href = '/login';
@@ -3114,6 +3310,74 @@ function renderActivity(activity) {
     '<th style="padding:8px 10px;border-bottom:2px solid var(--line);">' + d.colReason + '</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
+function renderBroadcastOptions(opts) {
+  var d = window.__pageDict();
+  var sel = document.getElementById('bc-target');
+  var html = '<option value="all">' + d.bcTargetAll + '</option>' +
+    '<option value="roster">' + d.bcTargetRoster + '</option>' +
+    '<option value="subs">' + d.bcTargetSubs + '</option>';
+  if (opts.teamNames && opts.teamNames.length) {
+    html += '<optgroup label="' + d.bcTargetTeamGroup + '">' +
+      opts.teamNames.map(function(t) { return '<option value="' + esc(t) + '">' + esc(t) + '</option>'; }).join('') +
+      '</optgroup>';
+  }
+  html += '<optgroup label="' + d.bcTargetStatusGroup + '">' +
+    '<option value="pending">' + d.bcTargetPending + '</option>' +
+    '<option value="in">' + d.bcTargetIn + '</option>' +
+    '</optgroup>';
+  sel.innerHTML = html;
+
+  var eventSel = document.getElementById('bc-event');
+  eventSel.innerHTML = (opts.upcomingEvents || []).map(function(e) {
+    return '<option value="' + esc(e.id) + '">' + esc(e.date) + '</option>';
+  }).join('');
+
+  sel.onchange = function() {
+    var needsEvent = sel.value === 'pending' || sel.value === 'in';
+    document.getElementById('bc-event-field').style.display = needsEvent ? '' : 'none';
+  };
+  sel.onchange();
+}
+async function sendBroadcast() {
+  var d = window.__pageDict();
+  var err = document.getElementById('bc-err'); var ok = document.getElementById('bc-ok');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var target = document.getElementById('bc-target').value;
+  var eventId = document.getElementById('bc-event').value;
+  var subject = document.getElementById('bc-subject').value.trim();
+  var message = document.getElementById('bc-message').value.trim();
+  if (!subject || !message) {
+    err.textContent = window.__errorText('BROADCAST_FIELDS_REQUIRED');
+    err.style.display = 'block';
+    return;
+  }
+  var btn = document.getElementById('btn-broadcast');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/comms/broadcast', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ target: target, event_id: eventId, subject: subject, message: message })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    if (data.total === 0) {
+      ok.textContent = d.broadcastNoRecipients;
+    } else if (data.failed_count > 0) {
+      ok.textContent = data.sent_count + ' ' + d.broadcastSentSuffix + ' ' + data.failed_count + ' ' + d.broadcastFailedSuffix;
+    } else {
+      ok.textContent = data.sent_count + ' ' + d.broadcastSentSuffix;
+    }
+    ok.style.display = 'block';
+    document.getElementById('bc-subject').value = '';
+    document.getElementById('bc-message').value = '';
+    await loadComms();
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+  }
+}
 async function loadComms() {
   try {
     var res = await fetch('/league/comms/data', { credentials: 'same-origin' });
@@ -3122,6 +3386,7 @@ async function loadComms() {
     renderStats(data.stats);
     renderCadence(data.cadence);
     renderActivity(data.activity);
+    renderBroadcastOptions(data.broadcastOptions || { teamNames: [], upcomingEvents: [] });
   } catch (e) {}
 }
 loadComms();
@@ -21617,6 +21882,9 @@ async function handleFetch(req, env, ctx) {
       // Live-testing task (batch 4), Part 3: manual drain, shared.
       if (url.pathname === '/league/comms/drain' && req.method === 'POST')
         return await handleLeagueCommsDrain(req, env, url);
+      // Live-testing task (batch 4), Part 4: broadcast/compose, shared.
+      if (url.pathname === '/league/comms/broadcast' && req.method === 'POST')
+        return await handleLeagueCommsBroadcast(req, env, url);
 
       // Live-testing task (batch 2), Part 12: hard delete (privacy/Law
       // 25). Status is read-only (for the settings page's own gate UI --
