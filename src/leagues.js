@@ -1825,14 +1825,26 @@ export async function handleLeagueUpdateIdentity(req, env, url) {
     }
     updates.push('public_theme = ?'); params.push(themeVal);
   }
+  // Live-testing task (batch 2), Part 10: per-league public-page
+  // visibility (migrate-037.sql, DEFAULT 1 -- every existing league
+  // stays enabled unless its admin explicitly flips this).
+  if (typeof body.publicPageEnabled === 'boolean') {
+    updates.push('public_page_enabled = ?'); params.push(body.publicPageEnabled ? 1 : 0);
+  }
   if (!updates.length) {
     return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
   }
   params.push(leagueId);
   await env.DB.prepare(`UPDATE leagues SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
 
-  const row = await env.DB.prepare('SELECT name, color, tracks_stats, public_theme FROM leagues WHERE id = ?').bind(leagueId).first();
-  return Response.json({ ok: true, settings: { name: row.name, color: row.color, tracksStats: !!row.tracks_stats, publicTheme: row.public_theme } });
+  const row = await env.DB.prepare('SELECT name, color, tracks_stats, public_theme, public_page_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
+  return Response.json({
+    ok: true,
+    settings: {
+      name: row.name, color: row.color, tracksStats: !!row.tracks_stats, publicTheme: row.public_theme,
+      publicPageEnabled: !!row.public_page_enabled
+    }
+  });
 }
 
 // Team names and colours -- the missing post-signup editing surface

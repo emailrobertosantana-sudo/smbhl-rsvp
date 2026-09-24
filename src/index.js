@@ -1440,6 +1440,7 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       noSeason: 'Pas de saison active',
       teamsLabel: 'équipes', playersLabel: 'joueurs',
       publicPage: 'Page publique', copyLink: 'Copier', copied: 'Copié !',
+      publicPageDisabled: 'Désactivée -- personne ne peut voir cette page.',
       teams: 'Équipes', tracksStatsLabel: 'Statistiques suivies', yes: 'Oui', no: 'Non',
       // Live-testing task (batch 2), Part 5: "Équipes (par match)" read
       // as "how many teams show up in each match" rather than the
@@ -1459,6 +1460,7 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       noSeason: 'No active season',
       teamsLabel: 'teams', playersLabel: 'players',
       publicPage: 'Public page', copyLink: 'Copy', copied: 'Copied!',
+      publicPageDisabled: "Disabled -- no one can see this page.",
       teams: 'Teams', tracksStatsLabel: 'Tracks stats', yes: 'Yes', no: 'No',
       teamsPerGame: 'Teams shuffle', noFixedTeams: 'No fixed teams',
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
@@ -1776,7 +1778,9 @@ async function handleDashboardPage(req, env, url) {
     <section class="nl-card nl-card--pad-lg dash-tile"><div class="overline" data-i18n="navRoster">Joueurs</div><div class="stat tnum">${playerCount}</div><a href="/league/roster" data-i18n="navRoster">Joueurs</a></section>
     <section class="nl-card nl-card--pad-lg dash-tile">
       <div class="overline" data-i18n="publicPage">Page publique</div>
-      <div class="dash-share"><code id="publicUrlLink" data-href="${esc(publicUrl)}">${esc(publicUrl)}</code><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="copyPublicUrlBtn" data-i18n="copyLink" onclick="copyPublicUrl()">Copier</button></div>
+      ${leagueRow.public_page_enabled
+        ? `<div class="dash-share"><code id="publicUrlLink" data-href="${esc(publicUrl)}">${esc(publicUrl)}</code><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="copyPublicUrlBtn" data-i18n="copyLink" onclick="copyPublicUrl()">Copier</button></div>`
+        : `<p class="nl-help" style="margin-top:4px" data-i18n="publicPageDisabled">Désactivée -- personne ne peut voir cette page.</p>`}
     </section>
   </div>
   <section class="nl-card nl-card--pad-lg">
@@ -2382,12 +2386,39 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
   .nl-lang button { color: #666666; }
   .nl-lang button[aria-pressed="true"] { background: #1a1a1a; color: #ffffff; }`;
 
+// Live-testing task (batch 2), Part 10: shared response for BOTH "this
+// league id/slug doesn't exist at all" and "this league exists but its
+// admin turned off the public page" -- deliberately the SAME response
+// (same status, same body) for both cases, so a visitor genuinely
+// cannot tell which one they hit. Leaking "no such league" vs "real
+// league, hidden" would defeat half the point of a hide-the-page
+// setting (an admin hiding their page specifically because they don't
+// want its existence advertised). Upgraded from the old bare
+// `new Response('not found', {status:404})` text to a real styled
+// page -- "not a 404 that looks like a broken link" is explicitly part
+// of the requirement, and a plain-text response reads exactly like a
+// broken link. Status stays 404: from the requester's own point of
+// view there is, correctly, no page to find either way.
+function publicPageNotAvailableResponse() {
+  const bodyHtml = `<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">Cette page n'est pas publique</h1></div>`;
+  return new Response(nlDocument({ title: 'Page non publique', description: '', bodyHtml }), {
+    status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
 async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const leagueId = resolvedLeagueId || url.searchParams.get('league');
   if (!leagueId) return new Response('league is required', { status: 400 });
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
-  if (!leagueRow) return new Response('not found', { status: 404 });
+  if (!leagueRow) return publicPageNotAvailableResponse();
+  // Live-testing task (batch 2), Part 10: checked before deactivation
+  // deliberately -- a disabled public page reads identically to a
+  // nonexistent one (see publicPageNotAvailableResponse's own comment),
+  // while a DEACTIVATED league (below) is a genuinely different,
+  // already-distinguishable state (that response already names the
+  // league's own situation explicitly, unlike this one).
+  if (!leagueRow.public_page_enabled) return publicPageNotAvailableResponse();
   // Live-testing task, Part 2: only 'arene' and 'clean' actually render
   // (see PUBLIC_THEME_ARENE_CSS's own comment) -- anything else
   // (unset, a future 'classic'/'warm' not implemented yet, or bad data)
@@ -2720,6 +2751,8 @@ async function handleLeagueSettingsPage(req, env, url) {
       identityTitle: 'Identité de la ligue', lblLeagueName: 'Nom de la ligue',
       lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée -- ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
       lblColor: 'Couleur de la ligue', lblTracksStats: 'Suivre les statistiques', save: 'Enregistrer', saved: 'Enregistré !',
+      lblPublicPageEnabled: 'Page publique',
+      publicPageEnabledHelp: "Quand c'est désactivé, personne ne peut voir ta page publique -- même pas avec le lien direct.",
       lblPublicTheme: 'Thème de la page publique', themeArene: 'Arène (sombre, actuel)', themeClean: 'Épuré (blanc, minimal)',
       themeHelp: "Deux thèmes sont offerts pour l'instant; deux autres (Classique, Quartier) s'en viennent.",
       themePreview: 'Voir la page publique',
@@ -2756,6 +2789,8 @@ async function handleLeagueSettingsPage(req, env, url) {
       identityTitle: 'League identity', lblLeagueName: 'League name',
       lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed -- that guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
       lblColor: 'League colour', lblTracksStats: 'Track stats', save: 'Save', saved: 'Saved!',
+      lblPublicPageEnabled: 'Public page',
+      publicPageEnabledHelp: "When this is off, no one can see your public page -- not even with the direct link.",
       lblPublicTheme: 'Public page theme', themeArene: 'Arène (dark, current)', themeClean: 'Épuré (white, minimal)',
       themeHelp: 'Two themes are available for now; two more (Classique, Quartier) are coming.',
       themePreview: 'View the public page',
@@ -2836,6 +2871,10 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div class="nl-toggle">
       <div><div class="nl-label" data-i18n="lblTracksStats">Suivre les statistiques</div></div>
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_stats ? 'true' : 'false'}" id="se_stats_switch" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
+    </div>
+    <div class="nl-toggle">
+      <div><div class="nl-label" data-i18n="lblPublicPageEnabled">Page publique</div><div class="nl-help" data-i18n="publicPageEnabledHelp">Quand c'est désactivé, personne ne peut voir ta page publique -- même pas avec le lien direct.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.public_page_enabled ? 'true' : 'false'}" id="se_public_page_switch" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="identity_save" data-i18n="save" onclick="submitIdentity()">Enregistrer</button></div>
   </section>
@@ -2976,7 +3015,8 @@ async function submitIdentity() {
         name: document.getElementById('se_name').value.trim(),
         color: document.getElementById('se_color').value,
         tracksStats: document.getElementById('se_stats_switch').getAttribute('aria-checked') === 'true',
-        publicTheme: document.getElementById('se_theme').value
+        publicTheme: document.getElementById('se_theme').value,
+        publicPageEnabled: document.getElementById('se_public_page_switch').getAttribute('aria-checked') === 'true'
       })
     });
     var data = await res.json().catch(function() { return {}; });
