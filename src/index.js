@@ -3230,13 +3230,35 @@ function toggleBulkImport() {
 }
 var BULK_HEADER_WORDS = ['name', 'nom', 'full name', 'nom complet', 'email', 'e-mail', 'courriel', 'phone', 'téléphone', 'telephone', 'tel'];
 function parseBulkText(text) {
-  var lines = text.split(/\r\n|\r|\n/);
+  // Live-testing bug fix (Part 1, URGENT regression, root cause of the
+  // roster page's "Ajouter" button doing nothing). This whole function
+  // is written as literal text inside index.js's own outer server-side
+  // template literal (the big "const script = ..." string built by
+  // handleLeagueRosterPage), so every backslash escape below goes
+  // through TWO rounds of JS parsing: once when THIS FILE loads in the
+  // Workers runtime, once more when the resulting text is later parsed
+  // as real JS in the browser. A backslash written only once here only
+  // survives ONE of those rounds -- the outer (server-side) parse
+  // silently drops a lone backslash before any character that isn't a
+  // recognized string escape (a digit-class shorthand became a bare
+  // letter), and turns a lone carriage-return-then-newline escape pair
+  // into REAL raw control-character bytes. A raw newline character
+  // landing inside a slash-delimited regex literal is flat-out illegal
+  // JS syntax -- which silently killed this entire inline script block
+  // (a syntax error anywhere in a script tag prevents every function in
+  // it from being defined at all, including submitContact). Confirmed
+  // by reproducing the exact syntax error with new Function on the
+  // rendered output locally before writing this fix. Writing every
+  // backslash TWICE below is what makes a single backslash survive the
+  // first (server-side) round intact, arriving correctly in the browser
+  // for the second round where it needs to mean something to a regex.
+  var lines = text.split(/\\r\\n|\\r|\\n/);
   var rows = [];
   var headerChecked = false;
   for (var i = 0; i < lines.length; i++) {
     var raw = lines[i];
     if (!raw || !raw.trim()) continue;
-    var sep = raw.indexOf('\t') !== -1 ? '\t' : ',';
+    var sep = raw.indexOf('\\t') !== -1 ? '\\t' : ',';
     var fields = raw.split(sep).map(function(f) { return f.trim(); });
     while (fields.length && !fields[fields.length - 1]) fields.pop();
     if (!fields.length) continue;
@@ -3250,9 +3272,9 @@ function parseBulkText(text) {
     for (var j = 0; j < remaining.length; j++) { if (remaining[j].indexOf('@') !== -1) { emailIdx = j; break; } }
     var email = emailIdx !== -1 ? remaining.splice(emailIdx, 1)[0] : '';
     var phoneIdx = -1;
-    for (var k = 0; k < remaining.length; k++) { if (/^[\d+().\s-]{7,}$/.test(remaining[k])) { phoneIdx = k; break; } }
+    for (var k = 0; k < remaining.length; k++) { if (/^[\\d+().\\s-]{7,}$/.test(remaining[k])) { phoneIdx = k; break; } }
     var phone = phoneIdx !== -1 ? remaining.splice(phoneIdx, 1)[0] : '';
-    var name = remaining.join(' ').replace(/\s+/g, ' ').trim();
+    var name = remaining.join(' ').replace(/\\s+/g, ' ').trim();
     rows.push({ name: name, email: email, phone: phone });
   }
   return rows;
