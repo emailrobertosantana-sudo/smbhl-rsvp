@@ -279,7 +279,13 @@ export async function verifyEmailToken(env, token) {
   const [userId, expStr, sig] = parts;
   const exp = Number(expStr);
   if (!userId || !Number.isFinite(exp)) return { ok: false, error: 'malformed' };
-  if (Date.now() > exp) return { ok: false, error: 'expired' };
+  // Live-testing task, Part 7: userId is included on every failure path
+  // below too (not just success) -- it's already parsed out of the
+  // token regardless of whether the token is still valid, and
+  // handleVerifyEmail's own error page needs it to look up which
+  // language to render in (the account's stored signup_lang), same as
+  // the success path already can.
+  if (Date.now() > exp) return { ok: false, error: 'expired', userId };
 
   let want;
   try {
@@ -287,7 +293,7 @@ export async function verifyEmailToken(env, token) {
   } catch (_) {
     return { ok: false, error: 'malformed' };
   }
-  if (!same(want, sig)) return { ok: false, error: 'invalid' };
+  if (!same(want, sig)) return { ok: false, error: 'invalid', userId };
 
   await env.DB.prepare('UPDATE users SET email_verified_at = ? WHERE id = ?').bind(new Date().toISOString(), userId).run();
   return { ok: true, userId };
@@ -782,44 +788,109 @@ export async function handleVerifyEmail(req, env, url) {
   const wantsHtml = (req.headers.get('accept') || '').includes('text/html');
   const token = url.searchParams.get('token');
   if (!token) {
-    if (wantsHtml) return renderVerifyEmailPage({ ok: false, errorKey: 'MISSING_TOKEN' }, 400);
+    if (wantsHtml) return renderVerifyEmailPage({ ok: false, errorKey: 'MISSING_TOKEN' }, 400, 'fr');
     return Response.json({ ok: false, error: 'Missing token', errorKey: 'MISSING_TOKEN' }, { status: 400 });
   }
 
   const result = await verifyEmailToken(env, token);
+  // Live-testing task, Part 7: render in the account's OWN stored
+  // signup language (users.signup_lang, from the prior task's signup
+  // work) instead of always stacking both -- matches every other page's
+  // convention of picking one starting language. result.userId is
+  // available on every path now except a genuinely malformed token
+  // (verifyEmailToken's own fix, above), so this works for the error
+  // page too, not just the success page. Falls back to 'fr' (this
+  // app's universal default) when the userId can't be resolved to a
+  // real account, or the account predates signup_lang being tracked.
+  let initialLang = 'fr';
+  if (result.userId) {
+    const user = await env.DB.prepare('SELECT signup_lang FROM users WHERE id = ?').bind(result.userId).first();
+    if (user && (user.signup_lang === 'fr' || user.signup_lang === 'en')) initialLang = user.signup_lang;
+  }
+
   if (!result.ok) {
     const status = result.error === 'expired' ? 410 : 400;
     const errorKey = result.error === 'expired' ? 'LINK_EXPIRED' : result.error === 'malformed' ? 'LINK_MALFORMED' : 'LINK_INVALID';
-    if (wantsHtml) return renderVerifyEmailPage({ ok: false, errorKey }, status);
+    if (wantsHtml) return renderVerifyEmailPage({ ok: false, errorKey }, status, initialLang);
     return Response.json({ ok: false, error: result.error, errorKey }, { status });
   }
-  if (wantsHtml) return renderVerifyEmailPage({ ok: true }, 200);
+  if (wantsHtml) return renderVerifyEmailPage({ ok: true }, 200, initialLang);
   return Response.json({ ok: true, userId: result.userId });
 }
 
-// Bilingual single render (FR then EN together), same convention as
-// every other standalone confirmation/error page this app builds on
-// nlDocument (e.g. leagueRsvpNotice, src/index.js) -- no FR/EN toggle
-// script needed for a one-shot confirmation the visitor reads once.
-function renderVerifyEmailPage({ ok, errorKey }, status) {
-  const fr = ok
-    ? { title: 'Courriel confirmé', body: 'Ton compte est activé.', cta: 'Aller à mon tableau de bord', href: '/dashboard' }
-    : { title: (ERROR_I18N[errorKey] && ERROR_I18N[errorKey].fr) || 'Ce lien est invalide.', body: 'Connecte-toi, puis renvoie un courriel de confirmation depuis ton tableau de bord.', cta: 'Se connecter', href: '/login' };
-  const en = ok
-    ? { title: 'Email confirmed', body: 'Your account is active.', cta: 'Go to my dashboard', href: '/dashboard' }
-    : { title: (ERROR_I18N[errorKey] && ERROR_I18N[errorKey].en) || 'This link is invalid.', body: 'Log in, then resend a confirmation email from your dashboard.', cta: 'Log in', href: '/login' };
+// Live-testing task, Part 7 (bug fix): this used to always stack BOTH
+// languages, each with its own button, and had no FR/EN toggle at all
+// -- unlike every other page in this app. Now renders ONE language
+// (the account's own signup_lang, resolved by the caller above) with a
+// real, working toggle -- same localStorage key (smbhl_admin_lang) and
+// data-i18n/applyLanguage technique every other standalone page
+// (leagueRsvpNotice, this file's own auth pages via nlAuthScript) uses,
+// so a choice made here is remembered consistently with the rest of
+// the app. No URL ?lang= param support here (unlike the signup wizard)
+// -- this page is reached from an email link the user doesn't control,
+// so the account's own stored preference is the right authoritative
+// starting point, not a query string.
+function renderVerifyEmailPage({ ok, errorKey }, status, initialLang = 'fr') {
+  const I18N = {
+    fr: ok
+      ? { title: 'Courriel confirmé', body: 'Ton compte est activé.', cta: 'Aller à mon tableau de bord', href: '/dashboard' }
+      : { title: (ERROR_I18N[errorKey] && ERROR_I18N[errorKey].fr) || 'Ce lien est invalide.', body: 'Connecte-toi, puis renvoie un courriel de confirmation depuis ton tableau de bord.', cta: 'Se connecter', href: '/login' },
+    en: ok
+      ? { title: 'Email confirmed', body: 'Your account is active.', cta: 'Go to my dashboard', href: '/dashboard' }
+      : { title: (ERROR_I18N[errorKey] && ERROR_I18N[errorKey].en) || 'This link is invalid.', body: 'Log in, then resend a confirmation email from your dashboard.', cta: 'Log in', href: '/login' }
+  };
+  const t = I18N[initialLang] || I18N.fr;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const bodyHtml = `<style>.nl{display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:var(--space-5)}</style>
-<div style="max-width:420px">
-  <h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;margin:0 0 8px;">${esc(fr.title)}</h1>
-  <p class="nl-help" style="margin:0 0 24px;">${esc(fr.body)}</p>
-  <a href="${esc(fr.href)}" class="nl-btn nl-btn--primary">${esc(fr.cta)}</a>
-  <hr style="border:none;border-top:1px solid var(--line);margin:28px 0;">
-  <h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;margin:0 0 8px;">${esc(en.title)}</h1>
-  <p class="nl-help" style="margin:0 0 24px;">${esc(en.body)}</p>
-  <a href="${esc(en.href)}" class="nl-btn nl-btn--secondary">${esc(en.cta)}</a>
-</div>`;
-  return new Response(nlDocument({ title: fr.title, description: '', bodyHtml }), {
+  const bodyHtml = `<style>
+  .nl { display: flex; flex-direction: column; min-height: 100vh; }
+  .ve-body { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; padding: var(--space-5); }
+</style>
+<header class="nl-header">
+  <span class="nl-brand nl-brand--product"><i></i>Notre Ligue</span>
+  <div class="spacer"></div>
+  <div class="nl-lang" role="group" aria-label="Langue / Language">
+    <button type="button" id="btn-lang-fr" aria-pressed="${String(initialLang === 'fr')}" onclick="window.__setLang('fr')">FR</button>
+    <button type="button" id="btn-lang-en" aria-pressed="${String(initialLang === 'en')}" onclick="window.__setLang('en')">EN</button>
+  </div>
+</header>
+<main class="ve-body">
+  <div style="max-width:420px">
+    <h1 data-i18n="title" style="font:700 26px/32px var(--font-display);font-stretch:118%;margin:0 0 8px;">${esc(t.title)}</h1>
+    <p data-i18n="body" class="nl-help" style="margin:0 0 24px;">${esc(t.body)}</p>
+    <a id="ve_cta" href="${esc(t.href)}" data-i18n="cta" class="nl-btn nl-btn--primary">${esc(t.cta)}</a>
+  </div>
+</main>
+<script>
+var VE_I18N = ${JSON.stringify(I18N)};
+(function() {
+  function applyLanguage(l) {
+    var dict = VE_I18N[l] || VE_I18N.fr;
+    document.querySelectorAll('[data-i18n]').forEach(function(el) {
+      var k = el.getAttribute('data-i18n');
+      if (dict[k] != null) el.textContent = dict[k];
+    });
+    var cta = document.getElementById('ve_cta');
+    if (cta) cta.setAttribute('href', dict.href);
+    var frBtn = document.getElementById('btn-lang-fr'), enBtn = document.getElementById('btn-lang-en');
+    if (frBtn) frBtn.setAttribute('aria-pressed', String(l === 'fr'));
+    if (enBtn) enBtn.setAttribute('aria-pressed', String(l === 'en'));
+  }
+  var lang = ${JSON.stringify(initialLang)};
+  try {
+    var saved = localStorage.getItem('smbhl_admin_lang');
+    if (saved === 'fr' || saved === 'en') lang = saved;
+  } catch (e) {}
+  window.__currentLang = lang;
+  window.__setLang = function(l) {
+    if (l !== 'fr' && l !== 'en') return;
+    window.__currentLang = l;
+    try { localStorage.setItem('smbhl_admin_lang', l); } catch (e) {}
+    applyLanguage(l);
+  };
+  applyLanguage(lang);
+})();
+</script>`;
+  return new Response(nlDocument({ title: t.title, description: '', bodyHtml }), {
     status,
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
