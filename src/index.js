@@ -604,6 +604,11 @@ const I18N_SIGNUP = {
     doneBadge: 'Ligue créée', doneTitle: 'Ta ligue est prête.',
     doneBody: 'Ta page publique est déjà en ligne. Partage-la dans le groupe de la ligue.',
     copyLink: 'Copier le lien', copied: 'Copié !', addPlayers: 'Ajouter mes joueurs',
+    // Live-testing task, Part 6: a season has to exist before matches
+    // (and therefore real roster use) mean anything -- see the
+    // dashboard's own checklist, which already orders "Créer la saison"
+    // before "Ajouter les joueurs" for exactly this reason.
+    startMySeason: 'Lancer ma saison',
     already: 'Déjà inscrit?'
   },
   en: {
@@ -629,6 +634,7 @@ const I18N_SIGNUP = {
     doneBadge: 'League created', doneTitle: 'Your league is ready.',
     doneBody: 'Your public page is already live. Share it in the league group chat.',
     copyLink: 'Copy link', copied: 'Copied!', addPlayers: 'Add my players',
+    startMySeason: 'Start my season',
     already: 'Already signed up?'
   }
 };
@@ -1121,7 +1127,13 @@ function renderSignupDone(league) {
   </div>
 </main>
 <div class="su-bottom">
-  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="addPlayers" onclick="location.href='/league/roster'">Ajouter mes joueurs</button>
+  <!-- Live-testing task, Part 6: the corrected dependency order (the
+       dashboard's own checklist, which this button now leads to) is
+       league -> season -> events/roster use -- a season has to exist
+       before adding players means anything real. "Ajouter mes joueurs"
+       is still one tap away, just no longer the headline action. -->
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="startMySeason" onclick="location.href='/dashboard'">Lancer ma saison</button>
+  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="addPlayers" onclick="location.href='/league/roster'">Ajouter mes joueurs</button>
 </div>
 <script>
 ${signupLangScript()}
