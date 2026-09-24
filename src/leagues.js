@@ -1598,6 +1598,25 @@ export async function handleLeagueUpdateReminderSettings(req, env, url) {
   ]) {
     if (typeof body[bodyKey] === 'boolean') { updates.push(`${col} = ?`); params.push(body[bodyKey] ? 1 : 0); }
   }
+  // Live-testing task, Part 9: same PATCH-style optional pair for the
+  // scheduled auto-draw toggle (migrate-031.sql) -- off by default,
+  // only meaningful for a weekly_draw league (silently inert
+  // otherwise, same posture as reminder_12h_enabled being harmless on
+  // a league that never publishes a start_time). Hours-before is
+  // clamped to 1-72 -- the cron's own scan window (runLeagueReminders)
+  // never looks further than 72h out, so a larger value would silently
+  // never fire rather than erroring, which is worse than just clamping
+  // it to the window that actually gets scanned.
+  if (typeof body.autoDrawEnabled === 'boolean') {
+    updates.push('auto_draw_enabled = ?'); params.push(body.autoDrawEnabled ? 1 : 0);
+  }
+  if (body.autoDrawHoursBefore !== undefined && body.autoDrawHoursBefore !== null && String(body.autoDrawHoursBefore).trim() !== '') {
+    const hours = Number(body.autoDrawHoursBefore);
+    if (!Number.isFinite(hours) || hours < 1) {
+      return Response.json({ ok: false, error: 'Auto-draw hours-before must be at least 1.', errorKey: 'AUTO_DRAW_HOURS_INVALID' }, { status: 400 });
+    }
+    updates.push('auto_draw_hours_before = ?'); params.push(Math.min(Math.floor(hours), 72));
+  }
   if (!updates.length) {
     return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
   }
@@ -1605,14 +1624,16 @@ export async function handleLeagueUpdateReminderSettings(req, env, url) {
   await env.DB.prepare(`UPDATE leagues SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
 
   const row = await env.DB.prepare(
-    'SELECT reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?'
+    'SELECT reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, auto_draw_enabled, auto_draw_hours_before FROM leagues WHERE id = ?'
   ).bind(leagueId).first();
   return Response.json({
     ok: true,
     settings: {
       reminder72h: !!row.reminder_72h_enabled,
       reminder24h: !!row.reminder_24h_enabled,
-      reminder12h: !!row.reminder_12h_enabled
+      reminder12h: !!row.reminder_12h_enabled,
+      autoDrawEnabled: !!row.auto_draw_enabled,
+      autoDrawHoursBefore: row.auto_draw_hours_before
     }
   });
 }

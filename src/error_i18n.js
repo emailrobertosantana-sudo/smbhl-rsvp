@@ -116,6 +116,7 @@ export const ERROR_I18N = {
   SLUG_RESERVED: { fr: 'Cette adresse est réservée. Choisis-en une autre.', en: 'This URL is reserved. Please choose another one.' },
   INVALID_LANGUAGE_MODE: { fr: "La langue doit être 'les deux', 'français' ou 'anglais'.", en: "Language must be 'both', 'fr', or 'en'." },
   NO_SETTINGS_PROVIDED: { fr: 'Aucun réglage fourni.', en: 'No settings provided.' },
+  AUTO_DRAW_HOURS_INVALID: { fr: 'Le nombre d\'heures avant le match doit être au moins 1.', en: 'Auto-draw hours-before must be at least 1.' },
   NO_UPCOMING_EVENT: { fr: 'Aucun prochain match trouvé.', en: 'No upcoming event found.' },
 
   // Client-side-only validation keys (no server round trip needed for

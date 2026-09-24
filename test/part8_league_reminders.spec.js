@@ -120,14 +120,23 @@ describe('Part 2: per-league automated reminders', () => {
       body: JSON.stringify({ reminder72h: false })
     });
     const json1 = await res1.json();
-    expect(json1.settings).toEqual({ reminder72h: false, reminder24h: true, reminder12h: true });
+    // Part 9 (live-testing task) added autoDrawEnabled/autoDrawHoursBefore
+    // to this same settings object -- asserting the 3 original reminder
+    // keys individually rather than the object's exact shape, so this
+    // test doesn't need updating again for the next independent setting
+    // added to this route.
+    expect(json1.settings.reminder72h).toBe(false);
+    expect(json1.settings.reminder24h).toBe(true);
+    expect(json1.settings.reminder12h).toBe(true);
 
     const res2 = await SELF.fetch('http://example.com/league/reminders/settings', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ reminder24h: false, reminder12h: false })
     });
     const json2 = await res2.json();
-    expect(json2.settings).toEqual({ reminder72h: false, reminder24h: false, reminder12h: false });
+    expect(json2.settings.reminder72h).toBe(false);
+    expect(json2.settings.reminder24h).toBe(false);
+    expect(json2.settings.reminder12h).toBe(false);
 
     const row = await env.DB.prepare('SELECT reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
     expect(row.reminder_72h_enabled).toBe(0);

@@ -1396,6 +1396,11 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder24Desc: 'Même chose, plus proche du match.',
       reminder12Label: 'Détails 12 h avant (joueurs confirmés)', reminder12Desc: 'Heure, lieu, et un lien pour se désister si besoin.',
       remindersSaved: 'Enregistré !',
+      autoDrawTitle: 'Tirage automatique des équipes',
+      autoDrawDesc: "Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.",
+      autoDrawEnableLabel: 'Activer le tirage automatique',
+      autoDrawEnableDesc: 'Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.',
+      autoDrawHoursLabel: 'Heures avant le match',
       deactivateLeague: 'Désactiver la ligue',
       deactivateDesc: "Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.",
       deactivateConfirmLabel: 'Tape le nom de ta ligue pour confirmer',
@@ -1419,6 +1424,11 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       reminder24Label: '24h reminder (no reply yet)', reminder24Desc: 'Same thing, closer to the game.',
       reminder12Label: '12h game details (confirmed players)', reminder12Desc: 'Time, venue, and a link to drop out if needed.',
       remindersSaved: 'Saved!',
+      autoDrawTitle: 'Automatic team draw',
+      autoDrawDesc: 'Automatically forms teams a set number of hours before each game -- off by default, like every other automation.',
+      autoDrawEnableLabel: 'Enable automatic draw',
+      autoDrawEnableDesc: 'The manual "Draw teams" button always stays available regardless.',
+      autoDrawHoursLabel: 'Hours before the game',
       deactivateLeague: 'Deactivate league',
       deactivateDesc: 'This deactivates your league. Your data is kept, but management access is blocked.',
       deactivateConfirmLabel: "Type your league's name to confirm",
@@ -1794,6 +1804,22 @@ async function handleDashboardPage(req, env, url) {
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="reminder_12h_switch" onclick="toggleReminderSwitch(this,'reminder12h')"></button>
     </div>
   </section>
+  ${leagueRow.team_structure === 'weekly_draw' ? `
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" data-i18n="autoDrawTitle">Tirage automatique des équipes</div>
+    <p class="nl-help" data-i18n="autoDrawDesc">Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.</p>
+    <div id="autoDrawErr" class="nl-error" style="display:none"></div>
+    <div id="autoDrawOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-toggle" style="margin-top:8px">
+      <div><div class="nl-label" data-i18n="autoDrawEnableLabel">Activer le tirage automatique</div><div class="nl-help" data-i18n="autoDrawEnableDesc">Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.auto_draw_enabled ? 'true' : 'false'}" id="auto_draw_switch" onclick="toggleReminderSwitch(this,'autoDrawEnabled')"></button>
+    </div>
+    <div class="nl-field" style="margin-top:8px;max-width:220px;">
+      <label class="nl-label" for="auto_draw_hours" data-i18n="autoDrawHoursLabel">Heures avant le match</label>
+      <input class="nl-input" id="auto_draw_hours" type="number" min="1" max="72" value="${esc(String(leagueRow.auto_draw_hours_before || 24))}">
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="auto_draw_hours_save" data-i18n="save" onclick="submitAutoDrawHours()">Enregistrer</button></div>
+  </section>` : ''}
   <section class="nl-card nl-card--pad-lg">
     <div class="h3" data-i18n="coAdmins">Co-administrateurs</div>
     <div class="nl-list" style="margin:12px 0">
@@ -2015,6 +2041,28 @@ async function toggleReminderSwitch(btn, bodyKey) {
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     btn.setAttribute('aria-checked', String(next));
+    ok.textContent = window.__pageDict().remindersSaved;
+    ok.style.display = 'block';
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block';
+  }
+  btn.disabled = false;
+}
+async function submitAutoDrawHours() {
+  var err = document.getElementById('autoDrawErr');
+  var ok = document.getElementById('autoDrawOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var hours = document.getElementById('auto_draw_hours').value;
+  var btn = document.getElementById('auto_draw_hours_save');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/reminders/settings', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ autoDrawHoursBefore: Number(hours) })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     ok.textContent = window.__pageDict().remindersSaved;
     ok.style.display = 'block';
   } catch (e) {
@@ -11208,6 +11256,32 @@ async function runLeagueReminders(env) {
       const results = await sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil);
       const total = results.reminder_72h + results.reminder_24h + results.logistics_12h;
       if (total > 0) log.push(`${leagueRow.id}:${ev.id} 72h=${results.reminder_72h} 24h=${results.reminder_24h} logistics=${results.logistics_12h}`);
+
+      // Live-testing task, Part 9: scheduled auto-draw, extending this
+      // SAME cron rather than building a second trigger -- per the
+      // standing principle (do not touch SMBHL's own cron, do not build
+      // a second parallel scheduler when one already exists for this
+      // exact "N hours before an event" purpose). Off by default
+      // (auto_draw_enabled); only meaningful for weekly_draw. Runs the
+      // EXACT same draw randomAssignEventTeams uses for the admin's own
+      // manual button -- never a second copy of the shuffle logic.
+      // league_auto_draw_log is the same self-healing idempotency
+      // pattern as league_reminder_log: a missed tick still draws late
+      // on the next one instead of skipping forever, and a re-run never
+      // re-shuffles an event already drawn once.
+      if (leagueRow.auto_draw_enabled && cfg.teamStructure === 'weekly_draw' && hoursUntil <= leagueRow.auto_draw_hours_before) {
+        const alreadyDrawn = await env.DB.prepare('SELECT 1 FROM league_auto_draw_log WHERE event_id = ?').bind(ev.id).first();
+        if (!alreadyDrawn) {
+          const drawResult = await randomAssignEventTeams(env, leagueRow.id, ev.id, cfg);
+          if (drawResult.ok) {
+            await env.DB.prepare(
+              `INSERT INTO league_auto_draw_log (event_id, league_id, drawn_at, assigned_count) VALUES (?, ?, ?, ?)
+               ON CONFLICT(event_id) DO NOTHING`
+            ).bind(ev.id, leagueRow.id, new Date().toISOString(), drawResult.assigned).run();
+            log.push(`${leagueRow.id}:${ev.id} auto-draw assigned=${drawResult.assigned}`);
+          }
+        }
+      }
     }
   }
   return log;
@@ -11347,6 +11421,42 @@ function shuffleInPlace(arr) {
   return arr;
 }
 
+// Live-testing task, Part 9: the actual draw logic used to live inline
+// in handleLeagueRandomAssignEventTeams -- pulled out here (same shape
+// as Part 6/7's createLeagueContactRow/createLeagueEventRow) so the
+// new scheduled auto-draw (runLeagueReminders' own cron, below) can
+// run the EXACT same shuffle-and-assign logic as the admin's manual
+// "draw teams" button, never a second copy. Returns a plain result
+// object, not an HTTP Response.
+async function randomAssignEventTeams(env, leagueId, eventId, cfg) {
+  if ((cfg.teamStructure || 'fixed') !== 'weekly_draw') {
+    return { ok: false, error: 'This league does not assign teams per event.', errorKey: 'NOT_WEEKLY_DRAW' };
+  }
+  const teamNames = getTeamNames(cfg);
+  if (teamNames.length < 1) {
+    return { ok: false, error: 'This league has no team names on file yet.', errorKey: 'NO_TEAM_NAMES' };
+  }
+
+  const unassigned = (await env.DB.prepare(
+    `SELECT c.player_id, c.is_goalie FROM contacts c
+       JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+      WHERE c.league_id = ? AND r.status = 'in' AND r.team IS NULL`
+  ).bind(eventId, leagueId).all()).results || [];
+
+  const goalies = shuffleInPlace(unassigned.filter(p => p.is_goalie === 1));
+  const skaters = shuffleInPlace(unassigned.filter(p => p.is_goalie !== 1));
+  const assignments = [
+    ...goalies.map((p, i) => ({ playerId: p.player_id, team: teamNames[i % teamNames.length] })),
+    ...skaters.map((p, i) => ({ playerId: p.player_id, team: teamNames[i % teamNames.length] }))
+  ];
+
+  for (const a of assignments) {
+    await env.DB.prepare('UPDATE rsvp SET team = ? WHERE event_id = ? AND player_id = ?').bind(a.team, eventId, a.playerId).run();
+  }
+
+  return { ok: true, assigned: assignments.length };
+}
+
 async function handleLeagueRandomAssignEventTeams(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
@@ -11369,32 +11479,11 @@ async function handleLeagueRandomAssignEventTeams(req, env, url) {
 
   // Same season-aware structure check as the manual assign-team route.
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
-  if ((cfg.teamStructure || 'fixed') !== 'weekly_draw') {
-    return Response.json({ ok: false, error: 'This league does not assign teams per event.', errorKey: 'NOT_WEEKLY_DRAW' }, { status: 400 });
+  const result = await randomAssignEventTeams(env, leagueId, eventId, cfg);
+  if (!result.ok) {
+    return Response.json(result, { status: 400 });
   }
-  const teamNames = getTeamNames(cfg);
-  if (teamNames.length < 1) {
-    return Response.json({ ok: false, error: 'This league has no team names on file yet.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
-  }
-
-  const unassigned = (await env.DB.prepare(
-    `SELECT c.player_id, c.is_goalie FROM contacts c
-       JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-      WHERE c.league_id = ? AND r.status = 'in' AND r.team IS NULL`
-  ).bind(eventId, leagueId).all()).results || [];
-
-  const goalies = shuffleInPlace(unassigned.filter(p => p.is_goalie === 1));
-  const skaters = shuffleInPlace(unassigned.filter(p => p.is_goalie !== 1));
-  const assignments = [
-    ...goalies.map((p, i) => ({ playerId: p.player_id, team: teamNames[i % teamNames.length] })),
-    ...skaters.map((p, i) => ({ playerId: p.player_id, team: teamNames[i % teamNames.length] }))
-  ];
-
-  for (const a of assignments) {
-    await env.DB.prepare('UPDATE rsvp SET team = ? WHERE event_id = ? AND player_id = ?').bind(a.team, eventId, a.playerId).run();
-  }
-
-  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, assigned: assignments.length });
+  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, assigned: result.assigned });
 }
 
 // Design system Part 4: player RSVP page, matching
