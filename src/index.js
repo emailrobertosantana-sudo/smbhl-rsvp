@@ -1464,7 +1464,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsPerGame: 'Équipes qui changent', noFixedTeams: 'Aucune équipe fixe',
       noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.",
       weeklyDrawTeamsDesc: 'Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.',
-      coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteBtn: 'Inviter',
+      coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteEmailPh: 'courriel@exemple.com', inviteBtn: 'Inviter',
       deactivateLeague: 'Désactiver la ligue',
       deactivateDesc: "Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.",
       deactivateConfirmLabel: 'Tape le nom de ta ligue pour confirmer',
@@ -1487,7 +1487,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsPerGame: 'Teams shuffle', noFixedTeams: 'No fixed teams',
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
-      coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteBtn: 'Invite',
+      coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteEmailPh: 'email@example.com', inviteBtn: 'Invite',
       deactivateLeague: 'Deactivate league',
       deactivateDesc: 'This deactivates your league. Your data is kept, but management access is blocked.',
       deactivateConfirmLabel: "Type your league's name to confirm",
@@ -1505,14 +1505,14 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       Object.assign(fr, {
         nextStep: 'Prochaine étape', startSeason: 'Lance ta première saison',
         startSeasonDesc: 'Choisis un nom pour ta saison. Tu pourras créer des matchs ensuite.',
-        seasonNameLabel: 'Nom de la saison', seasonStartBtn: 'Créer la saison',
+        seasonNameLabel: 'Nom de la saison', seasonNamePh: 'Ex. Saison Hiver 2026', seasonStartBtn: 'Créer la saison',
         checklistTitle: 'Pour bien partir',
         ckLeague: 'Créer la ligue', ckTeams: 'Nommer les équipes', ckPlayerCount: 'Choisir le nombre de joueurs', ckPlayers: 'Ajouter les joueurs', ckSeason: 'Créer la saison'
       });
       Object.assign(en, {
         nextStep: 'Next step', startSeason: 'Start your first season',
         startSeasonDesc: 'Choose a name for your season. You can create events after.',
-        seasonNameLabel: 'Season name', seasonStartBtn: 'Create the season',
+        seasonNameLabel: 'Season name', seasonNamePh: 'E.g. Winter Season 2026', seasonStartBtn: 'Create the season',
         checklistTitle: 'Getting started',
         ckLeague: 'Create the league', ckTeams: 'Name the teams', ckPlayerCount: 'Choose your player count', ckPlayers: 'Add players', ckSeason: 'Create a season'
       });
@@ -1532,6 +1532,13 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // overwrite behavior), a different name creates a new one.
       Object.assign(fr, {
         seasonsTitle: 'Saisons', seasonsDesc: "Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.",
+        // Live-testing task (batch 5), Part 3: this label used
+        // data-i18n="seasonNameLabel" but this state's own dict never
+        // defined that key (only the needsSeason branch did) -- on a
+        // league that already has a season, switching to English never
+        // translated this label at all. Same for the placeholder, which
+        // (like the needsSeason one above) had no i18n wiring whatsoever.
+        seasonNameLabel: 'Nom de la saison', seasonNamePh: 'Ex. Saison Hiver 2026',
         seasonMgmtNameHelp: 'Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.',
         seasonStructureHelp: "Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.",
         seasonSaveBtn: 'Enregistrer la saison',
@@ -1548,6 +1555,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       });
       Object.assign(en, {
         seasonsTitle: 'Seasons', seasonsDesc: 'Create an additional season, or republish the current one to edit it. Each season can have its own team structure.',
+        seasonNameLabel: 'Season name', seasonNamePh: 'E.g. Winter Season 2026',
         seasonMgmtNameHelp: "A new name creates a new season. The current season's own name edits it.",
         seasonStructureHelp: "By default, a new season uses your league's usual structure. Change it here just for this season.",
         seasonSaveBtn: 'Save season',
@@ -1777,7 +1785,7 @@ async function handleDashboardPage(req, env, url) {
         <div id="seasonErr" class="nl-error" style="display:none"></div>
         <div class="nl-field" style="max-width:360px">
           <label class="nl-label" for="season_name" data-i18n="seasonNameLabel">Nom de la saison</label>
-          <input class="nl-input" id="season_name" type="text" placeholder="Ex. Saison Hiver 2026">
+          <input class="nl-input" id="season_name" type="text" data-i18n-ph="seasonNamePh" placeholder="Ex. Saison Hiver 2026">
         </div>
         <div class="acts"><button type="button" class="nl-btn nl-btn--primary" id="season_submit" data-i18n="seasonStartBtn" onclick="submitSeason()">Créer la saison</button></div>
       </section>
@@ -1866,7 +1874,7 @@ async function handleDashboardPage(req, env, url) {
     <div id="seasonMgmtOk" class="nl-ok" style="display:none"></div>
     <div class="nl-field" style="max-width:360px">
       <label class="nl-label" for="season_mgmt_name" data-i18n="seasonNameLabel">Nom de la saison</label>
-      <input class="nl-input" id="season_mgmt_name" type="text" placeholder="Ex. Saison Hiver 2026">
+      <input class="nl-input" id="season_mgmt_name" type="text" data-i18n-ph="seasonNamePh" placeholder="Ex. Saison Hiver 2026">
       <p class="nl-help" data-i18n="seasonMgmtNameHelp">Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.</p>
     </div>
     <div class="nl-field">
@@ -1930,7 +1938,7 @@ async function handleDashboardPage(req, env, url) {
     <div id="inviteOk" class="nl-ok" style="display:none"></div>
     <div class="nl-field">
       <label class="nl-label" for="invite_email" data-i18n="inviteLabel">Inviter un(e) co-administrateur(-trice)</label>
-      <input class="nl-input" id="invite_email" type="email" placeholder="courriel@exemple.com">
+      <input class="nl-input" id="invite_email" type="email" data-i18n-ph="inviteEmailPh" placeholder="courriel@exemple.com">
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="invite_submit" data-i18n="inviteBtn" onclick="submitInvite()">Inviter</button></div>
   </section>
@@ -4055,7 +4063,8 @@ async function handleLeagueRosterPage(req, env, url) {
       bulkSummary: '{ok} sur {total} seront importés.',
       bulkResultSummary: '{created} ajouté(s), {skipped} ignoré(s).',
       bulkResultCreated: 'Ajouté', bulkResultSkippedDupeExisting: 'Ignoré — existe déjà dans ta ligue',
-      bulkResultSkippedInvalid: 'Ignoré — invalide', bulkResultSkippedDupeBatch: 'Ignoré — doublon dans la liste'
+      bulkResultSkippedInvalid: 'Ignoré — invalide', bulkResultSkippedDupeBatch: 'Ignoré — doublon dans la liste',
+      bulkTextPh: 'Marie Tremblay, marie@example.com, 514-555-0100\nJean Bouchard, jean@example.com'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
@@ -4079,7 +4088,8 @@ async function handleLeagueRosterPage(req, env, url) {
       bulkSummary: '{ok} of {total} will be imported.',
       bulkResultSummary: '{created} added, {skipped} skipped.',
       bulkResultCreated: 'Added', bulkResultSkippedDupeExisting: 'Skipped — already in your league',
-      bulkResultSkippedInvalid: 'Skipped — invalid', bulkResultSkippedDupeBatch: 'Skipped — duplicate in list'
+      bulkResultSkippedInvalid: 'Skipped — invalid', bulkResultSkippedDupeBatch: 'Skipped — duplicate in list',
+      bulkTextPh: 'John Smith, john@example.com, 514-555-0100\nJane Doe, jane@example.com'
     }
   };
 
@@ -4216,7 +4226,7 @@ async function handleLeagueRosterPage(req, env, url) {
       <h2 data-i18n="bulkImportTitle">Importer des joueurs</h2>
       <p class="nl-help" data-i18n="bulkImportHelp">Colle une liste copiée d'un tableur (Excel, Google Sheets) -- une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée.</p>
       <div id="bulkErr" class="nl-error" style="display:none"></div>
-      <textarea id="ro_bulk_text" placeholder="Marie Tremblay, marie@example.com, 514-555-0100&#10;Jean Bouchard, jean@example.com"></textarea>
+      <textarea id="ro_bulk_text" data-i18n-ph="bulkTextPh" placeholder="Marie Tremblay, marie@example.com, 514-555-0100&#10;Jean Bouchard, jean@example.com"></textarea>
       <div style="display:flex;gap:8px;">
         <button type="button" class="nl-btn nl-btn--secondary" data-i18n="bulkPreviewBtn" onclick="bulkPreview()">Prévisualiser</button>
       </div>
