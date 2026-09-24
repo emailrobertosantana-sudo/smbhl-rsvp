@@ -23,6 +23,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { runScript, extractInlineScripts } from './support/inline_scripts.js';
 
 const AUTH_SECRET = 'test-part2-batch2-bulk-no-linebreaks-secret';
 
@@ -50,25 +51,6 @@ async function createLeague(cookie, csrfToken, body) {
   });
   return (await res.json()).league;
 }
-function stubDom() {
-  const el = { querySelectorAll: () => [], addEventListener: () => {}, setAttribute: () => {}, getAttribute: () => null, style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {} } };
-  return {
-    window: { location: { search: '' } },
-    document: { getElementById: () => null, querySelectorAll: () => [], addEventListener: () => {}, createElement: () => ({ ...el, appendChild: () => {} }) },
-    localStorage: { getItem: () => null, setItem: () => {} },
-    navigator: { language: 'en-US' },
-    location: { search: '' }
-  };
-}
-function runScript(combined, tail) {
-  const stub = stubDom();
-  const fn = new Function('window', 'document', 'localStorage', 'navigator', 'location', combined + '\n' + (tail || ''));
-  return fn(stub.window, stub.document, stub.localStorage, stub.navigator, stub.location);
-}
-function extractInlineScripts(html) {
-  return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-}
-
 describe('Part 2 (live-testing task, batch 2): bulk import survives a paste with no line breaks between records', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;

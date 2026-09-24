@@ -11,6 +11,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { extractInlineScripts } from './support/inline_scripts.js';
 
 const AUTH_SECRET = 'test-part3-batch2-bulk-cancel-resets-secret';
 
@@ -38,10 +39,6 @@ async function createLeague(cookie, csrfToken, body) {
   });
   return (await res.json()).league;
 }
-function extractInlineScripts(html) {
-  return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-}
-
 // A small but REAL stateful DOM stub -- unlike part37's throwaway
 // no-op stub, this one actually tracks element values/classes/content
 // so cancelBulkImport's resets can be genuinely observed, not just

@@ -29,6 +29,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { runScript, extractInlineScripts, assertNoSyntaxError } from './support/inline_scripts.js';
 
 const AUTH_SECRET = 'test-part1-roster-broken-regression-secret';
 
@@ -56,35 +57,11 @@ async function createLeague(cookie, csrfToken, body) {
   });
   return (await res.json()).league;
 }
-// A minimal browser stub -- just enough for the page's top-level
-// script statements (which run immediately, not just on a later
-// event) to execute without a real DOM, so a check here proves the
-// script parses AND that its top-level code (including every function
-// declaration) actually runs to completion, without needing a real
-// browser or jsdom dependency.
-function stubDom() {
-  const el = { querySelectorAll: () => [], addEventListener: () => {}, setAttribute: () => {}, getAttribute: () => null, style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {} } };
-  return {
-    window: { location: { search: '' } },
-    document: { getElementById: () => null, querySelectorAll: () => [], addEventListener: () => {}, createElement: () => ({ ...el, appendChild: () => {} }) },
-    localStorage: { getItem: () => null, setItem: () => {} },
-    navigator: { language: 'en-US' },
-    location: { search: '' }
-  };
-}
-function runScript(combined, tail) {
-  const stub = stubDom();
-  const fn = new Function('window', 'document', 'localStorage', 'navigator', 'location', combined + '\n' + (tail || ''));
-  return fn(stub.window, stub.document, stub.localStorage, stub.navigator, stub.location);
-}
-function extractInlineScripts(html) {
-  return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-}
-function assertNoSyntaxError(scripts, pageLabel) {
-  for (const s of scripts) {
-    expect(() => new Function(s), `${pageLabel}: inline script has a syntax error`).not.toThrow();
-  }
-}
+// Live-testing task (batch 5), Part 8: this file's own stubDom/
+// runScript/extractInlineScripts/assertNoSyntaxError were the FIRST
+// use of this technique -- now generalized into test/support/
+// inline_scripts.js (see its own top-of-file comment), imported here
+// instead of the local copy.
 
 describe('Part 1 (live-testing task, URGENT): roster "Ajouter" button regression', () => {
   beforeAll(async () => {

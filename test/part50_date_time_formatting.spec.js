@@ -23,6 +23,7 @@ import { env, SELF } from 'cloudflare:test';
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from '../src/date_format.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { extractInlineScripts } from './support/inline_scripts.js';
 
 const AUTH_SECRET = 'test-part6-batch2-date-time-format-secret';
 const RSVP_SECRET = 'test-part6-batch2-date-time-format-rsvp-secret';
@@ -50,9 +51,6 @@ async function createLeague(cookie, csrfToken, body) {
     body: JSON.stringify(body)
   });
   return (await res.json()).league;
-}
-function extractInlineScripts(html) {
-  return [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
 }
 
 describe('Part 6 (live-testing task, batch 2): date/time formatting', () => {
