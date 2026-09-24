@@ -1402,7 +1402,12 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       teamsLabel: 'équipes', playersLabel: 'joueurs',
       publicPage: 'Page publique', copyLink: 'Copier', copied: 'Copié !',
       teams: 'Équipes', tracksStatsLabel: 'Statistiques suivies', yes: 'Oui', no: 'Non',
-      teamsPerGame: 'Équipes (par match)', noFixedTeams: 'Aucune équipe fixe',
+      // Live-testing task (batch 2), Part 5: "Équipes (par match)" read
+      // as "how many teams show up in each match" rather than the
+      // intended "teams are formed per match, not permanent" -- reuses
+      // the exact phrase the structure-picker itself already uses for
+      // this same concept (structureWeeklyTitle) for consistency.
+      teamsPerGame: 'Équipes qui changent', noFixedTeams: 'Aucune équipe fixe',
       noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.",
       weeklyDrawTeamsDesc: 'Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.',
       coAdmins: 'Co-administrateurs', inviteLabel: "Inviter un(e) co-administrateur(-trice)", inviteBtn: 'Inviter',
@@ -1416,7 +1421,7 @@ function buildDashI18n({ state, needsSeason, unverified }) {
       teamsLabel: 'teams', playersLabel: 'players',
       publicPage: 'Public page', copyLink: 'Copy', copied: 'Copied!',
       teams: 'Teams', tracksStatsLabel: 'Tracks stats', yes: 'Yes', no: 'No',
-      teamsPerGame: 'Teams (per game)', noFixedTeams: 'No fixed teams',
+      teamsPerGame: 'Teams shuffle', noFixedTeams: 'No fixed teams',
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
       coAdmins: 'Co-admins', inviteLabel: 'Invite a co-admin', inviteBtn: 'Invite',
@@ -1716,7 +1721,7 @@ async function handleDashboardPage(req, env, url) {
   ${startGridHtml}
   <div class="dash-tiles">
     <section class="nl-card nl-card--pad-lg dash-tile">
-      <div class="overline" data-i18n="${dashIsWeeklyDraw ? 'teamsPerGame' : 'teams'}">${dashIsWeeklyDraw ? 'Équipes (par match)' : 'Équipes'}</div>
+      <div class="overline" data-i18n="${dashIsWeeklyDraw ? 'teamsPerGame' : 'teams'}">${dashIsWeeklyDraw ? 'Équipes qui changent' : 'Équipes'}</div>
       ${dashIsHeadcount
         ? `<div class="stat tnum" style="font-size:20px" data-i18n="noFixedTeams">Aucune équipe fixe</div>`
         : `<div class="stat tnum">${teamNames.length}</div>`}
