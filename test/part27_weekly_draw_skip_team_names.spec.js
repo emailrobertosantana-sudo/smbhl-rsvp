@@ -1,26 +1,29 @@
 // Live-testing task, Part 4: weekly_draw doesn't ask for team names at
 // signup -- teams are re-drawn every game, so a permanent name chosen
-// upfront isn't meaningful. Two teams are created automatically
-// ("Rouge / Red" / "Bleu / Blue" -- a single bilingual name per team,
-// reading fine in either UI language without needing per-language
-// dict logic) and step 3 (the team-names step) is skipped entirely:
-// submitStep2() creates the league directly and navigates straight to
-// the done page for weekly_draw, never rendering step 3's team-name
-// inputs. 'fixed' is unaffected -- it still goes to step 3 and still
-// asks for real team names, since fixed teams are permanent.
+// upfront isn't meaningful. Two teams are created automatically and
+// step 3 (the team-names step) is skipped entirely: submitStep2()
+// creates the league directly and navigates straight to the done page
+// for weekly_draw, never rendering step 3's team-name inputs. 'fixed'
+// is unaffected -- it still goes to step 3 and still asks for real
+// team names, since fixed teams are permanent.
 //
-// DECISION (flagged per this task's own "document every decision"
-// instruction): the task described this as "fully editable later from
-// wherever team names/colors are already editable in league settings"
-// -- investigation found NO existing route or UI anywhere in this
-// codebase for editing a league's team names (or color) after
-// creation; handleLeagueCreate is the only writer of leagues.team_names.
-// Per the task's own "do not build a new editing surface if one
-// already exists" instruction, and since building one wasn't itself
-// asked for, no new editing surface was built. This is a genuine gap
-// (a weekly_draw admin can't yet rename "Rouge / Red" without direct DB
-// access) called out explicitly in the final report rather than
-// silently left unaddressed or silently expanded in scope.
+// Live-testing task (batch 2), Part 8: the original default names were
+// a single JAMMED bilingual string per team ("Rouge / Red", "Bleu /
+// Blue"), rendering literally as that combined string everywhere --
+// not "fine in either UI language" as first assumed, just wrong in
+// both. A team's name is meant to be a single value (whatever the
+// admin sets), not a bilingual pair crammed into one field (this
+// product has no name_fr/name_en split for league team names at all,
+// unlike SMBHL's own DEFAULT_SEASON_CONFIG.teams). Replaced with the
+// same numbered-placeholder convention the 'fixed' wizard's own
+// team-name step already uses when a name is left blank
+// (teamPlaceholder: "Équipe "/"Team " + the signup's own current
+// language) -- "Équipe 1"/"Équipe 2" (FR) or "Team 1"/"Team 2" (EN).
+//
+// The settings page's team-rename route (/league/settings/teams, built
+// in a later session than this file's own original "no editing
+// surface exists" note) now covers the "still editable afterward"
+// half of this fix -- confirmed below.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
@@ -38,13 +41,13 @@ function extractCsrfToken(res) {
   return csrfCookie ? csrfCookie.split(';')[0].split('=')[1] : '';
 }
 
-describe('Part 4 (live-testing task): weekly_draw skips team names at signup, defaults to Rouge/Red + Bleu/Blue', () => {
+describe('Part 4 (live-testing task): weekly_draw skips team names at signup, defaults to single-language numbered names', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     await applyRealSchema(env);
   });
 
-  it("signup step 2's served script creates the league directly for weekly_draw, with the bilingual default team names, and never mentions step=3", async () => {
+  it("signup step 2's served script creates the league directly for weekly_draw, with single-language numbered default team names (not a jammed bilingual pair), and never mentions step=3", async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.132' },
@@ -53,8 +56,15 @@ describe('Part 4 (live-testing task): weekly_draw skips team names at signup, de
     const cookieHeader = extractCookie(signupRes);
     const html = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie: cookieHeader } })).text();
     expect(html).toContain("teamStructure === 'weekly_draw'");
-    expect(html).toContain('Rouge / Red');
-    expect(html).toContain('Bleu / Blue');
+    // Live-testing task (batch 2), Part 8: single-language, numbered,
+    // built from the same i18n dict the 'fixed' wizard's own team-name
+    // placeholders already use -- not a hardcoded literal string, since
+    // the actual rendered team names depend on window.__pageDict() at
+    // signup time (the player's current FR/EN choice).
+    expect(html).toContain("(window.__pageDict().teamPlaceholder) + '1'");
+    expect(html).toContain("(window.__pageDict().teamPlaceholder) + '2'");
+    expect(html).not.toContain('Rouge / Red');
+    expect(html).not.toContain('Bleu / Blue');
     expect(html).toContain("window.__navWithLang('/signup?step=done')");
   });
 
@@ -81,7 +91,7 @@ describe('Part 4 (live-testing task): weekly_draw skips team names at signup, de
     expect(html).toContain("leagueDraft.teamStructure === 'weekly_draw'");
   });
 
-  it('a weekly_draw league created with the wizard default has exactly two teams named "Rouge / Red" and "Bleu / Blue"', async () => {
+  it('a weekly_draw league created with the wizard\'s real default (single-language, numbered) has exactly two such teams, and they can be renamed via the settings page afterward', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.130' },
@@ -90,19 +100,35 @@ describe('Part 4 (live-testing task): weekly_draw skips team names at signup, de
     const cookieHeader = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);
 
+    // The exact strings the FR-default signup script would send
+    // (window.__pageDict().teamPlaceholder + '1'/'2', per its own
+    // fix -- reproduced literally here since this test hits the API
+    // directly rather than executing the client script).
     const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: cookieHeader, 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ name: 'Weekly Draw Default League', tracksStats: true, teamStructure: 'weekly_draw', teamNames: ['Rouge / Red', 'Bleu / Blue'] })
+      body: JSON.stringify({ name: 'Weekly Draw Default League', tracksStats: true, teamStructure: 'weekly_draw', teamNames: ['Équipe 1', 'Équipe 2'] })
     });
     expect(leagueRes.status).toBe(200);
     const json = await leagueRes.json();
     expect(json.ok).toBe(true);
     expect(json.league.teamCount).toBe(2);
-    expect(json.league.teamNames).toEqual(['Rouge / Red', 'Bleu / Blue']);
+    expect(json.league.teamNames).toEqual(['Équipe 1', 'Équipe 2']);
 
     const row = await env.DB.prepare('SELECT team_names FROM leagues WHERE id = ?').bind(json.league.id).first();
-    expect(JSON.parse(row.team_names)).toEqual(['Rouge / Red', 'Bleu / Blue']);
+    expect(JSON.parse(row.team_names)).toEqual(['Équipe 1', 'Équipe 2']);
+
+    // Live-testing task (batch 2), Part 8: confirms the settings page's
+    // team-rename route now covers a weekly_draw league's default
+    // names -- a genuine gap this same file used to flag as absent.
+    const renameRes = await SELF.fetch('http://example.com/league/settings/teams', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: cookieHeader, 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ teamNames: ['Les Faucons', 'Les Loutres'] })
+    });
+    expect(renameRes.status).toBe(200);
+    const renamed = await env.DB.prepare('SELECT team_names FROM leagues WHERE id = ?').bind(json.league.id).first();
+    expect(JSON.parse(renamed.team_names)).toEqual(['Les Faucons', 'Les Loutres']);
   });
 
   it("'fixed' mode signups are unaffected end-to-end: still requires real team names via the API, still rejects fewer than 2", async () => {

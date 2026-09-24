@@ -969,7 +969,7 @@ async function submitStep2() {
       var res = await fetch('/leagues/create', {
         method: 'POST', credentials: 'same-origin',
         headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-        body: JSON.stringify({ name: name, tracksStats: tracksStats, slug: slug || undefined, teamStructure: teamStructure, teamNames: ['Rouge / Red', 'Bleu / Blue'] })
+        body: JSON.stringify({ name: name, tracksStats: tracksStats, slug: slug || undefined, teamStructure: teamStructure, teamNames: [(window.__pageDict().teamPlaceholder) + '1', (window.__pageDict().teamPlaceholder) + '2'] })
       });
       var data = await res.json().catch(function() { return {}; });
       if (!res.ok || !data.ok) {
