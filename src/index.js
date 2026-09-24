@@ -4401,6 +4401,18 @@ async function handleLeagueRosterPage(req, env, url) {
     'SELECT player_id, name, email, phone, role, preferred_team, is_goalie FROM contacts WHERE league_id = ? ORDER BY name'
   ).bind(leagueId).all()).results || [];
 
+  // Live-testing task (batch 6), Part 6: onboarding used to stall
+  // right here -- after adding a player, submitContact() just
+  // reloaded this same page with no direction at all. Shown only at
+  // the exact moment it's genuinely useful (real players exist, no
+  // event has been created yet) -- once a schedule exists, this
+  // naturally stops rendering, the same "compute from real state, not
+  // a one-time flag" approach the dashboard's own next-steps card
+  // (batch 5, Part 6) already established.
+  const eventCountRow = await env.DB.prepare('SELECT COUNT(*) AS c FROM events WHERE league_id = ?').bind(leagueId).first();
+  const eventCount = eventCountRow ? Number(eventCountRow.c) || 0 : 0;
+  const showScheduleNudge = contacts.length > 0 && eventCount === 0;
+
   const seasonCfg = await getLeagueSeasonConfig(env, leagueId);
   const teamNames = getTeamNames(seasonCfg);
   // Team-structure task: 'headcount' has no team concept at all (its
@@ -4440,6 +4452,9 @@ async function handleLeagueRosterPage(req, env, url) {
     fr: {
       navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter',
       title: 'Joueurs', addPlayer: 'Ajouter un joueur',
+      nextStep: 'Prochaine étape', rosterNudgeTitle: 'Tes joueurs sont prêts. Prochaine étape : crée ton horaire.',
+      rosterNudgeDesc: 'Ajoute tes premiers matchs pour que tes joueurs puissent commencer à répondre.',
+      rosterNudgeBtn: "Créer l'horaire",
       filterAll: 'Tous', filterSubs: 'Remplaçants', filterUnassigned: 'Sans équipe',
       colPlayer: 'Joueur', colTeam: 'Équipe', colRole: 'Rôle',
       fullName: 'Nom complet', emailOpt: 'Courriel (optionnel)', phoneOpt: 'Téléphone (optionnel)',
@@ -4465,6 +4480,9 @@ async function handleLeagueRosterPage(req, env, url) {
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
       title: 'Players', addPlayer: 'Add a player',
+      nextStep: 'Next step', rosterNudgeTitle: 'Your players are ready. Next step: create your schedule.',
+      rosterNudgeDesc: 'Add your first games so your players can start responding.',
+      rosterNudgeBtn: 'Create the schedule',
       filterAll: 'All', filterSubs: 'Subs', filterUnassigned: 'Unassigned',
       colPlayer: 'Player', colTeam: 'Team', colRole: 'Role',
       fullName: 'Full name', emailOpt: 'Email (optional)', phoneOpt: 'Phone (optional)',
@@ -4567,6 +4585,12 @@ async function handleLeagueRosterPage(req, env, url) {
       <button type="button" class="nl-btn nl-btn--primary" id="ro_toggle_panel" data-i18n="addPlayer" onclick="toggleRosterPanel()">Ajouter un joueur</button>
     </div>
   </div>
+  ${showScheduleNudge ? `<section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
+    <div class="overline" style="color:var(--primary)" data-i18n="nextStep">Prochaine étape</div>
+    <h2 data-i18n="rosterNudgeTitle">Tes joueurs sont prêts. Prochaine étape : crée ton horaire.</h2>
+    <p class="nl-help" data-i18n="rosterNudgeDesc">Ajoute tes premiers matchs pour que tes joueurs puissent commencer à répondre.</p>
+    <div style="margin-top:var(--space-2)"><a class="nl-btn nl-btn--primary" href="/league/schedule" data-i18n="rosterNudgeBtn">Créer l'horaire</a></div>
+  </section>` : ''}
   <div class="ro-filters">${filterPills}</div>
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);" class="ro-grid">
     <div class="ro-table-wrap">
