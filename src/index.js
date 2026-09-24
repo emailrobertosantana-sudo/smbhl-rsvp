@@ -3320,6 +3320,13 @@ function toggleRosterPanel() {
 // this reads correctly whether a real-world paste is "Name, Email,
 // Phone" or "Name, Phone, Email". A first row that looks like a header
 // (any field matching a common header word) is skipped entirely.
+// Live-testing task (batch 2), Part 2: a single physical line carrying
+// 2+ email addresses (or 2+ phone-looking fields) is chunked into
+// multiple records instead of one -- see parseBulkText's own comment
+// for the exact boundary rule. A record that still can't be told apart
+// confidently reports its real per-row status in the preview (missing
+// a real name, most often) rather than silently importing a garbled
+// combination of two people's data.
 function toggleBulkImport() {
   document.getElementById('ro_bulk_overlay').classList.toggle('open');
 }
@@ -3347,6 +3354,8 @@ function parseBulkText(text) {
   // backslash TWICE below is what makes a single backslash survive the
   // first (server-side) round intact, arriving correctly in the browser
   // for the second round where it needs to mean something to a regex.
+  var isEmailField = function(f) { return f.indexOf('@') !== -1; };
+  var isPhoneField = function(f) { return /^[\\d+().\\s-]{7,}$/.test(f); };
   var lines = text.split(/\\r\\n|\\r|\\n/);
   var rows = [];
   var headerChecked = false;
@@ -3362,12 +3371,62 @@ function parseBulkText(text) {
       var looksHeader = fields.some(function(f) { return BULK_HEADER_WORDS.indexOf(f.toLowerCase()) !== -1; });
       if (looksHeader) continue;
     }
+    // Live-testing task (batch 2), Part 2: a paste can arrive as one
+    // single physical line holding SEVERAL people (missing line breaks
+    // between records, e.g. a comma-separated dump with no newlines at
+    // all) -- the old code always treated one physical line as exactly
+    // one record, so every field on that line silently got jammed into
+    // one row (all names concatenated, only the LAST email/phone found
+    // kept). Two or more email addresses (or two or more phone-looking
+    // fields) on the same physical line is an unambiguous signal that
+    // multiple records got flattened onto it, so that case is chunked
+    // into separate records instead of parsed as a single one. The
+    // record-boundary signal is exactly what real pastes look like:
+    // once the CURRENT record already has an email or a phone, the next
+    // plain (non-email, non-phone) field is name-like text belonging to
+    // a NEW record, not more of this one's name -- an email or phone
+    // immediately followed by more such text is what starts the next
+    // record.
+    var emailCount = 0, phoneCount = 0;
+    for (var c = 0; c < fields.length; c++) {
+      if (isEmailField(fields[c])) emailCount++;
+      else if (isPhoneField(fields[c])) phoneCount++;
+    }
+    if (emailCount >= 2 || phoneCount >= 2) {
+      var cur = null;
+      var flushChunk = function() {
+        if (cur && (cur.nameParts.length || cur.email || cur.phone)) {
+          rows.push({
+            name: cur.nameParts.join(' ').replace(/\\s+/g, ' ').trim(),
+            email: cur.email,
+            phone: cur.phone
+          });
+        }
+        cur = { nameParts: [], email: '', phone: '' };
+      };
+      flushChunk();
+      for (var f = 0; f < fields.length; f++) {
+        var field = fields[f];
+        if (isEmailField(field)) {
+          if (cur.email) flushChunk();
+          cur.email = field;
+        } else if (isPhoneField(field)) {
+          if (cur.phone) flushChunk();
+          cur.phone = field;
+        } else {
+          if (cur.email || cur.phone) flushChunk();
+          cur.nameParts.push(field);
+        }
+      }
+      flushChunk();
+      continue;
+    }
     var remaining = fields.slice();
     var emailIdx = -1;
-    for (var j = 0; j < remaining.length; j++) { if (remaining[j].indexOf('@') !== -1) { emailIdx = j; break; } }
+    for (var j = 0; j < remaining.length; j++) { if (isEmailField(remaining[j])) { emailIdx = j; break; } }
     var email = emailIdx !== -1 ? remaining.splice(emailIdx, 1)[0] : '';
     var phoneIdx = -1;
-    for (var k = 0; k < remaining.length; k++) { if (/^[\\d+().\\s-]{7,}$/.test(remaining[k])) { phoneIdx = k; break; } }
+    for (var k = 0; k < remaining.length; k++) { if (isPhoneField(remaining[k])) { phoneIdx = k; break; } }
     var phone = phoneIdx !== -1 ? remaining.splice(phoneIdx, 1)[0] : '';
     var name = remaining.join(' ').replace(/\\s+/g, ' ').trim();
     rows.push({ name: name, email: email, phone: phone });
