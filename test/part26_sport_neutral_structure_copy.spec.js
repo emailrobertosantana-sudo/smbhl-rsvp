@@ -6,7 +6,9 @@
 // sont organisées tes équipes?" / "How are your teams organized?") as
 // part of an earlier team-structure copy pass, and that rewrite is
 // already applied consistently on both surfaces that ask it: signup
-// step 2 and the dashboard's season-override picker. No code change
+// step 2 and the season-override picker (originally on the dashboard;
+// moved to Settings in batch 6, Part 7 -- see that part's own comment
+// in handleLeagueSettingsPage/handleDashboardPage). No code change
 // needed; this test locks the sport-neutral wording in as a
 // regression, and confirms no sport name (hockey, ice hockey, etc.)
 // leaks into the question on either surface, in either language.
@@ -44,7 +46,7 @@ describe('Part 3 (live-testing task): team-structure question copy is sport-neut
     expect(html.toLowerCase()).not.toContain('hockey');
   });
 
-  it('the dashboard season-override picker uses the same sport-neutral question, both languages', async () => {
+  it('the Settings season-override picker uses the same sport-neutral question, both languages', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.121' },
@@ -69,10 +71,10 @@ describe('Part 3 (live-testing task): team-structure question copy is sport-neut
       body: JSON.stringify({ season_name: 'Structure Copy Season' })
     });
 
-    const dashboardHtml = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie: cookieHeader } })).text();
-    expect(dashboardHtml).toContain('Comment sont organisées tes équipes?');
-    expect(dashboardHtml).toContain('How are your teams organized?');
-    const htmlNoScripts = dashboardHtml.replace(/<script[\s\S]*?<\/script>/g, '');
+    const settingsHtml = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie: cookieHeader } })).text();
+    expect(settingsHtml).toContain('Comment sont organisées tes équipes?');
+    expect(settingsHtml).toContain('How are your teams organized?');
+    const htmlNoScripts = settingsHtml.replace(/<script[\s\S]*?<\/script>/g, '');
     const visibleText = (htmlNoScripts.match(/>([^<]*)</g) || []).join(' ').toLowerCase();
     expect(visibleText).not.toContain('hockey');
   });

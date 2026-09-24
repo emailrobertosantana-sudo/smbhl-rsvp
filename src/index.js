@@ -1523,59 +1523,16 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
         ckLeague: 'Create the league', ckTeams: 'Name the teams', ckPlayerCount: 'Choose your player count', ckPlayers: 'Add players', ckSeason: 'Create a season'
       });
     } else {
-      Object.assign(fr, { currentSeasonLabel: 'Saison actuelle' });
-      Object.assign(en, { currentSeasonLabel: 'Current season' });
-      // Season-level team-structure override task: a control to create
-      // an additional season, or republish (edit) the current one --
-      // the dashboard's own established "start a season" flow only
-      // ever appears once, before a league's first season exists, so
-      // this is the only UI surface for a SECOND (or later) season at
-      // all. Reuses the exact same structure-radio pattern as the
-      // signup wizard's own step 2 (structureFixedTitle/Desc etc.) and
-      // the same season_name + /league/season/publish route as the
-      // "first season" flow above -- re-submitting the CURRENT season's
-      // own name edits it in place (the route's own pre-existing
-      // overwrite behavior), a different name creates a new one.
-      Object.assign(fr, {
-        seasonsTitle: 'Saisons', seasonsDesc: "Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.",
-        // Live-testing task (batch 5), Part 3: this label used
-        // data-i18n="seasonNameLabel" but this state's own dict never
-        // defined that key (only the needsSeason branch did) -- on a
-        // league that already has a season, switching to English never
-        // translated this label at all. Same for the placeholder, which
-        // (like the needsSeason one above) had no i18n wiring whatsoever.
-        seasonNameLabel: 'Nom de la saison', seasonNamePh: 'Ex. Saison Hiver 2026',
-        seasonMgmtNameHelp: 'Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.',
-        seasonStructureHelp: "Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.",
-        seasonSaveBtn: 'Enregistrer la saison',
-        structureLabel: 'Comment sont organisées tes équipes?',
-        structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
-        structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
-        structureWeeklyTitle: 'Équipes qui changent', structureWeeklyDesc: 'De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.',
-        lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
-        lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.',
-        lblMaxGoalies: 'Maximum de gardiens (optionnel)', maxGoaliesHelp: "Laisse vide pour utiliser le même nombre que le minimum.",
-        rosterLimitsTitle: 'Effectif de l\'équipe',
-        rosterLimitsPerTeamHelp: 'Ces nombres s\'appliquent à chaque équipe.',
-        rosterLimitsPerEventHelp: 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs (pas par équipe).'
-      });
-      Object.assign(en, {
-        seasonsTitle: 'Seasons', seasonsDesc: 'Create an additional season, or republish the current one to edit it. Each season can have its own team structure.',
-        seasonNameLabel: 'Season name', seasonNamePh: 'E.g. Winter Season 2026',
-        seasonMgmtNameHelp: "A new name creates a new season. The current season's own name edits it.",
-        seasonStructureHelp: "By default, a new season uses your league's usual structure. Change it here just for this season.",
-        seasonSaveBtn: 'Save season',
-        structureLabel: 'How are your teams organized?',
-        structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
-        structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
-        structureWeeklyTitle: 'Teams shuffle', structureWeeklyDesc: 'Fresh teams every game — we can even build them for you, automatically.',
-        lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
-        lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately.",
-        lblMaxGoalies: 'Maximum goalies (optional)', maxGoaliesHelp: 'Leave blank to use the same number as the minimum.',
-        rosterLimitsTitle: 'Roster size',
-        rosterLimitsPerTeamHelp: 'These numbers apply to each team.',
-        rosterLimitsPerEventHelp: 'These numbers apply to each game, across every player (not per team).'
-      });
+      // Live-testing task (batch 6), Part 7: the full season-management
+      // form (name/structure/roster-limits override, submitSeasonMgmt)
+      // used to live here, fully expanded on the dashboard home -- it's
+      // now on Settings instead (handleLeagueSettingsPage's own
+      // "seasonMgmtTitle" section, right before the league-default
+      // structure section it sits next to thematically), reachable via
+      // this small "Modifier" link next to the season badge below. Only
+      // the read-only label + edit link stay here.
+      Object.assign(fr, { currentSeasonLabel: 'Saison actuelle', editSeason: 'Modifier' });
+      Object.assign(en, { currentSeasonLabel: 'Current season', editSeason: 'Edit' });
     }
     if (unverified) {
       Object.assign(fr, { notVerified: "Ton courriel n'est pas encore vérifié.", resendBtn: 'Renvoyer le courriel' });
@@ -1866,7 +1823,7 @@ async function handleDashboardPage(req, env, url) {
       <div class="dash-status">
         ${needsSeason
           ? `<span class="nl-badge nl-badge--pending" data-i18n="noSeason">Pas de saison active</span>`
-          : `<span><span data-i18n="currentSeasonLabel">Saison actuelle</span> : <b>${esc(currentSeason)}</b></span>`}
+          : `<span><span data-i18n="currentSeasonLabel">Saison actuelle</span> : <b>${esc(currentSeason)}</b> · <a href="/league/settings" data-i18n="editSeason">Modifier</a></span>`}
         <span>${dashIsHeadcount ? '' : `${teamNames.length} <span data-i18n="teamsLabel">équipes</span> · `}${playerCount} <span data-i18n="playersLabel">joueurs</span></span>
       </div>
     </div>
@@ -1905,69 +1862,6 @@ async function handleDashboardPage(req, env, url) {
     </div>
     <p class="nl-help" style="margin-top:12px;"><span data-i18n="tracksStatsLabel">Statistiques suivies</span> : <b data-i18n="${leagueRow.tracks_stats ? 'yes' : 'no'}">${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b></p>
   </section>
-  ${!needsSeason ? `
-  <section class="nl-card nl-card--pad-lg">
-    <div class="h3" data-i18n="seasonsTitle">Saisons</div>
-    <p class="nl-help" data-i18n="seasonsDesc">Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.</p>
-    <div id="seasonMgmtErr" class="nl-error" style="display:none"></div>
-    <div id="seasonMgmtOk" class="nl-ok" style="display:none"></div>
-    <div class="nl-field" style="max-width:360px">
-      <label class="nl-label" for="season_mgmt_name" data-i18n="seasonNameLabel">Nom de la saison</label>
-      <input class="nl-input" id="season_mgmt_name" type="text" data-i18n-ph="seasonNamePh" placeholder="Ex. Saison Hiver 2026">
-      <p class="nl-help" data-i18n="seasonMgmtNameHelp">Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.</p>
-    </div>
-    <div class="nl-field">
-      <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>
-      <div class="su-structure" id="season_structure_radio">
-        <!-- Live-testing bug fix (Part 3): this used to check only for
-             NOT headcount -- true for BOTH fixed and weekly_draw, so a
-             weekly_draw league showed two cards on at once (this one
-             AND its own, below) even though only one radio was ever
-             really checked. A precise, positive fixed-only check
-             matches the checked attribute right below it exactly, for
-             every value. -->
-        <label class="su-structure-opt${leagueRow.team_structure === 'fixed' || !leagueRow.team_structure ? ' on' : ''}" data-value="fixed">
-          <input type="radio" name="season_structure" value="fixed" ${leagueRow.team_structure === 'headcount' || leagueRow.team_structure === 'weekly_draw' ? '' : 'checked'}>
-          <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue classique.</span></span>
-        </label>
-        <label class="su-structure-opt${leagueRow.team_structure === 'headcount' ? ' on' : ''}" data-value="headcount">
-          <input type="radio" name="season_structure" value="headcount" ${leagueRow.team_structure === 'headcount' ? 'checked' : ''}>
-          <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de qui embarque — parfait pour une partie improvisée.</span></span>
-        </label>
-        <label class="su-structure-opt${leagueRow.team_structure === 'weekly_draw' ? ' on' : ''}" data-value="weekly_draw">
-          <input type="radio" name="season_structure" value="weekly_draw" ${leagueRow.team_structure === 'weekly_draw' ? 'checked' : ''}>
-          <span><span class="t" data-i18n="structureWeeklyTitle">Équipes qui changent</span><span class="d" data-i18n="structureWeeklyDesc">De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.</span></span>
-        </label>
-      </div>
-      <p class="nl-help" data-i18n="seasonStructureHelp">Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.</p>
-    </div>
-    <div id="season_headcount_section" style="">
-      <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
-      <p class="nl-help" id="season_roster_limits_help" data-i18n="${(leagueRow.team_structure || 'fixed') === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp'}">${(leagueRow.team_structure || 'fixed') === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe.' : 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs (pas par équipe).'}</p>
-      <div class="su-two">
-        <div class="nl-field">
-          <label class="nl-label" for="season_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
-          <input class="nl-input" id="season_min_players" type="number" min="1" value="${esc(dashHasRosterLimits ? String(leagueRow.min_players) : (dashIsHeadcount ? '8' : ''))}">
-        </div>
-        <div class="nl-field">
-          <label class="nl-label" for="season_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
-          <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(dashHasRosterLimits ? String(leagueRow.max_players) : (dashIsHeadcount ? '12' : ''))}">
-        </div>
-      </div>
-      <div class="su-two">
-        <div class="nl-field">
-          <label class="nl-label" for="season_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
-          <input class="nl-input" id="season_min_goalies" type="number" min="0" value="${esc(dashHasRosterLimits ? String(leagueRow.min_goalies || 0) : '')}">
-        </div>
-        <div class="nl-field">
-          <label class="nl-label" for="season_max_goalies" data-i18n="lblMaxGoalies">Maximum de gardiens (optionnel)</label>
-          <input class="nl-input" id="season_max_goalies" type="number" min="0" value="${esc(dashHasRosterLimits && leagueRow.max_goalies != null ? String(leagueRow.max_goalies) : '')}">
-        </div>
-      </div>
-      <p class="nl-help" data-i18n="maxGoaliesHelp">Laisse vide pour utiliser le même nombre que le minimum.</p>
-    </div>
-    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>
-  </section>` : ''}
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>
 ${tabbar}`;
@@ -2037,62 +1931,6 @@ async function submitSeason() {
     window.__navWithLang('/onboarding/season');
   } catch (e) {
     el.textContent = window.__errorText('NETWORK_ERROR'); el.style.display = 'block'; btn.disabled = false;
-  }
-}
-// Season-level team-structure override task: create an additional
-// season, or edit the current one (re-submitting its own name), with
-// an optional per-season structure override -- omitting team_structure
-// entirely (the radio just isn't touched) makes the season inherit the
-// league's own default, exactly like the "first season" form above.
-(function() {
-  var radioGroup = document.getElementById('season_structure_radio');
-  if (!radioGroup) return;
-  radioGroup.querySelectorAll('input[type=radio]').forEach(function(r) {
-    r.addEventListener('change', function() {
-      radioGroup.querySelectorAll('.su-structure-opt').forEach(function(opt) { opt.classList.remove('on'); });
-      r.closest('.su-structure-opt').classList.add('on');
-      // Live-testing task, Part 5: roster limits are shown -- and
-      // settable -- for every structure now, not headcount alone; only
-      // the help text's wording changes (per-team vs per-event pool).
-      var helpKey = r.value === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp';
-      var helpEl = document.getElementById('season_roster_limits_help');
-      if (helpEl) { helpEl.setAttribute('data-i18n', helpKey); helpEl.textContent = window.__pageDict()[helpKey]; }
-    });
-  });
-})();
-async function submitSeasonMgmt() {
-  var err = document.getElementById('seasonMgmtErr');
-  var ok = document.getElementById('seasonMgmtOk');
-  err.style.display = 'none'; ok.style.display = 'none';
-  var name = document.getElementById('season_mgmt_name').value.trim();
-  if (!name) { err.textContent = window.__errorText('SEASON_NAME_REQUIRED_CLIENT'); err.style.display = 'block'; return; }
-  var structure = document.querySelector('#season_structure_radio input:checked').value;
-  var payload = { season_name: name, team_structure: structure };
-  // Live-testing task, Part 5: sent for every structure now (the
-  // server-side route treats them as fully optional for
-  // fixed/weekly_draw). A field left blank is omitted entirely rather
-  // than coerced to 0 -- see the settings page's identical comment.
-  var minPlayersEl = document.getElementById('season_min_players');
-  var maxPlayersEl = document.getElementById('season_max_players');
-  if (minPlayersEl && minPlayersEl.value !== '') { payload.min_players = Number(minPlayersEl.value); }
-  if (maxPlayersEl && maxPlayersEl.value !== '') { payload.max_players = Number(maxPlayersEl.value); }
-  var minGoaliesEl = document.getElementById('season_min_goalies');
-  if (minGoaliesEl && minGoaliesEl.value !== '') { payload.min_goalies = Number(minGoaliesEl.value); }
-  var maxGoaliesEl = document.getElementById('season_max_goalies');
-  if (maxGoaliesEl && maxGoaliesEl.value !== '') { payload.max_goalies = Number(maxGoaliesEl.value); }
-  var btn = document.getElementById('season_mgmt_submit');
-  btn.disabled = true;
-  try {
-    var res = await fetch('/league/season/publish', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify(payload)
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
-    window.location.reload();
-  } catch (e) {
-    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
 }
 // Live-testing task (batch 5), Part 7: submitInvite/submitDeactivate
@@ -3808,6 +3646,16 @@ async function handleLeagueSettingsPage(req, env, url) {
       seasonTeamsNoSeason: "Aucune saison publiée pour l'instant.",
       addSeasonTeam: 'Ajouter', removeSeasonTeam: 'Retirer',
       newTeamPlaceholder: 'Nouvelle équipe',
+      // Live-testing task (batch 6), Part 7: moved here from the
+      // dashboard home, which used to show this fully expanded -- see
+      // handleLeagueSettingsPage's own comment at this section's markup.
+      seasonMgmtTitle: 'Saison actuelle',
+      seasonMgmtDesc: "Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.",
+      seasonNameLabel: 'Nom de la saison', seasonNamePh: 'Ex. Saison Hiver 2026',
+      seasonMgmtNameHelp: 'Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.',
+      seasonStructureHelp: "Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.",
+      seasonSaveBtn: 'Enregistrer la saison',
+      structureLabel: 'Comment sont organisées tes équipes?',
       structureTitle: 'Structure par défaut de la ligue',
       structureDesc: "Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées -- seules les nouvelles saisons utiliseront ce changement.",
       structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
@@ -3866,6 +3714,13 @@ async function handleLeagueSettingsPage(req, env, url) {
       seasonTeamsNoSeason: 'No season published yet.',
       addSeasonTeam: 'Add', removeSeasonTeam: 'Remove',
       newTeamPlaceholder: 'New team',
+      seasonMgmtTitle: 'Current season',
+      seasonMgmtDesc: 'Create an additional season, or republish the current one to edit it. Each season can have its own team structure.',
+      seasonNameLabel: 'Season name', seasonNamePh: 'E.g. Winter Season 2026',
+      seasonMgmtNameHelp: "A new name creates a new season. The current season's own name edits it.",
+      seasonStructureHelp: "By default, a new season uses your league's usual structure. Change it here just for this season.",
+      seasonSaveBtn: 'Save season',
+      structureLabel: 'How are your teams organized?',
       structureTitle: "League's default structure",
       structureDesc: "Change your league's default structure. Already-published seasons are never affected -- only new seasons will use this change.",
       structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
@@ -3972,6 +3827,63 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div class="h3" data-i18n="teamsTitle">Équipes</div>
     <p class="nl-help" data-i18n="teamsHeadcountNote">Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.</p>
   </section>`}
+
+  ${currentSeasonEntry ? `
+  <section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
+    <div class="h3" data-i18n="seasonMgmtTitle">Saison actuelle</div>
+    <p class="nl-help" data-i18n="seasonMgmtDesc">Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.</p>
+    <div id="seasonMgmtErr" class="nl-error" style="display:none"></div>
+    <div id="seasonMgmtOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-field" style="max-width:360px">
+      <label class="nl-label" for="season_mgmt_name" data-i18n="seasonNameLabel">Nom de la saison</label>
+      <input class="nl-input" id="season_mgmt_name" type="text" data-i18n-ph="seasonNamePh" placeholder="Ex. Saison Hiver 2026">
+      <p class="nl-help" data-i18n="seasonMgmtNameHelp">Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.</p>
+    </div>
+    <div class="nl-field">
+      <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>
+      <div class="su-structure" id="season_structure_radio">
+        <label class="su-structure-opt${teamStructure === 'fixed' ? ' on' : ''}" data-value="fixed">
+          <input type="radio" name="season_structure" value="fixed" ${teamStructure === 'headcount' || teamStructure === 'weekly_draw' ? '' : 'checked'}>
+          <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue classique.</span></span>
+        </label>
+        <label class="su-structure-opt${teamStructure === 'headcount' ? ' on' : ''}" data-value="headcount">
+          <input type="radio" name="season_structure" value="headcount" ${teamStructure === 'headcount' ? 'checked' : ''}>
+          <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de qui embarque — parfait pour une partie improvisée.</span></span>
+        </label>
+        <label class="su-structure-opt${teamStructure === 'weekly_draw' ? ' on' : ''}" data-value="weekly_draw">
+          <input type="radio" name="season_structure" value="weekly_draw" ${teamStructure === 'weekly_draw' ? 'checked' : ''}>
+          <span><span class="t" data-i18n="structureWeeklyTitle">Équipes qui changent</span><span class="d" data-i18n="structureWeeklyDesc">De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.</span></span>
+        </label>
+      </div>
+      <p class="nl-help" data-i18n="seasonStructureHelp">Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.</p>
+    </div>
+    <div id="season_headcount_section" style="">
+      <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
+      <p class="nl-help" id="season_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp'}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe.' : 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs (pas par équipe).'}</p>
+      <div class="su-two">
+        <div class="nl-field">
+          <label class="nl-label" for="season_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
+          <input class="nl-input" id="season_min_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.min_players) : (isHeadcount ? '8' : ''))}">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="season_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
+          <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.max_players) : (isHeadcount ? '12' : ''))}">
+        </div>
+      </div>
+      <div class="su-two">
+        <div class="nl-field">
+          <label class="nl-label" for="season_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
+          <input class="nl-input" id="season_min_goalies" type="number" min="0" value="${esc(hasRosterLimits ? String(leagueRow.min_goalies || 0) : '')}">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="season_max_goalies" data-i18n="lblMaxGoalies">Maximum de gardiens (optionnel)</label>
+          <input class="nl-input" id="season_max_goalies" type="number" min="0" value="${esc(hasRosterLimits && leagueRow.max_goalies != null ? String(leagueRow.max_goalies) : '')}">
+        </div>
+      </div>
+      <p class="nl-help" data-i18n="maxGoaliesHelp">Laisse vide pour utiliser le même nombre que le minimum.</p>
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>
+  </section>` : ''}
 
   ${!isHeadcount && currentSeasonEntry ? `
   <section class="nl-card nl-card--pad-lg">
@@ -4278,6 +4190,60 @@ async function submitStructure() {
     ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
     window.location.reload();
   } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
+// Live-testing task (batch 6), Part 7: moved here from the dashboard
+// home (Season-level team-structure override task's own original
+// comment, kept for history) -- create an additional season, or edit
+// the current one (re-submitting its own name), with an optional
+// per-season structure override -- omitting team_structure entirely
+// (the radio just isn't touched) makes the season inherit the league's
+// own default, exactly like the signup wizard's own step 2. Rewritten
+// to match this page's own established label-click idiom (see
+// #se_structure_radio right below) rather than the dashboard's
+// original getElementById-then-querySelectorAll shape -- both are
+// equivalent in a real browser, but this page's own pattern is what
+// the rest of Settings already uses.
+document.querySelectorAll('#season_structure_radio label').forEach(function(l) {
+  l.addEventListener('click', function() {
+    document.querySelectorAll('#season_structure_radio label').forEach(function(x) { x.classList.remove('on'); });
+    l.classList.add('on');
+    var val = l.getAttribute('data-value');
+    var helpKey = val === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp';
+    var helpEl = document.getElementById('season_roster_limits_help');
+    if (helpEl) { helpEl.setAttribute('data-i18n', helpKey); helpEl.textContent = window.__pageDict()[helpKey]; }
+  });
+});
+async function submitSeasonMgmt() {
+  var err = document.getElementById('seasonMgmtErr');
+  var ok = document.getElementById('seasonMgmtOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var name = document.getElementById('season_mgmt_name').value.trim();
+  if (!name) { err.textContent = window.__errorText('SEASON_NAME_REQUIRED_CLIENT'); err.style.display = 'block'; return; }
+  var structure = document.querySelector('#season_structure_radio input:checked').value;
+  var payload = { season_name: name, team_structure: structure };
+  var minPlayersEl = document.getElementById('season_min_players');
+  var maxPlayersEl = document.getElementById('season_max_players');
+  if (minPlayersEl && minPlayersEl.value !== '') { payload.min_players = Number(minPlayersEl.value); }
+  if (maxPlayersEl && maxPlayersEl.value !== '') { payload.max_players = Number(maxPlayersEl.value); }
+  var minGoaliesEl = document.getElementById('season_min_goalies');
+  if (minGoaliesEl && minGoaliesEl.value !== '') { payload.min_goalies = Number(minGoaliesEl.value); }
+  var maxGoaliesEl = document.getElementById('season_max_goalies');
+  if (maxGoaliesEl && maxGoaliesEl.value !== '') { payload.max_goalies = Number(maxGoaliesEl.value); }
+  var btn = document.getElementById('season_mgmt_submit');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/season/publish', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
+    window.location.reload();
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
+  }
 }
 async function submitLanguageMode() {
   var err = document.getElementById('langModeErr'); var ok = document.getElementById('langModeOk');

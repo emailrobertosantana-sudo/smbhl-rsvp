@@ -67,14 +67,17 @@ describe('Live-testing Part 3: team-structure copy is clearer and friendlier', (
     expect(html).not.toContain('Teams are different every game.');
   });
 
-  it('the dashboard\'s own season-structure-override picker uses the SAME updated copy, kept consistent with signup', async () => {
+  it('Settings\' own season-structure-override picker uses the SAME updated copy, kept consistent with signup', async () => {
+    // Live-testing task (batch 6), Part 7: this section moved from the
+    // dashboard home to Settings -- see handleDashboardPage/
+    // handleLeagueSettingsPage's own comments. Was /dashboard before.
     const { cookie, csrfToken } = await signup('bugs9.copy.dashboard@example.com', '203.0.124.003');
     await createLeague(cookie, csrfToken, { name: 'Copy Dashboard League', teamNames: ['A', 'B'], tracksStats: true });
     await SELF.fetch('http://example.com/league/season/publish', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ season_name: 'Copy Dashboard Season' })
     });
-    const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
     expect(html).toContain('La même équipe toute la saison, comme une ligue classique.');
     expect(html).toContain('Juste une liste de qui embarque — parfait pour une partie improvisée.');
     expect(html).toContain('on peut même les former pour toi, automatiquement.');

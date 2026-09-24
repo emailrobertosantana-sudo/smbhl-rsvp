@@ -76,12 +76,17 @@ describe('Part 3 (live-testing task, batch 5): hardcoded untranslated strings sw
     expect(en.seasonNamePh.toLowerCase()).toContain('winter');
   });
 
-  it('buildDashI18n (needsSeason=false, "Saisons" management section): seasonNameLabel used to be completely undefined here -- now translates too', () => {
-    const { fr, en } = buildDashI18n({ state: 'active', needsSeason: false, leagueName: 'Sweep League' });
-    expect(fr.seasonNameLabel).toBe('Nom de la saison');
-    expect(fr.seasonNamePh).toBe('Ex. Saison Hiver 2026');
-    expect(en.seasonNameLabel).toBe('Season name');
-    expect(en.seasonNamePh).not.toContain('Saison');
+  it('Settings page i18n dict (current-season management section): seasonNameLabel/seasonNamePh translate correctly -- this section used to live in buildDashI18n\'s needsSeason=false branch (where this exact bug was found and fixed), but moved to Settings in batch 6 Part 7', async () => {
+    const { cookie, csrfToken } = await signup('sweep.seasonmgmt.i18n@example.com', '203.0.182.005');
+    await createLeague(cookie, csrfToken, { name: 'Sweep Season Mgmt League', teamNames: ['X', 'Y'] });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
+    expect(m).toBeTruthy();
+    const dict = JSON.parse(m[1]);
+    expect(dict.fr.seasonNameLabel).toBe('Nom de la saison');
+    expect(dict.fr.seasonNamePh).toBe('Ex. Saison Hiver 2026');
+    expect(dict.en.seasonNameLabel).toBe('Season name');
+    expect(dict.en.seasonNamePh).not.toContain('Saison');
   });
 
   it('the co-admin invite email placeholder translates on the Settings page (was a bare French literal, never wired; moved off the dashboard in batch 5 Part 7)', async () => {
@@ -99,14 +104,17 @@ describe('Part 3 (live-testing task, batch 5): hardcoded untranslated strings sw
     expect(html).toContain('id="season_name" type="text" data-i18n-ph="seasonNamePh"');
   });
 
-  it('the served dashboard HTML wires data-i18n-ph on the season-mgmt-name input once a season already exists', async () => {
+  it('the served Settings HTML wires data-i18n-ph on the season-mgmt-name input once a season already exists', async () => {
+    // Live-testing task (batch 6), Part 7: this section moved from the
+    // dashboard home to Settings -- see handleDashboardPage/
+    // handleLeagueSettingsPage's own comments. Was /dashboard before.
     const { cookie, csrfToken } = await signup('sweep.hasseason@example.com', '203.0.182.002');
     await createLeague(cookie, csrfToken, { name: 'Sweep Has Season League', teamNames: ['X', 'Y'] });
     await SELF.fetch('http://example.com/league/season/publish', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ season_name: 'S1' })
     });
-    const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
     expect(html).toContain('id="season_mgmt_name" type="text" data-i18n-ph="seasonNamePh"');
   });
 

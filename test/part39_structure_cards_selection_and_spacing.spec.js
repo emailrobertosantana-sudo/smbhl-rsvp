@@ -58,14 +58,18 @@ describe('Part 3 (live-testing task): exactly one team-structure card highlighte
     ['headcount', { teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 }],
     ['weekly_draw', { teamStructure: 'weekly_draw', teamNames: ['Rouge / Red', 'Bleu / Blue'] }]
   ]) {
-    it(`dashboard season-management: a ${structure} league shows exactly one 'on' card, matching its real structure`, async () => {
+    it(`settings page season-management: a ${structure} league shows exactly one 'on' card, matching its real structure`, async () => {
+      // Live-testing task (batch 6), Part 7: this section (name/
+      // structure-override/roster-limits for the CURRENT season) moved
+      // from the dashboard home to Settings -- see handleDashboardPage/
+      // handleLeagueSettingsPage's own comments. Was /dashboard before.
       const { cookie, csrfToken } = await signup(`structure.dash.${structure}@example.com`, `203.0.141.00${structure === 'fixed' ? 1 : structure === 'headcount' ? 2 : 3}`);
       await createLeague(cookie, csrfToken, { name: `Structure Dash ${structure} League`, tracksStats: true, ...extra });
       await SELF.fetch('http://example.com/league/season/publish', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
         body: JSON.stringify({ season_name: `${structure} Season` })
       });
-      const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
+      const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
       const section = html.slice(html.indexOf('id="season_structure_radio"'), html.indexOf('id="season_structure_radio"') + 1400);
       const onLabels = [...section.matchAll(/<label class="su-structure-opt([^"]*)" data-value="(\w+)"/g)].filter(m => m[1].includes('on'));
       expect(onLabels.length).toBe(1);
