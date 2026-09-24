@@ -2359,8 +2359,15 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // sentinel, the league's only "team") for a headcount league, so this
   // section never renders for one, even when the season's own
   // standings array has the usual single-fake-team entry.
+  // Live-testing task (batch 2), Part 4: 'weekly_draw' is ALSO
+  // meaningless here, for a different reason -- teams are redrawn
+  // every event, so tonight's "Rouge" is a different group of people
+  // than next week's "Rouge". A cumulative win/loss table for a name
+  // that gets reassigned weekly doesn't track anything real. Standings
+  // are only ever meaningful for 'fixed', where a team really is the
+  // same group of players all season.
   let standings = [];
-  if (leagueRow.tracks_stats && !isHeadcount) {
+  if (leagueRow.tracks_stats && teamStructure === 'fixed') {
     const leagueData = await getLeagueDataJson(env, leagueId);
     const season = (leagueData.seasons || []).find(s => s.name === leagueData.current_season);
     standings = season && Array.isArray(season.standings) ? season.standings : [];
