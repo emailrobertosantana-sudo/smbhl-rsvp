@@ -2756,11 +2756,24 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
       ORDER BY date ASC LIMIT 20`
   ).bind(leagueId, today).all()).results || [];
   const nextEvent = events[0] || null;
+  // Live-testing task (batch 6), Part 11: reference smbhl.com's own
+  // public page, whose "Schedule" section shows one continuous history
+  // (past + upcoming), not just what's next -- unlike the standings
+  // table below (gated to stats-tracking leagues, unchanged), this is
+  // shown for EVERY league, regardless of stats tracking, per the
+  // task's own wording. Cancelled games are included here (unlike the
+  // upcoming list above) since an honest history includes what didn't
+  // happen, not just what did.
+  const pastEvents = (await env.DB.prepare(
+    `SELECT date, venue, venue_id, start_time, state FROM events
+      WHERE league_id = ? AND date < ?
+      ORDER BY date DESC LIMIT 10`
+  ).bind(leagueId, today).all()).results || [];
   // Live-testing task (batch 6), Part 9: reusable venues -- surfaces a
-  // map link next to the venue name wherever one resolves, on the two
-  // spots this page already shows a venue (the hero's next game, and
-  // the upcoming list).
-  const venueMapLinks = await getVenueMapLinksById(env, leagueId, events.map(ev => ev.venue_id));
+  // map link next to the venue name wherever one resolves, on this
+  // page's own venue spots (the hero's next game, the upcoming list,
+  // and -- Part 11 -- the past-events list below).
+  const venueMapLinks = await getVenueMapLinksById(env, leagueId, [...events, ...pastEvents].map(ev => ev.venue_id));
 
   // Team-structure task, Part 4: standings are inherently team-vs-team
   // -- meaningless (and a real leak of the internal HEADCOUNT_TEAM_NAME
@@ -2855,6 +2868,16 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     if (venueMapLinks.size > 0) {
       Object.assign(base, lang === 'fr' ? { viewOnMap: 'Voir sur la carte' } : { viewOnMap: 'View on map' });
     }
+    // Live-testing task (batch 6), Part 11: past events -- shown for
+    // every league (see pastEvents' own comment), so scoped only on
+    // whether there's actually any past history to show, same
+    // "never ship an unused word" discipline as every other conditional
+    // block in this dict.
+    if (pastEvents.length) {
+      Object.assign(base, lang === 'fr'
+        ? { recentResults: 'Résultats récents', statePlayed: 'Joué', stateCancelled: 'Annulé' }
+        : { recentResults: 'Recent results', statePlayed: 'Played', stateCancelled: 'Cancelled' });
+    }
     return base;
   }
   const I18N_PUBLIC = { fr: buildDict('fr'), en: buildDict('en') };
@@ -2888,6 +2911,26 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
       <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
       <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${venueMapLinks.has(ev.venue_id) ? ` · <a href="${esc(venueMapLinks.get(ev.venue_id))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
     </div>`).join('')}</div>` : `<p class="nl-help" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
+
+  // Live-testing task (batch 6), Part 11: "past events alongside
+  // upcoming" -- mirrors smbhl.com's own single continuous Schedule
+  // (not just a next-game view). No score/result data exists anywhere
+  // in the league product yet (no entry route was ever built for one --
+  // confirmed by grep before starting this part, out of scope to add
+  // here), so "result" here is honestly just each game's own state
+  // (played vs cancelled), not a score -- the standings table above
+  // already carries the real W/L record for stats-tracking leagues.
+  const PAST_STATE_KEY = { closed: 'statePlayed', open: 'statePlayed', cancelled: 'stateCancelled' };
+  const PAST_STATE_TONE = { closed: 'in', open: 'in', cancelled: 'out' };
+  const pastEventsHtml = pastEvents.length ? `
+  <h2 data-i18n="recentResults">${esc(t.recentResults)}</h2>
+  <div class="pb-glist">${pastEvents.map(ev => `<div class="pb-g">
+      <div>
+        <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
+        <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${venueMapLinks.has(ev.venue_id) ? ` · <a href="${esc(venueMapLinks.get(ev.venue_id))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
+      </div>
+      <span class="nl-badge nl-badge--${PAST_STATE_TONE[ev.state] || 'pending'}" data-i18n="${PAST_STATE_KEY[ev.state] || ''}">${esc(t[PAST_STATE_KEY[ev.state]] || ev.state)}</span>
+    </div>`).join('')}</div>` : '';
 
   // 'headcount' has no team names to show at all (just the internal,
   // never-shown HEADCOUNT_TEAM_NAME sentinel) -- this whole section is
@@ -2924,6 +2967,7 @@ ${theme === 'clean' ? PUBLIC_THEME_CLEAN_CSS : PUBLIC_THEME_ARENE_CSS}
   ${heroHtml}
   ${standingsHtml}
   ${upcomingHtml}
+  ${pastEventsHtml}
   ${teamsHtml}
   ${weeklyDrawTeamsHtml}
 </main>
