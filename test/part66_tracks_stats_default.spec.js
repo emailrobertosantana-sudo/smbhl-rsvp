@@ -80,14 +80,19 @@ describe('Part 2 (live-testing task, batch 5): tracksStats no longer defaults on
     expect(body.league.tracksStats).toBe(false);
   });
 
-  it("the signup wizard's own stats toggle (step 2) now renders aria-checked=\"false\" by default -- still a real, visible, explicit ask (label + description), just no longer silently on", async () => {
+  // B2 bug fix (i18n/onboarding polish task): the signup wizard's own
+  // stats toggle (step 2) was removed entirely -- it's asked again
+  // during onboarding (the correct, non-duplicated place), so signup
+  // itself no longer asks at all. The POST /leagues/create default this
+  // describes (OFF when omitted) is what signup step 2 now always
+  // sends, unconditionally -- still exercised by every other test in
+  // this file, all still passing unmodified.
+  it("the signup wizard's own stats toggle (step 2) no longer exists -- removed, not just defaulted off (asked again during onboarding instead)", async () => {
     const { cookie } = await signup('trackstats.step2html@example.com', '203.0.181.005');
     const html = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
-    expect(html).toContain('id="su_stats_switch"');
-    expect(html).toContain('aria-checked="false" id="su_stats_switch"');
-    // The visible ask itself (label + helper text) is unchanged.
-    expect(html).toContain('data-i18n="lblStats"');
-    expect(html).toContain('data-i18n="statsHelp"');
+    expect(html).not.toContain('id="su_stats_switch"');
+    expect(html).not.toContain('data-i18n="lblStats"');
+    expect(html).not.toContain('data-i18n="statsHelp"');
   });
 
   it("an EXISTING league's stored tracksStats value is untouched by this change -- this is a new-league-creation default only", async () => {

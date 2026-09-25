@@ -58,7 +58,6 @@ describe('Frontend pages: /signup, /login, /dashboard', () => {
       const step2Html = await step2Res.text();
       expect(step2Html).toContain('id="su_league_name"');
       expect(step2Html).toContain('id="su_slug"');
-      expect(step2Html).toContain('id="su_stats_switch"');
 
       const step3Res = await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie: cookieHeader } });
       expect(step3Res.status).toBe(200);

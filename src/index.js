@@ -617,7 +617,6 @@ const I18N_SIGNUP = {
     step2: 'Étape 2 sur 3', title2: 'Parle-nous de ta ligue',
     lblLeagueName: 'Nom de la ligue', lblSlug: 'Adresse de ta page',
     slugHelp: 'Créée à partir du nom. Tu peux la changer.',
-    lblStats: 'Suivre les statistiques?', statsHelp: "Buts, passes, gardiens. Tu pourras l'activer plus tard.",
     structureLabel: 'Comment sont organisées tes équipes?',
     structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
     structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
@@ -647,7 +646,6 @@ const I18N_SIGNUP = {
     step2: 'Step 2 of 3', title2: 'Tell us about your league',
     lblLeagueName: 'League name', lblSlug: 'Your page address',
     slugHelp: 'Created from the name. You can change it.',
-    lblStats: 'Track stats?', statsHelp: 'Goals, assists, goalies. You can turn this on later.',
     structureLabel: 'How are your teams organized?',
     structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
     structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
@@ -922,10 +920,6 @@ function renderSignupStep2() {
     <div class="nl-prefix"><span>notreligue.ca/</span><input class="nl-input" id="su_slug"></div>
     <p class="nl-help" data-i18n="slugHelp">Créée à partir du nom. Tu peux la changer.</p>
   </div>
-  <div class="nl-toggle">
-    <div><div class="nl-label" data-i18n="lblStats">Suivre les statistiques?</div><div class="nl-help" data-i18n="statsHelp">Buts, passes, gardiens. Tu pourras l'activer plus tard.</div></div>
-    <button type="button" class="nl-switch" role="switch" aria-checked="false" id="su_stats_switch" onclick="toggleStats()"></button>
-  </div>
   <div class="nl-field">
     <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>
     <div class="su-structure" id="su_structure_radio">
@@ -950,10 +944,6 @@ function renderSignupStep2() {
 </div>
 <script>
 ${signupLangScript()}
-function toggleStats() {
-  var b = document.getElementById('su_stats_switch');
-  b.setAttribute('aria-checked', String(b.getAttribute('aria-checked') !== 'true'));
-}
 function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 function clearError() { document.getElementById('formErr').style.display = 'none'; }
 var slugTouched = false;
@@ -971,7 +961,13 @@ async function submitStep2() {
   clearError();
   var name = document.getElementById('su_league_name').value.trim();
   var slug = document.getElementById('su_slug').value.trim();
-  var tracksStats = document.getElementById('su_stats_switch').getAttribute('aria-checked') === 'true';
+  // B2 bug fix (i18n/onboarding polish task): "Track stats?" removed
+  // from signup -- it's asked again during onboarding (the correct
+  // place, per the task's own decision), so asking here was a real
+  // duplicate. Always starts off; the onboarding step is what actually
+  // decides it, same as it always has for a signup that left this
+  // switch untouched (its default was already false).
+  var tracksStats = false;
   var teamStructure = document.querySelector('#su_structure_radio input:checked').value;
   if (!name) { showError(window.__errorText('LEAGUE_NAME_REQUIRED_CLIENT')); return; }
   if (slug && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) { showError(window.__errorText('SLUG_INVALID_FORMAT')); return; }

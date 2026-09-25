@@ -143,13 +143,17 @@ describe('Part 8 (live-testing task, batch 5): inline client-script coverage for
       assertNoSyntaxError(extractInlineScripts(html), '/signup?step=1');
     });
 
-    it('step 2 (league details) is syntactically valid, with submitStep2 and toggleStats defined -- toggleStats is the exact function behind Part 2\'s new tracksStats default', async () => {
+    // B2 bug fix (i18n/onboarding polish task): toggleStats no longer
+    // exists -- the stats toggle it drove was removed from signup step 2
+    // entirely (asked again during onboarding instead, not duplicated
+    // here anymore). submitStep2 itself is still the real function to
+    // check for a syntax error in this script.
+    it('step 2 (league details) is syntactically valid, with submitStep2 defined', async () => {
       const { cookie } = await signup('inline.signup.step2@example.com', '203.0.187.007');
       const html = await fetchHtml('/signup?step=2', cookie);
       const combined = extractInlineScripts(html).join('\n;\n');
       assertNoSyntaxError(extractInlineScripts(html), '/signup?step=2');
       expect(runScript(combined, 'return typeof submitStep2;')).toBe('function');
-      expect(runScript(combined, 'return typeof toggleStats;')).toBe('function');
     });
   });
 
