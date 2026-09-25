@@ -709,9 +709,26 @@ function signupDoc(langParam) {
 // screen: <span class="nl-brand">Ligue du dimanche matin</span>, no
 // product mark), so the two are built separately.
 function signupStyles() {
+  // A1 (layout/spacing polish task): .su-body used to be a flex:1 child
+  // stretching to fill .nl's min-height, which pushed .su-bottom's own
+  // primary action (Log in, Create my season, etc.) down to the
+  // bottom of whatever height was being measured -- on mobile, 100vh
+  // reports the LARGEST possible viewport (as if the browser's address
+  // bar were already hidden), taller than what's actually visible, so
+  // that action rendered below the fold; on a short-content desktop
+  // page it left a large, pointless empty gap above a bottom-pinned
+  // button. Fixed per this task's own explicit decision: content now
+  // defines the height (.su-body has no flex-grow, so the page
+  // collapses to its natural size at the top) rather than stretching
+  // to fill it. .nl's own min-height is kept (so a short page's
+  // background still reaches the bottom of the screen) but switched to
+  // 100dvh -- the real, current visible viewport, not the inflated one
+  // -- matching this task's "if a bottom-pinned action is genuinely
+  // wanted, use 100dvh, not 100vh" guidance for wherever full-height IS
+  // still intentional.
   return `<style>
-  .nl { display: flex; flex-direction: column; min-height: 100vh; }
-  .su-body { flex: 1; max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+  .nl { display: flex; flex-direction: column; min-height: 100dvh; }
+  .su-body { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
   .su-prog { display: flex; flex-direction: column; gap: var(--space-2); }
   .su-title { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-2); }
   .su-title h1 { font: 700 28px/34px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; }
@@ -1663,7 +1680,7 @@ function dashChrome(leagueName, active) {
 
 function dashStyles() {
   return `<style>
-  .nl { display: flex; flex-direction: column; min-height: 100vh; }
+  .nl { display: flex; flex-direction: column; min-height: 100dvh; }
   .dash-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-5); flex: 1; }
   .dash-top { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
   .dash-top h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; }
@@ -2684,7 +2701,7 @@ window.addEventListener('admin_lang_changed', function(e) {
 // them, so the settings page's picker only lists the 2 that actually
 // work; SETTINGS_PAGE_PUBLIC_THEMES (handleLeagueSettingsPage) is the
 // single source of truth for which themes are selectable.
-const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d); color: var(--ink-inverse, #f4f4f2); min-height: 100vh; display: flex; flex-direction: column; }
+const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d); color: var(--ink-inverse, #f4f4f2); min-height: 100dvh; display: flex; flex-direction: column; }
   .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .pb-hero { margin: var(--space-4) 0; padding: var(--space-5); background: var(--primary); border-radius: var(--radius-lg); }
   .pb-hero-when { font: 800 28px/32px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #fff; margin-top: 6px; }
@@ -2768,7 +2785,7 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
 // tiles become plain bordered cards with a dot, not a filled block).
 // Reuses the exact same class names/HTML as Arène -- only this block
 // differs.
-const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min-height: 100vh; display: flex; flex-direction: column; font-family: Inter, var(--font-sans); }
+const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min-height: 100dvh; display: flex; flex-direction: column; font-family: Inter, var(--font-sans); }
   .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .pb-hero { margin: 40px 0 16px; padding: 0; background: none; border-radius: 0; position: relative; }
   .pb-hero:before { content: ""; display: block; width: 24px; height: 4px; background: var(--primary, #b3122e); margin-bottom: 20px; }
@@ -2825,7 +2842,7 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
 // broken link. Status stays 404: from the requester's own point of
 // view there is, correctly, no page to find either way.
 function publicPageNotAvailableResponse() {
-  const bodyHtml = `<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">Cette page n'est pas publique</h1></div>`;
+  const bodyHtml = `<div style="display:flex;align-items:center;justify-content:center;min-height:100dvh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">Cette page n'est pas publique</h1></div>`;
   return new Response(nlDocument({ title: 'Page non publique', description: '', bodyHtml }), {
     status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
@@ -2850,7 +2867,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // falls back to 'arene', every league's real default.
   const theme = leagueRow.public_theme === 'clean' ? 'clean' : 'arene';
   if (leagueRow.deactivated_at) {
-    const bodyHtml410 = `<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">Cette ligue n'est plus active</h1></div>`;
+    const bodyHtml410 = `<div style="display:flex;align-items:center;justify-content:center;min-height:100dvh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">Cette ligue n'est plus active</h1></div>`;
     return new Response(nlDocument({ title: 'Ligue désactivée', description: '', bodyHtml: bodyHtml410 }), {
       status: 410, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
     });
@@ -4048,6 +4065,14 @@ async function handleLeagueSettingsPage(req, env, url) {
   const bodyHtml = `${dashStyles()}<style>
   .se-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
   .se-main h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; }
+  /* A3 (layout/spacing polish task): .se-main's own gap already spaces
+     the CARDS apart, but .nl-card has no gap of its own between
+     children -- every field/toggle/button row inside each card ran
+     flush against the label above it. Scoped to this page (not a
+     shared .nl-card rule, which SMBHL's own pages also use) -- same
+     flex+gap-on-the-container pattern already proven on this page's
+     own .se-main and on signupStyles()'s .su-body. */
+  .se-main .nl-card { display: flex; flex-direction: column; gap: var(--space-3); }
   .se-team-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
   .se-team-row input[data-team-name] { flex: 1; }
   .se-color { width: 44px; height: 40px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); padding: 2px; cursor: pointer; }
@@ -6546,6 +6571,16 @@ ${tabbar}`;
   const bodyHtml = `${dashStyles()}<style>
   .ev-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
   .ev-main h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; margin-top: 4px; }
+  /* A2 (layout/spacing polish task): .nl-card has no gap of its own
+     between direct children -- fine for cards whose own markup already
+     wraps each field in something with spacing (.sc-two, .su-two), but
+     #ev_edit_panel stacks .nl-field/.sc-two/the button row directly, so
+     they ran flush together, and editDateNote (already inside the same
+     .nl-field as the date input) read as closer to the NEXT field's
+     label than to its own input purely because nothing separated the
+     .nl-field blocks themselves. Same flex+gap-on-the-container pattern
+     signupStyles()'s own .su-body already uses successfully. */
+  #ev_edit_panel { display: flex; flex-direction: column; gap: var(--space-3); }
   .ev-teams { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); }
   .ev-team { display: flex; flex-direction: column; gap: var(--space-3); }
   .ev-th { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-3); }
@@ -15248,7 +15283,7 @@ async function handleLeagueRandomAssignEventTeams(req, env, url) {
 // (forcedLang leagues, as before, render directly in their one
 // language and hide the switcher).
 function leagueRsvpNotice(fr, en) {
-  const bodyHtml = `<style>.nl{display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:var(--space-5)}</style>
+  const bodyHtml = `<style>.nl{display:flex;align-items:center;justify-content:center;min-height:100dvh;text-align:center;padding:var(--space-5)}</style>
 <div><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">${esc(fr)}</h1><p class="nl-help">${esc(en)}</p></div>`;
   return new Response(nlDocument({ title: fr, description: '', bodyHtml }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
@@ -15405,7 +15440,7 @@ async function leagueRsvpGet(req, env, url) {
   ` : '';
 
   const bodyHtml = `<style>
-  .nl { display: flex; flex-direction: column; min-height: 100vh; }
+  .nl { display: flex; flex-direction: column; min-height: 100dvh; }
   .rv-body { flex: 1; max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-5); }
   .rv-q { font: 800 32px/35px var(--font-display); font-stretch: 118%; letter-spacing: -.02em; margin: var(--space-2) 0; }
   .rv-meta { display: flex; flex-direction: column; gap: 4px; font-size: 18px; line-height: 28px; }
