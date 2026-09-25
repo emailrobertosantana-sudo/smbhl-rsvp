@@ -6147,6 +6147,11 @@ ${tabbar}`;
         </div>`).join('')
       : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
 
+    // Item 1 (event-page layout polish task): heading/badge, then the
+    // player list (what an admin actually acts on), THEN the counts/
+    // progress bar/invite buttons -- the list used to be last, below
+    // three things an admin never clicks, making it the hardest part
+    // of the card to reach despite being the reason the card exists.
     teamCards.push(`
     <section class="nl-card nl-card--pad-lg${st.short ? ' nl-card--short' : ''} ev-team"${isHeadcount ? ' style="grid-column:1/-1"' : ''}>
       <div class="ev-th">
@@ -6155,6 +6160,7 @@ ${tabbar}`;
           ? `<span class="nl-badge nl-badge--short">${BADGE_ICON_ALERT}<span data-i18n="short">Manque</span> ${Math.max(openGoalies, 0) + Math.max(openSkaters, 0)}</span>`
           : `<span class="nl-badge nl-badge--in">${BADGE_ICON_CHECK}<span data-i18n="complete">Complet</span></span>`}
       </div>
+      <div class="ev-ppl">${rosterListHtml}</div>
       <div class="ev-nums">
         <div><span class="stat tnum">${confirmed}</span><span data-i18n="confirmed">confirmés</span></div>
         <div><span class="stat tnum">${openSkaters + openGoalies}</span><span data-i18n="openSpots">places libres</span></div>
@@ -6164,7 +6170,6 @@ ${tabbar}`;
       <div class="nl-meter">${Array.from({ length: meterSpots }, (_, s) => `<i class="${s < confirmed ? 'in' : 'open'}"></i>`).join('')}</div>
       ${inviteButtons.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${inviteButtons.join('')}</div>` : ''}
       <p class="inviteMsg nl-help" style="display:none;"></p>
-      <div class="ev-ppl">${rosterListHtml}</div>
     </section>`);
   }
 
@@ -6215,6 +6220,9 @@ ${tabbar}`;
         </div>`).join('')
       : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
 
+    // Item 1 (event-page layout polish task): same reorder as the
+    // per-team cards above -- list right after the heading, counts/
+    // meter/invite buttons after.
     poolCardHtml = `
     <section class="nl-card nl-card--pad-lg${pool.short ? ' nl-card--short' : ''} ev-team" style="grid-column:1/-1">
       <div class="ev-th">
@@ -6223,6 +6231,7 @@ ${tabbar}`;
           ? `<span class="nl-badge nl-badge--short">${BADGE_ICON_ALERT}<span data-i18n="short">Manque</span> ${pool.openGoalies + pool.openSkaters}</span>`
           : `<span class="nl-badge nl-badge--in">${BADGE_ICON_CHECK}<span data-i18n="complete">Complet</span></span>`}
       </div>
+      <div class="ev-ppl" id="ev_pool_list">${poolPlayerListHtml}</div>
       <div class="ev-nums">
         <div><span class="stat tnum">${poolCounts.in}</span><span data-i18n="confirmed">confirmés</span></div>
         <div><span class="stat tnum">${pool.openSkaters + pool.openGoalies}</span><span data-i18n="openSpots">places libres</span></div>
@@ -6231,7 +6240,6 @@ ${tabbar}`;
       <div class="nl-meter">${Array.from({ length: poolMeterSpots }, (_, s) => `<i class="${s < poolCounts.in ? 'in' : 'open'}"></i>`).join('')}</div>
       ${poolInviteButtons.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${poolInviteButtons.join('')}</div>` : ''}
       <p class="inviteMsg nl-help" style="display:none;"></p>
-      <div class="ev-ppl" id="ev_pool_list" style="margin-top:var(--space-3)">${poolPlayerListHtml}</div>
     </section>`;
   }
 
@@ -6241,7 +6249,19 @@ ${tabbar}`;
   // reach that state, since writeLeagueRsvpStatus only sets team=null
   // for weekly_draw in the first place).
   let unassignedHtml = '';
-  if (isWeeklyDraw) {
+  // Item 1 (event-page layout polish task): this card is only ever
+  // useful once at least one player has confirmed for this event --
+  // with zero confirmed, "Tous les joueurs confirmés sont assignés"
+  // would technically be true but meaningless (there's nothing to
+  // assign, not "nothing LEFT to assign"), so it's suppressed
+  // entirely rather than shown as an empty/no-op card above the real
+  // content. Once ANY player has confirmed, the card shows again,
+  // including its legitimate "all assigned already" state.
+  const anyConfirmedForEvent = isWeeklyDraw ? (await env.DB.prepare(
+    `SELECT 1 FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND c.league_id = ? AND r.status = 'in' LIMIT 1`
+  ).bind(ev.id, leagueId).first()) : null;
+  if (isWeeklyDraw && anyConfirmedForEvent) {
     const unassignedRows = (await env.DB.prepare(
       `SELECT c.player_id, c.name
          FROM contacts c
@@ -6347,8 +6367,8 @@ ${tabbar}`;
     </div>
     <p id="evRemindersMsg" class="nl-help" style="display:none;margin-top:4px;"></p>
   </div>
-  ${unassignedHtml}
   <div class="ev-teams">${poolCardHtml || teamCards.join('')}</div>
+  ${unassignedHtml}
 </main>
 ${tabbar}`;
 

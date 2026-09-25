@@ -309,3 +309,143 @@ describe('UI task Part U: GET /league/events/detail', () => {
     });
   });
 });
+
+// Item 1 (event-page layout polish task): the Players card -- what an
+// admin acts on most -- used to sit below "Confirmed, not yet
+// assigned", and within it the player list sat below counts/meter/
+// invite buttons, making it the hardest thing on the page to reach.
+// These tests lock the rendered ORDER (not just presence), since a
+// page can have every element present and still be laid out wrong.
+describe('Item 1: event page layout order', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  async function publishSeason(cookie, csrfToken, body) {
+    return SELF.fetch('http://example.com/league/season/publish', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify(body)
+    });
+  }
+  async function addContact(cookie, csrfToken, body) {
+    const res = await SELF.fetch('http://example.com/league/contacts', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify(body)
+    });
+    return (await res.json()).contact;
+  }
+  async function signupAndCreateWeeklyDrawLeague(email, ip, name) {
+    const signupRes = await SELF.fetch('http://example.com/auth/signup', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
+      body: JSON.stringify({ email, password: 'a-strong-password-1' })
+    });
+    const cookie = extractCookie(signupRes);
+    const csrfToken = extractCsrfToken(signupRes);
+    const leagueRes = await SELF.fetch('http://example.com/leagues/create', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ name, teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: true })
+    });
+    return { cookie, csrfToken, leagueId: (await leagueRes.json()).league.id };
+  }
+  async function createEvent(cookie, csrfToken, date) {
+    const res = await SELF.fetch('http://example.com/league/events', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ date })
+    });
+    return (await res.json()).event.id;
+  }
+  async function setIn(cookie, csrfToken, eventId, playerId) {
+    await SELF.fetch('http://example.com/league/rsvp/admin', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ event_id: eventId, player_id: playerId, status: 'in' })
+    });
+  }
+
+  it('top-level page order: title/venue/edit, then reminders, then the Players card, then Confirmed-not-yet-assigned', async () => {
+    const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('item1.layout.order@example.com', '203.0.150.001', 'Item1 Layout Order League', ['A', 'B']);
+    await publishSeason(cookie, csrfToken, { season_name: 'Layout Order Season' });
+    const player = await addContact(cookie, csrfToken, { name: 'Layout Order Player', team: 'A', email: 'layoutorder@example.com' });
+    const eventId = await createEvent(cookie, csrfToken, '2099-09-01');
+    await setIn(cookie, csrfToken, eventId, player.player_id);
+
+    const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+    const titleIdx = html.indexOf('id="ev_edit_toggle"');
+    const remindersIdx = html.indexOf('id="ev_reminders_switch"');
+    const playersCardIdx = html.indexOf('class="ev-teams"');
+    expect(titleIdx).toBeGreaterThan(-1);
+    expect(remindersIdx).toBeGreaterThan(-1);
+    expect(playersCardIdx).toBeGreaterThan(-1);
+    expect(titleIdx).toBeLessThan(remindersIdx);
+    expect(remindersIdx).toBeLessThan(playersCardIdx);
+    // fixed-mode has no "Confirmed, not yet assigned" card at all --
+    // covered separately below for weekly_draw, where it's real.
+  });
+
+  it('weekly_draw: the Players card renders before "Confirmed, not yet assigned" once both are present', async () => {
+    const { cookie, csrfToken } = await signupAndCreateWeeklyDrawLeague('item1.layout.weekly@example.com', '203.0.150.002', 'Item1 Layout Weekly League');
+    await publishSeason(cookie, csrfToken, { season_name: 'Layout Weekly Season' });
+    const player = await addContact(cookie, csrfToken, { name: 'Layout Weekly Player', email: 'layoutweekly@example.com' });
+    const eventId = await createEvent(cookie, csrfToken, '2099-09-02');
+    await setIn(cookie, csrfToken, eventId, player.player_id);
+
+    const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+    expect(html).toContain('data-i18n="unassignedTitle"');
+    const playersCardIdx = html.indexOf('class="ev-teams"');
+    const unassignedIdx = html.indexOf('data-i18n="unassignedTitle"');
+    expect(playersCardIdx).toBeGreaterThan(-1);
+    expect(playersCardIdx).toBeLessThan(unassignedIdx);
+  });
+
+  it('within the Players card: heading/badge, then the player list with IN/OUT, then counts/meter, then invite buttons', async () => {
+    const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('item1.layout.inner@example.com', '203.0.150.003', 'Item1 Layout Inner League', ['A', 'B']);
+    // Tight roster requirement so an invite button genuinely renders.
+    await publishSeason(cookie, csrfToken, { season_name: 'Layout Inner Season', skaters_per_team: 3, min_skaters: 1, goalies_per_team: 0 });
+    const player = await addContact(cookie, csrfToken, { name: 'Layout Inner Player', team: 'A', email: 'layoutinner@example.com' });
+    const eventId = await createEvent(cookie, csrfToken, '2099-09-03');
+    await setIn(cookie, csrfToken, eventId, player.player_id);
+
+    const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+    const cardStart = html.indexOf('class="ev-teams"');
+    const cardHtml = html.slice(cardStart, html.indexOf('</main>', cardStart));
+    const headingIdx = cardHtml.indexOf('class="ev-th"');
+    const listIdx = cardHtml.indexOf(`setPlayerStatus('${player.player_id}'`);
+    const numsIdx = cardHtml.indexOf('class="ev-nums"');
+    const inviteIdx = cardHtml.indexOf('data-i18n="inviteSkater"');
+    expect(headingIdx).toBeGreaterThan(-1);
+    expect(listIdx).toBeGreaterThan(-1);
+    expect(numsIdx).toBeGreaterThan(-1);
+    expect(inviteIdx).toBeGreaterThan(-1);
+    expect(headingIdx).toBeLessThan(listIdx);
+    expect(listIdx).toBeLessThan(numsIdx);
+    expect(numsIdx).toBeLessThan(inviteIdx);
+  });
+
+  it('"Confirmed, not yet assigned" is entirely absent when no player has confirmed yet for this event', async () => {
+    const { cookie, csrfToken } = await signupAndCreateWeeklyDrawLeague('item1.layout.noconfirm@example.com', '203.0.150.004', 'Item1 Layout No Confirm League');
+    await publishSeason(cookie, csrfToken, { season_name: 'No Confirm Season' });
+    await addContact(cookie, csrfToken, { name: 'Never Confirmed Player', email: 'neverconfirmed@example.com' });
+    const eventId = await createEvent(cookie, csrfToken, '2099-09-04');
+    // No setIn call -- player stays pending.
+
+    const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+    expect(html).not.toContain('data-i18n="unassignedTitle"');
+    expect(html).not.toContain('id="ev_unassigned_list"');
+  });
+
+  it('"Confirmed, not yet assigned" still shows its real "all assigned" state once at least one player has confirmed and been assigned', async () => {
+    const { cookie, csrfToken } = await signupAndCreateWeeklyDrawLeague('item1.layout.allassigned@example.com', '203.0.150.005', 'Item1 Layout All Assigned League');
+    await publishSeason(cookie, csrfToken, { season_name: 'All Assigned Season' });
+    const player = await addContact(cookie, csrfToken, { name: 'All Assigned Player', email: 'allassigned@example.com' });
+    const eventId = await createEvent(cookie, csrfToken, '2099-09-05');
+    await setIn(cookie, csrfToken, eventId, player.player_id);
+    await SELF.fetch('http://example.com/league/events/assign-team', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ event_id: eventId, player_id: player.player_id, team: 'Rouge' })
+    });
+
+    const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+    expect(html).toContain('data-i18n="unassignedTitle"');
+    expect(html).toContain('data-i18n="noUnassigned"');
+  });
+});
