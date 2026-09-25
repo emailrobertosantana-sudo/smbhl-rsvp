@@ -4655,7 +4655,7 @@ async function handleLeagueRosterPage(req, env, url) {
   const leagueRow = await env.DB.prepare('SELECT name, team_colors FROM leagues WHERE id = ?').bind(leagueId).first();
 
   const contacts = (await env.DB.prepare(
-    'SELECT player_id, name, email, phone, role, preferred_team, is_goalie FROM contacts WHERE league_id = ? ORDER BY name'
+    'SELECT player_id, name, email, phone, role, preferred_team, is_goalie, is_backup_goalie FROM contacts WHERE league_id = ? ORDER BY name'
   ).bind(leagueId).all()).results || [];
 
   // Live-testing task (batch 6), Part 6: onboarding used to stall
@@ -4719,9 +4719,20 @@ async function handleLeagueRosterPage(req, env, url) {
       teamOpt: 'Équipe (optionnel)', teamUnassigned: 'Non assigné', addBtn: 'Ajouter', cancel: 'Annuler',
       players: 'Joueurs', unassigned: 'Non assigné', noPlayers: "Aucun joueur pour l'instant.",
       weeklyDrawNote: "Les équipes sont assignées à chaque match, pas ici — voir la page d'un match.",
-      goalieAxis: 'Gardien ou joueur?', axisPlayer: 'Joueur', axisGoalie: 'Gardien',
+      // E1 bug fix (players polish task): "Gardien ou joueur?" as a
+      // label, with a column header separately reading "Gardien" above
+      // cells reading "Joueur", was contradictory -- a "Joueur" cell
+      // under a "Gardien" column reads as an error. Both renamed to the
+      // neutral "Position"; the options themselves (axisPlayer/
+      // axisGoalie) are unchanged, still "Joueur"/"Gardien".
+      goalieAxis: 'Position', axisPlayer: 'Joueur', axisGoalie: 'Gardien',
       goalieAxisHelp: 'Indépendant de Régulier/Remplaçant — un gardien peut être régulier ou remplaçant.',
-      colGoalie: 'Gardien',
+      colGoalie: 'Position',
+      // E2 (players polish task): a "Joueur" who can also cover goalie --
+      // common in ball hockey. Independent of the Position axis itself
+      // (still exactly Player/Goalie), shown only under "Joueur".
+      canAlsoGoalie: 'Peut aussi jouer gardien',
+      goalieBadge: 'G',
       bulkImport: "Importer d'un tableur", bulkImportTitle: 'Importer des joueurs',
       bulkImportHelp: "Colle une liste copiée d'un tableur (Excel, Google Sheets) — une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée.",
       bulkPreviewBtn: 'Prévisualiser', bulkConfirmBtn: "Confirmer l'import",
@@ -4747,9 +4758,11 @@ async function handleLeagueRosterPage(req, env, url) {
       teamOpt: 'Team (optional)', teamUnassigned: 'Unassigned', addBtn: 'Add', cancel: 'Cancel',
       players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.',
       weeklyDrawNote: 'Teams are assigned per game, not here — see a game’s own page.',
-      goalieAxis: 'Goalie or player?', axisPlayer: 'Player', axisGoalie: 'Goalie',
+      goalieAxis: 'Position', axisPlayer: 'Player', axisGoalie: 'Goalie',
       goalieAxisHelp: "Independent of Regular/Sub — a goalie can be regular or sub.",
-      colGoalie: 'Goalie',
+      colGoalie: 'Position',
+      canAlsoGoalie: 'Can also play goalie',
+      goalieBadge: 'G',
       bulkImport: 'Import from spreadsheet', bulkImportTitle: 'Import players',
       bulkImportHelp: 'Paste a list copied from a spreadsheet (Excel, Google Sheets) — one person per line, columns separated by a tab or comma. A header row is fine, it will be skipped.',
       bulkPreviewBtn: 'Preview', bulkConfirmBtn: 'Confirm import',
@@ -4788,11 +4801,17 @@ async function handleLeagueRosterPage(req, env, url) {
     const filterAttr = c.role !== 'roster' ? 'subs' : c.preferred_team ? `team:${c.preferred_team}` : 'unassigned';
     const roleBtn = `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-toggle-role="${esc(c.player_id)}" data-next-role="${nextRole}"><span data-i18n="${roleKey}">${esc(I18N_ROSTER.fr[roleKey])}</span></button>`;
     const goalieBtn = `<button type="button" class="nl-btn ${c.is_goalie ? 'nl-btn--primary' : 'nl-btn--secondary'} nl-btn--sm" data-toggle-goalie="${esc(c.player_id)}" data-next-goalie="${c.is_goalie ? '0' : '1'}"><span data-i18n="${c.is_goalie ? 'axisGoalie' : 'axisPlayer'}">${esc(c.is_goalie ? I18N_ROSTER.fr.axisGoalie : I18N_ROSTER.fr.axisPlayer)}</span></button>`;
+    // E2 (players polish task): a small "G" badge next to "Joueur" for
+    // anyone who can also cover goalie -- never shown for an actual
+    // goalie (is_goalie already says "Gardien" on its own).
+    const backupGoalieBadge = (!c.is_goalie && c.is_backup_goalie)
+      ? ` <span class="nl-badge nl-badge--sub" style="padding:1px 6px;font-size:11px;" data-i18n="goalieBadge" title="${esc(I18N_ROSTER.fr.canAlsoGoalie)}">G</span>`
+      : '';
     return `<tr data-row-filter="${esc(filterAttr)}">
       <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}</td>
       ${showTeams ? `<td>${c.preferred_team ? esc(c.preferred_team) : `<span class="nl-help" data-i18n="teamUnassigned">Non assigné</span>`}</td>` : ''}
       <td>${roleBtn}</td>
-      ${showGoalieAxis ? `<td>${goalieBtn}</td>` : ''}
+      ${showGoalieAxis ? `<td>${goalieBtn}${backupGoalieBadge}</td>` : ''}
     </tr>`;
   }).join('');
 
@@ -4852,7 +4871,7 @@ async function handleLeagueRosterPage(req, env, url) {
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);" class="ro-grid">
     <div class="ro-table-wrap">
       <table>
-        <thead><tr><th data-i18n="colPlayer">Joueur</th>${showTeams ? '<th data-i18n="colTeam">Équipe</th>' : ''}<th data-i18n="colRole">Rôle</th>${showGoalieAxis ? '<th data-i18n="colGoalie">Gardien</th>' : ''}</tr></thead>
+        <thead><tr><th data-i18n="colPlayer">Joueur</th>${showTeams ? '<th data-i18n="colTeam">Équipe</th>' : ''}<th data-i18n="colRole">Rôle</th>${showGoalieAxis ? '<th data-i18n="colGoalie">Position</th>' : ''}</tr></thead>
         <tbody id="ro_tbody">${rows || ''}</tbody>
       </table>
       ${!contacts.length ? `<p class="nl-help" style="padding:var(--space-4);margin:0;" data-i18n="noPlayers">Aucun joueur pour l'instant.</p>` : ''}
@@ -4890,12 +4909,16 @@ async function handleLeagueRosterPage(req, env, url) {
         </div>
       </div>
       ${showGoalieAxis ? `<div class="nl-field" id="r_goalie_field">
-        <span class="nl-label" data-i18n="goalieAxis">Gardien ou joueur?</span>
+        <span class="nl-label" data-i18n="goalieAxis">Position</span>
         <div class="ro-radio" id="r_goalie_radio" style="grid-template-columns:1fr 1fr">
           <label data-value="player" class="on"><span data-i18n="axisPlayer">Joueur</span></label>
           <label data-value="goalie"><span data-i18n="axisGoalie">Gardien</span></label>
         </div>
         <p class="nl-help" data-i18n="goalieAxisHelp">Indépendant de Régulier/Remplaçant — un gardien peut être régulier ou remplaçant.</p>
+        <label id="r_backup_goalie_wrap" style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+          <input type="checkbox" id="r_backup_goalie">
+          <span data-i18n="canAlsoGoalie">Peut aussi jouer gardien</span>
+        </label>
       </div>` : ''}
       ${showTeams ? `<div class="nl-field">
         <label class="nl-label" for="r_team" data-i18n="teamOpt">Équipe (optionnel)</label>
@@ -4959,6 +4982,14 @@ document.querySelectorAll('#r_goalie_radio label').forEach(function(l) {
     document.querySelectorAll('#r_goalie_radio label').forEach(function(x) { x.classList.remove('on'); });
     l.classList.add('on');
     r_goalie = l.getAttribute('data-value') === 'goalie';
+    // E2 (players polish task): "can also play goalie" only makes
+    // sense for a Player -- hidden (and unchecked, so a stale checked
+    // state never silently submits) the moment Goalie is picked.
+    var backupWrap = document.getElementById('r_backup_goalie_wrap');
+    if (backupWrap) {
+      backupWrap.style.display = r_goalie ? 'none' : '';
+      if (r_goalie) document.getElementById('r_backup_goalie').checked = false;
+    }
   });
 });
 function toggleRosterPanel() {
@@ -5241,7 +5272,7 @@ async function submitContact() {
     var res = await fetch('/league/contacts', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined, is_goalie: ${showGoalieAxis ? 'r_goalie' : 'undefined'} })
+      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined, is_goalie: ${showGoalieAxis ? 'r_goalie' : 'undefined'}, is_backup_goalie: ${showGoalieAxis ? "(!r_goalie && document.getElementById('r_backup_goalie').checked)" : 'undefined'} })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }

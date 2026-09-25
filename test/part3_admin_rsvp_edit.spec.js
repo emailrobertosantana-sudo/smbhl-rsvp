@@ -153,4 +153,66 @@ describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
     });
     expect(res.status).toBe(401);
   });
+
+  // E3 bug fix (players polish task): investigated and found this
+  // feature already fully built (the "Part 3"/"Part R" work this whole
+  // file already covers) -- session-gated admin IN/OUT, writing through
+  // writeLeagueRsvpStatus(..., 'manager', ...), with NO player-facing
+  // notification path at all (unlike SMBHL's own /team-rsvp, which lets
+  // a TEAMMATE mark another teammate and notifies them -- see
+  // handleLeagueAdminSetRsvp's own comment for that explicit
+  // distinction). What was missing was this task's own explicit test
+  // requirement: proving the "no email" behaviour directly, not just
+  // that the route exists. Locked here.
+  describe('E3: admin confirmation is silent -- no email to the player', () => {
+    it('marking a player IN as admin sends no email at all, even though the player has a real address on file', async () => {
+      const { cookie: c, csrfToken: t, leagueId: lid } = await signupAndCreateLeague('part3.e3.silent@example.com', '203.0.113.422', 'E3 Silent League', ['A', 'B']);
+      await SELF.fetch('http://example.com/league/season/publish', {
+        method: 'POST', headers: { cookie: c, 'content-type': 'application/json', 'x-csrf-token': t },
+        body: JSON.stringify({ season_name: 'E3 Silent Season' })
+      });
+      const playerRes = await SELF.fetch('http://example.com/league/contacts', {
+        method: 'POST', headers: { cookie: c, 'content-type': 'application/json', 'x-csrf-token': t },
+        body: JSON.stringify({ name: 'Silent Confirm Player', team: 'A', email: 'silentconfirm@example.com' })
+      });
+      const playerId = (await playerRes.json()).contact.player_id;
+      const evRes = await SELF.fetch('http://example.com/league/events', {
+        method: 'POST', headers: { cookie: c, 'content-type': 'application/json', 'x-csrf-token': t },
+        body: JSON.stringify({ date: '2099-09-09' })
+      });
+      const eId = (await evRes.json()).event.id;
+
+      const originalFetch = globalThis.fetch;
+      const sentMails = [];
+      globalThis.fetch = async (url, opts) => {
+        if (String(url).includes('api.resend.com')) { sentMails.push(JSON.parse(opts.body)); return new Response(JSON.stringify({ id: 'mock' }), { status: 200 }); }
+        return originalFetch(url, opts);
+      };
+      let res;
+      try {
+        res = await SELF.fetch('http://example.com/league/rsvp/admin', {
+          method: 'POST', headers: { cookie: c, 'content-type': 'application/json', 'x-csrf-token': t },
+          body: JSON.stringify({ event_id: eId, player_id: playerId, status: 'in' })
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+      expect(res.status).toBe(200);
+      expect(sentMails.length).toBe(0);
+
+      // The RSVP row itself really did change -- this isn't silent
+      // because nothing happened, it's silent because nothing was SENT.
+      const rsvpRow = await env.DB.prepare('SELECT status, status_by FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eId, playerId).first();
+      expect(rsvpRow.status).toBe('in');
+      expect(rsvpRow.status_by).toBe('manager');
+
+      // And the outbox has nothing queued for this player from this
+      // action either (distinct from the OUT+shortage case, already
+      // covered elsewhere in this file, where a SUB invite is a real,
+      // intentional, separate side effect -- not a notification to this
+      // same player).
+      const outboxRow = await env.DB.prepare('SELECT * FROM outbox WHERE event_id = ? AND player_id = ?').bind(eId, playerId).first();
+      expect(outboxRow).toBeNull();
+    });
+  });
 });

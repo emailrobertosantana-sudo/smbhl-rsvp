@@ -447,6 +447,19 @@ async function createLeagueContactRow(env, leagueId, body) {
   if (sportHasGoalie(cfg.sportType) && body.is_goalie !== undefined) {
     isGoalie = body.is_goalie === true ? 1 : 0;
   }
+  // E2 (players polish task): "can also play goalie" -- a Player who
+  // can cover the goalie spot if the primary is out. Reuses the SAME
+  // contacts.is_backup_goalie column SMBHL's own admin already writes
+  // (teamState/expected, index.js, already fall back to it
+  // automatically for shortage detection and coverage -- this is only
+  // the league product's first WRITE path for it). Never true for an
+  // actual goalie (isGoalie === 1) regardless of what's sent -- the
+  // two are mutually exclusive by definition, same as the form's own
+  // client-side hide-on-Goalie behaviour.
+  let isBackupGoalie = 0;
+  if (sportHasGoalie(cfg.sportType) && !isGoalie && body.is_backup_goalie === true) {
+    isBackupGoalie = 1;
+  }
 
   const maxP = await env.DB.prepare(
     'SELECT player_id FROM contacts WHERE player_id LIKE ? ORDER BY player_id DESC LIMIT 1'
@@ -460,13 +473,13 @@ async function createLeagueContactRow(env, leagueId, body) {
   const salt = crypto.randomUUID().replace(/-/g, '');
 
   await env.DB.prepare(
-    `INSERT INTO contacts (player_id, name, email, phone, role, is_goalie, position, preferred_team, token_salt, league_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(playerId, name, email, phone, role, isGoalie, position, team, salt, leagueId).run();
+    `INSERT INTO contacts (player_id, name, email, phone, role, is_goalie, is_backup_goalie, position, preferred_team, token_salt, league_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(playerId, name, email, phone, role, isGoalie, isBackupGoalie, position, team, salt, leagueId).run();
 
   return {
     ok: true,
-    contact: { player_id: playerId, name, email, phone, role, is_goalie: isGoalie, position, team }
+    contact: { player_id: playerId, name, email, phone, role, is_goalie: isGoalie, is_backup_goalie: isBackupGoalie, position, team }
   };
 }
 
@@ -563,6 +576,17 @@ export async function handleLeagueContactUpdate(req, env, url) {
       return Response.json({ ok: false, error: 'This league has no goalie position.', errorKey: 'NO_GOALIE_POSITION' }, { status: 400 });
     }
     updates.push('is_goalie = ?'); params.push(body.is_goalie === true ? 1 : 0);
+    // E2 (players polish task): switching TO Goalie clears any stale
+    // "can also play goalie" flag in the same write -- the two are
+    // mutually exclusive, same as the add-player form's own behaviour.
+    if (body.is_goalie === true) { updates.push('is_backup_goalie = 0'); }
+  }
+  if (body.is_backup_goalie !== undefined) {
+    const cfg = await getLeagueSeasonConfig(env, leagueId);
+    if (!sportHasGoalie(cfg.sportType)) {
+      return Response.json({ ok: false, error: 'This league has no goalie position.', errorKey: 'NO_GOALIE_POSITION' }, { status: 400 });
+    }
+    updates.push('is_backup_goalie = ?'); params.push(body.is_backup_goalie === true ? 1 : 0);
   }
   if (!updates.length) {
     return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
@@ -571,8 +595,8 @@ export async function handleLeagueContactUpdate(req, env, url) {
   params.push(playerId, leagueId);
   await env.DB.prepare(`UPDATE contacts SET ${updates.join(', ')} WHERE player_id = ? AND league_id = ?`).bind(...params).run();
 
-  const row = await env.DB.prepare('SELECT role, is_goalie FROM contacts WHERE player_id = ?').bind(playerId).first();
-  return Response.json({ ok: true, player_id: playerId, role: row.role, is_goalie: !!row.is_goalie });
+  const row = await env.DB.prepare('SELECT role, is_goalie, is_backup_goalie FROM contacts WHERE player_id = ?').bind(playerId).first();
+  return Response.json({ ok: true, player_id: playerId, role: row.role, is_goalie: !!row.is_goalie, is_backup_goalie: !!row.is_backup_goalie });
 }
 
 /* ---------- POST /league/contacts/bulk (Part 6, live-testing task) ----------

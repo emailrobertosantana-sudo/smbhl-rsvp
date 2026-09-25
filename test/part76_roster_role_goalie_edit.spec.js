@@ -57,6 +57,12 @@ async function updateContact(cookie, csrfToken, body) {
     body: JSON.stringify(body)
   });
 }
+async function createEvent(cookie, csrfToken, body) {
+  return SELF.fetch('http://example.com/league/events', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body)
+  });
+}
 
 describe('Part 5 (live-testing task, batch 6): roster role/goalie are now editable inline', () => {
   beforeAll(async () => {
@@ -121,6 +127,115 @@ describe('Part 5 (live-testing task, batch 6): roster role/goalie are now editab
     const row = await env.DB.prepare('SELECT role, is_goalie FROM contacts WHERE player_id = ?').bind(contact.player_id).first();
     expect(row.role).toBe('sub_skater');
     expect(row.is_goalie).toBe(1); // untouched by the role-only update
+  });
+
+  // E1 bug fix (players polish task): "Gardien ou joueur?" as a label,
+  // with a column header separately reading "Gardien" above cells
+  // reading "Joueur", was contradictory. Both renamed to "Position" --
+  // the options themselves are unchanged.
+  it('E1: the label and column header both read "Position" now, not the old contradictory "Gardien ou joueur?"/"Gardien"', async () => {
+    const { cookie, csrfToken } = await signup('rosteredit.e1.position@example.com', '203.0.190.020');
+    await createLeague(cookie, csrfToken, { name: 'E1 Position League', teamNames: ['X', 'Y'] });
+    const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    expect(html).toContain('data-i18n="goalieAxis">Position<');
+    expect(html).toContain('data-i18n="colGoalie">Position<');
+    expect(html).not.toContain('Gardien ou joueur?');
+    // The options themselves are untouched.
+    expect(html).toContain('data-i18n="axisPlayer">Joueur<');
+    expect(html).toContain('data-i18n="axisGoalie">Gardien<');
+  });
+
+  // E2 bug fix (players polish task): "can also play goalie" -- a
+  // Player who can cover the goalie spot if the primary is out.
+  // Reuses contacts.is_backup_goalie (the same column SMBHL's own
+  // admin already writes for this exact concept) -- new here is only
+  // the league product's own write path and display.
+  describe('E2: "can also play goalie"', () => {
+    it('the add-player form shows the checkbox only under Player, hidden under Goalie, with the explanatory Regular/Sub line kept', async () => {
+      const { cookie, csrfToken } = await signup('rosteredit.e2.form@example.com', '203.0.190.021');
+      await createLeague(cookie, csrfToken, { name: 'E2 Form League', teamNames: ['X', 'Y'] });
+      const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+      expect(html).toContain('id="r_backup_goalie_wrap"');
+      expect(html).toContain('data-i18n="canAlsoGoalie"');
+      expect(html).toContain("document.getElementById('r_backup_goalie_wrap')");
+      expect(html).toContain("backupWrap.style.display = r_goalie ? 'none' : ''");
+      // The existing Regular/Sub independence note is kept, unchanged.
+      expect(html).toContain('data-i18n="goalieAxisHelp"');
+      expect(html).toContain('Indépendant de Régulier/Remplaçant');
+    });
+
+    it('POST /league/contacts persists is_backup_goalie=1 for a Player, and the table shows the G badge', async () => {
+      const { cookie, csrfToken } = await signup('rosteredit.e2.create@example.com', '203.0.190.022');
+      await createLeague(cookie, csrfToken, { name: 'E2 Create League', teamNames: ['X', 'Y'] });
+      const contact = await addContact(cookie, csrfToken, { name: 'Dual Position Player', is_goalie: false, is_backup_goalie: true });
+      expect(contact.is_backup_goalie).toBe(1);
+      const row = await env.DB.prepare('SELECT is_goalie, is_backup_goalie FROM contacts WHERE player_id = ?').bind(contact.player_id).first();
+      expect(row.is_goalie).toBe(0);
+      expect(row.is_backup_goalie).toBe(1);
+
+      const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+      expect(html).toContain('data-i18n="goalieBadge"');
+      expect(html).toContain('title="Peut aussi jouer gardien"');
+    });
+
+    it('is_backup_goalie is never set for an actual goalie, even if a caller sends true for both', async () => {
+      const { cookie, csrfToken } = await signup('rosteredit.e2.mutex@example.com', '203.0.190.023');
+      await createLeague(cookie, csrfToken, { name: 'E2 Mutex League', teamNames: ['X', 'Y'] });
+      const contact = await addContact(cookie, csrfToken, { name: 'Actual Goalie Player', is_goalie: true, is_backup_goalie: true });
+      expect(contact.is_goalie).toBe(1);
+      expect(contact.is_backup_goalie).toBe(0);
+
+      // Switching an existing backup-goalie Player TO Goalie clears the flag too.
+      const player2 = await addContact(cookie, csrfToken, { name: 'Switching Player', is_goalie: false, is_backup_goalie: true });
+      expect(player2.is_backup_goalie).toBe(1);
+      await updateContact(cookie, csrfToken, { player_id: player2.player_id, is_goalie: true });
+      const row = await env.DB.prepare('SELECT is_goalie, is_backup_goalie FROM contacts WHERE player_id = ?').bind(player2.player_id).first();
+      expect(row.is_goalie).toBe(1);
+      expect(row.is_backup_goalie).toBe(0);
+    });
+
+    it('E2 behaviour: counts as a player for roster minimums (unaffected skater count), and satisfies goalie coverage for a game when the primary goalie is out', async () => {
+      // headcount: a single implicit team/pool -- isolates this check
+      // from a SECOND real team's own, unrelated shortage (a 'fixed'
+      // 2-team league would show team Y as short its own goalie too,
+      // for having nobody confirmed at all -- a real but irrelevant
+      // confound for what this test is actually checking).
+      const { cookie, csrfToken } = await signup('rosteredit.e2.coverage@example.com', '203.0.190.024');
+      await createLeague(cookie, csrfToken, { name: 'E2 Coverage League', teamStructure: 'headcount', minPlayers: 1, maxPlayers: 10 });
+      await SELF.fetch('http://example.com/league/season/publish', {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+        body: JSON.stringify({ season_name: 'E2 Season', min_players: 1, max_players: 10, min_goalies: 1 })
+      });
+      const primaryGoalie = await addContact(cookie, csrfToken, { name: 'Primary Goalie Player', is_goalie: true });
+      const dualPlayer = await addContact(cookie, csrfToken, { name: 'Dual Coverage Player', is_goalie: false, is_backup_goalie: true });
+      expect(dualPlayer.is_backup_goalie).toBe(1);
+
+      const evRes = await createEvent(cookie, csrfToken, { date: '2099-08-08' });
+      const eventId = (await evRes.json()).event.id;
+      await SELF.fetch('http://example.com/league/rsvp/admin', {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+        body: JSON.stringify({ event_id: eventId, player_id: primaryGoalie.player_id, status: 'out' })
+      });
+      await SELF.fetch('http://example.com/league/rsvp/admin', {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+        body: JSON.stringify({ event_id: eventId, player_id: dualPlayer.player_id, status: 'in' })
+      });
+
+      // "Counts as a player for roster minimums": still a real skater
+      // confirmation, unaffected by the backup-goalie flag.
+      const detailHtml = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+      expect(detailHtml).toContain('Dual Coverage Player');
+
+      // "Satisfies goalie coverage": with the primary goalie out and this
+      // player confirmed in, the event is NOT short a goalie -- no real
+      // "Inviter un gardien" BUTTON, matching teamState/expected's own
+      // existing backup-goalie fallback (index.js, unchanged by this
+      // task). The embedded __I18N dict always carries the
+      // "inviteGoalie" KEY regardless of whether it's used (same as
+      // every other page here) -- what matters is whether a button
+      // actually uses it as its own data-i18n value.
+      expect(detailHtml).not.toContain('data-i18n="inviteGoalie"');
+    });
   });
 
   it('cross-league scoping: a league admin cannot update another league\'s contact', async () => {
