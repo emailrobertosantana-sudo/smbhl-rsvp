@@ -92,8 +92,12 @@ describe('Part 1 (live-testing task): consolidated settings page', () => {
       const json = await res.json();
       // Superseded by live-testing task (batch 2), Part 10: the
       // identity route's response now also includes publicPageEnabled
-      // (default true, unaffected here).
-      expect(json.settings).toEqual({ name: 'Renamed Identity League', color: '#2a5fa8', tracksStats: false, publicTheme: 'arene', publicPageEnabled: true });
+      // (default true, unaffected here). Stats tracking task (Part 1):
+      // also includes tracksResults/tracksPlayerStats -- untouched
+      // here (this call never sent either), so both stay at the
+      // creation-time value (tracksStats: true migrated both on, per
+      // handleLeagueCreate's own "legacy field still means both" rule).
+      expect(json.settings).toEqual({ name: 'Renamed Identity League', color: '#2a5fa8', tracksStats: false, publicTheme: 'arene', publicPageEnabled: true, tracksResults: true, tracksPlayerStats: true });
 
       const row = await env.DB.prepare('SELECT name, color, tracks_stats FROM leagues WHERE id = ?').bind(league.id).first();
       expect(row.name).toBe('Renamed Identity League');

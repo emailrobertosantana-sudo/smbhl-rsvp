@@ -2609,10 +2609,23 @@ export async function handleLeagueCreate(req, env) {
     // league already stored with the old default is untouched (its
     // Settings page shows it as the extra "current" swatch, per this
     // task's own "do not break it" instruction).
+    // Stats tracking task (Part 1): the legacy single tracksStats
+    // field is still accepted here (nothing calls this route with the
+    // two new independent ones at creation time -- both the signup
+    // wizard and onboarding's own real 'stats' question happen
+    // AFTER a league exists) -- same "migrate anyone with the old
+    // switch on to having BOTH new ones on" rule migrate-047.sql
+    // applies to existing rows, applied prospectively here so the old
+    // field keeps meaning exactly what it always has for any caller
+    // still using it. tracksResults is never forced on for a
+    // headcount league (no sides to attach a score to) even if the
+    // legacy tracksStats was sent true -- same guard
+    // handleLeagueUpdateIdentity enforces.
+    const tracksResultsAtCreate = tracksStats && teamStructure !== 'headcount';
     await env.DB.prepare(
-      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at, slug, team_structure, min_players, max_players, min_goalies, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, color)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)`
-    ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug, teamStructure, minPlayers, maxPlayers, minGoalies, '#c0392b').run();
+      `INSERT INTO leagues (id, name, division_label, tracks_stats, tracks_results, tracks_player_stats, team_count, team_names, created_by, created_at, slug, team_structure, min_players, max_players, min_goalies, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, color)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)`
+    ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, tracksResultsAtCreate ? 1 : 0, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug, teamStructure, minPlayers, maxPlayers, minGoalies, '#c0392b').run();
 
     await env.DB.prepare(
       `INSERT INTO league_admins (user_id, league_id, role, created_at) VALUES (?, ?, 'admin', ?)`
@@ -2625,6 +2638,8 @@ export async function handleLeagueCreate(req, env) {
         name,
         divisionLabel,
         tracksStats,
+        tracksResults: tracksResultsAtCreate,
+        tracksPlayerStats: tracksStats,
         teamCount: teamNames.length,
         teamNames,
         slug,
@@ -3123,6 +3138,25 @@ export async function handleLeagueUpdateIdentity(req, env, url) {
   if (typeof body.tracksStats === 'boolean') {
     updates.push('tracks_stats = ?'); params.push(body.tracksStats ? 1 : 0);
   }
+  // Stats tracking task (Part 1): the single "Track stats?" question
+  // replaced by two independent ones -- game results and player
+  // stats. NO TEAMS (headcount) has no sides to attach a score to, so
+  // game results is never offered to it -- rejected here at the
+  // route, not only hidden by the UI, same posture as every other
+  // structure-gated setting in this file.
+  if (typeof body.tracksResults === 'boolean' || typeof body.tracksPlayerStats === 'boolean') {
+    const structRow = await env.DB.prepare('SELECT team_structure FROM leagues WHERE id = ?').bind(leagueId).first();
+    const structure = (structRow && structRow.team_structure) || 'fixed';
+    if (typeof body.tracksResults === 'boolean') {
+      if (body.tracksResults && structure === 'headcount') {
+        return Response.json({ ok: false, error: 'Game results need two sides to attach a score to -- not offered for a no-teams league.', errorKey: 'RESULTS_REQUIRE_TEAMS' }, { status: 409 });
+      }
+      updates.push('tracks_results = ?'); params.push(body.tracksResults ? 1 : 0);
+    }
+    if (typeof body.tracksPlayerStats === 'boolean') {
+      updates.push('tracks_player_stats = ?'); params.push(body.tracksPlayerStats ? 1 : 0);
+    }
+  }
   // Live-testing task, Part 2: public site theme. Only 'arene' and
   // 'clean' actually render (see PUBLIC_THEME_ARENE_CSS's own comment
   // in index.js for why Classique/Quartier were deliberately deferred
@@ -3148,12 +3182,13 @@ export async function handleLeagueUpdateIdentity(req, env, url) {
   params.push(leagueId);
   await env.DB.prepare(`UPDATE leagues SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
 
-  const row = await env.DB.prepare('SELECT name, color, tracks_stats, public_theme, public_page_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
+  const row = await env.DB.prepare('SELECT name, color, tracks_stats, tracks_results, tracks_player_stats, public_theme, public_page_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
   return Response.json({
     ok: true,
     settings: {
       name: row.name, color: row.color, tracksStats: !!row.tracks_stats, publicTheme: row.public_theme,
-      publicPageEnabled: !!row.public_page_enabled
+      publicPageEnabled: !!row.public_page_enabled,
+      tracksResults: !!row.tracks_results, tracksPlayerStats: !!row.tracks_player_stats
     }
   });
 }

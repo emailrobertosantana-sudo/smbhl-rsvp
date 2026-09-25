@@ -150,7 +150,10 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(step4).toContain('aria-checked="true"'); // defaults on (migrate-026.sql)
 
     const step5 = await getOnboarding(cookie, 5);
-    expect(step5).toContain('id="ob_stats"');
+    // Stats tracking task (Part 1): the old single "Track stats?"
+    // toggle replaced by two independent ones.
+    expect(step5).toContain('id="ob_tracks_results"');
+    expect(step5).toContain('id="ob_tracks_player_stats"');
     expect(step5).toContain('data-i18n="finish"');
     expect(step5).not.toContain('data-i18n="next"');
   });
@@ -257,7 +260,10 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(step2).not.toContain('id="ob_teams"');
 
     const step3 = await getOnboarding(cookie, 3);
-    expect(step3).toContain('id="ob_stats"');
+    // Stats tracking task (Part 1): NO TEAMS (headcount) never gets
+    // the game-results question -- no sides to attach a score to.
+    expect(step3).not.toContain('id="ob_tracks_results"');
+    expect(step3).toContain('id="ob_tracks_player_stats"');
     expect(step3).toContain('data-i18n="finish"');
   });
 

@@ -1,7 +1,7 @@
 // GENERATED FILE -- do not hand-edit.
 // Produced by scripts/generate_schema_manifest.js from
 // test/support/base_schema_v1.sql +
-// all migrate-*.sql files (46 files parsed, as of this
+// all migrate-*.sql files (47 files parsed, as of this
 // generation). Re-run that script after adding a new migration, then
 // run the full test suite -- test/schema_manifest.spec.js fails loudly
 // if this file and the real migrated schema disagree.
@@ -11,7 +11,7 @@
 // this list against a real database's actual PRAGMA table_info output.
 // This is the single source of truth both share.
 //
-// 26 tables, 230 columns tracked.
+// 27 tables, 244 columns tracked.
 export const SCHEMA_MANIFEST = {
   "availability": [
     "answered_at",
@@ -46,14 +46,17 @@ export const SCHEMA_MANIFEST = {
   ],
   "events": [
     "auto_reminders_enabled",
+    "away_score",
     "away_team",
     "date",
     "end_time",
+    "home_score",
     "home_team",
     "id",
     "is_playoff",
     "league_id",
     "playoff_meta",
+    "result_entered_at",
     "season",
     "start_time",
     "state",
@@ -149,6 +152,8 @@ export const SCHEMA_MANIFEST = {
     "team_count",
     "team_names",
     "team_structure",
+    "tracks_player_stats",
+    "tracks_results",
     "tracks_stats"
   ],
   "outbox": [
@@ -183,6 +188,17 @@ export const SCHEMA_MANIFEST = {
     "notes",
     "player_id",
     "season",
+    "updated_at"
+  ],
+  "player_game_stats": [
+    "assists",
+    "event_id",
+    "goals",
+    "goals_against",
+    "league_id",
+    "player_id",
+    "role",
+    "team",
     "updated_at"
   ],
   "poll_votes": [

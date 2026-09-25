@@ -1630,7 +1630,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsLabel: 'équipes', playersLabel: 'joueurs',
       publicPage: 'Page publique', copyLink: 'Copier', copied: 'Copié !',
       publicPageDisabled: 'Désactivée -- personne ne peut voir cette page.',
-      teams: 'Équipes', tracksStatsLabel: 'Statistiques suivies :', yes: 'Oui', no: 'Non',
+      teams: 'Équipes', tracksResultsLabel: 'Résultats suivis :', tracksPlayerStatsLabel: 'Statistiques des joueurs suivies :', yes: 'Oui', no: 'Non',
       // B2 (stale-copy polish task): superseding the "Nouvelles
       // équipes chaque match" wording test/part49_teams_per_game_label.spec.js
       // previously locked with a do-not-revert comment (batch 2 Part 5,
@@ -1666,7 +1666,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsLabel: 'teams', playersLabel: 'players',
       publicPage: 'Public page', copyLink: 'Copy', copied: 'Copied!',
       publicPageDisabled: "Disabled -- no one can see this page.",
-      teams: 'Teams', tracksStatsLabel: 'Tracks stats:', yes: 'Yes', no: 'No',
+      teams: 'Teams', tracksResultsLabel: 'Results tracked:', tracksPlayerStatsLabel: 'Player stats tracked:', yes: 'Yes', no: 'No',
       teamsPerGame: 'Pickup with teams', noFixedTeams: 'No fixed teams',
       teamsPerGameCount: 'team names available',
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
@@ -2198,7 +2198,7 @@ async function handleDashboardPage(req, env, url) {
     </div>
     ${dashIsWeeklyDraw ? `<p class="nl-help" style="margin-top:12px" data-i18n="weeklyDrawTeamsDesc">Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.</p>` : ''}`}
     </div>
-    <p class="nl-help" style="margin-top:12px;"><span data-i18n="tracksStatsLabel">Statistiques suivies :</span> <b data-i18n="${leagueRow.tracks_stats ? 'yes' : 'no'}">${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b></p>
+    <p class="nl-help" style="margin-top:12px;"><span data-i18n="tracksResultsLabel">Résultats suivis :</span> <b data-i18n="${leagueRow.tracks_results ? 'yes' : 'no'}">${leagueRow.tracks_results ? 'Oui' : 'Non'}</b> · <span data-i18n="tracksPlayerStatsLabel">Statistiques des joueurs suivies :</span> <b data-i18n="${leagueRow.tracks_player_stats ? 'yes' : 'no'}">${leagueRow.tracks_player_stats ? 'Oui' : 'Non'}</b></p>
   </section>
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>
@@ -2427,8 +2427,16 @@ function buildOnboardingI18n() {
     // as opting in, since that's what this screen actually is now.
     remindersTitle: 'Rappels automatiques', remindersSub: "Désactivés par défaut. Active ceux que tu veux -- tu peux changer ça n'importe quand dans les réglages.",
     reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder12Label: 'Détails 12 h avant (confirmés)',
-    statsTitle: 'Suivre les statistiques?', statsSub: 'Buts, passes, gardiens. Tu pourras l\'activer plus tard dans Paramètres.',
-    lblStats: 'Suivre les statistiques?',
+    // Stats tracking task (Part 1): replaced the single "Track
+    // stats?" question with two independent ones -- see this step's
+    // own render-site comment for why.
+    statsTitle: 'Suivre les statistiques?',
+    statsSub: 'Choisis indépendamment ce que tu veux suivre -- tu pourras changer ça plus tard dans Paramètres.',
+    lblTracksResults: 'Résultats des matchs',
+    lblTracksResultsDesc: 'Le score de chaque match, calculé en classement (V-D-N).',
+    lblTracksResultsDescPickup: "Le score de chaque match, gardé comme historique -- les équipes changent chaque semaine, donc pas de classement.",
+    lblTracksPlayerStats: 'Statistiques des joueurs',
+    lblTracksPlayerStatsDesc: 'Buts et passes par joueur, par match.',
     // Playoff extension, Part 1: fixed-teams only. THE MODEL -- séries
     // consomment des créneaux; l'horaire régulier utilise ce qui reste.
     playoffsTitle: 'Y a-t-il des séries éliminatoires?',
@@ -2453,8 +2461,13 @@ function buildOnboardingI18n() {
     teamsSubWeekly: 'These teams change every game, but their names stay the same all season. You can keep "Team 1, 2…" and come back later.',
     remindersTitle: 'Automated reminders', remindersSub: "Off by default. Turn on the ones you want -- you can change this any time in Settings.",
     reminder72Label: '72h reminder (no reply yet)', reminder24Label: '24h reminder (no reply yet)', reminder12Label: '12h details (confirmed players)',
-    statsTitle: 'Track stats?', statsSub: 'Goals, assists, goalies. You can turn it on later in Settings.',
-    lblStats: 'Track stats?',
+    statsTitle: 'Track stats?',
+    statsSub: 'Pick what you want to track, independently -- you can change this later in Settings.',
+    lblTracksResults: 'Game results',
+    lblTracksResultsDesc: "Each game's score, computed into a standings table (W-L-T).",
+    lblTracksResultsDescPickup: "Each game's score, kept as history -- teams change every week, so there's no standings table.",
+    lblTracksPlayerStats: 'Player stats',
+    lblTracksPlayerStatsDesc: 'Goals and assists per player, per game.',
     playoffsTitle: 'Are there playoffs?',
     playoffsSub: "Playoffs consume slots from your league's total -- the regular-season schedule is calculated from what's left.",
     playoffsEnabledLabel: 'There are playoffs',
@@ -2643,15 +2656,27 @@ async function handleOnboardingSeasonPage(req, env, url) {
     <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="ob_reminder_12h" onclick="obToggle(this)"></button>
   </div>`;
   } else if (step === 'stats') {
+    // Stats tracking task (Part 1): the old single "Track stats?"
+    // question replaced by two independent ones -- a fixed-teams
+    // league may want standings and never track individuals; a
+    // pickup league may want goals/assists with no meaningful
+    // standings at all. NO TEAMS (headcount) has no sides to attach a
+    // score to, so game results is never asked at all -- only player
+    // stats. FIXED and PICKUP (weekly_draw) get both.
+    const offerResults = teamStructure !== 'headcount';
     stepHtml = `
   <div class="su-title">
     <h1 data-i18n="statsTitle">Suivre les statistiques?</h1>
-    <p class="nl-help" data-i18n="statsSub">Buts, passes, gardiens. Tu pourras l'activer plus tard dans Paramètres.</p>
+    <p class="nl-help" data-i18n="statsSub">Choisis indépendamment ce que tu veux suivre -- tu pourras changer ça plus tard dans Paramètres.</p>
   </div>
   <div id="formErr" class="nl-error" style="display:none"></div>
+  ${offerResults ? `<div class="nl-toggle">
+    <div><div class="nl-label" data-i18n="lblTracksResults">Résultats des matchs</div><p class="nl-help" data-i18n="${teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickup' : 'lblTracksResultsDesc'}" style="margin:2px 0 0">${teamStructure === 'weekly_draw' ? "Le score de chaque match, gardé comme historique -- les équipes changent chaque semaine, donc pas de classement." : 'Le score de chaque match, calculé en classement (V-D-N).'}</p></div>
+    <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_results ? 'true' : 'false'}" id="ob_tracks_results" onclick="obToggle(this)"></button>
+  </div>` : ''}
   <div class="nl-toggle">
-    <div class="nl-label" data-i18n="lblStats">Suivre les statistiques?</div>
-    <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_stats ? 'true' : 'false'}" id="ob_stats" onclick="obToggle(this)"></button>
+    <div><div class="nl-label" data-i18n="lblTracksPlayerStats">Statistiques des joueurs</div><p class="nl-help" data-i18n="lblTracksPlayerStatsDesc" style="margin:2px 0 0">Buts et passes par joueur, par match.</p></div>
+    <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_player_stats ? 'true' : 'false'}" id="ob_tracks_player_stats" onclick="obToggle(this)"></button>
   </div>`;
   }
 
@@ -2827,10 +2852,14 @@ async function obSubmit() {
     } else if (OB_STEP === 'stats') {
       // Partial update -- handleLeagueUpdateIdentity only touches fields
       // actually present in the body, so this leaves name/color/theme/
-      // publicPageEnabled completely untouched.
-      await obSave('/league/settings/identity', {
-        tracksStats: document.getElementById('ob_stats').getAttribute('aria-checked') === 'true'
-      });
+      // publicPageEnabled completely untouched. tracksResults' own
+      // toggle doesn't exist in the DOM at all for a headcount league
+      // (no sides to attach a score to) -- omitted from the payload
+      // entirely rather than sent as a stray false.
+      var resultsEl = document.getElementById('ob_tracks_results');
+      var payload = { tracksPlayerStats: document.getElementById('ob_tracks_player_stats').getAttribute('aria-checked') === 'true' };
+      if (resultsEl) payload.tracksResults = resultsEl.getAttribute('aria-checked') === 'true';
+      await obSave('/league/settings/identity', payload);
     }
     window.location.href = OB_IS_LAST ? '/dashboard' : OB_NEXT_URL;
   } catch (e) {
@@ -4421,7 +4450,12 @@ async function handleLeagueSettingsPage(req, env, url) {
       navLanguage: 'Langue', navReminders: 'Rappels', navAutoDraw: 'Tirage auto', navAdmins: 'Co-admins', navDeactivate: 'Désactiver',
       identityTitle: 'Identité de la ligue', lblLeagueName: 'Nom de la ligue',
       lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée -- ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
-      lblColor: 'Couleur de la ligue', lblTracksStats: 'Suivre les statistiques', save: 'Enregistrer', saved: 'Enregistré !',
+      lblColor: 'Couleur de la ligue', save: 'Enregistrer', saved: 'Enregistré !',
+      lblTracksResults: 'Résultats des matchs',
+      lblTracksResultsDesc: 'Le score de chaque match, calculé en classement (V-D-N).',
+      lblTracksResultsDescPickup: "Le score de chaque match, gardé comme historique -- les équipes changent chaque semaine, donc pas de classement.",
+      lblTracksPlayerStats: 'Statistiques des joueurs',
+      lblTracksPlayerStatsDesc: 'Buts et passes par joueur, par match.',
       // D2 (settings polish task): swatch names, both for the visible
       // tooltip (data-i18n-title) and a possible future need -- see
       // LEAGUE_COLOR_PRESETS' own comment for the 8-colour set itself.
@@ -4555,7 +4589,12 @@ async function handleLeagueSettingsPage(req, env, url) {
       navLanguage: 'Language', navReminders: 'Reminders', navAutoDraw: 'Auto-draw', navAdmins: 'Co-admins', navDeactivate: 'Deactivate',
       identityTitle: 'League identity', lblLeagueName: 'League name',
       lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed -- that guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
-      lblColor: 'League colour', lblTracksStats: 'Track stats', save: 'Save', saved: 'Saved!',
+      lblColor: 'League colour', save: 'Save', saved: 'Saved!',
+      lblTracksResults: 'Game results',
+      lblTracksResultsDesc: "Each game's score, computed into a standings table (W-L-T).",
+      lblTracksResultsDescPickup: "Each game's score, kept as history -- teams change every week, so there's no standings table.",
+      lblTracksPlayerStats: 'Player stats',
+      lblTracksPlayerStatsDesc: 'Goals and assists per player, per game.',
       colorPresetRed: 'Red', colorPresetBlue: 'Blue', colorPresetTeal: 'Teal', colorPresetPurple: 'Purple',
       colorPresetOrange: 'Orange', colorPresetPink: 'Pink', colorPresetIndigo: 'Indigo', colorPresetGold: 'Gold',
       colorPresetHelp: 'Every colour is verified legible on both public page themes.',
@@ -4754,9 +4793,18 @@ async function handleLeagueSettingsPage(req, env, url) {
       <p class="nl-help" data-i18n="themeHelp">Deux thèmes sont offerts pour l'instant; deux autres (Classique, Quartier) s'en viennent.</p>
       <p class="nl-help"><a href="/${esc(leagueSlug)}" target="_blank" rel="noopener" data-i18n="themePreview">Voir la page publique</a></p>
     </div>
+    <!-- Stats tracking task (Part 1): the old single "Track stats?"
+         switch replaced by two independent ones -- see the onboarding
+         'stats' step's own comment for the full reasoning. NO TEAMS
+         (headcount) never gets the results switch at all -- no sides
+         to attach a score to. -->
+    ${teamStructure !== 'headcount' ? `<div class="nl-toggle">
+      <div><div class="nl-label" data-i18n="lblTracksResults">Résultats des matchs</div><div class="nl-help" data-i18n="${teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickup' : 'lblTracksResultsDesc'}">${teamStructure === 'weekly_draw' ? "Le score de chaque match, gardé comme historique -- les équipes changent chaque semaine, donc pas de classement." : 'Le score de chaque match, calculé en classement (V-D-N).'}</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_results ? 'true' : 'false'}" id="se_tracks_results" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
+    </div>` : ''}
     <div class="nl-toggle">
-      <div><div class="nl-label" data-i18n="lblTracksStats">Suivre les statistiques</div></div>
-      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_stats ? 'true' : 'false'}" id="se_stats_switch" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
+      <div><div class="nl-label" data-i18n="lblTracksPlayerStats">Statistiques des joueurs</div><div class="nl-help" data-i18n="lblTracksPlayerStatsDesc">Buts et passes par joueur, par match.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_player_stats ? 'true' : 'false'}" id="se_tracks_player_stats" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
     </div>
     <div class="nl-toggle">
       <div><div class="nl-label" data-i18n="lblPublicPageEnabled">Page publique</div><div class="nl-help" data-i18n="publicPageEnabledHelp">Quand c'est désactivé, personne ne peut voir ta page publique -- même pas avec le lien direct.</div></div>
@@ -5244,16 +5292,22 @@ async function submitIdentity() {
   err.style.display = 'none'; ok.style.display = 'none';
   var btn = document.getElementById('identity_save'); btn.disabled = true;
   try {
+    var resultsEl = document.getElementById('se_tracks_results');
+    var payload = {
+      name: document.getElementById('se_name').value.trim(),
+      color: document.getElementById('se_color').value,
+      tracksPlayerStats: document.getElementById('se_tracks_player_stats').getAttribute('aria-checked') === 'true',
+      publicTheme: document.getElementById('se_theme').value,
+      publicPageEnabled: document.getElementById('se_public_page_switch').getAttribute('aria-checked') === 'true'
+    };
+    // Not rendered at all for a headcount league (no sides to attach
+    // a score to) -- omitted from the payload, never sent as a stray
+    // false.
+    if (resultsEl) payload.tracksResults = resultsEl.getAttribute('aria-checked') === 'true';
     var res = await fetch('/league/settings/identity', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({
-        name: document.getElementById('se_name').value.trim(),
-        color: document.getElementById('se_color').value,
-        tracksStats: document.getElementById('se_stats_switch').getAttribute('aria-checked') === 'true',
-        publicTheme: document.getElementById('se_theme').value,
-        publicPageEnabled: document.getElementById('se_public_page_switch').getAttribute('aria-checked') === 'true'
-      })
+      body: JSON.stringify(payload)
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }

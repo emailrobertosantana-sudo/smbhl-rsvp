@@ -126,7 +126,8 @@ describe('B1: one continuous "STEP n OF m" count, signup through onboarding', ()
 
     const obStats = await getOnboarding(cookie, 5);
     expect(stepAttrs(obStats)).toEqual({ now: '8', max: '8' });
-    expect(obStats).toContain('id="ob_stats"');
+    expect(obStats).toContain('id="ob_tracks_results"');
+    expect(obStats).toContain('id="ob_tracks_player_stats"');
     expect(obStats).toContain('data-i18n="finish"');
   });
 

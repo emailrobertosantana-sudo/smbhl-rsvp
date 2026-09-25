@@ -598,8 +598,12 @@ describe('Part 4: small fixes', () => {
     // English no-space form on its own text either.
     expect(dashHtml).not.toContain('Saison actuelle: '); // no-space variant never leaks into French
 
-    // tracksStatsLabel is this same dashboard page's own dict (not Settings').
-    expect(dashDict.fr.tracksStatsLabel).toBe('Statistiques suivies :');
-    expect(dashDict.en.tracksStatsLabel).toBe('Tracks stats:');
+    // Stats tracking task (Part 1): tracksStatsLabel replaced by two
+    // independent labels -- both still correctly punctuated per
+    // language (this same dashboard page's own dict, not Settings').
+    expect(dashDict.fr.tracksResultsLabel).toBe('Résultats suivis :');
+    expect(dashDict.en.tracksResultsLabel).toBe('Results tracked:');
+    expect(dashDict.fr.tracksPlayerStatsLabel).toBe('Statistiques des joueurs suivies :');
+    expect(dashDict.en.tracksPlayerStatsLabel).toBe('Player stats tracked:');
   });
 });
