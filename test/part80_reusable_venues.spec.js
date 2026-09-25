@@ -344,4 +344,73 @@ describe('Part 9 (live-testing task, batch 6): reusable venues', () => {
       assertNoSyntaxError(scripts);
     }
   });
+
+  // C5 bug fix (schedule/events polish task): "View on map" appeared on
+  // some events and not others depending on whether the venue was a
+  // saved venue (with a map link) or free text -- even with the
+  // identical venue NAME -- and nothing on the page explained why. The
+  // underlying resolution (map link only ever comes from a saved
+  // venue) is correct by design and unchanged; what was missing was
+  // making that predictable -- a plain note wherever free text is
+  // entered, shown only once the league actually has a saved venue to
+  // contrast it with.
+  it("C5: the create/edit/bulk-create forms explain that free text never gets a map link, once the league has a saved venue to contrast it with", async () => {
+    const { cookie, csrfToken } = await signup('venues.c5.explain@example.com', '203.0.199.019');
+    await createLeague(cookie, csrfToken, { name: 'C5 Explain League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+
+    // No saved venue yet -- nothing to contrast, so no note.
+    const scheduleBeforeHtml = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
+    expect(scheduleBeforeHtml).not.toContain('data-i18n="freeTextNoMapLink"');
+
+    await createVenue(cookie, csrfToken, { name: 'C5 Saved Arena', map_link: 'https://maps.example.com/c5' });
+    const scheduleAfterHtml = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
+    expect(scheduleAfterHtml).toContain('data-i18n="freeTextNoMapLink"');
+    expect(scheduleAfterHtml).toContain("Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.");
+
+    const evRes = await createEvent(cookie, csrfToken, { date: '2099-06-01', venue: 'Some Free Text Venue' });
+    const ev = (await evRes.json()).event;
+    const detailHtml = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(ev.id)}`, { headers: { cookie } })).text();
+    expect(detailHtml).toContain('data-i18n="freeTextNoMapLink"');
+  });
+
+  // D1: investigated directly (creating events with a saved venue's
+  // map link, in every section this product renders one -- public
+  // page hero/upcoming/past, admin schedule list, event-detail page) --
+  // could not reproduce an orphan " · " separator with no link
+  // anywhere; every one of these render sites already gates the
+  // separator and the link together as a single conditional (see e.g.
+  // handleLeaguePublicPage's own venue-line template). Locked here as
+  // an explicit regression test for exactly that co-gating, across
+  // every section, so if it's ever split apart again this fails loudly.
+  it("D1 (investigated, not reproduced as literally described -- locked as a regression guard): the map-link separator never renders without the link, anywhere", async () => {
+    const { cookie, csrfToken } = await signup('venues.d1.separator@example.com', '203.0.199.020');
+    const league = await createLeague(cookie, csrfToken, { name: 'D1 Separator League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const venueRes = await createVenue(cookie, csrfToken, { name: 'Letendre', map_link: 'https://maps.example.com/letendre' });
+    const venue = (await venueRes.json()).venue;
+
+    // One hero-position event, one list-position event, one past event --
+    // every section the public page renders a venue line in.
+    const heroRes = await createEvent(cookie, csrfToken, { date: '2099-07-01', venue_id: venue.id });
+    const heroEvent = (await heroRes.json()).event;
+    await createEvent(cookie, csrfToken, { date: '2099-07-08', venue_id: venue.id });
+    await createEvent(cookie, csrfToken, { date: '2020-07-01', venue_id: venue.id });
+
+    const publicHtml = await (await SELF.fetch(`http://example.com/league/public?league=${league.id}`)).text();
+    // Every "Letendre" occurrence must be immediately followed by the
+    // real map link, never a bare separator with nothing after it.
+    const occurrences = publicHtml.split('Letendre').length - 1;
+    expect(occurrences).toBeGreaterThanOrEqual(3); // hero + upcoming list + past list
+    const afterEach = [...publicHtml.matchAll(/Letendre( · <a href="[^"]+"[^>]*>[^<]+<\/a>)?/g)];
+    for (const m of afterEach) {
+      expect(m[1]).toBeTruthy(); // the link-or-nothing group actually matched a real link every time
+    }
+
+    // Same check on the admin schedule list and the event-detail page.
+    const scheduleHtml = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
+    expect(scheduleHtml).toContain('Letendre');
+    const detailHtml = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(heroEvent.id)}`, { headers: { cookie } })).text();
+    expect(detailHtml).toMatch(/Letendre · <a href="https:\/\/maps\.example\.com\/letendre"/);
+  });
 });

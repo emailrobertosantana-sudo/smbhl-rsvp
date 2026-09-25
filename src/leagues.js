@@ -998,6 +998,101 @@ export async function handleLeagueEventUpdateReminders(req, env) {
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, auto_reminders_enabled: enabled });
 }
 
+/* ---------- C2 (schedule/events polish task): event editing ----------
+ * Everything about an existing event EXCEPT its date: start_time,
+ * end_time, venue (a saved venue's id, or free text), all reusing the
+ * exact same validation/resolution createLeagueEventRow already uses
+ * for creation, not a second copy. Deliberately does NOT accept id,
+ * date, season, week, or state -- the id encodes the date (league_ids.js),
+ * and SMBHL's own existing date-edit path (handleScheduleSave) renames
+ * the id when the date changes, which would silently break every
+ * already-issued RSVP link (HMAC'd against the old id) for this event.
+ * Editable date support is a separate, later task -- see this route's
+ * own frontend (handleLeagueEventDetailPage) for the read-only date note.
+ */
+export async function handleLeagueEventUpdate(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+
+  const eventId = String(body.event_id || '').trim();
+  if (!eventId) {
+    return Response.json({ ok: false, error: 'event_id is required.', errorKey: 'EVENT_ID_REQUIRED' }, { status: 400 });
+  }
+  const existing = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  if (!existing) {
+    return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  }
+
+  const timePattern = /^\d{2}:\d{2}$/;
+  const startTime = String(body.start_time || '').trim();
+  if (startTime && !timePattern.test(startTime)) {
+    return Response.json({ ok: false, error: 'start_time must be in HH:MM format.', errorKey: 'START_TIME_FORMAT' }, { status: 400 });
+  }
+  const endTime = String(body.end_time || '').trim();
+  if (endTime && !timePattern.test(endTime)) {
+    return Response.json({ ok: false, error: 'end_time must be in HH:MM format.', errorKey: 'END_TIME_FORMAT' }, { status: 400 });
+  }
+
+  // Same venue_id resolution as createLeagueEventRow: optional, must be
+  // one of THIS league's own saved venues, and its name is copied into
+  // events.venue as a denormalized snapshot so every existing read site
+  // keeps working unchanged. A caller sending only free-text `venue`
+  // (no venue_id) clears any previously-saved venue link.
+  let venue = String(body.venue || '').trim() || null;
+  let venueId = null;
+  if (body.venue_id) {
+    const venueRow = await env.DB.prepare(
+      'SELECT id, name FROM venues WHERE id = ? AND league_id = ?'
+    ).bind(String(body.venue_id).trim(), leagueId).first();
+    if (!venueRow) {
+      return Response.json({ ok: false, error: "venue_id must be one of this league's own saved venues.", errorKey: 'VENUE_UNKNOWN' }, { status: 400 });
+    }
+    venueId = venueRow.id;
+    venue = venueRow.name;
+  }
+
+  await env.DB.prepare(
+    `UPDATE events SET start_time = ?, end_time = ?, venue = ?, venue_id = ? WHERE id = ? AND league_id = ?`
+  ).bind(startTime || null, endTime || null, venue, venueId, eventId, leagueId).run();
+
+  // Reminder-safety (see this route's own top comment, and the CAUTION
+  // in this task): start_time is one of the two inputs
+  // applyReminderWindowSkipRule's hoursUntil math depends on (the other
+  // is the event's own id, unchanged by this route). Re-running it here
+  // is exactly Rule 2 from the reminder-window-skip-on-create/reschedule
+  // fix (commit 6ed0ee8, reminder_scheduling.js's own comment) --
+  // re-evaluate every cadence step from scratch against the event's
+  // current effective time: newly-passed steps get marked skipped, a
+  // stale skip whose window is legitimately back in the future gets
+  // cleared, and a step that already genuinely sent is never touched.
+  // Only relevant when reminders are armed for this event at all.
+  if (existing.auto_reminders_enabled) {
+    await applyReminderWindowSkipRule(env, leagueId, { id: eventId, start_time: startTime || null });
+  }
+
+  return Response.json({
+    ok: true,
+    event: { id: eventId, venue, venue_id: venueId, start_time: startTime || null, end_time: endTime || null }
+  });
+}
+
 /* ---------- Reusable venues (Part 9, batch 6, live-testing task) ----------
  * A league defines a venue ONCE (name, optional address, optional map
  * link) in Settings, then selects it at event-creation time instead of

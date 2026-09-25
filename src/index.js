@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -5281,9 +5281,36 @@ async function handleLeagueSchedulePage(req, env, url) {
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
   const leagueRow = await env.DB.prepare('SELECT name, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
-  const events = (await env.DB.prepare(
-    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time FROM events WHERE league_id = ? ORDER BY date DESC, week DESC'
-  ).bind(leagueId).all()).results || [];
+  // C1 bug fix (schedule/events polish task): this list used to sort
+  // newest-first unconditionally (ORDER BY date DESC) -- for an
+  // UPCOMING schedule that buries the next game at the bottom under
+  // every future week after it. The public page already gets this
+  // right (two separate queries: upcoming ascending, past descending,
+  // concatenated) -- reused verbatim as the reference here. Cancelled
+  // events are NOT excluded (unlike the public page) -- this is the
+  // admin's own management view, which should still show them in their
+  // real chronological slot, not hide them.
+  const scheduleToday = new Date().toISOString().slice(0, 10);
+  const upcomingEvents = (await env.DB.prepare(
+    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time FROM events WHERE league_id = ? AND date >= ? ORDER BY date ASC, week ASC'
+  ).bind(leagueId, scheduleToday).all()).results || [];
+  const pastEvents = (await env.DB.prepare(
+    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time FROM events WHERE league_id = ? AND date < ? ORDER BY date DESC, week DESC'
+  ).bind(leagueId, scheduleToday).all()).results || [];
+  const events = [...upcomingEvents, ...pastEvents];
+  // C4 bug fix (schedule/events polish task): most leagues play at the
+  // same time every week -- prefilling the create form's start time
+  // with whatever was most recently used means the field is usually
+  // already correct after the first event. "Most recently used" =
+  // the latest-DATED event that has a real start_time (not creation
+  // order -- events has no created_at column -- but for a normal
+  // weekly-schedule workflow the two track each other closely enough,
+  // and this needs no new column). Blank when there's no prior event
+  // with a start_time at all, exactly as before this task.
+  const lastUsedStartTimeRow = await env.DB.prepare(
+    `SELECT start_time FROM events WHERE league_id = ? AND start_time IS NOT NULL ORDER BY date DESC LIMIT 1`
+  ).bind(leagueId).first();
+  const lastUsedStartTime = lastUsedStartTimeRow ? lastUsedStartTimeRow.start_time : '';
 
   // Live-testing task (batch 6), Part 10: warn before arming automated
   // emails -- an admin creating an event with reminders enabled AND real
@@ -5331,6 +5358,15 @@ async function handleLeagueSchedulePage(req, env, url) {
       date: 'Date', startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
       venueOpt: 'Lieu (optionnel)', createBtn: 'Créer le match', cancel: 'Annuler',
       venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun -- texte libre ci-dessous',
+      // C5 bug fix (schedule/events polish task): a map link only ever
+      // comes from a SAVED venue (venues.map_link) -- free text can
+      // never have one, even when it happens to name the same place as
+      // a saved venue with a map link. That inconsistency was silent
+      // and unexplained before this task; this makes it predictable
+      // instead, shown only when the league actually has a saved venue
+      // to point at (no point explaining a distinction that doesn't
+      // exist yet for a league with none).
+      freeTextNoMapLink: "Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.",
       viewOnMap: 'Voir sur la carte',
       remindersOptOutLabel: 'Ne pas envoyer les rappels automatiques pour ce match',
       noEvents: "Aucun match pour l'instant.",
@@ -5351,6 +5387,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       date: 'Date', startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
       venueOpt: 'Venue (optional)', createBtn: 'Create the event', cancel: 'Cancel',
       venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None -- free text below',
+      freeTextNoMapLink: "Free text never shows a map link. Pick a saved venue above for that.",
       viewOnMap: 'View on map',
       remindersOptOutLabel: "Don't send automated reminders for this game",
       noEvents: 'No events yet.',
@@ -5415,7 +5452,16 @@ async function handleLeagueSchedulePage(req, env, url) {
   .sc-panel.open { display: flex; }
   .sc-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
   .sc-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
-  @media (min-width: 900px) { .sc-panel { display: flex; } }
+  .sc-time-presets { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .sc-time-presets .nl-btn { padding: 2px 10px; min-height: unset; }
+  /* C3 bug fix (schedule/events polish task): this panel used to force
+     itself open on desktop (display: flex unconditionally above
+     900px), completely defeating its own toggle button/'open' class
+     mechanism there -- after a successful create, the server re-renders
+     a fresh (blank) page with no 'open' class present, so on desktop
+     the panel came right back up expanded, reading as "keep adding
+     events" rather than "created, here's your list". Now collapsible
+     on every screen size, same as .sc-bulk-panel already was. */
   @media (max-width: 640px) { .sc-game { grid-template-columns: 92px 1fr auto; } .sc-game .sc-chevron { display: none; } }
   .sc-needs-season { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 2px solid var(--primary); }
   .sc-needs-season h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
@@ -5466,7 +5512,17 @@ async function handleLeagueSchedulePage(req, env, url) {
       <div class="sc-two">
         <div class="nl-field">
           <label class="nl-label" for="e_start" data-i18n="startOpt">Heure de début (optionnel)</label>
-          <input class="nl-input" id="e_start" type="time">
+          <input class="nl-input" id="e_start" type="time" value="${esc(lastUsedStartTime)}">
+          <!-- C4 (schedule/events polish task): quick-set buttons for the
+               common case (:00/:15/:30/:45 within whatever hour is
+               already set) -- the native picker underneath stays fully
+               usable for any other value; these just save the common
+               case a few clicks. Deliberately start-time only (see
+               setTimePreset's own comment for why end time doesn't get
+               these). -->
+          <div class="sc-time-presets">
+            ${['00', '15', '30', '45'].map(m => `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" onclick="setTimePreset('e_start','${m}')">:${m}</button>`).join('')}
+          </div>
         </div>
         <div class="nl-field">
           <label class="nl-label" for="e_end" data-i18n="endOpt">Heure de fin (optionnel)</label>
@@ -5483,6 +5539,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       <div class="nl-field">
         <label class="nl-label" for="e_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
         <input class="nl-input" id="e_venue" type="text">
+        ${venues.length ? `<p class="nl-help" data-i18n="freeTextNoMapLink">Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.</p>` : ''}
       </div>
       ${showReminderWarning ? `<div class="sc-reminder-warn">
         <p class="nl-help" style="margin:0" data-date-fr="${esc(reminderWarningFr)}" data-date-en="${esc(reminderWarningEn)}">${esc(reminderWarningFr)}</p>
@@ -5533,6 +5590,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       <div class="nl-field">
         <label class="nl-label" for="be_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
         <input class="nl-input" id="be_venue" type="text">
+        ${venues.length ? `<p class="nl-help" data-i18n="freeTextNoMapLink">Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.</p>` : ''}
       </div>
       ${showReminderWarning ? `<div class="sc-reminder-warn">
         <p class="nl-help" style="margin:0" data-date-fr="${esc(reminderWarningFr)}" data-date-en="${esc(reminderWarningEn)}">${esc(reminderWarningFr)}</p>
@@ -5554,6 +5612,21 @@ ${tabbar}`;
   const script = `
 ${nlAuthScript(I18N_SCHEDULE)}
 function toggleSchedulePanel() { document.getElementById('sc_panel').classList.toggle('open'); }
+// C4 (schedule/events polish task): sets the MINUTE part of a time
+// input to one of the four quarter-hour presets, keeping whatever hour
+// is already there (from the "most recently used" prefill, or
+// whatever the admin already typed) -- an odd start time (the task's
+// own explicit requirement) is still just a normal edit in the native
+// picker underneath, this never restricts it. Only wired to start time
+// (e_start) -- end time is usually just "start + an hour or two" and
+// doesn't repeat week to week the same predictable way start time
+// does, so a prefill/preset pair for it would mostly just be noise;
+// its native picker is unchanged.
+function setTimePreset(inputId, minutes) {
+  var input = document.getElementById(inputId);
+  var hour = (input.value && input.value.indexOf(':') !== -1) ? input.value.split(':')[0] : '18';
+  input.value = hour + ':' + minutes;
+}
 function showErr(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 async function submitEvent() {
   document.getElementById('formErr').style.display = 'none';
@@ -5718,6 +5791,9 @@ ${tabbar}`;
   // lookup the schedule/public pages use.
   const venueMapLinks = await getVenueMapLinksById(env, leagueId, [ev.venue_id]);
   const venueMapLink = venueMapLinks.get(ev.venue_id) || null;
+  // C2 (schedule/events polish task): the same saved-venue list the
+  // schedule page's create form already uses, for the edit form below.
+  const venues = await getLeagueVenues(env, leagueId);
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
   const teamNames = getTeamNames(cfg);
@@ -5761,6 +5837,15 @@ ${tabbar}`;
       unassignedTitle: 'Confirmés, pas encore assignés', unassignedDesc: 'Assigne chaque joueur confirmé à une équipe pour ce match.',
       noUnassigned: 'Tous les joueurs confirmés sont assignés.',
       assignTo: 'Assigner à…', assign: 'Assigner', randomDraw: 'Tirage aléatoire',
+      // C2 (schedule/events polish task): edit everything except the
+      // date -- see handleLeagueEventUpdate's own comment (leagues.js)
+      // for why the date specifically stays out of scope.
+      editBtn: 'Modifier', saveBtn: 'Enregistrer', cancelEdit: 'Annuler',
+      editDateLabel: 'Date', editDateNote: "La date ne peut pas encore être modifiée.",
+      startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
+      venueOpt: 'Lieu (optionnel)', venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun -- texte libre ci-dessous',
+      freeTextNoMapLink: "Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.",
+      editSaved: 'Modifications enregistrées.',
       ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
     },
     en: {
@@ -5780,6 +5865,12 @@ ${tabbar}`;
       unassignedTitle: 'Confirmed, not yet assigned', unassignedDesc: 'Assign each confirmed player to a team for this game.',
       noUnassigned: 'Every confirmed player is assigned.',
       assignTo: 'Assign to…', assign: 'Assign', randomDraw: 'Random draw',
+      editBtn: 'Edit', saveBtn: 'Save', cancelEdit: 'Cancel',
+      editDateLabel: 'Date', editDateNote: "The date can't be changed yet.",
+      startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
+      venueOpt: 'Venue (optional)', venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None -- free text below',
+      freeTextNoMapLink: "Free text never shows a map link. Pick a saved venue above for that.",
+      editSaved: 'Changes saved.',
       ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     }
   };
@@ -5975,8 +6066,51 @@ ${tabbar}`;
   <div>
     <p class="nl-help" style="margin:0"><a href="/league/schedule" data-i18n="backToSchedule">&lsaquo; Horaire</a></p>
     ${dateTimeSpanHtml('h1', ev.date, ev.start_time, 'long')}
-    <p class="nl-help" style="margin-top:4px">${ev.venue ? esc(ev.venue) : ''}${venueMapLink ? ` · <a href="${esc(venueMapLink)}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</p>
+    <p class="nl-help" style="margin-top:4px" id="ev_venue_display">${ev.venue ? esc(ev.venue) : ''}${venueMapLink ? ` · <a href="${esc(venueMapLink)}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</p>
+    <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" style="margin-top:6px" id="ev_edit_toggle" data-i18n="editBtn" onclick="toggleEventEdit()">Modifier</button>
   </div>
+  <!-- C2 (schedule/events polish task): everything except the date is
+       editable -- start/end time, venue (saved or free text). The date
+       field is a real, visibly disabled input (not just text) with an
+       explicit note, matching this route's own backend refusal
+       (handleLeagueEventUpdate, leagues.js) to accept a date change --
+       see that function's own comment for why (id-rename would break
+       already-issued RSVP links; a separate, later task). -->
+  <section class="nl-card nl-card--pad-lg" id="ev_edit_panel" style="display:none;">
+    <div id="editFormErr" class="nl-error" style="display:none"></div>
+    <div class="nl-field">
+      <label class="nl-label" for="ev_edit_date" data-i18n="editDateLabel">Date</label>
+      <input class="nl-input" id="ev_edit_date" type="date" value="${esc(ev.date)}" disabled>
+      <p class="nl-help" data-i18n="editDateNote">La date ne peut pas encore être modifiée.</p>
+    </div>
+    <div class="sc-two">
+      <div class="nl-field">
+        <label class="nl-label" for="ev_edit_start" data-i18n="startOpt">Heure de début (optionnel)</label>
+        <input class="nl-input" id="ev_edit_start" type="time" value="${esc(ev.start_time || '')}">
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="ev_edit_end" data-i18n="endOpt">Heure de fin (optionnel)</label>
+        <input class="nl-input" id="ev_edit_end" type="time" value="${esc(ev.end_time || '')}">
+      </div>
+    </div>
+    ${venues.length ? `<div class="nl-field">
+      <label class="nl-label" for="ev_edit_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
+      <select class="nl-select" id="ev_edit_venue_select" onchange="onEditVenueSelectChange()">
+        <option value="" data-i18n="venueSelectNone">Aucun -- texte libre ci-dessous</option>
+        ${venues.map(v => `<option value="${esc(v.id)}"${v.id === ev.venue_id ? ' selected' : ''}>${esc(v.name)}</option>`).join('')}
+      </select>
+    </div>` : ''}
+    <div class="nl-field">
+      <label class="nl-label" for="ev_edit_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
+      <input class="nl-input" id="ev_edit_venue" type="text" value="${esc(ev.venue_id ? '' : (ev.venue || ''))}" ${ev.venue_id ? 'disabled' : ''}>
+      ${venues.length ? `<p class="nl-help" data-i18n="freeTextNoMapLink">Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.</p>` : ''}
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="saveBtn" onclick="submitEventEdit()">Enregistrer</button>
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="cancelEdit" onclick="toggleEventEdit()">Annuler</button>
+    </div>
+    <p id="editMsg" class="nl-help" style="display:none;margin-top:8px;"></p>
+  </section>
   <div>
     <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="remind_now_btn" data-i18n="remindNow" onclick="sendReminderNow(this)">Envoyer un rappel maintenant</button>
     <p id="remindNowMsg" class="nl-help" style="display:none;margin-top:8px;"></p>
@@ -5993,6 +6127,53 @@ ${tabbar}`;
 
   const script = `
 ${nlAuthScript(I18N_DETAIL)}
+// C2 (schedule/events polish task): edit everything except the date.
+function toggleEventEdit() {
+  var panel = document.getElementById('ev_edit_panel');
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+}
+function onEditVenueSelectChange() {
+  var select = document.getElementById('ev_edit_venue_select');
+  var freeText = document.getElementById('ev_edit_venue');
+  // A saved venue's name is the source of truth while one is picked --
+  // same posture as the create-event form -- so free text is disabled
+  // (and cleared) while a saved venue is selected, and re-enabled the
+  // moment "None" is chosen again.
+  if (select.value) { freeText.value = ''; freeText.disabled = true; }
+  else { freeText.disabled = false; }
+}
+async function submitEventEdit() {
+  var errEl = document.getElementById('editFormErr');
+  errEl.style.display = 'none';
+  var msg = document.getElementById('editMsg');
+  msg.style.display = 'none';
+  var venueSelect = document.getElementById('ev_edit_venue_select');
+  var payload = {
+    event_id: ${JSON.stringify(ev.id)},
+    start_time: document.getElementById('ev_edit_start').value,
+    end_time: document.getElementById('ev_edit_end').value,
+    venue: document.getElementById('ev_edit_venue').value,
+    venue_id: venueSelect ? venueSelect.value : ''
+  };
+  try {
+    var res = await fetch('/league/events/update', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) {
+      errEl.textContent = window.__errorText(data.errorKey, data.error);
+      errEl.style.display = 'block';
+      return;
+    }
+    // Server-rendered-is-truth, same pattern as assignTeam/randomAssignTeams.
+    window.location.reload();
+  } catch (e) {
+    errEl.textContent = window.__errorText('NETWORK_ERROR');
+    errEl.style.display = 'block';
+  }
+}
 async function assignTeam(playerId, btn) {
   var msg = document.querySelector('.assignMsg');
   var select = document.getElementById('assign_team_' + playerId);
@@ -23002,6 +23183,8 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueVenueDelete(req, env);
       if (url.pathname === '/league/events/reminders' && req.method === 'POST')
         return await handleLeagueEventUpdateReminders(req, env);
+      if (url.pathname === '/league/events/update' && req.method === 'POST')
+        return await handleLeagueEventUpdate(req, env);
       if (url.pathname === '/league/season/publish' && req.method === 'POST')
         return await handleLeagueSeasonPublish(req, env);
       // Signup/login/dashboard pages — pure UI on top of the routes above.

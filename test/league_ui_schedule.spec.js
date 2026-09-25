@@ -136,4 +136,131 @@ describe('UI task Part T: GET /league/schedule', () => {
     const html = await res.text();
     expect(html).toContain('Aucun match');
   });
+
+  // C1 bug fix (schedule/events polish task): this list used to sort
+  // strictly newest-first (ORDER BY date DESC) -- for an upcoming
+  // schedule that buries the very next game under every future week
+  // scheduled after it. Now: upcoming events ascending (soonest first),
+  // past events below them, most recent first -- the same two-query
+  // pattern the public page already used correctly, reused as the
+  // reference.
+  it('C1: upcoming events sort ascending (soonest first); past events sit below, most recent first', async () => {
+    const c = await signupAndCreateLeague('uischedule.c1.sort@example.com', '203.0.113.364', 'UI Schedule Sort League', ['A', 'B']);
+    await SELF.fetch('http://example.com/league/season/publish', {
+      method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
+      body: JSON.stringify({ season_name: 'Sort Season' })
+    });
+    // Deliberately created out of order, so a passing test can only mean
+    // the page itself re-sorts them, not that insertion order happened
+    // to match.
+    const toCreate = [
+      { date: '2099-03-20', venue: 'Far Future Rink' },
+      { date: '2020-01-05', venue: 'Old Past Rink' },
+      { date: '2099-03-10', venue: 'Near Future Rink' },
+      { date: '2020-01-15', venue: 'Recent Past Rink' }
+    ];
+    for (const body of toCreate) {
+      const res = await SELF.fetch('http://example.com/league/events', {
+        method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
+        body: JSON.stringify(body)
+      });
+      expect(res.status).toBe(200);
+    }
+
+    const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
+    const idx = {
+      nearFuture: html.indexOf('Near Future Rink'),   // 2099-03-10 -- soonest upcoming
+      farFuture: html.indexOf('Far Future Rink'),      // 2099-03-20
+      recentPast: html.indexOf('Recent Past Rink'),    // 2020-01-15 -- most recent past
+      oldPast: html.indexOf('Old Past Rink')            // 2020-01-05
+    };
+    for (const v of Object.values(idx)) expect(v).toBeGreaterThan(-1);
+
+    // Upcoming ascending: soonest (near future) before the later one.
+    expect(idx.nearFuture).toBeLessThan(idx.farFuture);
+    // All upcoming events appear before all past events.
+    expect(idx.farFuture).toBeLessThan(idx.recentPast);
+    expect(idx.farFuture).toBeLessThan(idx.oldPast);
+    // Past descending: most recent past before the older one.
+    expect(idx.recentPast).toBeLessThan(idx.oldPast);
+  });
+
+  // C3 bug fix (schedule/events polish task): the create-event panel
+  // used to force itself open on desktop (a `@media (min-width: 900px)`
+  // CSS override), completely defeating its own toggle button/'open'
+  // class mechanism there -- after a successful create
+  // (window.location.reload()), the server re-renders a fresh page with
+  // no 'open' class, so on desktop the blank form came right back up
+  // expanded regardless, reading as "keep adding events". This suite
+  // can't execute real CSS layout (see other files' own stated
+  // limitation), so this locks the actual mechanical fix: that
+  // unconditional desktop override is gone from the served page, the
+  // same collapsible-on-every-size behaviour .sc-bulk-panel already had.
+  it("C3: the create-event panel no longer forces itself open on desktop -- collapsible on every screen size now", async () => {
+    const c = await signupAndCreateLeague('uischedule.c3.collapse@example.com', '203.0.113.365', 'UI Schedule Collapse League', ['A', 'B']);
+    const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
+    expect(html).not.toContain('@media (min-width: 900px) { .sc-panel { display: flex; } }');
+    expect(html).toContain('.sc-panel.open { display: flex; }');
+    // The panel itself never renders with the 'open' class server-side --
+    // a fresh/reloaded page always starts collapsed, letting the toggle
+    // button (and only the toggle button) control it.
+    expect(html).not.toMatch(/class="sc-panel open"|class="open sc-panel"/);
+  });
+
+  // C4 bug fix (schedule/events polish task): (a) quarter-hour preset
+  // buttons beside start time, native picker unchanged underneath;
+  // (b) the start-time field is prefilled with the league's own most
+  // recently used event start time (most leagues play at the same
+  // time every week), blank when there's no prior event with one yet.
+  describe('C4: start-time presets and remembered start time', () => {
+    it('the create form has quarter-hour preset buttons for start time, and no equivalent for end time', async () => {
+      const c = await signupAndCreateLeague('uischedule.c4.presets@example.com', '203.0.113.366', 'UI Schedule Presets League', ['A', 'B']);
+      await SELF.fetch('http://example.com/league/season/publish', {
+        method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
+        body: JSON.stringify({ season_name: 'Presets Season' })
+      });
+      const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
+      expect(html).toContain("setTimePreset('e_start','00')");
+      expect(html).toContain("setTimePreset('e_start','15')");
+      expect(html).toContain("setTimePreset('e_start','30')");
+      expect(html).toContain("setTimePreset('e_start','45')");
+      expect(html).not.toContain("setTimePreset('e_end'");
+      // The native input itself is untouched -- no step attribute
+      // restricting it, still a real HTML time picker for any value.
+      expect(html).toContain('id="e_start" type="time"');
+      expect(html).not.toContain('step="900"');
+    });
+
+    it("a league with no prior event: start time is blank by default", async () => {
+      const c = await signupAndCreateLeague('uischedule.c4.blank@example.com', '203.0.113.367', 'UI Schedule Blank Prefill League', ['A', 'B']);
+      await SELF.fetch('http://example.com/league/season/publish', {
+        method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
+        body: JSON.stringify({ season_name: 'Blank Prefill Season' })
+      });
+      const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
+      expect(html).toContain('id="e_start" type="time" value=""');
+    });
+
+    it("a league with a prior event: start time is prefilled with that event's own start time", async () => {
+      const c = await signupAndCreateLeague('uischedule.c4.prefill@example.com', '203.0.113.368', 'UI Schedule Prefill League', ['A', 'B']);
+      await SELF.fetch('http://example.com/league/season/publish', {
+        method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
+        body: JSON.stringify({ season_name: 'Prefill Season' })
+      });
+      await SELF.fetch('http://example.com/league/events', {
+        method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
+        body: JSON.stringify({ date: '2099-04-10', start_time: '19:45' })
+      });
+      const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
+      expect(html).toContain('id="e_start" type="time" value="19:45"');
+
+      // A LATER-dated event's own start time becomes the new prefill.
+      await SELF.fetch('http://example.com/league/events', {
+        method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
+        body: JSON.stringify({ date: '2099-04-17', start_time: '20:15' })
+      });
+      const html2 = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
+      expect(html2).toContain('id="e_start" type="time" value="20:15"');
+    });
+  });
 });
