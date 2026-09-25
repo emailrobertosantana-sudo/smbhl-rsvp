@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -3920,6 +3920,14 @@ async function handleLeagueSettingsPage(req, env, url) {
       seasonMgmtNameHelp: 'Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.',
       seasonStructureHelp: "Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.",
       seasonSaveBtn: 'Enregistrer la saison',
+      // Item 4 (season-rollover polish task): offered right after
+      // creating a genuinely new season -- import last season's
+      // players (active pre-checked, inactive unchecked but listed so
+      // a returning player can be brought back deliberately), or skip.
+      rolloverTitle: 'Importer les joueurs de la saison précédente?',
+      rolloverDesc: "Les joueurs actifs sont précochés. Un joueur non importé devient inactif -- il garde son historique et peut être réactivé plus tard.",
+      rolloverImportBtn: 'Importer', rolloverSkipBtn: 'Ignorer',
+      rolloverInactiveTag: 'Inactif',
       structureLabel: 'Comment sont organisées tes équipes?',
       structureTitle: 'Par défaut pour les nouvelles saisons',
       structureDesc: "Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées -- seules les nouvelles saisons utiliseront ce changement.",
@@ -3992,6 +4000,10 @@ async function handleLeagueSettingsPage(req, env, url) {
       seasonMgmtNameHelp: "A new name creates a new season. The current season's own name edits it.",
       seasonStructureHelp: "By default, a new season uses your league's usual structure. Change it here just for this season.",
       seasonSaveBtn: 'Save season',
+      rolloverTitle: 'Import players from the previous season?',
+      rolloverDesc: "Active players are pre-checked. A player who isn't imported becomes inactive -- they keep their history and can be reactivated later.",
+      rolloverImportBtn: 'Import', rolloverSkipBtn: 'Skip',
+      rolloverInactiveTag: 'Inactive',
       structureLabel: 'How are your teams organized?',
       structureTitle: 'Default for new seasons',
       structureDesc: "Change your league's default structure. Already-published seasons are never affected -- only new seasons will use this change.",
@@ -4298,6 +4310,25 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="structure_save" data-i18n="save" onclick="submitStructure()">Enregistrer</button></div>
   </section>
 
+  <!-- Item 4 (season-rollover polish task): shown only right after
+       publishing a genuinely NEW season (submitSeasonMgmt's own JS
+       decides that, comparing against CURRENT_SEASON_NAME) -- never on
+       a league's first season (nothing to roll over from) and never on
+       a same-name republish (editing, not rolling over). Deliberately
+       NOT sandwiched between the two structure cards above (G1, prior
+       task) -- an unrelated hidden panel there would break the exact
+       adjacency that task established. -->
+  <section class="nl-card nl-card--pad-lg" id="rollover_import_panel" style="display:none;">
+    <div class="h3" data-i18n="rolloverTitle">Importer les joueurs de la saison précédente?</div>
+    <p class="nl-help" data-i18n="rolloverDesc">Les joueurs actifs sont précochés. Un joueur non importé devient inactif -- il garde son historique et peut être réactivé plus tard.</p>
+    <div id="rolloverErr" class="nl-error" style="display:none"></div>
+    <div id="rollover_list" style="margin-top:12px;max-height:360px;overflow-y:auto;"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="rollover_import_btn" data-i18n="rolloverImportBtn" onclick="submitRolloverImport()">Importer</button>
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="rolloverSkipBtn" onclick="skipRolloverImport()">Ignorer</button>
+    </div>
+  </section>
+
   <section class="nl-card nl-card--pad-lg" id="section-language">
     <div class="h3" data-i18n="langExposure">Langue exposée aux joueurs</div>
     <p class="nl-help" data-i18n="langExposureDesc">Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.</p>
@@ -4394,6 +4425,13 @@ ${nlAuthScript(I18N_SETTINGS)}
 // Live-testing task (batch 6), Part 3: same palette/reasoning as the
 // onboarding page's own OB_TEAM_COLORS -- see that constant's comment.
 var SE_TEAM_COLORS = ${JSON.stringify(ROSTER_TEAM_DOTS)};
+// Item 4 (season-rollover polish task): the name this season card
+// already has on file BEFORE any submit -- compared against what the
+// admin just typed to tell "renaming/republishing the SAME season"
+// (no rollover) apart from "creating a genuinely NEW one" (offer the
+// import). Empty string when no season has ever been published yet --
+// there's nothing to roll over from for a league's first season.
+var CURRENT_SEASON_NAME = ${JSON.stringify(leagueData.current_season || '')};
 async function submitIdentity() {
   var err = document.getElementById('identityErr'); var ok = document.getElementById('identityOk');
   err.style.display = 'none'; ok.style.display = 'none';
@@ -4610,6 +4648,11 @@ async function submitSeasonMgmt() {
   if (minGoaliesEl && minGoaliesEl.value !== '') { payload.min_goalies = Number(minGoaliesEl.value); }
   var maxGoaliesEl = document.getElementById('season_max_goalies');
   if (maxGoaliesEl && maxGoaliesEl.value !== '') { payload.max_goalies = Number(maxGoaliesEl.value); }
+  // Item 4 (season-rollover polish task): a genuinely NEW season name
+  // (not a same-name republish/edit) on a league that already had one
+  // is exactly the case this task's own import offer applies to --
+  // a league's first-ever season has nothing to roll over from.
+  var isNewSeason = !!CURRENT_SEASON_NAME && name !== CURRENT_SEASON_NAME;
   var btn = document.getElementById('season_mgmt_submit');
   btn.disabled = true;
   try {
@@ -4621,10 +4664,69 @@ async function submitSeasonMgmt() {
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
+    if (isNewSeason) {
+      btn.disabled = false;
+      await showRolloverImportPanel();
+    } else {
+      window.location.reload();
+    }
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
+  }
+}
+// Item 4 (season-rollover polish task): the checkbox list is built
+// from GET /league/contacts (already returns is_active) rather than a
+// new read endpoint -- one league-wide contact list, same source of
+// truth the Players page itself reads from.
+async function showRolloverImportPanel() {
+  var panel = document.getElementById('rollover_import_panel');
+  var list = document.getElementById('rollover_list');
+  list.innerHTML = '';
+  try {
+    var res = await fetch('/league/contacts', { credentials: 'same-origin' });
+    var data = await res.json().catch(function() { return {}; });
+    var contacts = (data && data.contacts) || [];
+    var dict = window.__pageDict();
+    contacts.forEach(function(c) {
+      var row = document.createElement('label');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 0;';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = c.player_id;
+      cb.checked = c.is_active !== 0;
+      row.appendChild(cb);
+      var span = document.createElement('span');
+      span.textContent = c.name + (c.is_active === 0 ? ' (' + dict.rolloverInactiveTag + ')' : '');
+      row.appendChild(span);
+      list.appendChild(row);
+    });
+  } catch (e) {}
+  panel.style.display = '';
+}
+async function submitRolloverImport() {
+  var err = document.getElementById('rolloverErr');
+  err.style.display = 'none';
+  var checked = document.querySelectorAll('#rollover_list input[type=checkbox]:checked');
+  var ids = Array.prototype.slice.call(checked).map(function(cb) { return cb.value; });
+  var btn = document.getElementById('rollover_import_btn');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/season/rollover-import', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ player_ids: ids })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     window.location.reload();
   } catch (e) {
     err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
+}
+// Skippable, per this task's own explicit requirement -- an admin
+// starting fresh just moves on, no state is written at all.
+function skipRolloverImport() {
+  window.location.reload();
 }
 async function submitLanguageMode() {
   var err = document.getElementById('langModeErr'); var ok = document.getElementById('langModeOk');
@@ -23576,6 +23678,9 @@ async function handleFetch(req, env, ctx) {
       // Item 3 (players polish task): inactive players.
       if (url.pathname === '/league/contacts/active' && req.method === 'POST')
         return await handleLeagueContactSetActive(req, env, url);
+      // Item 4 (season-rollover polish task): import players.
+      if (url.pathname === '/league/season/rollover-import' && req.method === 'POST')
+        return await handleLeagueSeasonRolloverImport(req, env, url);
       if (url.pathname === '/league/events' && req.method === 'POST')
         return await handleLeagueEventCreate(req, env);
       if (url.pathname === '/league/events/bulk' && req.method === 'POST')

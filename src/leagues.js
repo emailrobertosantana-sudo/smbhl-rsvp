@@ -278,7 +278,7 @@ export async function handleLeagueContacts(req, env, url) {
   if (access !== 'ok') return leagueAccessResponse(access);
 
   const contacts = (await env.DB.prepare(
-    'SELECT player_id, name, email, phone, role FROM contacts WHERE league_id = ? ORDER BY name'
+    'SELECT player_id, name, email, phone, role, is_active FROM contacts WHERE league_id = ? ORDER BY name'
   ).bind(leagueId).all()).results || [];
 
   return Response.json({ ok: true, league_id: leagueId, contacts });
@@ -711,6 +711,56 @@ export async function handleLeagueContactSetActive(req, env, url) {
   await setContactActiveState(env, leagueId, playerId, body.is_active);
 
   return Response.json({ ok: true, player_id: playerId, is_active: body.is_active });
+}
+
+/* ---------- Item 4 (season-rollover polish task): import players ----------
+ * Players are league-wide, not season-scoped (Item 3's own note), so
+ * there's no separate per-season roster to copy from -- "importing" is
+ * really the admin confirming, at the moment a new season starts, who
+ * stays active. Every current contact NOT in player_ids becomes
+ * inactive; every one IN it becomes/stays active -- through
+ * setContactActiveState, the SAME mechanism Item 3's own manual
+ * toggle uses (this task's own "one path, not two implementations").
+ * Entirely skippable: an admin who never calls this route changes
+ * nothing.
+ */
+export async function handleLeagueSeasonRolloverImport(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update contacts for SMBHL.', errorKey: 'ROUTE_BLOCKED_CONTACTS' }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  if (!Array.isArray(body.player_ids)) {
+    return Response.json({ ok: false, error: 'player_ids must be an array.', errorKey: 'PLAYER_IDS_REQUIRED' }, { status: 400 });
+  }
+  const keepActive = new Set(body.player_ids.map(id => String(id)));
+
+  const existing = (await env.DB.prepare(
+    'SELECT player_id, is_active FROM contacts WHERE league_id = ?'
+  ).bind(leagueId).all()).results || [];
+
+  let activated = 0, deactivated = 0;
+  for (const c of existing) {
+    const shouldBeActive = keepActive.has(c.player_id);
+    const isCurrentlyActive = c.is_active !== 0;
+    if (shouldBeActive === isCurrentlyActive) continue;
+    await setContactActiveState(env, leagueId, c.player_id, shouldBeActive);
+    if (shouldBeActive) activated++; else deactivated++;
+  }
+
+  return Response.json({ ok: true, activated, deactivated });
 }
 
 /* ---------- POST /league/contacts/bulk (Part 6, live-testing task) ----------

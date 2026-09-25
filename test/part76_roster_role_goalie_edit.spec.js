@@ -614,3 +614,139 @@ describe('Item 3: inactive players', () => {
     expect((await res.json()).errorKey).toBe('NO_LEAGUE_FOUND');
   });
 });
+
+// Item 4 (season-rollover polish task): players are league-wide, not
+// season-scoped (Item 3's own note), so there's no separate per-season
+// roster to copy -- "importing" is the admin confirming, at the
+// moment a new season starts, who stays active. Reuses
+// setContactActiveState (Item 3's own mechanism) for both directions,
+// per this task's "one path, not two implementations" instruction.
+describe('Item 4: season rollover -- import players', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  async function publishSeason(cookie, csrfToken, body) {
+    return SELF.fetch('http://example.com/league/season/publish', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify(body)
+    });
+  }
+  async function setActive(cookie, csrfToken, playerId, isActive) {
+    return SELF.fetch('http://example.com/league/contacts/active', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ player_id: playerId, is_active: isActive })
+    });
+  }
+  async function rolloverImport(cookie, csrfToken, playerIds) {
+    return SELF.fetch('http://example.com/league/season/rollover-import', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ player_ids: playerIds })
+    });
+  }
+
+  it('a player from the previous season who is NOT imported becomes inactive, but keeps their history (not deleted)', async () => {
+    const { cookie, csrfToken } = await signup('item4.notimported@example.com', '203.0.193.001');
+    await createLeague(cookie, csrfToken, { name: 'Item4 Not Imported League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'Item4 Season 1' });
+    const kept = await addContact(cookie, csrfToken, { name: 'Kept Player One', team: 'A', email: 'kept1@example.com' });
+    const dropped = await addContact(cookie, csrfToken, { name: 'Dropped Player One', team: 'B', email: 'dropped1@example.com' });
+
+    const res = await rolloverImport(cookie, csrfToken, [kept.player_id]);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.deactivated).toBe(1);
+    expect(data.activated).toBe(0);
+
+    const keptRow = await env.DB.prepare('SELECT is_active FROM contacts WHERE player_id = ?').bind(kept.player_id).first();
+    expect(keptRow.is_active).toBe(1);
+    const droppedRow = await env.DB.prepare('SELECT is_active, name FROM contacts WHERE player_id = ?').bind(dropped.player_id).first();
+    expect(droppedRow.is_active).toBe(0);
+    expect(droppedRow.name).toBe('Dropped Player One'); // not deleted -- real history kept
+  });
+
+  it('an inactive player imported deliberately (checked in the list, matching this task\'s own "brought back" case) becomes active', async () => {
+    const { cookie, csrfToken } = await signup('item4.deliberate@example.com', '203.0.193.002');
+    await createLeague(cookie, csrfToken, { name: 'Item4 Deliberate League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'Item4 Deliberate Season 1' });
+    const returning = await addContact(cookie, csrfToken, { name: 'Returning Player One', team: 'A', email: 'returning1@example.com' });
+    await setActive(cookie, csrfToken, returning.player_id, false);
+    const before = await env.DB.prepare('SELECT is_active FROM contacts WHERE player_id = ?').bind(returning.player_id).first();
+    expect(before.is_active).toBe(0);
+
+    const res = await rolloverImport(cookie, csrfToken, [returning.player_id]);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.activated).toBe(1);
+
+    const after = await env.DB.prepare('SELECT is_active FROM contacts WHERE player_id = ?').bind(returning.player_id).first();
+    expect(after.is_active).toBe(1);
+  });
+
+  it('the import is skippable -- declining to call this route at all changes nothing', async () => {
+    const { cookie, csrfToken } = await signup('item4.skippable@example.com', '203.0.193.003');
+    await createLeague(cookie, csrfToken, { name: 'Item4 Skippable League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'Item4 Skippable Season 1' });
+    const player = await addContact(cookie, csrfToken, { name: 'Skippable Player One', team: 'A', email: 'skippable1@example.com' });
+
+    // A second, genuinely new season is created -- exactly the moment
+    // the rollover offer would appear -- but the admin simply never
+    // calls the import route (the rendered page's own "Ignorer"/Skip
+    // button does nothing but reload, per submitSeasonMgmt's own JS).
+    await publishSeason(cookie, csrfToken, { season_name: 'Item4 Skippable Season 2' });
+
+    const row = await env.DB.prepare('SELECT is_active FROM contacts WHERE player_id = ?').bind(player.player_id).first();
+    expect(row.is_active).toBe(1);
+  });
+
+  it('rejects a non-array player_ids, blocks SMBHL, and requires authentication', async () => {
+    const { cookie, csrfToken } = await signup('item4.validate@example.com', '203.0.193.004');
+    await createLeague(cookie, csrfToken, { name: 'Item4 Validate League', teamNames: ['A', 'B'] });
+
+    const badBody = await SELF.fetch('http://example.com/league/season/rollover-import', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ player_ids: 'not-an-array' })
+    });
+    expect(badBody.status).toBe(400);
+    expect((await badBody.json()).errorKey).toBe('PLAYER_IDS_REQUIRED');
+
+    const noAuth = await SELF.fetch('http://example.com/league/season/rollover-import', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ player_ids: [] })
+    });
+    expect(noAuth.status).toBe(401);
+
+    const { cookie: smbhlCookie, csrfToken: smbhlCsrf } = await signup('item4.smbhlguard@example.com', '203.0.193.005');
+    const smbhlRes = await rolloverImport(smbhlCookie, smbhlCsrf, []);
+    expect(smbhlRes.status).toBe(404);
+    expect((await smbhlRes.json()).errorKey).toBe('NO_LEAGUE_FOUND');
+  });
+
+  it('the settings page renders the collapsed rollover-import panel (hidden by default) with the checkbox-list wiring, once a season already exists', async () => {
+    const { cookie, csrfToken } = await signup('item4.render@example.com', '203.0.193.006');
+    await createLeague(cookie, csrfToken, { name: 'Item4 Render League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'Item4 Render Season 1' });
+
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    expect(html).toContain('id="rollover_import_panel" style="display:none;"');
+    expect(html).toContain('data-i18n="rolloverTitle"');
+    expect(html).toContain('onclick="submitRolloverImport()"');
+    expect(html).toContain('onclick="skipRolloverImport()"');
+    expect(html).toContain('CURRENT_SEASON_NAME = "Item4 Render Season 1"');
+  });
+
+  it('GET /league/contacts (the panel\'s own data source) includes is_active, so the checkbox list can pre-check active players and leave inactive ones unchecked', async () => {
+    const { cookie, csrfToken } = await signup('item4.contactsjson@example.com', '203.0.193.007');
+    await createLeague(cookie, csrfToken, { name: 'Item4 Contacts Json League', teamNames: ['A', 'B'] });
+    const active = await addContact(cookie, csrfToken, { name: 'Json Active Player', team: 'A' });
+    const inactive = await addContact(cookie, csrfToken, { name: 'Json Inactive Player', team: 'B' });
+    await setActive(cookie, csrfToken, inactive.player_id, false);
+
+    const res = await SELF.fetch('http://example.com/league/contacts', { headers: { cookie } });
+    const data = await res.json();
+    const byId = Object.fromEntries(data.contacts.map(c => [c.player_id, c]));
+    expect(byId[active.player_id].is_active).toBe(1);
+    expect(byId[inactive.player_id].is_active).toBe(0);
+  });
+});
