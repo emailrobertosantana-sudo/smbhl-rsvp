@@ -85,7 +85,11 @@ describe('Part 2 (live-testing task, batch 3): Comms view -- email activity and 
     const { cookie, csrfToken } = await signup('comms.cadence@example.com', '203.0.178.002');
     const league = await createLeague(cookie, csrfToken, { name: 'Comms Cadence League', teamNames: ['A', 'B'], tracksStats: true, teamStructure: 'weekly_draw' });
 
-    await env.DB.prepare('UPDATE leagues SET reminder_72h_enabled = 0, auto_draw_enabled = 1, auto_draw_hours_before = 36 WHERE id = ?').bind(league.id).run();
+    // F1 (players/reminders polish task) changed the create-time default
+    // to all 3 OFF -- reminder_24h_enabled is set explicitly here so this
+    // test still proves cadence reflects each field's REAL value, not an
+    // assumed default.
+    await env.DB.prepare('UPDATE leagues SET reminder_72h_enabled = 0, reminder_24h_enabled = 1, auto_draw_enabled = 1, auto_draw_hours_before = 36 WHERE id = ?').bind(league.id).run();
 
     const { body } = await commsData(cookie);
     expect(body.cadence.reminder72hEnabled).toBe(false);

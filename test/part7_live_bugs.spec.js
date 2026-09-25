@@ -295,3 +295,46 @@ describe('Bug 6: sweep -- raw backend errors now resolve through ERROR_I18N on e
     expect(json.errorKey).toBe('INVALID_EMAIL');
   });
 });
+
+describe('F1 (players/reminders polish task): new leagues start with automated reminders OFF, with a checklist nudge to turn them on', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it('a freshly created league has all three reminder columns at 0 in the DB, not the schema default of 1', async () => {
+    const { leagueId } = await signupAndCreateLeague('f1.offbydefault@example.com', '203.0.113.951', 'F1 Off By Default League', ['A', 'B']);
+    const row = await env.DB.prepare('SELECT reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
+    expect(row.reminder_72h_enabled).toBe(0);
+    expect(row.reminder_24h_enabled).toBe(0);
+    expect(row.reminder_12h_enabled).toBe(0);
+  });
+
+  it('the Getting Started checklist shows a not-done "turn on reminders" row before any reminder is enabled', async () => {
+    const { cookie } = await signupAndCreateLeague('f1.checklistoff@example.com', '203.0.113.952', 'F1 Checklist Off League', ['A', 'B']);
+    const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
+    const html = await res.text();
+    expect(html).toContain('data-i18n="ckReminders"');
+    expect(html).toContain('href="/league/settings#reminders-section"');
+    const anchorIdx = html.indexOf('data-i18n="ckReminders"');
+    const rowStart = html.lastIndexOf('<div class="dash-ck', anchorIdx);
+    expect(html.slice(rowStart, anchorIdx)).not.toContain('dash-ck done');
+  });
+
+  it('the checklist row flips to done once any one reminder is turned on, and the settings page reminders section is anchorable', async () => {
+    const { cookie, csrfToken } = await signupAndCreateLeague('f1.checklistone@example.com', '203.0.113.953', 'F1 Checklist One League', ['A', 'B']);
+    const settingsHtml = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    expect(settingsHtml).toContain('id="reminders-section"');
+
+    await SELF.fetch('http://example.com/league/reminders/settings', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ reminder72h: true })
+    });
+    const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
+    const html = await res.text();
+    expect(html).toContain('data-i18n="ckReminders"');
+    const anchorIdx = html.indexOf('data-i18n="ckReminders"');
+    const rowStart = html.lastIndexOf('<div class="dash-ck', anchorIdx);
+    expect(html.slice(rowStart, anchorIdx)).toContain('dash-ck done');
+  });
+});

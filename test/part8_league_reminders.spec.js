@@ -93,6 +93,18 @@ async function insertEventDirectlyHoursFromNow(leagueId, hoursFromNow) {
   return id;
 }
 
+// F1 (players/reminders polish task): new leagues now start with all 3
+// automated reminders OFF (previously ON by default). Most of this
+// file's tests are about the SENDING/toggling logic itself, not the
+// default, so they need to explicitly arm reminders in their own setup
+// now that the default no longer does it for them.
+async function enableAllReminders(cookie, csrfToken) {
+  await SELF.fetch('http://example.com/league/reminders/settings', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify({ reminder72h: true, reminder24h: true, reminder12h: true })
+  });
+}
+
 async function addPlayer(cookie, csrfToken, name, team, email) {
   const res = await SELF.fetch('http://example.com/league/contacts', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -128,16 +140,20 @@ describe('Part 2: per-league automated reminders', () => {
     await applyRealSchema(env);
   });
 
-  it('all 3 reminder toggles default ON for a newly created league', async () => {
+  it('all 3 reminder toggles default OFF for a newly created league (F1: mid-setup player adds must not silently email)', async () => {
     const { leagueId } = await signupAndCreateLeague('reminders.defaults@example.com', '203.0.113.951', 'Defaults League', ['A', 'B']);
     const row = await env.DB.prepare('SELECT reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
-    expect(row.reminder_72h_enabled).toBe(1);
-    expect(row.reminder_24h_enabled).toBe(1);
-    expect(row.reminder_12h_enabled).toBe(1);
+    expect(row.reminder_72h_enabled).toBe(0);
+    expect(row.reminder_24h_enabled).toBe(0);
+    expect(row.reminder_12h_enabled).toBe(0);
   });
 
   it('each of the 3 settings toggles independently, via the dashboard route', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.toggle@example.com', '203.0.113.952', 'Toggle League', ['A', 'B']);
+    // Start from all 3 explicitly ON (F1 changed the create-time default
+    // to OFF) so the assertions below about the OTHER two kinds staying
+    // untouched while one is flipped remain meaningful.
+    await enableAllReminders(cookie, csrfToken);
 
     const res1 = await SELF.fetch('http://example.com/league/reminders/settings', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -170,6 +186,9 @@ describe('Part 2: per-league automated reminders', () => {
 
   it('the settings page shows the 3 real switches reflecting current state (moved from the dashboard, live-testing task Part 1)', async () => {
     const { cookie, csrfToken } = await signupAndCreateLeague('reminders.dashboard@example.com', '203.0.113.953', 'Dashboard Reminders League', ['A', 'B']);
+    // F1: reminders are OFF by default now, so 72h needs to be explicitly
+    // armed for the aria-checked="true" assertion below to mean anything.
+    await enableAllReminders(cookie, csrfToken);
     await SELF.fetch('http://example.com/league/reminders/settings', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ reminder24h: false })
@@ -185,6 +204,7 @@ describe('Part 2: per-league automated reminders', () => {
 
   it('a 72h-out event with a non-responder sends the 72h reminder only to that non-responder, and logs it', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.r72@example.com', '203.0.113.954', 'R72 League', ['A', 'B']);
+    await enableAllReminders(cookie, csrfToken);
     // Direct insert, not createEventHoursFromNow -- see that helper's
     // own comment: this tests the cron catching an event that already
     // existed within its window, not the new creation-time skip hook.
@@ -208,6 +228,7 @@ describe('Part 2: per-league automated reminders', () => {
 
   it('running the cron again for the same event does not re-send the 72h reminder (idempotent via the log)', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.idempotent@example.com', '203.0.113.955', 'Idempotent League', ['A', 'B']);
+    await enableAllReminders(cookie, csrfToken);
     await insertEventDirectlyHoursFromNow(leagueId, 70);
     await addPlayer(cookie, csrfToken, 'Idempotent Non Responder', 'A', 'idem@example.com');
 
@@ -232,6 +253,7 @@ describe('Part 2: per-league automated reminders', () => {
 
   it('a 24h-out event sends the 24h reminder to non-responders only', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.r24@example.com', '203.0.113.957', 'R24 League', ['A', 'B']);
+    await enableAllReminders(cookie, csrfToken);
     const eventId = await insertEventDirectlyHoursFromNow(leagueId, 20);
     await addPlayer(cookie, csrfToken, 'R24 Non Responder', 'A', 'r24nonresp@example.com');
     const outId = await addPlayer(cookie, csrfToken, 'R24 Already Out', 'A', 'r24out@example.com');
@@ -250,6 +272,7 @@ describe('Part 2: per-league automated reminders', () => {
 
   it('a 12h-out event sends the logistics email to CONFIRMED players only, never to non-responders', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.r12@example.com', '203.0.113.958', 'R12 League', ['A', 'B']);
+    await enableAllReminders(cookie, csrfToken);
     const eventId = await insertEventDirectlyHoursFromNow(leagueId, 10);
     const confirmedId = await addPlayer(cookie, csrfToken, 'R12 Confirmed', 'A', 'r12confirmed@example.com');
     await addPlayer(cookie, csrfToken, 'R12 Non Responder', 'A', 'r12nonresp@example.com');
@@ -312,6 +335,7 @@ describe('Part 2: per-league automated reminders', () => {
     // too) still works fine after a manual send elsewhere -- proves the
     // manual trigger and the automatic cron are two real, independent
     // paths, not that automation is broken by having been used.
+    await enableAllReminders(cookie, csrfToken);
     const secondEventId = await insertEventDirectlyHoursFromNow(leagueId, 70);
     await addPlayer(cookie, csrfToken, 'Manual Target Two', 'A', 'manualtarget2@example.com');
     const { sentMails: autoMails } = await withMailMock(() => runLeagueReminders(env));

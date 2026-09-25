@@ -1551,14 +1551,16 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
         startSeasonDesc: 'Choisis un nom pour ta saison. Tu pourras créer des matchs ensuite.',
         seasonNameLabel: 'Nom de la saison', seasonNamePh: 'Ex. Saison Hiver 2026', seasonStartBtn: 'Créer la saison',
         checklistTitle: 'Pour bien partir',
-        ckLeague: 'Créer la ligue', ckTeams: 'Nommer les équipes', ckPlayerCount: 'Choisir le nombre de joueurs', ckPlayers: 'Ajouter les joueurs', ckSeason: 'Créer la saison'
+        ckLeague: 'Créer la ligue', ckTeams: 'Nommer les équipes', ckPlayerCount: 'Choisir le nombre de joueurs', ckPlayers: 'Ajouter les joueurs', ckSeason: 'Créer la saison',
+        ckReminders: 'Activer les rappels automatiques'
       });
       Object.assign(en, {
         nextStep: 'Next step', startSeason: 'Start your first season',
         startSeasonDesc: 'Choose a name for your season. You can create events after.',
         seasonNameLabel: 'Season name', seasonNamePh: 'E.g. Winter Season 2026', seasonStartBtn: 'Create the season',
         checklistTitle: 'Getting started',
-        ckLeague: 'Create the league', ckTeams: 'Name the teams', ckPlayerCount: 'Choose your player count', ckPlayers: 'Add players', ckSeason: 'Create a season'
+        ckLeague: 'Create the league', ckTeams: 'Name the teams', ckPlayerCount: 'Choose your player count', ckPlayers: 'Add players', ckSeason: 'Create a season',
+        ckReminders: 'Turn on reminders'
       });
     } else {
       // Live-testing task (batch 6), Part 7: the full season-management
@@ -1850,6 +1852,7 @@ async function handleDashboardPage(req, env, url) {
       <div style="margin-top:10px"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/events/detail?e=${encodeURIComponent(nextEvent.id)}" data-i18n="weekStatusDetailBtn">Voir le match</a></div>`}
     </section>`;
 
+    const remindersAnyOn = !!(leagueRow.reminder_72h_enabled || leagueRow.reminder_24h_enabled || leagueRow.reminder_12h_enabled);
     const startGridHtml = needsSeason ? `
     <div class="dash-grid">
       <section class="nl-card dash-start">
@@ -1889,6 +1892,16 @@ async function handleDashboardPage(req, env, url) {
                here by construction. -->
           <div class="dash-ck"><span class="b n"></span><span data-i18n="ckSeason">Créer la saison</span></div>
           <div class="dash-ck${playerCount > 0 ? ' done' : ''}"><span class="b ${playerCount > 0 ? 'y">' + DASH_ICON_CHECK : 'n">'}</span><span data-i18n="ckPlayers">Ajouter les joueurs</span></div>
+          <!-- F1 (players/reminders polish task): new leagues now start
+               with all three automated reminders OFF (see
+               handleLeagueCreate in leagues.js) so a mid-setup player
+               add never silently emails anyone. This closing checklist
+               row is the promised nudge to turn them back on once the
+               admin is ready -- computed live from leagueRow (settings
+               are reachable pre-season too), so it flips to done the
+               moment any one of the three is enabled, same pattern as
+               the other rows above. -->
+          <div class="dash-ck${remindersAnyOn ? ' done' : ''}"><span class="b ${remindersAnyOn ? 'y">' + DASH_ICON_CHECK : 'n">'}</span><a href="/league/settings#reminders-section" data-i18n="ckReminders">Activer les rappels automatiques</a></div>
         </div>
       </section>
     </div>` : '';
@@ -4225,7 +4238,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     </div>
   </section>
 
-  <section class="nl-card nl-card--pad-lg">
+  <section class="nl-card nl-card--pad-lg" id="reminders-section">
     <div class="h3" data-i18n="remindersTitle">Rappels automatiques</div>
     <p class="nl-help" data-i18n="remindersDesc">Envoyés automatiquement à tes joueurs avant chaque match.</p>
     <div id="remindersErr" class="nl-error" style="display:none"></div>

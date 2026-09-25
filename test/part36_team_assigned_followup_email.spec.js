@@ -81,6 +81,17 @@ async function insertEventDirectlyHoursFromNow(leagueId, hoursFromNow) {
   ).bind(id, date, time, leagueId).run();
   return { id };
 }
+// F1 (players/reminders polish task): new leagues now start with all 3
+// automated reminders OFF -- this file's tests are all about the 12h
+// logistics wave genuinely firing, so arm it explicitly now that
+// league creation no longer does it for them.
+async function enable12hReminder(cookie, csrfToken) {
+  await SELF.fetch('http://example.com/league/reminders/settings', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify({ reminder12h: true })
+  });
+}
+
 async function addPlayer(cookie, csrfToken, name, email) {
   const res = await SELF.fetch('http://example.com/league/contacts', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -117,6 +128,7 @@ describe('Part 3 (live-testing task): team-assigned follow-up email for the late
 
   it('draw BEFORE the 12h email: team is included in that one email, no follow-up is sent', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateWeeklyDrawLeague('followup.before@example.com', '203.0.135.001', 'Followup Before League');
+    await enable12hReminder(cookie, csrfToken);
     const player = await addPlayer(cookie, csrfToken, 'Before Draw Player', 'beforedrawplayer@example.com');
     const ev = await insertEventDirectlyHoursFromNow(leagueId, 10);
     await SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -148,6 +160,7 @@ describe('Part 3 (live-testing task): team-assigned follow-up email for the late
 
   it('draw AFTER the 12h email: the logistics email has no team, then a follow-up arrives with it', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateWeeklyDrawLeague('followup.after@example.com', '203.0.135.002', 'Followup After League');
+    await enable12hReminder(cookie, csrfToken);
     const player = await addPlayer(cookie, csrfToken, 'After Draw Player', 'afterdrawplayer@example.com');
     const ev = await insertEventDirectlyHoursFromNow(leagueId, 10);
     await SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -182,6 +195,7 @@ describe('Part 3 (live-testing task): team-assigned follow-up email for the late
 
   it('the follow-up is idempotent -- reassigning the same player again does not re-send it', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateWeeklyDrawLeague('followup.idempotent@example.com', '203.0.135.003', 'Followup Idempotent League');
+    await enable12hReminder(cookie, csrfToken);
     const player = await addPlayer(cookie, csrfToken, 'Idempotent Followup Player', 'idempotentfollowup@example.com');
     const ev = await insertEventDirectlyHoursFromNow(leagueId, 10);
     await SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -212,6 +226,7 @@ describe('Part 3 (live-testing task): team-assigned follow-up email for the late
 
   it('the manual per-player assign route (not just bulk draw) also triggers the late-case follow-up', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateWeeklyDrawLeague('followup.manual@example.com', '203.0.135.004', 'Followup Manual League');
+    await enable12hReminder(cookie, csrfToken);
     const player = await addPlayer(cookie, csrfToken, 'Manual Assign Followup Player', 'manualassignfollowup@example.com');
     const ev = await insertEventDirectlyHoursFromNow(leagueId, 10);
     await SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -254,6 +269,7 @@ describe('Part 3 (live-testing task): team-assigned follow-up email for the late
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ season_name: 'Fixed Unaffected Season' })
     });
+    await enable12hReminder(cookie, csrfToken);
     const player = await addPlayer(cookie, csrfToken, 'Fixed Unaffected Player', 'fixedunaffected@example.com');
     const ev = await createEventHoursFromNow(cookie, csrfToken, 10);
     await SELF.fetch('http://example.com/league/rsvp/admin', {

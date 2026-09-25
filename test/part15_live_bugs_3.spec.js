@@ -258,6 +258,13 @@ describe('Live-testing bugs, round 3: broken email sending', () => {
 
     it('the automated cron wave (runLeagueReminders) is unaffected by the return-shape change -- still sums to a plain count', async () => {
       const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('bugs3.autowave@example.com', '203.0.118.006', 'Auto Wave League', ['A', 'B']);
+      // F1 (players/reminders polish task): reminders now start OFF by
+      // default -- this test is about runLeagueReminders' return shape,
+      // not the default, so arm 72h explicitly.
+      await SELF.fetch('http://example.com/league/reminders/settings', {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+        body: JSON.stringify({ reminder72h: true })
+      });
       const eventId = await insertEventDirectlyHoursFromNow(leagueId, 70);
       await addPlayer(cookie, csrfToken, 'Auto Wave Target', 'A', 'autowavetarget@example.com');
       const { sentMails } = await withMailMock(() => runLeagueReminders(env));

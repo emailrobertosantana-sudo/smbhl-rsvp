@@ -70,6 +70,19 @@ async function createEventHoursFromNow(cookie, csrfToken, hoursFromNow) {
   return json.event.id;
 }
 
+// F1 (players/reminders polish task): new leagues now start with all 3
+// automated reminders OFF (previously ON by default). This whole file
+// is about the skip-marking behavior for ENABLED kinds, so most tests
+// need to explicitly arm reminders now that league creation no longer
+// does it for them (the dedicated "disabled kind" test below still
+// covers the off case on its own terms).
+async function enableAllReminders(cookie, csrfToken) {
+  await SELF.fetch('http://example.com/league/reminders/settings', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify({ reminder72h: true, reminder24h: true, reminder12h: true })
+  });
+}
+
 async function addPlayer(cookie, csrfToken, name, team, email) {
   const res = await SELF.fetch('http://example.com/league/contacts', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -113,6 +126,7 @@ describe('Reminder-window-skip-on-create/reschedule bug fix', () => {
 
   it('an event created with ALL windows already passed (72h/24h/12h) is marked skipped for all 3 kinds, and sends nothing', async () => {
     const { cookie, csrfToken } = await signupAndCreateLeague('skip.all@example.com', '203.0.113.970', 'Skip All League', ['A', 'B']);
+    await enableAllReminders(cookie, csrfToken);
     // 5 hours out: already inside all 3 windows (72/24/12) the instant
     // the event is created -- exactly the confirmed live-demo bug
     // scenario (a Friday event created a few days out, just more extreme).
@@ -130,6 +144,7 @@ describe('Reminder-window-skip-on-create/reschedule bug fix', () => {
 
   it('an event created with SOME windows already passed (only 72h) marks just that one skipped, leaving the still-future 24h/12h windows untouched (no row at all)', async () => {
     const { cookie, csrfToken } = await signupAndCreateLeague('skip.some@example.com', '203.0.113.971', 'Skip Some League', ['A', 'B']);
+    await enableAllReminders(cookie, csrfToken);
     // 50 hours out: past the 72h threshold (50 <= 72) but not yet the
     // 24h or 12h ones (50 > 24, 50 > 12).
     const eventId = await createEventHoursFromNow(cookie, csrfToken, 50);
@@ -193,7 +208,8 @@ describe('Reminder-window-skip-on-create/reschedule bug fix', () => {
   // each test below drives one representative id/date rather than
   // literally reusing one id across a simulated reschedule.
   it('Rule 2 (closer): a step whose window has newly elapsed gets marked skipped; a step that already genuinely sent is left completely untouched', async () => {
-    const { leagueId } = await signupAndCreateLeague('skip.reschedule.closer@example.com', '203.0.113.973', 'Reschedule Closer League', ['A', 'B']);
+    const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('skip.reschedule.closer@example.com', '203.0.113.973', 'Reschedule Closer League', ['A', 'B']);
+    await enableAllReminders(cookie, csrfToken);
     const { date, time } = easternDateTimeHoursFromNow(5); // past all 3 windows
     const eventId = `${leagueId}:${date}`;
 
@@ -215,7 +231,8 @@ describe('Reminder-window-skip-on-create/reschedule bug fix', () => {
   });
 
   it('Rule 2 (further out): a step previously marked skipped has that mark cleared once its window is legitimately back in the future; a genuinely-sent step is still left untouched', async () => {
-    const { leagueId } = await signupAndCreateLeague('skip.reschedule.further@example.com', '203.0.113.974', 'Reschedule Further League', ['A', 'B']);
+    const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('skip.reschedule.further@example.com', '203.0.113.974', 'Reschedule Further League', ['A', 'B']);
+    await enableAllReminders(cookie, csrfToken);
     const { date, time } = easternDateTimeHoursFromNow(200); // well outside all 3 windows
     const eventId = `${leagueId}:${date}`;
 
@@ -238,9 +255,12 @@ describe('Reminder-window-skip-on-create/reschedule bug fix', () => {
 
   it('applies to the simple on/off toggle model too: a kind the league has disabled is never marked skipped (nothing to mark -- it was never going to send)', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('skip.toggleoff@example.com', '203.0.113.974', 'Toggle Off League', ['A', 'B']);
+    // reminder_72h stays off (the new create-time default); 24h/12h are
+    // explicitly armed so this test still proves what it always proved --
+    // a disabled kind gets no row, an enabled one gets a real skip row.
     await SELF.fetch('http://example.com/league/reminders/settings', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ reminder72h: false })
+      body: JSON.stringify({ reminder72h: false, reminder24h: true, reminder12h: true })
     });
     // 5 hours out: past all 3 windows, but reminder_72h is disabled for this league.
     const eventId = await createEventHoursFromNow(cookie, csrfToken, 5);

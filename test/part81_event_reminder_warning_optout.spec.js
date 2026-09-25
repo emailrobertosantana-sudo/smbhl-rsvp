@@ -91,6 +91,15 @@ async function disableAllReminders(cookie, csrfToken) {
     body: JSON.stringify({ reminder72h: false, reminder24h: false, reminder12h: false })
   });
 }
+// F1 (players/reminders polish task): new leagues now start with all 3
+// reminders OFF (previously ON by default) -- callers that need the
+// warning/sending machinery genuinely armed must do so explicitly now.
+async function enableAllReminders(cookie, csrfToken) {
+  return SELF.fetch('http://example.com/league/reminders/settings', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify({ reminder72h: true, reminder24h: true, reminder12h: true })
+  });
+}
 function easternDateTimeHoursFromNow(hoursFromNow) {
   const target = new Date(Date.now() + hoursFromNow * 3600000);
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -126,10 +135,14 @@ describe('Part 10 (live-testing task, batch 6): event creation warns before armi
     await applyRealSchema(env);
   });
 
-  it('shows the warning (recipient count + which kinds are armed) once real player emails exist -- reminders default ON for a new league', async () => {
+  it('shows the warning (recipient count + which kinds are armed) once real player emails exist and reminders are armed', async () => {
     const { cookie, csrfToken } = await signup('optout.warn@example.com', '203.0.197.001');
     await createLeague(cookie, csrfToken, { name: 'Reminder Warn League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    // F1 changed the create-time default to OFF -- explicitly arm here
+    // since this test is about the warning UI, not the default itself
+    // (that's covered by part7_live_bugs.spec.js's F1 tests).
+    await enableAllReminders(cookie, csrfToken);
     await addContact(cookie, csrfToken, { name: 'Real Email Player', role: 'roster', email: 'realemail@example.com' });
 
     const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
@@ -189,6 +202,7 @@ describe('Part 10 (live-testing task, batch 6): event creation warns before armi
     const { cookie, csrfToken, } = await signup('optout.isolation@example.com', '203.0.197.005');
     const league = await createLeague(cookie, csrfToken, { name: 'Reminder Isolation League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await enableAllReminders(cookie, csrfToken);
 
     // 40h apart (both still inside the cron's 72h window) so the two
     // events are guaranteed to land on different calendar dates --

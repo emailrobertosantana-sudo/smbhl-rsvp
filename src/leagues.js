@@ -1727,9 +1727,23 @@ export async function handleLeagueCreate(req, env) {
     const leagueId = crypto.randomUUID();
     const now = new Date().toISOString();
 
+    // F1 bug fix (reminders/email-safety polish task): automated
+    // reminders (reminder_72h_enabled/24h/12h) used to default ON
+    // (migrate-026.sql's own column DEFAULT 1) -- so adding players to
+    // a brand-new league with an imminent event already started
+    // emailing them mid-setup, before the admin had made any real
+    // choice about it. Explicitly OFF at creation now, overriding that
+    // schema-level default (SQLite can't ALTER a column's own DEFAULT
+    // without a full table rebuild, so this is done at the one place
+    // new rows are ever created instead -- the schema default itself
+    // stays DEFAULT 1, now dead/unreachable code for any path that
+    // still doesn't specify these columns explicitly, harmless).
+    // "Turn on reminders" is the new final Getting Started checklist
+    // step (buildDashI18n/handleDashboardPage, index.js) -- a real,
+    // deliberate admin choice, not a silent default.
     await env.DB.prepare(
-      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at, slug, team_structure, min_players, max_players, min_goalies)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at, slug, team_structure, min_players, max_players, min_goalies, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`
     ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug, teamStructure, minPlayers, maxPlayers, minGoalies).run();
 
     await env.DB.prepare(

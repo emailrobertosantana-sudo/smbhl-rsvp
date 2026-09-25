@@ -141,6 +141,13 @@ describe('Part 10 (live-testing task): subs never get the initial reminder, only
     const roster = await addPlayer(cookie, csrfToken, 'Pending Roster Player', 'pendingroster@example.com', { team: 'A' });
     const sub = await addPlayer(cookie, csrfToken, 'Never Emailed Sub', 'neveremailedsub@example.com', { role: 'sub_skater' });
 
+    // F1 (players/reminders polish task): reminders now start OFF by
+    // default -- this test is about WHO the 72h wave emails, not the
+    // default, so arm 72h explicitly.
+    await SELF.fetch('http://example.com/league/reminders/settings', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ reminder72h: true })
+    });
     await insertEventDirectlyHoursFromNow(league.id, 50);
 
     const { sentMails } = await withMailMock(() => runLeagueReminders(env));
