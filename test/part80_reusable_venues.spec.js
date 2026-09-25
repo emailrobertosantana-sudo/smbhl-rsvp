@@ -413,4 +413,66 @@ describe('Part 9 (live-testing task, batch 6): reusable venues', () => {
     const detailHtml = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(heroEvent.id)}`, { headers: { cookie } })).text();
     expect(detailHtml).toMatch(/Letendre · <a href="https:\/\/maps\.example\.com\/letendre"/);
   });
+
+  // Item 2 (public page polish task): the link from the test above was
+  // never actually invisible in the MARKUP (D1's own conclusion) -- it
+  // was invisible in practice because the shared base stylesheet's
+  // .nl a rule (design_system.js, color: var(--ink)) outranks
+  // .pb-g-venue's own color on the surrounding div, and --ink flips
+  // with the visitor's OS colour-scheme preference. On the always-dark
+  // arène background, a light-OS-theme visitor got near-black text on
+  // a near-black background -- genuinely unreadable, not merely a
+  // markup gap. This can't be measured by computing an actual pixel
+  // colour in this test harness (no real browser/cascade here), so it
+  // asserts the higher-specificity override rule itself is present in
+  // the rendered <style> block for both shipping themes -- the same
+  // way the pre-existing .pb-foot fix (right above this rule in the
+  // stylesheet) is the established, working pattern for this exact
+  // class of bug on this exact page.
+  describe('Item 2: the venue-list map link is legible on both public themes, not just present in markup', () => {
+    it('arène (dark) theme: an explicit, non-token override beats the shared .nl a rule for .pb-g-venue links', async () => {
+      const { cookie, csrfToken } = await signup('item2.contrast.arene@example.com', '203.0.199.021');
+      const league = await createLeague(cookie, csrfToken, { name: 'Item2 Contrast Arene League', teamNames: ['A', 'B'] });
+      await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+      const venueRes = await createVenue(cookie, csrfToken, { name: 'Contrast Rink', map_link: 'https://maps.example.com/contrast' });
+      const venue = (await venueRes.json()).venue;
+      await createEvent(cookie, csrfToken, { date: '2099-07-15', venue_id: venue.id });
+
+      const html = await (await SELF.fetch(`http://example.com/league/public?league=${league.id}`)).text();
+      // A literal hex value (not var(--ink), which is the actual bug)
+      // wins over the shared .nl a rule for these links specifically.
+      expect(html).toMatch(/\.nl \.pb-g-venue a\s*\{[^}]*color:\s*#a3a6ad/);
+      expect(html).not.toMatch(/\.nl \.pb-g-venue a\s*\{[^}]*color:\s*var\(--ink\)/);
+    });
+
+    it('Épuré (clean/light) theme: the mirror-image case (--ink flips light under a dark OS preference) is also pinned to a fixed, legible colour', async () => {
+      const { cookie, csrfToken } = await signup('item2.contrast.clean@example.com', '203.0.199.022');
+      const league = await createLeague(cookie, csrfToken, { name: 'Item2 Contrast Clean League', teamNames: ['A', 'B'] });
+      await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+      await SELF.fetch('http://example.com/league/settings/identity', {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+        body: JSON.stringify({ publicTheme: 'clean' })
+      });
+      const venueRes = await createVenue(cookie, csrfToken, { name: 'Contrast Rink Clean', map_link: 'https://maps.example.com/contrast-clean' });
+      const venue = (await venueRes.json()).venue;
+      await createEvent(cookie, csrfToken, { date: '2099-07-16', venue_id: venue.id });
+
+      const html = await (await SELF.fetch(`http://example.com/league/public?league=${league.id}`)).text();
+      expect(html).toMatch(/\.nl \.pb-g-venue a\s*\{[^}]*color:\s*#666666/);
+      expect(html).not.toMatch(/\.nl \.pb-g-venue a\s*\{[^}]*color:\s*var\(--ink\)/);
+    });
+
+    it('the hero venue link (already fixed pre-existing, color:inherit from a fixed parent colour) is unaffected by this change', async () => {
+      const { cookie, csrfToken } = await signup('item2.contrast.hero@example.com', '203.0.199.023');
+      const league = await createLeague(cookie, csrfToken, { name: 'Item2 Contrast Hero League', teamNames: ['A', 'B'] });
+      await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+      const venueRes = await createVenue(cookie, csrfToken, { name: 'Hero Rink', map_link: 'https://maps.example.com/hero' });
+      const venue = (await venueRes.json()).venue;
+      await createEvent(cookie, csrfToken, { date: '2099-07-14', venue_id: venue.id });
+
+      const html = await (await SELF.fetch(`http://example.com/league/public?league=${league.id}`)).text();
+      expect(html).toContain('class="pb-hero-venue"');
+      expect(html).toMatch(/pb-hero-venue">Hero Rink · <a href="https:\/\/maps\.example\.com\/hero"[^>]*style="color:inherit"/);
+    });
+  });
 });

@@ -2715,6 +2715,21 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
   .pb-g-d b { font: 700 15px/20px var(--font-display); font-stretch: 118%; white-space: nowrap; }
   .pb-g-d span { font-size: 13px; color: #a3a6ad; }
   .pb-g-venue { font-size: 14px; color: #a3a6ad; }
+  /* Contrast bug fix (public page polish task): same root cause as the
+     .pb-foot fix above -- the shared base stylesheet's .nl a rule
+     (design_system.js, color: var(--ink)) has higher specificity
+     (0,1,1) than .pb-g-venue's own color on its PARENT div (0,1,0),
+     and --ink flips with the visitor's OS colour-scheme preference
+     (near-black by default, near-white under prefers-color-scheme:
+     dark -- design_system.js's own :root vs dark-mode block). On this
+     page's fixed dark surface-hero background, a light-OS-theme
+     visitor got near-black text on a near-black background --
+     invisible, read as an orphan " · " separator with nothing after
+     it. .nl .pb-g-venue a (0,2,1) reliably wins regardless of source
+     order or the visitor's OS theme, matching .pb-g-venue's own
+     already-legible grey instead of the flipping token. */
+  .nl .pb-g-venue a { color: #a3a6ad; }
+  .nl .pb-g-venue a:hover { color: #f4f4f2; }
   .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
   .pb-tg div { height: 64px; border-radius: var(--radius-md); padding: var(--space-3); font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #fff; display: flex; align-items: flex-end; }
   .pb-tg div i { display: none; }
@@ -2773,6 +2788,15 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
   .pb-g-d b { font-weight: 600; font-size: 15px; white-space: nowrap; }
   .pb-g-d span { font-size: 13px; color: #666666; }
   .pb-g-venue { font-size: 14px; color: #666666; }
+  /* Contrast bug fix (public page polish task): this theme's own
+     mirror image of the arène fix above -- --ink flips to near-white
+     under prefers-color-scheme: dark (design_system.js), which is
+     just as invisible against Épuré's fixed #ffffff background for a
+     dark-OS-theme visitor as near-black was against arène's fixed
+     dark background. Same fix, same reasoning: pin the link to this
+     theme's own already-legible grey instead of the flipping token. */
+  .nl .pb-g-venue a { color: #666666; }
+  .nl .pb-g-venue a:hover { color: #1a1a1a; }
   .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
   .pb-tg div { height: 64px; border-radius: 8px; padding: var(--space-3); font-weight: 600; font-size: 15px; color: #1a1a1a; display: flex; align-items: center; gap: 8px; background: #ffffff !important; border: 1px solid #eeeeee; }
   .pb-tg div i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
