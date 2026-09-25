@@ -1905,10 +1905,23 @@ export async function handleLeagueCreate(req, env) {
     // "Turn on reminders" is the new final Getting Started checklist
     // step (buildDashI18n/handleDashboardPage, index.js) -- a real,
     // deliberate admin choice, not a silent default.
+    // D2 (settings polish task): migrate-025.sql's own schema DEFAULT
+    // for this column (#b3122e) fails the >=3:1 legibility bar the new
+    // colour-preset picker holds every option to (2.57:1 against the
+    // Arène theme's dark surface-hero -- see LEAGUE_COLOR_PRESETS' own
+    // comment, index.js). Same fix as F1's reminder-columns precedent
+    // just above: SQLite can't ALTER a column's own DEFAULT without a
+    // full table rebuild, so a new league gets an explicit, legible
+    // preset (the first of the 8, closest in hue to the old default)
+    // written here instead -- the schema default stays #b3122e,
+    // now dead/unreachable code for this path, harmless. An existing
+    // league already stored with the old default is untouched (its
+    // Settings page shows it as the extra "current" swatch, per this
+    // task's own "do not break it" instruction).
     await env.DB.prepare(
-      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at, slug, team_structure, min_players, max_players, min_goalies, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`
-    ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug, teamStructure, minPlayers, maxPlayers, minGoalies).run();
+      `INSERT INTO leagues (id, name, division_label, tracks_stats, team_count, team_names, created_by, created_at, slug, team_structure, min_players, max_players, min_goalies, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, color)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)`
+    ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug, teamStructure, minPlayers, maxPlayers, minGoalies, '#c0392b').run();
 
     await env.DB.prepare(
       `INSERT INTO league_admins (user_id, league_id, role, created_at) VALUES (?, ?, 'admin', ?)`

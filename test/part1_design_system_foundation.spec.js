@@ -62,7 +62,7 @@ describe('Part 1 (design system): foundation', () => {
     expect(darkenedYellow.toLowerCase()).toMatch(/^#[0-9a-f]{6}$/);
   });
 
-  it('a new league gets the design system\'s sample color by default (no color-picker exists yet)', async () => {
+  it('a new league gets an explicit, legible preset colour by default (D2, settings polish task: a colour picker now exists, migrate-025.sql\'s own schema DEFAULT #b3122e is superseded)', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.691' },
       body: JSON.stringify({ email: 'part1.color@example.com', password: 'a-strong-password-1' })
@@ -78,7 +78,12 @@ describe('Part 1 (design system): foundation', () => {
     });
     const leagueId = (await leagueRes.json()).league.id;
     const row = await env.DB.prepare('SELECT color FROM leagues WHERE id = ?').bind(leagueId).first();
-    expect(row.color).toBe('#b3122e');
+    // D2: #b3122e (2.57:1 against the Arène theme's dark surface-hero)
+    // fails the new picker's own >=3:1 bar, so a new league now gets
+    // an explicit preset at creation time instead of relying on the
+    // schema default -- see handleLeagueCreate's own comment.
+    expect(row.color).toBe('#c0392b');
+    expect(row.color).not.toBe('#b3122e');
   });
 
   it("SMBHL's own real pages are completely unaffected -- no Archivo font, no design-system tokens, page() unchanged", async () => {

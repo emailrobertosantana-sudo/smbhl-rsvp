@@ -947,6 +947,14 @@ window.__errorText = function(errorKey, fallback, vars) {
       var k = el.getAttribute('data-i18n-aria');
       if (dict[k] != null) el.setAttribute('aria-label', dict[k]);
     });
+    // D2 (settings polish task): same gap, for the title= hover
+    // tooltip -- the league-colour preset swatches' own name ("Red",
+    // "Teal", ...) stayed in whatever language the page first
+    // rendered in.
+    document.querySelectorAll('[data-i18n-title]').forEach(function(el) {
+      var k = el.getAttribute('data-i18n-title');
+      if (dict[k] != null) el.setAttribute('title', dict[k]);
+    });
     // Live-testing task (batch 2), Part 6: dates/times are dynamic data,
     // not a static dictionary string, so they can't go through the
     // [data-i18n] lookup above -- the server pre-renders BOTH
@@ -1767,7 +1775,14 @@ function dashChrome(leagueName, active) {
     { key: 'settings', href: '/league/settings', icon: DASH_ICON_SETTINGS, i18n: 'navSettings' }
   ];
   const header = `<header class="nl-header">
-  <span class="nl-brand" style="max-width:280px">${esc(leagueName)}</span>
+  <!-- D1 (nav polish task): a long league name ("Sunday Morning Hockey
+       League") truncates against the 280px max-width with no way to
+       see it in full. title= gives a native hover tooltip AND exposes
+       the full name to assistive tech (the accessible name for a
+       <span> with visible, truncated text) -- decided against a
+       separate short-name field, which would be new config to
+       maintain for a purely cosmetic nav-width problem. -->
+  <span class="nl-brand" style="max-width:280px" title="${esc(leagueName)}">${esc(leagueName)}</span>
   <nav class="nl-nav">${nav.map(n => `<a href="${n.href}"${n.key === active ? ' aria-current="page"' : ''} data-i18n="${n.i18n}">${esc(DASH_NAV_LABEL_FR[n.i18n])}</a>`).join('')}</nav>
   <div class="spacer"></div>
   <div class="nl-lang" role="group" aria-label="Langue / Language">
@@ -3292,7 +3307,9 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
 ${theme === 'clean' ? PUBLIC_THEME_CLEAN_CSS : PUBLIC_THEME_ARENE_CSS}
 </style>
 <header class="nl-header">
-  <span class="nl-brand" style="max-width:280px;font-weight:700;">${esc(leagueRow.name)}</span>
+  <!-- D1 (nav polish task): same truncation/tooltip fix as the admin
+       nav's own .nl-brand -- see dashChrome's own comment. -->
+  <span class="nl-brand" style="max-width:280px;font-weight:700;" title="${esc(leagueRow.name)}">${esc(leagueRow.name)}</span>
   <div class="spacer"></div>
   ${forcedLang ? '' : `<div class="nl-lang" role="group" aria-label="Langue / Language">
     <button type="button" id="btn-lang-fr" aria-pressed="true" onclick="window.__setLang('fr')">FR</button>
@@ -3384,6 +3401,29 @@ var PB_FORCED_LANG = ${JSON.stringify(forcedLang)};
 // invisible team dots on that theme. Every colour below is verified
 // (see test/part51) to clear >=3:1 against BOTH #ffffff and #16181d.
 const ROSTER_TEAM_DOTS = ['#c0392b', '#2980b9', '#16a085', '#8e44ad', '#d35400', '#c2185b', '#4a5fc1', '#b7791f'];
+
+// D2 (settings polish task): the free-text colour picker for a
+// league's own overall colour (leagues.color, driving the public
+// page via leagueFillColor()) let an admin pick anything, including
+// values that read fine in the small square swatch of a native
+// <input type="color"> but go illegible once actually applied --
+// exactly the failure mode ROSTER_TEAM_DOTS' own comment documents
+// for team dots (#a3123a/#6d3fae/#8b4a1c, all under WCAG's 3:1 non-
+// text minimum against the Arène theme's dark surface-hero). Rather
+// than inventing a new set, this reuses that SAME already-verified,
+// already-shipped 8-colour palette (test/part51 already proves each
+// one clears >=3:1 against both #ffffff, the Épuré theme, and
+// #16181d, the Arène theme's surface-hero) -- one legibility bar, one
+// source of truth, for both team dots and a league's own colour.
+// Names are the closest plain-language description of each hex, not
+// re-derived from anything -- purely for the picker's own labels/
+// tooltips. nameKey is the I18N_SETTINGS dict key (colorPresetRed
+// etc.) so the swatch tooltip stays correct across a client-side
+// FR/EN toggle, same data-i18n-title convention as everything else.
+const LEAGUE_COLOR_PRESET_NAME_KEYS = ['colorPresetRed', 'colorPresetBlue', 'colorPresetTeal', 'colorPresetPurple', 'colorPresetOrange', 'colorPresetPink', 'colorPresetIndigo', 'colorPresetGold'];
+// Derived FROM ROSTER_TEAM_DOTS by index (not a second hardcoded hex
+// list) so the two palettes can never drift apart.
+const LEAGUE_COLOR_PRESETS = ROSTER_TEAM_DOTS.map((hex, i) => ({ hex, nameKey: LEAGUE_COLOR_PRESET_NAME_KEYS[i] }));
 
 // Live-testing task, Part 1: leagues.team_colors (migrate-032.sql) is
 // an optional JSON array parallel to team_names -- a custom colour at
@@ -4161,6 +4201,12 @@ async function handleLeagueSettingsPage(req, env, url) {
       identityTitle: 'Identité de la ligue', lblLeagueName: 'Nom de la ligue',
       lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée -- ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
       lblColor: 'Couleur de la ligue', lblTracksStats: 'Suivre les statistiques', save: 'Enregistrer', saved: 'Enregistré !',
+      // D2 (settings polish task): swatch names, both for the visible
+      // tooltip (data-i18n-title) and a possible future need -- see
+      // LEAGUE_COLOR_PRESETS' own comment for the 8-colour set itself.
+      colorPresetRed: 'Rouge', colorPresetBlue: 'Bleu', colorPresetTeal: 'Sarcelle', colorPresetPurple: 'Violet',
+      colorPresetOrange: 'Orange', colorPresetPink: 'Rose', colorPresetIndigo: 'Indigo', colorPresetGold: 'Or',
+      colorPresetHelp: 'Chaque couleur est vérifiée lisible sur les deux thèmes de page publique.',
       lblPublicPageEnabled: 'Page publique',
       publicPageEnabledHelp: "Quand c'est désactivé, personne ne peut voir ta page publique -- même pas avec le lien direct.",
       lblPublicTheme: 'Thème de la page publique', themeArene: 'Arène (sombre, actuel)', themeClean: 'Épuré (blanc, minimal)',
@@ -4251,6 +4297,9 @@ async function handleLeagueSettingsPage(req, env, url) {
       identityTitle: 'League identity', lblLeagueName: 'League name',
       lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed -- that guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
       lblColor: 'League colour', lblTracksStats: 'Track stats', save: 'Save', saved: 'Saved!',
+      colorPresetRed: 'Red', colorPresetBlue: 'Blue', colorPresetTeal: 'Teal', colorPresetPurple: 'Purple',
+      colorPresetOrange: 'Orange', colorPresetPink: 'Pink', colorPresetIndigo: 'Indigo', colorPresetGold: 'Gold',
+      colorPresetHelp: 'Every colour is verified legible on both public page themes.',
       lblPublicPageEnabled: 'Public page',
       publicPageEnabledHelp: "When this is off, no one can see your public page -- not even with the direct link.",
       lblPublicTheme: 'Public page theme', themeArene: 'Arène (dark, current)', themeClean: 'Épuré (white, minimal)',
@@ -4336,6 +4385,13 @@ async function handleLeagueSettingsPage(req, env, url) {
   .se-team-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
   .se-team-row input[data-team-name] { flex: 1; }
   .se-color { width: 44px; height: 40px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); padding: 2px; cursor: pointer; }
+  /* D2 (settings polish task): the league's own overall colour --
+     scoped separately from .se-color/[data-team-color] above (per-team
+     dots stay a free native colour picker, unaffected by this task). */
+  .se-color-presets { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  .se-color-swatch { width: 36px; height: 36px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+  .se-color-swatch.on { border-color: var(--ink); box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--ink); }
+  .se-color-swatch--current { border: 2px dashed var(--line-strong); }
   /* Live-testing task (batch 2), Part 9: same fix as the dashboard's
      public-page URL card -- see that rule's own comment. */
   .se-slug-display { font: 500 14px/20px var(--font-sans); color: var(--ink-muted); background: var(--surface-sunken); padding: 10px 12px; border-radius: var(--radius-md); word-break: normal; overflow-wrap: anywhere; }
@@ -4385,8 +4441,20 @@ async function handleLeagueSettingsPage(req, env, url) {
       <p class="nl-help" data-i18n="slugHelp">L'adresse de ta ligue est fixée à la création et ne peut pas être changée -- ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.</p>
     </div>
     <div class="nl-field">
-      <label class="nl-label" for="se_color" data-i18n="lblColor">Couleur de la ligue</label>
-      <input type="color" class="se-color" id="se_color" value="${esc(leagueRow.color || '#b3122e')}">
+      <label class="nl-label" data-i18n="lblColor">Couleur de la ligue</label>
+      <!-- D2 (settings polish task): was an unrestricted native colour
+           picker driving the public page -- a poor choice could make
+           that page unreadable, nothing prevented it. Replaced with
+           LEAGUE_COLOR_PRESETS (this file's own comment explains the
+           8-colour set and its legibility bar). se_color itself stays
+           a hidden input with the real value, so the existing save
+           logic (reads #se_color .value) needs no change. -->
+      <div class="se-color-presets" id="se_color_presets" role="radiogroup" data-i18n-aria="lblColor" aria-label="Couleur de la ligue">
+        ${LEAGUE_COLOR_PRESETS.map(c => `<button type="button" class="se-color-swatch${leagueRow.color === c.hex ? ' on' : ''}" style="background:${c.hex}" data-hex="${c.hex}" role="radio" aria-checked="${leagueRow.color === c.hex ? 'true' : 'false'}" data-i18n-title="${c.nameKey}" title="${esc((I18N_SETTINGS[lang] || I18N_SETTINGS.fr)[c.nameKey])}" onclick="selectLeagueColor('${c.hex}', this)"></button>`).join('')}
+        ${LEAGUE_COLOR_PRESETS.some(c => c.hex === leagueRow.color) || !leagueRow.color ? '' : `<button type="button" class="se-color-swatch se-color-swatch--current on" style="background:${esc(leagueRow.color)}" data-hex="${esc(leagueRow.color)}" role="radio" aria-checked="true" title="${esc(leagueRow.color)}" onclick="selectLeagueColor('${esc(leagueRow.color)}', this)"></button>`}
+      </div>
+      <p class="nl-help" data-i18n="colorPresetHelp">Chaque couleur est vérifiée lisible sur les deux thèmes de page publique.</p>
+      <input type="hidden" id="se_color" value="${esc(leagueRow.color || '#b3122e')}">
     </div>
     <div class="nl-field">
       <label class="nl-label" for="se_theme" data-i18n="lblPublicTheme">Thème de la page publique</label>
@@ -4721,6 +4789,16 @@ var SE_TEAM_COLORS = ${JSON.stringify(ROSTER_TEAM_DOTS)};
 // import). Empty string when no season has ever been published yet --
 // there's nothing to roll over from for a league's first season.
 var CURRENT_SEASON_NAME = ${JSON.stringify(leagueData.current_season || '')};
+// D2 (settings polish task): swatch picker -- updates the hidden
+// #se_color input submitIdentity() already reads, and moves the
+// selected ring to whichever swatch was clicked.
+function selectLeagueColor(hex, btn) {
+  document.getElementById('se_color').value = hex;
+  document.querySelectorAll('#se_color_presets .se-color-swatch').forEach(function(b) {
+    b.classList.toggle('on', b === btn);
+    b.setAttribute('aria-checked', String(b === btn));
+  });
+}
 async function submitIdentity() {
   var err = document.getElementById('identityErr'); var ok = document.getElementById('identityOk');
   err.style.display = 'none'; ok.style.display = 'none';

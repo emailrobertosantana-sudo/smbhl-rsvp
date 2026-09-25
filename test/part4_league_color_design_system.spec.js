@@ -84,15 +84,22 @@ describe('Part 4: the league\'s own color is used, not a hardcoded one', () => {
     expect(html2).not.toContain(`--league:${green}`);
   });
 
-  it("a league that never set its own color falls back to the design system's real sample color, not an arbitrary one", async () => {
+  it("a league that never set its own color gets D2's own default preset colour, not migrate-025.sql's old sample colour", async () => {
+    // D2 (settings polish task): the old sample colour (#b3122e) fails
+    // the new colour-preset picker's own >=3:1 legibility bar (2.57:1
+    // against the Arène theme's dark surface-hero) -- superseded by an
+    // explicit preset written at league-creation time (see
+    // handleLeagueCreate's own comment); the schema DEFAULT itself is
+    // unchanged/unreachable for this path.
     const league = await setUpLeague('ds.color.default@example.com', '203.0.113.843', 'Color Default League', null);
     const row = await env.DB.prepare('SELECT color FROM leagues WHERE id = ?').bind(league.leagueId).first();
-    expect(row.color).toBe('#b3122e');
+    expect(row.color).toBe('#c0392b');
+    expect(row.color).not.toBe('#b3122e');
 
     const res = await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.leagueId)}`);
     const html = await res.text();
-    // The public page's hero uses the same leagueFillColor() darkening
-    // on the same default color.
-    expect(html).toContain(leagueFillColor('#b3122e'));
+    // The public page's hero still uses leagueFillColor() darkening,
+    // completely unchanged mechanism -- just fed a different default.
+    expect(html).toContain(leagueFillColor('#c0392b'));
   });
 });
