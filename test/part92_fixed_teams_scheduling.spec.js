@@ -400,6 +400,11 @@ describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
     });
     return { status: res.status, json: await res.json() };
   }
+  // THE MODEL: total_slots is a GAME count (gym time already paid
+  // for), not a date/round count -- one full round-robin cycle for N
+  // teams is always N*(N-1)/2 games (everyone plays everyone once),
+  // regardless of how those games are spread across dates.
+  function fullCycleGames(numTeams) { return numTeams * (numTeams - 1) / 2; }
   function allTeamsAppearBalanced(rounds, teams) {
     const gamesPerTeam = Object.fromEntries(teams.map(t => [t, 0]));
     for (const round of rounds) {
@@ -426,13 +431,15 @@ describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
       await createLeague(cookie, csrfToken, { name: `RR ${teams.length} League`, teamNames: teams, tracksStats: true });
       await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
-      const cycleLength = teams.length % 2 === 0 ? teams.length - 1 : teams.length;
+      const totalSlots = fullCycleGames(teams.length);
       const { status, json } = await fixturePreview(cookie, csrfToken, {
-        rounds: cycleLength, start_date: '2099-09-06', interval_days: 7, time: '18:00', venue: 'Main Gym'
+        total_slots: totalSlots, start_date: '2099-09-06', interval_days: 7, time: '18:00', venue: 'Main Gym'
       });
       expect(status).toBe(200);
-      expect(json.rounds.length).toBe(cycleLength);
-      const gamesPerTeam = allTeamsAppearBalanced(json.rounds, teams);
+      expect(json.arithmetic.regularSeasonSlots).toBe(totalSlots);
+      expect(json.arithmetic.regularSeasonSlotsUsed).toBe(totalSlots); // no playoffs configured -- no leftover
+      expect(json.playoffs).toEqual([]);
+      const gamesPerTeam = allTeamsAppearBalanced(json.regularSeason, teams);
       // A full single round-robin cycle: every team plays every other
       // team exactly once, so each plays (n-1) games total.
       for (const t of teams) expect(gamesPerTeam[t]).toBe(teams.length - 1);
@@ -444,9 +451,10 @@ describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
     const league = await createLeague(cookie, csrfToken, { name: 'No Write League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
-    const { status, json } = await fixturePreview(cookie, csrfToken, { rounds: 3, start_date: '2099-09-06', time: '18:00', venue: 'Gym' });
+    const { status, json } = await fixturePreview(cookie, csrfToken, { total_slots: 3, start_date: '2099-09-06', time: '18:00', venue: 'Gym' });
     expect(status).toBe(200);
-    expect(json.rounds.length).toBe(3);
+    const gameCount = json.regularSeason.reduce((n, r) => n + r.games.length, 0);
+    expect(gameCount).toBe(3);
 
     const row = await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ?').bind(league.id).first();
     expect(row.c).toBe(0);
@@ -457,12 +465,12 @@ describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
     const league = await createLeague(cookie, csrfToken, { name: 'Approve League', teamNames: ['Rouge', 'Bleu', 'Vert', 'Jaune'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
-    const params = { rounds: 3, start_date: '2099-09-06', interval_days: 7, time: '18:00', venue: 'Main Gym' };
+    const params = { total_slots: 6, start_date: '2099-09-06', interval_days: 7, time: '18:00', venue: 'Main Gym' };
     const preview = await fixturePreview(cookie, csrfToken, params);
     const approve = await fixtureApprove(cookie, csrfToken, params);
     expect(approve.status).toBe(200);
 
-    const expectedGameCount = preview.json.rounds.reduce((n, r) => n + r.games.length, 0);
+    const expectedGameCount = preview.json.regularSeason.reduce((n, r) => n + r.games.length, 0);
     expect(approve.json.createdCount).toBe(expectedGameCount);
     expect(approve.json.skippedCount).toBe(0);
 
@@ -472,7 +480,7 @@ describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
     // Round 2 (index 1) has 2 simultaneous games (4-team round robin) --
     // staggered by 1 hour at the same venue, per this task's own
     // decision, rather than colliding.
-    const round2 = preview.json.rounds[1];
+    const round2 = preview.json.regularSeason[1];
     expect(round2.games.length).toBe(2);
     expect(round2.games[0].start_time).toBe('18:00');
     expect(round2.games[1].start_time).toBe('19:00');
@@ -528,7 +536,7 @@ describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
     await publishSeason(c1, t1, { season_name: 'S1' });
     const html1 = await scheduleHtml(c1);
     expect(html1).toContain('id="sc_fixture_panel"');
-    expect(html1).toContain('id="fx_rounds"');
+    expect(html1).toContain('id="fx_total_slots"');
     expect(html1).toContain('data-i18n="fixtureGenBtn"');
 
     const { cookie: c2, csrfToken: t2 } = await signup('p3.uiwd@example.com', '203.0.199.202');

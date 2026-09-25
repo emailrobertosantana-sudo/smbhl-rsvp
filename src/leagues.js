@@ -1010,10 +1010,22 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
   // existed -- a caller has to explicitly opt out, never the reverse.
   const autoRemindersEnabled = body.auto_reminders_enabled === false ? 0 : 1;
 
+  // Playoff extension: a playoff placeholder (fixture generator's own
+  // playoff proposal, never the single-event/bulk/duplicate routes --
+  // none of them ever send these) is created with home_team/away_team
+  // left null (seeding can't be resolved at generation time -- no
+  // score-entry feature exists in this product) and a structured,
+  // language-agnostic playoff_meta blob (migrate-046.sql) instead --
+  // the event detail page (Part 1 of the original fixed-teams batch)
+  // reads is_playoff to show "awaiting seeding," not a misconfigured
+  // regular-season game.
+  const isPlayoff = !!body.is_playoff;
+  const playoffMeta = body.playoff_meta ? JSON.stringify(body.playoff_meta) : null;
+
   await env.DB.prepare(
-    `INSERT INTO events (id, season, week, date, venue, venue_id, state, start_time, end_time, league_id, auto_reminders_enabled, home_team, away_team)
-     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
-  ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId, autoRemindersEnabled, homeTeam, awayTeam).run();
+    `INSERT INTO events (id, season, week, date, venue, venue_id, state, start_time, end_time, league_id, auto_reminders_enabled, home_team, away_team, is_playoff, playoff_meta)
+     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId, autoRemindersEnabled, homeTeam, awayTeam, isPlayoff ? 1 : 0, playoffMeta).run();
 
   if (autoRemindersEnabled) {
     await applyReminderWindowSkipRule(env, leagueId, { id: eventId, start_time: startTime || null });
@@ -1021,7 +1033,7 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
 
   return {
     ok: true,
-    event: { id: eventId, season, week, date, venue, venue_id: venueId, state: 'open', start_time: startTime || null, end_time: endTime || null, auto_reminders_enabled: !!autoRemindersEnabled, home_team: homeTeam, away_team: awayTeam }
+    event: { id: eventId, season, week, date, venue, venue_id: venueId, state: 'open', start_time: startTime || null, end_time: endTime || null, auto_reminders_enabled: !!autoRemindersEnabled, home_team: homeTeam, away_team: awayTeam, is_playoff: isPlayoff, playoff_meta: body.playoff_meta || null }
   };
 }
 
@@ -1965,30 +1977,255 @@ export async function handleLeagueSeasonMoveEvents(req, env) {
  * Simpler, and still a genuinely balanced schedule when `rounds` is a
  * multiple of the cycle length.
  */
-function buildFixtureProposal({ teams, rounds, startDate, intervalDays, time, venue }) {
-  const cycle = generateRoundRobinRounds(teams);
-  const proposalRounds = [];
-  for (let r = 0; r < rounds; r++) {
-    const pairings = cycle[r % cycle.length];
-    const date = addDaysToDateStr(startDate, r * intervalDays);
-    const games = pairings.map((p, gameIndex) => {
-      let startTime = null;
-      if (time) {
-        const [hh, mm] = time.split(':').map(Number);
-        const staggeredHour = (hh + gameIndex) % 24;
-        startTime = `${String(staggeredHour).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-      }
-      return { home: p.home, away: p.away, date, start_time: startTime, venue: venue || null };
-    });
-    proposalRounds.push({ round: r + 1, date, games });
+/* ---------- playoffs (Part of the fixed-teams playoff extension) ----------
+ * Extends the fixture generator above with playoffs, reusing its own
+ * buildFixtureProposal/generateRoundRobinRounds for the regular season
+ * -- no second copy of the pairing math. THE MODEL (task spec): a
+ * league has a FIXED NUMBER OF SLOTS (gym time already paid for).
+ * Playoffs consume some of those slots; the regular season is whatever
+ * remains. Fixed-teams only -- weekly_draw/headcount never see any of
+ * this (checked the same way the fixture generator itself already is,
+ * resolveFixtureLeagueTeams).
+ *
+ * computePlayoffSlots is the single source of truth for the arithmetic
+ * -- exactly what the preview response's own "arithmetic" block shows
+ * the admin, and exactly what buildPlayoffPlaceholders below generates
+ * placeholders for. They can never disagree.
+ *
+ * Formula:
+ *   single_elimination: (numTeams - 1) + thirdPlace(1) + bye(1 if odd)
+ *   best_of_n:          ((numTeams - 1) + thirdPlace(1)) * seriesLength + bye(1 if odd)
+ *   reserved_slots:     reservedSlots (the admin's own direct number)
+ * The bye slot is a flat +1, never multiplied by seriesLength -- it
+ * isn't a real game/series, just a reserved scheduling buffer for the
+ * round an odd team count leaves one team sitting out (DECIDED here,
+ * flagged in the final report: a fully "correct" bracket needs no
+ * extra slot for a bye at all -- each real game still eliminates
+ * exactly one team, N-1 total, bye or not -- but the task's own
+ * example counts it as consuming one anyway, so this reserves an
+ * honestly-labelled buffer slot for it rather than silently absorbing
+ * it into the real bracket math). A third-place game needs two real
+ * semifinal LOSERS to exist, so it's only ever added for numTeams >= 4
+ * -- structurally meaningless below that (see buildPlayoffPlaceholders'
+ * own matching guard, which must never disagree with this count).
+ */
+export function computePlayoffSlots({ format, numTeams, thirdPlace, bestOf, reservedSlots }) {
+  if (format === 'reserved_slots') {
+    const slots = Math.max(0, Math.floor(reservedSlots || 0));
+    return { playoffSlots: slots, hasBye: false, breakdown: { format, reservedSlots: slots } };
   }
-  return proposalRounds;
+  const baseMatches = Math.max(0, numTeams - 1);
+  const hasBye = numTeams % 2 === 1 && numTeams > 1;
+  const thirdPlaceMatches = (thirdPlace && numTeams >= 4) ? 1 : 0;
+  const seriesLength = format === 'best_of_n' ? Math.max(1, Math.floor(bestOf || 1)) : 1;
+  const gameSlots = (baseMatches + thirdPlaceMatches) * seriesLength;
+  const byeSlots = hasBye ? 1 : 0;
+  return {
+    playoffSlots: gameSlots + byeSlots,
+    hasBye,
+    breakdown: { format, numTeams, baseMatches, thirdPlaceMatches, seriesLength, gameSlots, byeSlots }
+  };
+}
+
+// Standard bracket-seeding: pads to the next power of two (B) and
+// places byes using the real, recursive "mirror" order every seeded
+// tournament bracket uses (B=4: 1,4,2,3; B=8: 1,8,4,5,2,7,3,6 --
+// matches the task's own worked example, "Semi-final 1 -- seed 1 vs
+// seed 4," exactly), so every bye lands in ROUND 1 only, spread across
+// different first-round matchups rather than several. This matters:
+// an earlier, simpler version paired seeds sequentially and re-halved
+// the survivors every round, which could leave a bye stranded in a
+// LATER round too (5 teams: round 1 has one bye, but then round 2's
+// own 3 survivors needed a second bye) -- that made the "semifinal"
+// round have only one real matchup instead of two, so a third-place
+// game (which needs two real semifinal LOSERS) could never be built
+// for 5 teams even though it obviously should be. Padding to a clean
+// power of two up front means every round from the second one on has
+// an exact power-of-two participant count -- no further byes, ever.
+// Total real games is still always numTeams-1 regardless (byes are
+// free, mathematically) -- computePlayoffSlots' own separate "+1 flat
+// bye slot" is an intentionally different, simplified thing (a
+// reserved scheduling buffer, per the task's own instruction), not a
+// second copy of this cost.
+export function buildEliminationBracket(numTeams) {
+  let bracketSize = 1;
+  while (bracketSize < numTeams) bracketSize *= 2;
+  let order = [1];
+  while (order.length < bracketSize) {
+    const mirror = order.length * 2 + 1;
+    const next = [];
+    for (const seed of order) next.push(seed, mirror - seed);
+    order = next;
+  }
+
+  const rounds = [];
+  let participants = order;
+  while (participants.length > 1) {
+    const matchups = [];
+    const nextParticipants = [];
+    for (let i = 0; i < participants.length; i += 2) {
+      const a = participants[i], b = participants[i + 1];
+      const aReal = a <= numTeams, bReal = b <= numTeams;
+      if (aReal && bReal) {
+        matchups.push({ seedA: a, seedB: b });
+        nextParticipants.push(a); // placeholder advance -- no real result exists yet
+      } else if (aReal) {
+        nextParticipants.push(a); // b is a bye
+      } else if (bReal) {
+        nextParticipants.push(b); // a is a bye
+      }
+    }
+    if (matchups.length) rounds.push(matchups);
+    participants = nextParticipants;
+  }
+  return rounds;
+}
+
+// Ordered list of DATE GROUPS of playoff slot descriptors (each group
+// shares one calendar date, same "one date, possibly several games"
+// shape buildRegularSeasonForSlots' own rounds use) -- flattening every
+// group gives exactly computePlayoffSlots({...}).playoffSlots
+// descriptors, always (the arithmetic and the generated placeholders
+// can never disagree, since nothing else computes this count
+// independently). Each descriptor is language-agnostic (see
+// playoffRoleLabel for the bilingual text) --
+// role/matchupIndexInRound/seedA/seedB/gameNumber/seriesLength, stored
+// verbatim into events.playoff_meta as JSON.
+//
+// Grouping: a single-elimination bracket round's real matchups (and a
+// reserved-slots batch) genuinely happen the same day in practice, so
+// they're grouped onto one date, exactly like the regular season's own
+// simultaneous-game handling. A best-of-N SERIES cannot: game 2 of a
+// series is played on a LATER date than game 1 by definition, so
+// best-of-N flattens to one placeholder per date instead -- grouping
+// same-round DIFFERENT series onto one date while also spanning each
+// series across dates is real bracket-scheduling complexity this
+// generator's job (get a season on the board fast) doesn't need to
+// solve; flagged in the final report as a known simplification.
+export function buildPlayoffPlaceholders({ format, numTeams, thirdPlace, bestOf, reservedSlots }) {
+  if (format === 'reserved_slots') {
+    const slots = Math.max(0, Math.floor(reservedSlots || 0));
+    return Array.from({ length: slots }, (_, i) => [{
+      role: 'reserved', matchupIndexInRound: i + 1, seedA: null, seedB: null, gameNumber: null, seriesLength: 1
+    }]);
+  }
+  const seriesLength = format === 'best_of_n' ? Math.max(1, Math.floor(bestOf || 1)) : 1;
+  const bracketRounds = buildEliminationBracket(numTeams);
+  const hasBye = numTeams % 2 === 1 && numTeams > 1;
+  const groups = [];
+  if (hasBye) {
+    groups.push([{ role: 'bye', matchupIndexInRound: 1, seedA: null, seedB: null, gameNumber: null, seriesLength: 1 }]);
+  }
+  bracketRounds.forEach((round, roundIndex) => {
+    const roundsFromFinal = bracketRounds.length - 1 - roundIndex;
+    const role = roundsFromFinal === 0 ? 'final' : roundsFromFinal === 1 ? 'semifinal' : roundsFromFinal === 2 ? 'quarterfinal' : 'bracket';
+    const roundPlaceholders = [];
+    round.forEach((m, mIdx) => {
+      for (let g = 1; g <= seriesLength; g++) {
+        roundPlaceholders.push({ role, matchupIndexInRound: mIdx + 1, seedA: m.seedA, seedB: m.seedB, gameNumber: seriesLength > 1 ? g : null, seriesLength });
+      }
+    });
+    if (seriesLength > 1) {
+      // Flatten -- each game of each series gets its own date.
+      roundPlaceholders.forEach(p => groups.push([p]));
+    } else {
+      groups.push(roundPlaceholders);
+    }
+    // Third-place: needs two real semifinal LOSERS to exist, i.e. a
+    // semifinal round with >=2 real matchups -- same numTeams >= 4
+    // guard as computePlayoffSlots' own thirdPlaceMatches, so the two
+    // never disagree on whether this slot exists at all.
+    if (roundsFromFinal === 1 && round.length >= 2 && thirdPlace) {
+      const tp = [];
+      for (let g = 1; g <= seriesLength; g++) tp.push({ role: 'third_place', matchupIndexInRound: 1, seedA: null, seedB: null, gameNumber: seriesLength > 1 ? g : null, seriesLength });
+      if (seriesLength > 1) tp.forEach(p => groups.push([p]));
+      else groups.push(tp);
+    }
+  });
+  return groups;
+}
+
+// Bilingual, derived at render time from the language-agnostic
+// descriptor above -- never baked into storage (this codebase's own
+// established i18n convention). Matches the task's own examples
+// exactly: "Semi-final 1 -- seed 1 vs seed 4", "Final", "Third-place
+// game", "Playoff game 1" (reserved).
+export function playoffRoleLabel(meta, lang) {
+  const en = lang === 'en';
+  const vsWord = en ? 'vs' : 'contre';
+  const seed = n => en ? `seed ${n}` : `tête de série ${n}`;
+  let base;
+  if (meta.role === 'final') base = en ? 'Final' : 'Finale';
+  else if (meta.role === 'third_place') base = en ? 'Third-place game' : 'Match pour la 3e place';
+  else if (meta.role === 'semifinal') base = (en ? 'Semi-final ' : 'Demi-finale ') + meta.matchupIndexInRound;
+  else if (meta.role === 'quarterfinal') base = (en ? 'Quarterfinal ' : 'Quart de finale ') + meta.matchupIndexInRound;
+  else if (meta.role === 'bracket') base = (en ? 'Playoff round 1, game ' : 'Ronde 1 des séries, match ') + meta.matchupIndexInRound;
+  else if (meta.role === 'bye') base = en ? 'Playoff bye round (reserved slot)' : 'Ronde de repos des séries (créneau réservé)';
+  else if (meta.role === 'reserved') base = (en ? 'Playoff game ' : 'Match de séries ') + meta.matchupIndexInRound;
+  else base = en ? 'Playoff game' : 'Match de séries';
+  if (meta.seedA && meta.seedB) base += ` -- ${seed(meta.seedA)} ${vsWord} ${seed(meta.seedB)}`;
+  if (meta.gameNumber && meta.seriesLength > 1) base += ` (${en ? `Game ${meta.gameNumber} of ${meta.seriesLength}` : `Match ${meta.gameNumber} de ${meta.seriesLength}`})`;
+  return base;
+}
+
+// Hour-stagger for N simultaneous games on the same date/venue --
+// shared by the regular season and playoff builders below (same
+// Part-2 slot-conflict-avoidance decision either way).
+function staggeredTime(time, gameIndex) {
+  if (!time) return null;
+  const [hh, mm] = time.split(':').map(Number);
+  const staggeredHour = (hh + gameIndex) % 24;
+  return `${String(staggeredHour).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+// THE MODEL (task spec): a league has a FIXED NUMBER OF SLOTS (gym
+// time already paid for) -- this fills exactly `slotBudget` regular-
+// season GAMES (not dates/rounds) from generateRoundRobinRounds'
+// endlessly-repeating pairing cycle, rather than asking for a round
+// count. DECIDED: when the budget runs out partway through a date's
+// own pairing list, PLAY that partial date rather than leaving paid-
+// for slots empty -- an unused gym slot is money already spent. Each
+// returned round is flagged isPartial so the proposal can show the
+// admin exactly which fixtures made the cut, not just a game count.
+function buildRegularSeasonForSlots({ teams, slotBudget, startDate, intervalDays, time, venue }) {
+  const cycle = generateRoundRobinRounds(teams);
+  const rounds = [];
+  let remaining = Math.max(0, slotBudget);
+  let dateIndex = 0;
+  while (remaining > 0 && cycle.length && cycle[dateIndex % cycle.length].length > 0) {
+    const pairings = cycle[dateIndex % cycle.length];
+    const takeCount = Math.min(pairings.length, remaining);
+    const isPartial = takeCount < pairings.length;
+    const date = addDaysToDateStr(startDate, dateIndex * intervalDays);
+    const games = pairings.slice(0, takeCount).map((p, gameIndex) => ({
+      home: p.home, away: p.away, date, start_time: staggeredTime(time, gameIndex), venue: venue || null
+    }));
+    rounds.push({ round: dateIndex + 1, date, games, isPartial });
+    remaining -= takeCount;
+    dateIndex++;
+  }
+  return { rounds, nextDateIndex: dateIndex, slotsUsed: slotBudget - remaining };
+}
+
+// Playoff groups (buildPlayoffPlaceholders) onto real dates, continuing
+// the SAME date sequence the regular season left off at (startDateIndex
+// -- so playoffs are scheduled right after the last regular-season
+// slot, never overlapping it).
+function scheduleFixtureGroups(groups, { startDate, startDateIndex, intervalDays, time, venue }) {
+  return groups.map((placeholders, i) => {
+    const dateIndex = startDateIndex + i;
+    const date = addDaysToDateStr(startDate, dateIndex * intervalDays);
+    return {
+      round: dateIndex + 1, date,
+      games: placeholders.map((meta, gameIndex) => ({ meta, date, start_time: staggeredTime(time, gameIndex), venue: venue || null }))
+    };
+  });
 }
 
 function validateFixtureInput(env, body) {
-  const rounds = Number(body.rounds);
-  if (!Number.isFinite(rounds) || rounds < 1) {
-    return { error: { ok: false, error: 'rounds (or weeks) must be at least 1.', errorKey: 'FIXTURE_ROUNDS_REQUIRED' } };
+  const totalSlots = Number(body.total_slots);
+  if (!Number.isFinite(totalSlots) || totalSlots < 1) {
+    return { error: { ok: false, error: 'total_slots (how much gym time you have) must be at least 1.', errorKey: 'FIXTURE_TOTAL_SLOTS_REQUIRED' } };
   }
   const startDate = String(body.start_date || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
@@ -2001,7 +2238,21 @@ function validateFixtureInput(env, body) {
     return { error: { ok: false, error: 'time must be in HH:MM format.', errorKey: 'START_TIME_FORMAT' } };
   }
   const venue = String(body.venue || '').trim() || null;
-  return { value: { rounds: Math.min(Math.floor(rounds), 30), startDate, intervalDays: Math.floor(intervalDays), time: time || null, venue } };
+  return { value: { totalSlots: Math.min(Math.floor(totalSlots), 500), startDate, intervalDays: Math.floor(intervalDays), time: time || null, venue } };
+}
+
+// The league's own stored playoff preferences (asked once at
+// onboarding, editable later in Settings -- migrate-046.sql). Returns
+// a computePlayoffSlots-shaped input, or null when playoffs are off
+// (every slot goes to the regular season, exactly the pre-playoffs
+// behaviour).
+function resolveLeaguePlayoffConfig(leagueRow) {
+  if (!leagueRow.playoffs_enabled) return null;
+  return {
+    format: leagueRow.playoff_format, numTeams: leagueRow.playoff_teams,
+    thirdPlace: !!leagueRow.playoff_third_place, bestOf: leagueRow.playoff_best_of,
+    reservedSlots: leagueRow.playoff_reserved_slots
+  };
 }
 
 // Shared by both routes below: confirms this is a real, currently-
@@ -2022,7 +2273,42 @@ async function resolveFixtureLeagueTeams(env, leagueId) {
   if (teams.length < 2) {
     return { error: { ok: false, error: 'This league needs at least 2 teams to generate a schedule.', errorKey: 'FIXTURE_NEEDS_TWO_TEAMS' } };
   }
-  return { value: { season: leagueData.current_season, teams } };
+  const leagueRow = await env.DB.prepare(
+    'SELECT playoffs_enabled, playoff_format, playoff_teams, playoff_best_of, playoff_third_place, playoff_reserved_slots FROM leagues WHERE id = ?'
+  ).bind(leagueId).first();
+  return { value: { season: leagueData.current_season, teams, playoffConfig: resolveLeaguePlayoffConfig(leagueRow || {}) } };
+}
+
+// Shared by preview and approve: THE MODEL (task spec) -- total slots
+// (gym time already paid for) minus whatever playoffs consume (0 when
+// this league has none configured) leaves the regular season's own
+// budget. Computes and returns BOTH the arithmetic (for display) and
+// the actual dated proposal (regular season + playoffs, playoffs
+// scheduled right after the regular season's own last date) -- preview
+// and approve call this SAME function, so they can never disagree.
+function buildFixtureAndPlayoffProposal({ teams, playoffConfig, totalSlots, startDate, intervalDays, time, venue }) {
+  const playoff = playoffConfig ? computePlayoffSlots({ ...playoffConfig, numTeams: playoffConfig.numTeams || teams.length }) : null;
+  const playoffSlots = playoff ? playoff.playoffSlots : 0;
+  const regularSeasonSlots = totalSlots - playoffSlots;
+  if (regularSeasonSlots < 0) {
+    return { error: { ok: false, error: `This league's playoffs alone need ${playoffSlots} slots -- total_slots must be at least that many.`, errorKey: 'FIXTURE_TOTAL_SLOTS_TOO_LOW' } };
+  }
+
+  const regular = buildRegularSeasonForSlots({ teams, slotBudget: regularSeasonSlots, startDate, intervalDays, time, venue });
+  const playoffGroups = playoffConfig ? buildPlayoffPlaceholders({ ...playoffConfig, numTeams: playoffConfig.numTeams || teams.length }) : [];
+  const playoffRounds = scheduleFixtureGroups(playoffGroups, { startDate, startDateIndex: regular.nextDateIndex, intervalDays, time, venue });
+
+  return {
+    value: {
+      arithmetic: {
+        totalSlots, playoffSlots, regularSeasonSlots,
+        regularSeasonSlotsUsed: regular.slotsUsed, regularSeasonSlotsUnused: regularSeasonSlots - regular.slotsUsed,
+        playoffBreakdown: playoff ? playoff.breakdown : null
+      },
+      regularSeason: regular.rounds,
+      playoffs: playoffRounds
+    }
+  };
 }
 
 export async function handleLeagueFixturePreview(req, env) {
@@ -2048,9 +2334,10 @@ export async function handleLeagueFixturePreview(req, env) {
   const inputResult = validateFixtureInput(env, body);
   if (inputResult.error) return Response.json(inputResult.error, { status: 400 });
 
-  const { teams } = teamsResult.value;
-  const proposalRounds = buildFixtureProposal({ teams, ...inputResult.value });
-  return Response.json({ ok: true, league_id: leagueId, teams, rounds: proposalRounds });
+  const { teams, playoffConfig } = teamsResult.value;
+  const proposal = buildFixtureAndPlayoffProposal({ teams, playoffConfig, ...inputResult.value });
+  if (proposal.error) return Response.json(proposal.error, { status: 409 });
+  return Response.json({ ok: true, league_id: leagueId, teams, ...proposal.value });
 }
 
 export async function handleLeagueFixtureApprove(req, env) {
@@ -2077,26 +2364,35 @@ export async function handleLeagueFixtureApprove(req, env) {
   if (inputResult.error) return Response.json(inputResult.error, { status: 400 });
 
   // Never trusts a client-supplied fixture list -- regenerated here,
-  // server-side, from the same real season team list the preview
-  // route itself used. A client can only ever approve exactly what
-  // preview would have shown it, never something it fabricated.
-  const { season, teams } = teamsResult.value;
-  const proposalRounds = buildFixtureProposal({ teams, ...inputResult.value });
+  // server-side, from the same real season team list AND the same
+  // league-stored playoff config the preview route itself used. A
+  // client can only ever approve exactly what preview would have
+  // shown it, never something it fabricated.
+  const { season, teams, playoffConfig } = teamsResult.value;
+  const proposal = buildFixtureAndPlayoffProposal({ teams, playoffConfig, ...inputResult.value });
+  if (proposal.error) return Response.json(proposal.error, { status: 409 });
 
   const leagueData = await getLeagueDataJson(env, leagueId);
   const created = [];
   const skipped = [];
-  for (const round of proposalRounds) {
+  for (const round of proposal.value.regularSeason) {
     for (const game of round.games) {
       const result = await createLeagueEventRow(env, leagueId, {
         date: game.date, start_time: game.start_time || undefined, venue: game.venue || undefined,
         season, home_team: game.home, away_team: game.away
       }, leagueData);
-      if (result.ok) {
-        created.push(result.event);
-      } else {
-        skipped.push({ round: round.round, home: game.home, away: game.away, date: game.date, errorKey: result.errorKey });
-      }
+      if (result.ok) created.push(result.event);
+      else skipped.push({ round: round.round, home: game.home, away: game.away, date: game.date, errorKey: result.errorKey });
+    }
+  }
+  for (const round of proposal.value.playoffs) {
+    for (const game of round.games) {
+      const result = await createLeagueEventRow(env, leagueId, {
+        date: game.date, start_time: game.start_time || undefined, venue: game.venue || undefined,
+        season, is_playoff: true, playoff_meta: game.meta
+      }, leagueData);
+      if (result.ok) created.push(result.event);
+      else skipped.push({ round: round.round, playoff: true, meta: game.meta, date: game.date, errorKey: result.errorKey });
     }
   }
 
@@ -3199,5 +3495,97 @@ export async function handleLeagueUpdateStructure(req, env, url) {
   return Response.json({
     ok: true,
     settings: { teamStructure: row.team_structure, minPlayers: row.min_players, maxPlayers: row.max_players, minGoalies: row.min_goalies, maxGoalies: row.max_goalies }
+  });
+}
+
+/* ---------- playoff settings (Part 1, playoff extension) ----------
+ * The league's own stored playoff preferences (migrate-046.sql) --
+ * asked once at the onboarding 'playoffs' step (fixed-teams leagues
+ * only), and this SAME route makes them editable later, exactly like
+ * every other onboarding-asked-once/Settings-edited-later field
+ * (roster limits, team names, reminders). Fixed-teams only: rejected
+ * for weekly_draw/headcount, same posture as the fixture generator
+ * itself (playoffs are meaningless for either -- weekly_draw's teams
+ * aren't fixed, headcount has no teams at all).
+ */
+export async function handleLeagueUpdatePlayoffs(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update SMBHL.', errorKey: 'ROUTE_BLOCKED_SETTINGS' }, { status: 403 });
+  }
+
+  const leagueRow = await env.DB.prepare('SELECT team_structure, team_names FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) {
+    return Response.json({ ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' }, { status: 404 });
+  }
+  if ((leagueRow.team_structure || 'fixed') !== 'fixed') {
+    return Response.json({ ok: false, error: 'Playoffs are only offered for fixed-teams leagues.', errorKey: 'PLAYOFFS_REQUIRE_FIXED_TEAMS' }, { status: 409 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const playoffsEnabled = !!body.playoffs_enabled;
+
+  if (!playoffsEnabled) {
+    // Question 1's "no" answer -- every slot is regular season, the
+    // rest is skipped (and cleared, so a later re-enable never resurfaces
+    // stale answers from a previous configuration).
+    await env.DB.prepare(
+      'UPDATE leagues SET playoffs_enabled = 0, playoff_format = NULL, playoff_teams = NULL, playoff_best_of = NULL, playoff_third_place = 0, playoff_reserved_slots = NULL WHERE id = ?'
+    ).bind(leagueId).run();
+    return Response.json({ ok: true, settings: { playoffsEnabled: false } });
+  }
+
+  const format = String(body.playoff_format || '').trim();
+  if (!['single_elimination', 'best_of_n', 'reserved_slots'].includes(format)) {
+    return Response.json({ ok: false, error: "playoff_format must be 'single_elimination', 'best_of_n', or 'reserved_slots'.", errorKey: 'INVALID_PLAYOFF_FORMAT' }, { status: 400 });
+  }
+
+  let teamNames = [];
+  try { teamNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
+  const leagueTeamCount = Math.max(2, teamNames.filter(Boolean).length);
+
+  let playoffTeams = null, bestOf = null, reservedSlots = null;
+  const thirdPlace = !!body.playoff_third_place;
+
+  if (format === 'reserved_slots') {
+    reservedSlots = Number(body.playoff_reserved_slots);
+    if (!Number.isFinite(reservedSlots) || reservedSlots < 1) {
+      return Response.json({ ok: false, error: 'playoff_reserved_slots must be at least 1.', errorKey: 'PLAYOFF_RESERVED_SLOTS_REQUIRED' }, { status: 400 });
+    }
+    reservedSlots = Math.floor(reservedSlots);
+  } else {
+    playoffTeams = Number(body.playoff_teams);
+    // Question 3: ASKED, never derived -- capped at how many teams this
+    // league actually has (never more, per the task's own instruction).
+    if (!Number.isFinite(playoffTeams) || playoffTeams < 2 || playoffTeams > leagueTeamCount) {
+      return Response.json({ ok: false, error: `playoff_teams must be between 2 and ${leagueTeamCount}.`, errorKey: 'INVALID_PLAYOFF_TEAMS' }, { status: 400 });
+    }
+    playoffTeams = Math.floor(playoffTeams);
+    if (format === 'best_of_n') {
+      bestOf = Number(body.playoff_best_of);
+      if (!Number.isFinite(bestOf) || bestOf < 1) {
+        return Response.json({ ok: false, error: 'playoff_best_of must be at least 1.', errorKey: 'INVALID_PLAYOFF_BEST_OF' }, { status: 400 });
+      }
+      bestOf = Math.floor(bestOf);
+    }
+  }
+
+  await env.DB.prepare(
+    `UPDATE leagues SET playoffs_enabled = 1, playoff_format = ?, playoff_teams = ?, playoff_best_of = ?, playoff_third_place = ?, playoff_reserved_slots = ? WHERE id = ?`
+  ).bind(format, playoffTeams, bestOf, thirdPlace ? 1 : 0, reservedSlots, leagueId).run();
+
+  return Response.json({
+    ok: true,
+    settings: { playoffsEnabled: true, format, playoffTeams, bestOf, thirdPlace, reservedSlots }
   });
 }

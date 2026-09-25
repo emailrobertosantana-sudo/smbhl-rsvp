@@ -112,21 +112,22 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(noSeason.headers.get('location')).toContain('/dashboard');
   });
 
-  it('fixed structure: 4 steps (roster, teams, reminders, stats), pre-filled and skippable', async () => {
+  it('fixed structure: 5 steps (roster, teams, playoffs, reminders, stats), pre-filled and skippable', async () => {
     const { cookie, csrfToken } = await signup('ob.fixed@example.com', '203.0.185.003');
     await createLeague(cookie, csrfToken, { name: 'Onboarding Fixed League', teamNames: ['Nord', 'Sud'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const step1 = await getOnboarding(cookie, 1);
     // B1 (onboarding polish task): the stepper now counts the WHOLE
-    // flow (signup + onboarding), not onboarding's own local 1-4 --
-    // fixed's real total is 7 (signup 1,2,3 + onboarding roster,teams,
-    // reminders,stats), and this onboarding roster step is #4 in that
-    // count.
-    expect(step1).toContain('aria-valuemax="7"');
+    // flow (signup + onboarding), not onboarding's own local 1-5 --
+    // fixed's real total is 8 (signup 1,2,3 + onboarding roster,teams,
+    // playoffs,reminders,stats -- the playoffs step added by the
+    // playoff extension), and this onboarding roster step is #4 in
+    // that count.
+    expect(step1).toContain('aria-valuemax="8"');
     expect(step1).toContain('aria-valuenow="4"');
     expect(step1).toContain('data-i18n="flowStepLabel"');
-    expect(step1).toMatch(/Étape 4 sur 7|Step 4 of 7/);
+    expect(step1).toMatch(/Étape 4 sur 8|Step 4 of 8/);
     expect(step1).toContain('id="ob_min_players"');
     expect(step1).toContain('data-i18n="skip"');
     // B2 (onboarding polish task): "Skip for now" is a small centered
@@ -142,13 +143,16 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(step2).toContain('value="Sud"');
 
     const step3 = await getOnboarding(cookie, 3);
-    expect(step3).toContain('id="ob_reminder_72h"');
-    expect(step3).toContain('aria-checked="true"'); // defaults on (migrate-026.sql)
+    expect(step3).toContain('id="ob_playoffs_enabled"');
 
     const step4 = await getOnboarding(cookie, 4);
-    expect(step4).toContain('id="ob_stats"');
-    expect(step4).toContain('data-i18n="finish"');
-    expect(step4).not.toContain('data-i18n="next"');
+    expect(step4).toContain('id="ob_reminder_72h"');
+    expect(step4).toContain('aria-checked="true"'); // defaults on (migrate-026.sql)
+
+    const step5 = await getOnboarding(cookie, 5);
+    expect(step5).toContain('id="ob_stats"');
+    expect(step5).toContain('data-i18n="finish"');
+    expect(step5).not.toContain('data-i18n="next"');
   });
 
   it('weekly_draw structure: team-names step shows the real "Équipe 1"/"Équipe 2" defaults, editable', async () => {

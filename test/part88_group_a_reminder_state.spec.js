@@ -93,7 +93,9 @@ describe('A1: onboarding reminders copy matches the real off-by-default behaviou
     const { cookie, csrfToken } = await signup('a1.copy@example.com', '203.0.211.001');
     await createLeague(cookie, csrfToken, { name: 'A1 Copy League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const html = await (await SELF.fetch('http://example.com/onboarding/season?step=3', { headers: { cookie } })).text();
+    // Playoff extension: fixed's own step order is now roster, teams,
+    // playoffs, reminders -- reminders moved from step 3 to step 4.
+    const html = await (await SELF.fetch('http://example.com/onboarding/season?step=4', { headers: { cookie } })).text();
     expect(html).toContain('id="ob_reminder_72h"');
 
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);

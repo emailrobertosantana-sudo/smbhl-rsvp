@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove, handleLeagueUpdatePlayoffs, playoffRoleLabel } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -661,10 +661,10 @@ ${nlAuthScript(I18N_HOME)}
  */
 const I18N_SIGNUP = {
   fr: {
-    step1: 'Étape 1 sur 7', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.',
+    step1: 'Étape 1 sur 8', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.',
     lblEmail: 'Courriel', lblPassword: 'Mot de passe', showPw: 'Afficher', hidePw: 'Cacher',
     pwHelp: '8 caractères minimum.', continueBtn: 'Continuer', alreadySignedUp: 'Déjà inscrit?', login: 'Se connecter',
-    step2: 'Étape 2 sur 7', title2: 'Parle-nous de ta ligue',
+    step2: 'Étape 2 sur 8', title2: 'Parle-nous de ta ligue',
     lblLeagueName: 'Nom de la ligue', lblSlug: 'Adresse de ta page',
     // A2 bug fix (onboarding polish task): the old text ("tu peux la
     // changer") was actively wrong -- true only before submitting; once
@@ -688,7 +688,7 @@ const I18N_SIGNUP = {
     structureWeeklyTitle: 'Sans équipes fixes', structureWeeklyDesc: 'Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.',
     structureHeadcountTitle: 'Sans équipes', structureHeadcountDesc: 'Juste la liste des présents. Vous formez les équipes sur place.',
     back: 'Retour',
-    step3: 'Étape 3 sur 7', title3: "Combien d'équipes?",
+    step3: 'Étape 3 sur 8', title3: "Combien d'équipes?",
     teamCountGroupAria: "Nombre d'équipes", decreaseTeamsAria: 'Moins', increaseTeamsAria: 'Plus',
     teamNamesLabel: 'Noms des équipes', teamPlaceholder: 'Équipe ', teamHelp: 'Pas encore décidé? Garde « Équipe 1, 2… ».',
     title3Headcount: 'Combien de joueurs?',
@@ -720,10 +720,10 @@ const I18N_SIGNUP = {
     already: 'Déjà inscrit?'
   },
   en: {
-    step1: 'Step 1 of 7', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.',
+    step1: 'Step 1 of 8', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.',
     lblEmail: 'Email', lblPassword: 'Password', showPw: 'Show', hidePw: 'Hide',
     pwHelp: '8 characters minimum.', continueBtn: 'Continue', alreadySignedUp: 'Already signed up?', login: 'Log in',
-    step2: 'Step 2 of 7', title2: 'Tell us about your league',
+    step2: 'Step 2 of 8', title2: 'Tell us about your league',
     lblLeagueName: 'League name', lblSlug: 'Your page address',
     slugHelp: "Becomes permanent once your league is created -- that guarantees the links you share always keep working.",
     structureLabel: 'How are your teams organized?',
@@ -731,7 +731,7 @@ const I18N_SIGNUP = {
     structureWeeklyTitle: 'Pickup with teams', structureWeeklyDesc: 'Pickup, but split into teams each game — drawn automatically or set by you.',
     structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in. You sort out sides at the venue.",
     back: 'Back',
-    step3: 'Step 3 of 7', title3: 'How many teams?',
+    step3: 'Step 3 of 8', title3: 'How many teams?',
     teamCountGroupAria: 'Number of teams', decreaseTeamsAria: 'Decrease', increaseTeamsAria: 'Increase',
     teamNamesLabel: 'Team names', teamPlaceholder: 'Team ', teamHelp: 'Not decided yet? Keep "Team 1, 2...".',
     title3Headcount: 'How many players?',
@@ -979,8 +979,8 @@ function renderSignupStep1(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" data-i18n="step1">Étape 1 sur 7</div>
-    ${flowStepper(1, 7)}
+    <div class="overline" data-i18n="step1">Étape 1 sur 8</div>
+    ${flowStepper(1, 8)}
   </div>
   <div class="su-title">
     <h1 data-i18n="title1">Créons ton compte</h1>
@@ -1049,8 +1049,8 @@ function renderSignupStep2(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" data-i18n="step2">Étape 2 sur 7</div>
-    ${flowStepper(2, 7)}
+    <div class="overline" data-i18n="step2">Étape 2 sur 8</div>
+    ${flowStepper(2, 8)}
   </div>
   <div class="su-title"><h1 data-i18n="title2">Parle-nous de ta ligue</h1></div>
   <div id="formErr" class="nl-error" style="display:none"></div>
@@ -1165,8 +1165,8 @@ function renderSignupStep3(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" id="su_step3_label" data-i18n="step3">Étape 3 sur 7</div>
-    <div id="su_step3_prog">${flowStepper(3, 7)}</div>
+    <div class="overline" id="su_step3_label" data-i18n="step3">Étape 3 sur 8</div>
+    <div id="su_step3_prog">${flowStepper(3, 8)}</div>
   </div>
   <div class="su-title"><h1 id="su_step3_title" data-i18n="title3">Combien d'équipes?</h1></div>
   <div id="formErr" class="nl-error" style="display:none"></div>
@@ -1221,16 +1221,18 @@ if (isHeadcount) {
   document.getElementById('su_teams_section').style.display = 'none';
   document.getElementById('su_headcount_section').style.display = '';
   document.getElementById('su_step3_title').setAttribute('data-i18n', 'title3Headcount');
-  // B1: headcount's real total is 6 (no onboarding "teams" step), not
-  // fixed's 7 -- server-rendered with 7 as the honest default (team
-  // structure isn't known until this exact draft loads client-side).
-  // data-i18n removed so a later FR/EN toggle's [data-i18n] sweep
-  // doesn't clobber this back to the shared dict's "of 7" -- kept in
-  // sync on toggle via applyHeadcountStepLabel below instead.
+  // B1: headcount's real total is 6 (no onboarding "teams" step, and
+  // -- playoff extension -- no 'playoffs' step either, that's fixed-
+  // teams only), not fixed's 8 -- server-rendered with 8 as the honest
+  // default (team structure isn't known until this exact draft loads
+  // client-side). data-i18n removed so a later FR/EN toggle's
+  // [data-i18n] sweep doesn't clobber this back to the shared dict's
+  // "of 8" -- kept in sync on toggle via applyHeadcountStepLabel below
+  // instead.
   document.getElementById('su_step3_label').removeAttribute('data-i18n');
   var prog = document.getElementById('su_step3_prog').querySelector('.nl-steps');
   prog.setAttribute('aria-valuemax', '6');
-  if (prog.children.length > 6) prog.removeChild(prog.lastElementChild);
+  while (prog.children.length > 6) prog.removeChild(prog.lastElementChild);
 }
 function applyHeadcountStepLabel() {
   if (!isHeadcount) return;
@@ -2347,9 +2349,16 @@ if (document.getElementById('hardDeleteStatus')) loadHardDeleteStatus();
 // names to confirm, so it gets 3 steps (roster, reminders, stats)
 // instead of 4 (roster, teams, reminders, stats) -- computed once,
 // server-side, from the league's own already-fixed team_structure
-// (chosen once at signup, never changed after).
+// (chosen once at signup, never changed after). Playoff extension: a
+// 'fixed' league ALSO gets a conditional 'playoffs' step (playoffs are
+// meaningless for weekly_draw -- teams aren't fixed -- and headcount --
+// no team concept at all -- so neither ever sees it), inserted right
+// after 'teams' since the playoff questions reference the team count
+// just confirmed.
 function onboardingStepsFor(teamStructure) {
-  return teamStructure === 'headcount' ? ['roster', 'reminders', 'stats'] : ['roster', 'teams', 'reminders', 'stats'];
+  if (teamStructure === 'headcount') return ['roster', 'reminders', 'stats'];
+  if (teamStructure === 'weekly_draw') return ['roster', 'teams', 'reminders', 'stats'];
+  return ['roster', 'teams', 'playoffs', 'reminders', 'stats'];
 }
 
 // B1 (onboarding polish task): ONE continuous step count spanning the
@@ -2361,19 +2370,23 @@ function onboardingStepsFor(teamStructure) {
 // it never had a stepper (a one-off confirmation, not a form step).
 // Total varies by team structure, only known once it's actually
 // chosen on step 2:
-//   fixed:       signup 1,2,3 + onboarding roster,teams,reminders,stats = 7
-//   headcount:   signup 1,2,3 + onboarding roster,reminders,stats       = 6
-//   weekly_draw: signup 1,2   + onboarding roster,teams,reminders,stats = 6
+//   fixed:       signup 1,2,3 + onboarding roster,teams,playoffs,reminders,stats = 8
+//   headcount:   signup 1,2,3 + onboarding roster,reminders,stats                = 6
+//   weekly_draw: signup 1,2   + onboarding roster,teams,reminders,stats          = 6
 // Steps 1/2 render before a structure is chosen -- they show the
-// pre-selected 'fixed' structure's total (7) as the honest current
+// pre-selected 'fixed' structure's total (8) as the honest current
 // best guess (never an impossible/unreachable number); the real total
 // takes over the moment a structure is actually chosen (client-side
 // on step 3 for fixed/headcount -- see su_step3_title's own swap
 // logic -- or server-side straight from step 2 for weekly_draw, which
-// knows its structure by the time onboarding starts).
-const FLOW_TOTAL_STEPS = { fixed: 7, headcount: 6, weekly_draw: 6 };
+// knows its structure by the time onboarding starts). Playoff
+// extension: added fixed's own conditional 'playoffs' step (between
+// 'teams' and 'reminders') -- fixed's total goes from 7 to 8;
+// headcount/weekly_draw are completely untouched (neither structure
+// ever sees a playoffs step, so neither total number changes).
+const FLOW_TOTAL_STEPS = { fixed: 8, headcount: 6, weekly_draw: 6 };
 const FLOW_STEP_NUMBER = {
-  fixed: { signup3: 3, roster: 4, teams: 5, reminders: 6, stats: 7 },
+  fixed: { signup3: 3, roster: 4, teams: 5, playoffs: 6, reminders: 7, stats: 8 },
   headcount: { signup3: 3, roster: 4, reminders: 5, stats: 6 },
   weekly_draw: { roster: 3, teams: 4, reminders: 5, stats: 6 }
 };
@@ -2415,7 +2428,19 @@ function buildOnboardingI18n() {
     remindersTitle: 'Rappels automatiques', remindersSub: "Désactivés par défaut. Active ceux que tu veux -- tu peux changer ça n'importe quand dans les réglages.",
     reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder12Label: 'Détails 12 h avant (confirmés)',
     statsTitle: 'Suivre les statistiques?', statsSub: 'Buts, passes, gardiens. Tu pourras l\'activer plus tard dans Paramètres.',
-    lblStats: 'Suivre les statistiques?'
+    lblStats: 'Suivre les statistiques?',
+    // Playoff extension, Part 1: fixed-teams only. THE MODEL -- séries
+    // consomment des créneaux; l'horaire régulier utilise ce qui reste.
+    playoffsTitle: 'Y a-t-il des séries éliminatoires?',
+    playoffsSub: "Les séries consomment des créneaux de ta ligue -- l'horaire de la saison régulière est calculé en fonction de ce qui reste.",
+    playoffsEnabledLabel: 'Il y a des séries éliminatoires',
+    formatLabel: 'Format des séries', formatSingleElim: 'Élimination simple', formatBestOfN: 'Série la meilleure de N', formatReserved: 'Créneaux réservés',
+    formatReservedDesc: "Tu dis combien de matchs il te faut -- on réserve les créneaux, sans équipes assignées. Idéal si ton format ne correspond à aucun modèle, ou si tu décideras plus tard.",
+    bestOfLabel: 'Le meilleur de combien de matchs?',
+    playoffTeamsLabel: "Combien d'équipes participent aux séries?",
+    byeNote: "Un nombre impair d'équipes a besoin d'une ronde de repos (bye), ce qui utilise un créneau de plus.",
+    thirdPlaceLabel: 'Match pour la 3e place?',
+    reservedSlotsLabel: 'Combien de matchs faut-il réserver?'
   };
   const en = {
     skip: 'Skip for now', next: 'Continue', finish: 'Go to dashboard', saveErr: 'Something went wrong. Please try again.',
@@ -2429,7 +2454,17 @@ function buildOnboardingI18n() {
     remindersTitle: 'Automated reminders', remindersSub: "Off by default. Turn on the ones you want -- you can change this any time in Settings.",
     reminder72Label: '72h reminder (no reply yet)', reminder24Label: '24h reminder (no reply yet)', reminder12Label: '12h details (confirmed players)',
     statsTitle: 'Track stats?', statsSub: 'Goals, assists, goalies. You can turn it on later in Settings.',
-    lblStats: 'Track stats?'
+    lblStats: 'Track stats?',
+    playoffsTitle: 'Are there playoffs?',
+    playoffsSub: "Playoffs consume slots from your league's total -- the regular-season schedule is calculated from what's left.",
+    playoffsEnabledLabel: 'There are playoffs',
+    formatLabel: 'Playoff format', formatSingleElim: 'Single elimination', formatBestOfN: 'Best-of-N series', formatReserved: 'Reserved slots',
+    formatReservedDesc: "Tell us how many games you need -- we reserve the slots, with no teams assigned. For a format that doesn't fit a template, or if you'll decide later.",
+    bestOfLabel: 'Best of how many games?',
+    playoffTeamsLabel: 'How many teams make the playoffs?',
+    byeNote: 'An odd number of teams needs a bye round, which costs one extra slot.',
+    thirdPlaceLabel: 'Third-place game?',
+    reservedSlotsLabel: 'How many games do you need to reserve?'
   };
   return { fr, en };
 }
@@ -2536,6 +2571,58 @@ async function handleOnboardingSeasonPage(req, env, url) {
   <div class="su-teams" id="ob_teams">
     ${teamNames.map((t, i) => `<div class="su-team-in"><span class="n">${i + 1}</span><input class="nl-input" data-idx="${i}" value="${esc(t)}"></div>`).join('')}
   </div>`;
+  } else if (step === 'playoffs') {
+    // Playoff extension, Part 1: fixed-teams only (onboardingStepsFor's
+    // own gate already guarantees teamStructure === 'fixed' here).
+    // Questions 1-4, in order: are there playoffs at all (if no,
+    // everything below is skipped -- every slot is regular season);
+    // which format; how many teams (ASKED, never derived -- capped at
+    // this league's own real team count); a third-place game (asked,
+    // never assumed). The bye-round note and the third-place toggle's
+    // visibility both react live to the chosen team count (obPlayoffsUpdate,
+    // in the script below) -- a real bracket fact, not static copy.
+    const realTeamNames = teamNames.filter(Boolean);
+    const teamCountOptions = Array.from({ length: Math.max(0, realTeamNames.length - 1) }, (_, i) => i + 2); // 2..N
+    stepHtml = `
+  <div class="su-title">
+    <h1 data-i18n="playoffsTitle">Y a-t-il des séries éliminatoires?</h1>
+    <p class="nl-help" data-i18n="playoffsSub">Les séries consomment des créneaux de ta ligue -- l'horaire de la saison régulière est calculé en fonction de ce qui reste.</p>
+  </div>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <div class="nl-toggle">
+    <div class="nl-label" data-i18n="playoffsEnabledLabel">Il y a des séries éliminatoires</div>
+    <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.playoffs_enabled ? 'true' : 'false'}" id="ob_playoffs_enabled" onclick="obToggle(this); obPlayoffsUpdate();"></button>
+  </div>
+  <div id="ob_playoffs_detail" style="display:none;margin-top:var(--space-3);display:flex;flex-direction:column;gap:var(--space-3);">
+    <div class="nl-field">
+      <span class="nl-label" data-i18n="formatLabel">Format des séries</span>
+      <select class="nl-select" id="ob_playoff_format" onchange="obPlayoffsUpdate()">
+        <option value="single_elimination" data-i18n="formatSingleElim"${leagueRow.playoff_format === 'single_elimination' || !leagueRow.playoff_format ? ' selected' : ''}>Élimination simple</option>
+        <option value="best_of_n" data-i18n="formatBestOfN"${leagueRow.playoff_format === 'best_of_n' ? ' selected' : ''}>Série la meilleure de N</option>
+        <option value="reserved_slots" data-i18n="formatReserved"${leagueRow.playoff_format === 'reserved_slots' ? ' selected' : ''}>Créneaux réservés</option>
+      </select>
+    </div>
+    <p class="nl-help" id="ob_format_reserved_desc" style="display:none" data-i18n="formatReservedDesc">Tu dis combien de matchs il te faut -- on réserve les créneaux, sans équipes assignées. Idéal si ton format ne correspond à aucun modèle, ou si tu décideras plus tard.</p>
+    <div class="nl-field" id="ob_bestof_wrap" style="display:none">
+      <label class="nl-label" for="ob_best_of" data-i18n="bestOfLabel">Le meilleur de combien de matchs?</label>
+      <input class="nl-input" id="ob_best_of" type="number" min="1" value="${esc(leagueRow.playoff_best_of ? String(leagueRow.playoff_best_of) : '3')}">
+    </div>
+    <div class="nl-field" id="ob_playoff_teams_wrap">
+      <label class="nl-label" for="ob_playoff_teams" data-i18n="playoffTeamsLabel">Combien d'équipes participent aux séries?</label>
+      <select class="nl-select" id="ob_playoff_teams" onchange="obPlayoffsUpdate()">
+        ${teamCountOptions.map(n => `<option value="${n}"${leagueRow.playoff_teams === n ? ' selected' : ''}>${n}</option>`).join('')}
+      </select>
+      <p class="nl-help" id="ob_bye_note" style="display:none" data-i18n="byeNote">Un nombre impair d'équipes a besoin d'une ronde de repos (bye), ce qui utilise un créneau de plus.</p>
+    </div>
+    <div class="nl-toggle" id="ob_third_place_wrap">
+      <div class="nl-label" data-i18n="thirdPlaceLabel">Match pour la 3e place?</div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.playoff_third_place ? 'true' : 'false'}" id="ob_third_place" onclick="obToggle(this)"></button>
+    </div>
+    <div class="nl-field" id="ob_reserved_slots_wrap" style="display:none">
+      <label class="nl-label" for="ob_reserved_slots" data-i18n="reservedSlotsLabel">Combien de matchs faut-il réserver?</label>
+      <input class="nl-input" id="ob_reserved_slots" type="number" min="1" value="${esc(leagueRow.playoff_reserved_slots ? String(leagueRow.playoff_reserved_slots) : '')}">
+    </div>
+  </div>`;
   } else if (step === 'reminders') {
     stepHtml = `
   <div class="su-title">
@@ -2623,6 +2710,32 @@ var OB_TEAM_COLORS = ${JSON.stringify(ROSTER_TEAM_DOTS)};
 function obToggle(btn) {
   btn.setAttribute('aria-checked', String(btn.getAttribute('aria-checked') !== 'true'));
 }
+// Playoff extension, Part 1: live reaction to the enabled toggle, the
+// chosen format, and the chosen team count -- the bye-round note and
+// the third-place toggle's own visibility are real bracket facts
+// (odd team count needs a bye; third place needs two real semifinal
+// losers, i.e. >=4 teams), not static copy, so they only ever show
+// when actually true for what's currently selected.
+function obPlayoffsUpdate() {
+  var enabledEl = document.getElementById('ob_playoffs_enabled');
+  if (!enabledEl) return;
+  var enabled = enabledEl.getAttribute('aria-checked') === 'true';
+  document.getElementById('ob_playoffs_detail').style.display = enabled ? '' : 'none';
+  if (!enabled) return;
+  var format = document.getElementById('ob_playoff_format').value;
+  document.getElementById('ob_bestof_wrap').style.display = format === 'best_of_n' ? '' : 'none';
+  document.getElementById('ob_format_reserved_desc').style.display = format === 'reserved_slots' ? '' : 'none';
+  document.getElementById('ob_playoff_teams_wrap').style.display = format === 'reserved_slots' ? 'none' : '';
+  document.getElementById('ob_third_place_wrap').style.display = format === 'reserved_slots' ? 'none' : '';
+  document.getElementById('ob_reserved_slots_wrap').style.display = format === 'reserved_slots' ? '' : 'none';
+  if (format !== 'reserved_slots') {
+    var teamsEl = document.getElementById('ob_playoff_teams');
+    var n = Number(teamsEl.value);
+    document.getElementById('ob_bye_note').style.display = (n % 2 === 1) ? '' : 'none';
+    document.getElementById('ob_third_place_wrap').style.display = n >= 4 ? '' : 'none';
+  }
+}
+if (OB_STEP === 'playoffs') { obPlayoffsUpdate(); }
 function showErr(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 async function obSave(path, payload) {
   var res = await fetch(path, {
@@ -2687,6 +2800,24 @@ async function obSubmit() {
         await obSave('/league/settings/teams', { teamNames: teamNames, teamColors: teamNames.map(function(_, idx) { return OB_TEAM_COLORS[idx % OB_TEAM_COLORS.length]; }) });
         await obSave('/league/season/teams', { season_name: OB_SEASON_NAME, teamNames: teamNames });
       }
+    } else if (OB_STEP === 'playoffs') {
+      // Playoff extension, Part 1: question 1's "no" answer needs no
+      // further payload -- handleLeagueUpdatePlayoffs' own "not
+      // enabled" branch clears everything else server-side.
+      var playoffsEnabled = document.getElementById('ob_playoffs_enabled').getAttribute('aria-checked') === 'true';
+      var payload = { playoffs_enabled: playoffsEnabled };
+      if (playoffsEnabled) {
+        var format = document.getElementById('ob_playoff_format').value;
+        payload.playoff_format = format;
+        payload.playoff_third_place = document.getElementById('ob_third_place').getAttribute('aria-checked') === 'true';
+        if (format === 'reserved_slots') {
+          payload.playoff_reserved_slots = Number(document.getElementById('ob_reserved_slots').value);
+        } else {
+          payload.playoff_teams = Number(document.getElementById('ob_playoff_teams').value);
+          if (format === 'best_of_n') payload.playoff_best_of = Number(document.getElementById('ob_best_of').value);
+        }
+      }
+      await obSave('/league/settings/playoffs', payload);
     } else if (OB_STEP === 'reminders') {
       await obSave('/league/reminders/settings', {
         reminder72h: document.getElementById('ob_reminder_72h').getAttribute('aria-checked') === 'true',
@@ -4354,6 +4485,16 @@ async function handleLeagueSettingsPage(req, env, url) {
       rolloverExplainOldClosed: '{old} ferme et devient une saison consultable en lecture seule.',
       rolloverExplainConfigScope: "L'effectif et la structure d'équipe définis ici s'appliquent seulement à {new} -- la saison fermée ne change pas.",
       rolloverMoveEventsLabel: "{n} matchs à venir sont encore dans {old}. Les déplacer vers {new}? Les matchs laissés dans une saison fermée ne peuvent plus être gérés depuis le tableau de bord.",
+      // Part 1 (playoff extension): same questions/copy as the
+      // onboarding 'playoffs' step, editable here afterward.
+      playoffsTitle: 'Y a-t-il des séries éliminatoires?',
+      playoffsSub: "Les séries consomment des créneaux de ta ligue -- l'horaire de la saison régulière est calculé en fonction de ce qui reste.",
+      playoffsEnabledLabel: 'Il y a des séries éliminatoires',
+      formatLabel: 'Format des séries', formatSingleElim: 'Élimination simple', formatBestOfN: 'Série la meilleure de N', formatReserved: 'Créneaux réservés',
+      bestOfLabel: 'Le meilleur de combien de matchs?',
+      playoffTeamsLabel: "Combien d'équipes participent aux séries?",
+      thirdPlaceLabel: 'Match pour la 3e place?',
+      reservedSlotsLabel: 'Combien de matchs faut-il réserver?',
       // Item 4 (season-rollover polish task): offered as part of the
       // rollover confirmation above -- import last season's players
       // (active pre-checked, inactive unchecked but listed so a
@@ -4458,6 +4599,14 @@ async function handleLeagueSettingsPage(req, env, url) {
       rolloverExplainOldClosed: '{old} closes and becomes a read-only, viewable season.',
       rolloverExplainConfigScope: 'The roster size and team structure set here apply only to {new} -- the closed season does not change.',
       rolloverMoveEventsLabel: "{n} upcoming games are still on {old}. Move them to {new}? Games left on a closed season can't be managed from your dashboard.",
+      playoffsTitle: 'Are there playoffs?',
+      playoffsSub: "Playoffs consume slots from your league's total -- the regular-season schedule is calculated from what's left.",
+      playoffsEnabledLabel: 'There are playoffs',
+      formatLabel: 'Playoff format', formatSingleElim: 'Single elimination', formatBestOfN: 'Best-of-N series', formatReserved: 'Reserved slots',
+      bestOfLabel: 'Best of how many games?',
+      playoffTeamsLabel: 'How many teams make the playoffs?',
+      thirdPlaceLabel: 'Third-place game?',
+      reservedSlotsLabel: 'How many games do you need to reserve?',
       rolloverTitle: 'Import players from the previous season?',
       rolloverDesc: "Active players are pre-checked. A player who isn't imported becomes inactive -- they keep their history and can be reactivated later.",
       rolloverInactiveTag: 'Inactive',
@@ -4928,6 +5077,53 @@ async function handleLeagueSettingsPage(req, env, url) {
         <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="cancel" onclick="cancelNewSeasonFlow()">Annuler</button>
       </div>
     </div>
+  </section>` : ''}
+
+  ${teamStructure === 'fixed' ? `
+  <!-- Part 1 (playoff extension): the SAME questions asked once at
+       onboarding, editable here afterward -- same posture as team
+       structure/roster limits/team names. Meaningless for weekly_draw
+       (teams aren't fixed) and headcount (no teams at all), so this
+       whole section is gated to 'fixed', matching the fixture
+       generator's own gating. -->
+  <section class="nl-card nl-card--pad-lg" id="section-playoffs">
+    <div class="h3" data-i18n="playoffsTitle">Y a-t-il des séries éliminatoires?</div>
+    <p class="nl-help" data-i18n="playoffsSub">Les séries consomment des créneaux de ta ligue -- l'horaire de la saison régulière est calculé en fonction de ce qui reste.</p>
+    <div id="playoffsErr" class="nl-error" style="display:none"></div>
+    <div id="playoffsOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-toggle" style="margin-top:8px">
+      <div class="nl-label" data-i18n="playoffsEnabledLabel">Il y a des séries éliminatoires</div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.playoffs_enabled ? 'true' : 'false'}" id="se_playoffs_enabled" onclick="sePlayoffsToggle(this); sePlayoffsUpdate();"></button>
+    </div>
+    <div id="se_playoffs_detail" style="${leagueRow.playoffs_enabled ? '' : 'display:none;'}margin-top:var(--space-3);display:flex;flex-direction:column;gap:var(--space-3);">
+      <div class="nl-field">
+        <span class="nl-label" data-i18n="formatLabel">Format des séries</span>
+        <select class="nl-select" id="se_playoff_format" onchange="sePlayoffsUpdate()">
+          <option value="single_elimination" data-i18n="formatSingleElim"${leagueRow.playoff_format === 'single_elimination' || !leagueRow.playoff_format ? ' selected' : ''}>Élimination simple</option>
+          <option value="best_of_n" data-i18n="formatBestOfN"${leagueRow.playoff_format === 'best_of_n' ? ' selected' : ''}>Série la meilleure de N</option>
+          <option value="reserved_slots" data-i18n="formatReserved"${leagueRow.playoff_format === 'reserved_slots' ? ' selected' : ''}>Créneaux réservés</option>
+        </select>
+      </div>
+      <div class="nl-field" id="se_bestof_wrap" style="display:none">
+        <label class="nl-label" for="se_best_of" data-i18n="bestOfLabel">Le meilleur de combien de matchs?</label>
+        <input class="nl-input" id="se_best_of" type="number" min="1" value="${esc(leagueRow.playoff_best_of ? String(leagueRow.playoff_best_of) : '3')}">
+      </div>
+      <div class="nl-field" id="se_playoff_teams_wrap">
+        <label class="nl-label" for="se_playoff_teams" data-i18n="playoffTeamsLabel">Combien d'équipes participent aux séries?</label>
+        <select class="nl-select" id="se_playoff_teams" onchange="sePlayoffsUpdate()">
+          ${Array.from({ length: Math.max(0, teamNames.filter(Boolean).length - 1) }, (_, i) => i + 2).map(n => `<option value="${n}"${leagueRow.playoff_teams === n ? ' selected' : ''}>${n}</option>`).join('')}
+        </select>
+      </div>
+      <div class="nl-toggle" id="se_third_place_wrap">
+        <div class="nl-label" data-i18n="thirdPlaceLabel">Match pour la 3e place?</div>
+        <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.playoff_third_place ? 'true' : 'false'}" id="se_third_place" onclick="sePlayoffsToggle(this)"></button>
+      </div>
+      <div class="nl-field" id="se_reserved_slots_wrap" style="display:none">
+        <label class="nl-label" for="se_reserved_slots" data-i18n="reservedSlotsLabel">Combien de matchs faut-il réserver?</label>
+        <input class="nl-input" id="se_reserved_slots" type="number" min="1" value="${esc(leagueRow.playoff_reserved_slots ? String(leagueRow.playoff_reserved_slots) : '')}">
+      </div>
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="playoffs_save" data-i18n="save" onclick="submitPlayoffs()">Enregistrer</button></div>
   </section>` : ''}
 
   <section class="nl-card nl-card--pad-lg" id="section-language">
@@ -5453,6 +5649,54 @@ async function toggleReminderSwitch(btn, bodyKey) {
     ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
   } catch (e) { err.style.display = 'block'; err.textContent = window.__errorText('NETWORK_ERROR'); }
   btn.disabled = false;
+}
+// Part 1 (playoff extension): a local, non-auto-saving toggle (unlike
+// toggleReminderSwitch above, which POSTs immediately on click) --
+// playoff settings are a real form with several interdependent
+// fields, saved together by submitPlayoffs() below, not one field at
+// a time.
+function sePlayoffsToggle(btn) {
+  btn.setAttribute('aria-checked', String(btn.getAttribute('aria-checked') !== 'true'));
+}
+function sePlayoffsUpdate() {
+  var enabled = document.getElementById('se_playoffs_enabled').getAttribute('aria-checked') === 'true';
+  document.getElementById('se_playoffs_detail').style.display = enabled ? '' : 'none';
+  if (!enabled) return;
+  var format = document.getElementById('se_playoff_format').value;
+  document.getElementById('se_bestof_wrap').style.display = format === 'best_of_n' ? '' : 'none';
+  document.getElementById('se_playoff_teams_wrap').style.display = format === 'reserved_slots' ? 'none' : '';
+  document.getElementById('se_third_place_wrap').style.display = format === 'reserved_slots' ? 'none' : '';
+  document.getElementById('se_reserved_slots_wrap').style.display = format === 'reserved_slots' ? '' : 'none';
+}
+try { sePlayoffsUpdate(); } catch (e) {}
+async function submitPlayoffs() {
+  var err = document.getElementById('playoffsErr'); var ok = document.getElementById('playoffsOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var playoffsEnabled = document.getElementById('se_playoffs_enabled').getAttribute('aria-checked') === 'true';
+  var payload = { playoffs_enabled: playoffsEnabled };
+  if (playoffsEnabled) {
+    var format = document.getElementById('se_playoff_format').value;
+    payload.playoff_format = format;
+    payload.playoff_third_place = document.getElementById('se_third_place').getAttribute('aria-checked') === 'true';
+    if (format === 'reserved_slots') {
+      payload.playoff_reserved_slots = Number(document.getElementById('se_reserved_slots').value);
+    } else {
+      payload.playoff_teams = Number(document.getElementById('se_playoff_teams').value);
+      if (format === 'best_of_n') payload.playoff_best_of = Number(document.getElementById('se_best_of').value);
+    }
+  }
+  var btn = document.getElementById('playoffs_save'); btn.disabled = true;
+  try {
+    var res = await fetch('/league/settings/playoffs', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
+    btn.disabled = false;
+  } catch (e) { err.style.display = 'block'; err.textContent = window.__errorText('NETWORK_ERROR'); btn.disabled = false; }
 }
 async function submitAutoDrawHours() {
   var err = document.getElementById('autoDrawErr'); var ok = document.getElementById('autoDrawOk');
@@ -6475,10 +6719,10 @@ async function handleLeagueSchedulePage(req, env, url) {
   // real chronological slot, not hide them.
   const scheduleToday = new Date().toISOString().slice(0, 10);
   const upcomingEvents = (await env.DB.prepare(
-    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time, home_team, away_team FROM events WHERE league_id = ? AND date >= ? ORDER BY date ASC, week ASC'
+    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time, home_team, away_team, is_playoff, playoff_meta FROM events WHERE league_id = ? AND date >= ? ORDER BY date ASC, week ASC'
   ).bind(leagueId, scheduleToday).all()).results || [];
   const pastEvents = (await env.DB.prepare(
-    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time, home_team, away_team FROM events WHERE league_id = ? AND date < ? ORDER BY date DESC, week DESC'
+    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time, home_team, away_team, is_playoff, playoff_meta FROM events WHERE league_id = ? AND date < ? ORDER BY date DESC, week DESC'
   ).bind(leagueId, scheduleToday).all()).results || [];
   const events = [...upcomingEvents, ...pastEvents];
   // C4 bug fix (schedule/events polish task): most leagues play at the
@@ -6614,11 +6858,29 @@ async function handleLeagueSchedulePage(req, env, url) {
       // schedule tool). Only offered for a 'fixed' league.
       fixtureGenBtn: 'Générer un calendrier', fixtureGenTitle: 'Générer un calendrier (matchs aller-retour)',
       fixtureGenHelp: 'Crée un calendrier équilibré où chaque équipe affronte les autres tour à tour -- rien n\'est créé avant que tu confirmes.',
-      fixtureGenRounds: 'Nombre de rondes', fixtureGenStartDate: 'Première date', fixtureGenInterval: 'Intervalle (jours)',
+      fixtureGenTotalSlots: 'Nombre total de créneaux (gym déjà payé)', fixtureGenStartDate: 'Première date', fixtureGenInterval: 'Intervalle (jours)',
       fixtureGenPreviewBtn: 'Prévisualiser', fixtureGenApproveBtn: 'Créer ces matchs', fixtureGenBackBtn: 'Retour',
       fixtureGenRoundLabel: 'Ronde {n} -- {date}',
       fixtureGenSameGymNote: 'Plus d\'un match cette ronde-là -- même lieu, heures décalées d\'une heure entre elles.',
-      fixtureGenResultSummary: '{created} match(s) créé(s).'
+      fixtureGenResultSummary: '{created} match(s) créé(s).',
+      // Playoff extension, Part 2: the arithmetic, shown BEFORE
+      // anything is generated -- total/playoff/regular-season split,
+      // and how many of the regular season's own slots actually got
+      // used (a partial last round is played rather than leaving paid-
+      // for slots empty, per this task's own decision).
+      fixtureArithmeticSummary: '{total} créneaux au total -- {playoff} pour les séries, {regular} pour la saison régulière.',
+      fixtureArithmeticPartial: 'La dernière ronde de la saison régulière est partielle ({used} sur {regular} créneaux utilisés).',
+      fixturePlayoffsSectionTitle: 'Séries éliminatoires',
+      fixtureTooFewSlots: 'Pas assez de créneaux pour les séries configurées.',
+      // Client-side mirror of leagues.js's own playoffRoleLabel -- same
+      // role vocabulary, used only to render the transient preview (not
+      // stored, cleared on approve/cancel -- same "current page
+      // language, not live-bound" posture as this panel's own
+      // pre-existing round-label rendering).
+      playoffRoleFinal: 'Finale', playoffRoleThirdPlace: 'Match pour la 3e place',
+      playoffRoleSemifinal: 'Demi-finale', playoffRoleQuarterfinal: 'Quart de finale',
+      playoffRoleBracket: 'Ronde 1 des séries, match', playoffRoleBye: 'Ronde de repos des séries (créneau réservé)',
+      playoffRoleReserved: 'Match de séries', playoffSeedLabel: 'tête de série {n}', playoffGameOfSeries: 'Match {g} de {n}'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
@@ -6649,11 +6911,19 @@ async function handleLeagueSchedulePage(req, env, url) {
       matchupTeam1: 'Team 1', matchupTeam2: 'Team 2', matchupVsWord: 'vs',
       fixtureGenBtn: 'Generate a schedule', fixtureGenTitle: 'Generate a schedule (round robin)',
       fixtureGenHelp: "Creates a balanced schedule where every team takes turns playing the others -- nothing is created until you confirm.",
-      fixtureGenRounds: 'Number of rounds', fixtureGenStartDate: 'First date', fixtureGenInterval: 'Interval (days)',
+      fixtureGenTotalSlots: 'Total number of slots (gym time already paid for)', fixtureGenStartDate: 'First date', fixtureGenInterval: 'Interval (days)',
       fixtureGenPreviewBtn: 'Preview', fixtureGenApproveBtn: 'Create these games', fixtureGenBackBtn: 'Back',
       fixtureGenRoundLabel: 'Round {n} -- {date}',
       fixtureGenSameGymNote: 'More than one game this round -- same venue, times staggered an hour apart.',
-      fixtureGenResultSummary: '{created} game(s) created.'
+      fixtureGenResultSummary: '{created} game(s) created.',
+      fixtureArithmeticSummary: '{total} total slots -- {playoff} for playoffs, {regular} for the regular season.',
+      fixtureArithmeticPartial: 'The regular season\'s last round is partial ({used} of {regular} slots used).',
+      fixturePlayoffsSectionTitle: 'Playoffs',
+      fixtureTooFewSlots: 'Not enough slots for the playoffs you configured.',
+      playoffRoleFinal: 'Final', playoffRoleThirdPlace: 'Third-place game',
+      playoffRoleSemifinal: 'Semi-final', playoffRoleQuarterfinal: 'Quarterfinal',
+      playoffRoleBracket: 'Playoff round 1, game', playoffRoleBye: 'Playoff bye round (reserved slot)',
+      playoffRoleReserved: 'Playoff game', playoffSeedLabel: 'seed {n}', playoffGameOfSeries: 'Game {g} of {n}'
     }
   };
 
@@ -6666,7 +6936,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     ? events.map(ev => `<div class="nl-card sc-game-row">
       <a class="sc-game" href="/league/events/detail?e=${encodeURIComponent(ev.id)}">
         <div class="sc-when">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
-        ${ev.home_team && ev.away_team ? `<div class="sc-venue">${esc(ev.home_team)} <span data-i18n="matchupVsWord">contre</span> ${esc(ev.away_team)}</div>` : ''}
+        ${ev.is_playoff ? `<div class="sc-venue">${esc((() => { try { return playoffRoleLabel(JSON.parse(ev.playoff_meta || 'null') || {}, lang); } catch (_) { return ''; } })())}</div>` : (ev.home_team && ev.away_team ? `<div class="sc-venue">${esc(ev.home_team)} <span data-i18n="matchupVsWord">contre</span> ${esc(ev.away_team)}</div>` : '')}
         <div class="sc-venue">${ev.venue ? esc(ev.venue) : ''}</div>
         <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
         <span class="sc-chevron">&rsaquo;</span>
@@ -6878,8 +7148,9 @@ async function handleLeagueSchedulePage(req, env, url) {
       <div id="fixtureGenOk" class="nl-ok" style="display:none"></div>
       <div id="fixture_form_fields">
         <div class="nl-field">
-          <label class="nl-label" for="fx_rounds" data-i18n="fixtureGenRounds">Nombre de rondes</label>
-          <input class="nl-input" id="fx_rounds" type="number" min="1" max="30" value="${Math.max(1, scheduleTeamNames.length - (scheduleTeamNames.length % 2 === 0 ? 1 : 0))}">
+          <label class="nl-label" for="fx_total_slots" data-i18n="fixtureGenTotalSlots">Nombre total de créneaux (gym déjà payé)</label>
+          <input class="nl-input" id="fx_total_slots" type="number" min="1" max="500" value="${scheduleTeamNames.length * (scheduleTeamNames.length - 1) / 2}">
+          <p class="nl-help" id="fx_arithmetic_note" style="display:none"></p>
         </div>
         <div class="nl-field">
           <label class="nl-label" for="fx_start_date" data-i18n="fixtureGenStartDate">Première date</label>
@@ -7056,16 +7327,51 @@ function backToFixtureForm() {
   document.getElementById('fixture_form_fields').style.display = '';
   document.getElementById('fixture_preview_wrap').style.display = 'none';
 }
+// Playoff extension, Part 3: client-side mirror of leagues.js's own
+// playoffRoleLabel -- same role vocabulary (playoffRole* dict keys
+// above), only ever used to render this transient preview.
+function playoffLabelClient(meta, dict) {
+  var roleKey = { final: 'playoffRoleFinal', third_place: 'playoffRoleThirdPlace', semifinal: 'playoffRoleSemifinal',
+    quarterfinal: 'playoffRoleQuarterfinal', bracket: 'playoffRoleBracket', bye: 'playoffRoleBye', reserved: 'playoffRoleReserved' }[meta.role];
+  var base = dict[roleKey] || 'Playoff game';
+  if (meta.role === 'semifinal' || meta.role === 'quarterfinal' || meta.role === 'bracket' || meta.role === 'reserved') {
+    base += ' ' + meta.matchupIndexInRound;
+  }
+  if (meta.seedA && meta.seedB) {
+    var seed = function(n) { return (dict.playoffSeedLabel || 'seed {n}').split('{n}').join(n); };
+    base += ' -- ' + seed(meta.seedA) + ' ' + (dict.matchupVsWord || 'vs') + ' ' + seed(meta.seedB);
+  }
+  if (meta.gameNumber && meta.seriesLength > 1) {
+    base += ' (' + (dict.playoffGameOfSeries || 'Game {g} of {n}').split('{g}').join(meta.gameNumber).split('{n}').join(meta.seriesLength) + ')';
+  }
+  return base;
+}
+function renderFixtureRounds(container, rounds, dict, isPlayoff) {
+  rounds.forEach(function(round) {
+    var block = document.createElement('div');
+    var label = (dict.fixtureGenRoundLabel || 'Round {n} -- {date}').split('{n}').join(String(round.round)).split('{date}').join(round.date);
+    var html = '<div class="h3" style="font-size:15px">' + label + (round.isPartial ? ' *' : '') + '</div>';
+    round.games.forEach(function(g) {
+      var text = isPlayoff ? playoffLabelClient(g.meta, dict) : (g.home + ' ' + (dict.matchupVsWord || 'vs') + ' ' + g.away);
+      html += '<div class="nl-help" style="margin-top:4px">' + text + (g.start_time ? ' -- ' + g.start_time : '') + (g.venue ? ' (' + g.venue + ')' : '') + '</div>';
+    });
+    if (round.games.length > 1) {
+      html += '<p class="nl-help" style="margin-top:4px;font-style:italic">' + (dict.fixtureGenSameGymNote || '') + '</p>';
+    }
+    block.innerHTML = html;
+    container.appendChild(block);
+  });
+}
 async function previewFixtures() {
   document.getElementById('fixtureGenErr').style.display = 'none';
   document.getElementById('fixtureGenOk').style.display = 'none';
-  var rounds = document.getElementById('fx_rounds').value;
+  var totalSlots = document.getElementById('fx_total_slots').value;
   var startDate = document.getElementById('fx_start_date').value;
   var interval = document.getElementById('fx_interval').value;
   var time = document.getElementById('fx_time').value;
   var venue = document.getElementById('fx_venue').value.trim();
   if (!startDate) { showFixtureErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
-  var params = { rounds: Number(rounds), start_date: startDate, interval_days: Number(interval) || 7, time: time || undefined, venue: venue || undefined };
+  var params = { total_slots: Number(totalSlots), start_date: startDate, interval_days: Number(interval) || 7, time: time || undefined, venue: venue || undefined };
   var btn = document.getElementById('fx_preview_btn');
   btn.disabled = true;
   try {
@@ -7080,19 +7386,32 @@ async function previewFixtures() {
     var dict = window.__pageDict ? window.__pageDict() : {};
     var out = document.getElementById('fixture_preview_results');
     out.innerHTML = '';
-    data.rounds.forEach(function(round) {
-      var block = document.createElement('div');
-      var label = (dict.fixtureGenRoundLabel || 'Round {n} -- {date}').split('{n}').join(String(round.round)).split('{date}').join(round.date);
-      var html = '<div class="h3" style="font-size:15px">' + label + '</div>';
-      round.games.forEach(function(g) {
-        html += '<div class="nl-help" style="margin-top:4px">' + g.home + ' ' + (dict.matchupVsWord || 'vs') + ' ' + g.away + (g.start_time ? ' -- ' + g.start_time : '') + (g.venue ? ' (' + g.venue + ')' : '') + '</div>';
-      });
-      if (round.games.length > 1) {
-        html += '<p class="nl-help" style="margin-top:4px;font-style:italic">' + (dict.fixtureGenSameGymNote || '') + '</p>';
-      }
-      block.innerHTML = html;
-      out.appendChild(block);
-    });
+    // Playoff extension, Part 2: the arithmetic, shown BEFORE anything
+    // is generated -- total/playoff/regular-season split, and whether
+    // the regular season's own last round is partial (played rather
+    // than left empty).
+    var a = data.arithmetic;
+    var summaryEl = document.createElement('p');
+    summaryEl.className = 'nl-help';
+    summaryEl.style.fontWeight = '600';
+    summaryEl.textContent = (dict.fixtureArithmeticSummary || '{total} total -- {playoff} playoffs, {regular} regular season')
+      .split('{total}').join(a.totalSlots).split('{playoff}').join(a.playoffSlots).split('{regular}').join(a.regularSeasonSlots);
+    out.appendChild(summaryEl);
+    if (a.regularSeasonSlotsUsed < a.regularSeasonSlots) {
+      var partialEl = document.createElement('p');
+      partialEl.className = 'nl-help';
+      partialEl.textContent = (dict.fixtureArithmeticPartial || 'Last round is partial ({used} of {regular} used)')
+        .split('{used}').join(a.regularSeasonSlotsUsed).split('{regular}').join(a.regularSeasonSlots);
+      out.appendChild(partialEl);
+    }
+    renderFixtureRounds(out, data.regularSeason, dict, false);
+    if (data.playoffs && data.playoffs.length) {
+      var playoffHeader = document.createElement('div');
+      playoffHeader.className = 'h3';
+      playoffHeader.textContent = dict.fixturePlayoffsSectionTitle || 'Playoffs';
+      out.appendChild(playoffHeader);
+      renderFixtureRounds(out, data.playoffs, dict, true);
+    }
     document.getElementById('fixture_form_fields').style.display = 'none';
     document.getElementById('fixture_preview_wrap').style.display = '';
     btn.disabled = false;
@@ -7277,6 +7596,18 @@ ${tabbar}`;
     ? [ev.home_team, ev.away_team]
     : null;
   const fixedMatchupUnknown = isFixed && teamNames.length > 2 && !matchupTeams;
+  // Part 3 (playoff extension): a playoff placeholder (fixture
+  // generator's own playoff proposal) ALWAYS has home_team/away_team
+  // null -- seeding can't be resolved at generation time, regardless
+  // of team count (even a 2-team league's playoff game is still a
+  // placeholder, unlike its regular-season games). Read BEFORE the
+  // regular "no matchup set" check above so a playoff game never
+  // renders as if it were a misconfigured regular-season one -- its
+  // own message explains it's awaiting seeding instead.
+  let playoffMeta = null;
+  if (ev.is_playoff) {
+    try { playoffMeta = JSON.parse(ev.playoff_meta || 'null'); } catch (_) {}
+  }
 
   const I18N_DETAIL = {
     fr: {
@@ -7323,6 +7654,14 @@ ${tabbar}`;
       // matchup data exists (or is set) for this specific event.
       noMatchupSetTitle: 'Aucun match déterminé',
       noMatchupSetDesc: "Cette ligue a plus de deux équipes -- il faut savoir lesquelles jouent ce match avant d'afficher les alignements.",
+      // Part 3 (playoff extension): a playoff placeholder's own
+      // version of the "no matchup set" state -- explicitly a playoff
+      // game awaiting seeding, never confused with a misconfigured
+      // regular-season game (no score-entry/standings feature exists
+      // in this product yet to resolve seeding automatically -- see
+      // this task's own final report for what that would take).
+      playoffAwaitingSeedingTitle: 'Match de séries -- en attente des résultats',
+      playoffAwaitingSeedingDesc: "Les équipes seront connues une fois les résultats de la saison régulière (et des rondes précédentes) entrés -- ce produit ne calcule pas encore les classements automatiquement.",
       ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
     },
     en: {
@@ -7353,6 +7692,8 @@ ${tabbar}`;
       goalieBadge: 'G', goalieTitle: 'Goalie', canAlsoGoalieTitle: 'Can also play goalie',
       noMatchupSetTitle: 'No matchup set',
       noMatchupSetDesc: "This league has more than two teams -- who's playing needs to be known before rosters can be shown.",
+      playoffAwaitingSeedingTitle: 'Playoff game -- awaiting results',
+      playoffAwaitingSeedingDesc: "Teams will be known once regular-season (and earlier-round) results are entered -- this product doesn't calculate standings automatically yet.",
       ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     }
   };
@@ -7673,7 +8014,13 @@ ${tabbar}`;
     ${leagueRemindersArmed ? '' : `<p class="nl-help" data-i18n="remindersNoneArmedHelp" style="margin-top:4px;">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).remindersNoneArmedHelp)}</p>`}
     <p id="evRemindersMsg" class="nl-help" style="display:none;margin-top:4px;"></p>
   </div>
-  <div class="ev-teams">${fixedMatchupUnknown
+  <div class="ev-teams">${ev.is_playoff
+    ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
+      <h2 data-i18n="playoffAwaitingSeedingTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingTitle)}</h2>
+      ${playoffMeta ? `<p class="nl-help" style="font-weight:600">${esc(playoffRoleLabel(playoffMeta, lang))}</p>` : ''}
+      <p class="nl-help" data-i18n="playoffAwaitingSeedingDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingDesc)}</p>
+    </section>`
+    : fixedMatchupUnknown
     ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
       <h2 data-i18n="noMatchupSetTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetTitle)}</h2>
       <p class="nl-help" data-i18n="noMatchupSetDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetDesc)}</p>
@@ -24706,6 +25053,11 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueUpdateSeasonTeams(req, env, url);
       if (url.pathname === '/league/settings/structure' && req.method === 'POST')
         return await handleLeagueUpdateStructure(req, env, url);
+      // Part 1 (playoff extension): the league's own stored playoff
+      // preferences -- asked once at onboarding (fixed-teams leagues
+      // only), editable here afterward.
+      if (url.pathname === '/league/settings/playoffs' && req.method === 'POST')
+        return await handleLeagueUpdatePlayoffs(req, env, url);
       // Part 2: admin-initiated manual "send now" trigger (same UI
       // pattern as the existing manual sub-invite button) -- sends the
       // same non-responder reminder outside the automatic 72h/24h
