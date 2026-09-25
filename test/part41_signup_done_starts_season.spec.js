@@ -63,15 +63,18 @@ describe('Part 6 (live-testing task): signup completion screen starts the season
     });
   }
 
-  it('"Ajouter mes joueurs" is still present, as a non-primary (ghost) button targeting /league/roster', async () => {
+  // B3 bug fix (i18n/onboarding polish task): "Ajouter mes joueurs"
+  // removed outright, not just kept as a secondary action -- a season
+  // has to exist before adding players is meaningful (the reason it was
+  // already demoted below primary), so "Lancer ma saison" is the one
+  // real next action on this screen now.
+  it('"Ajouter mes joueurs" is gone entirely -- "Lancer ma saison" is the only action on this screen', async () => {
     const { cookie, csrfToken } = await signup('done.secondary@example.com', '203.0.151.010');
     await createLeague(cookie, csrfToken, { name: 'Done Secondary League', teamNames: ['A', 'B'], tracksStats: true });
     const html = await (await SELF.fetch('http://example.com/signup?step=done', { headers: { cookie } })).text();
-    expect(html).toContain("onclick=\"location.href='/league/roster'\"");
-    const addPlayersMatch = html.match(/<button[^>]*data-i18n="addPlayers"[^>]*>/);
-    expect(addPlayersMatch).not.toBeNull();
-    expect(addPlayersMatch[0]).not.toContain('nl-btn--primary');
-    expect(addPlayersMatch[0]).toContain('nl-btn--ghost');
+    expect(html).not.toContain("onclick=\"location.href='/league/roster'\"");
+    expect(html).not.toContain('data-i18n="addPlayers"');
+    expect((html.match(/class="su-bottom"[\s\S]*?<\/div>/) || [''])[0].match(/<button/g) || []).toHaveLength(1);
   });
 
   it('clicking through to /dashboard actually shows the season-start form as the headline next step', async () => {

@@ -631,7 +631,7 @@ const I18N_SIGNUP = {
     createLeague: 'Créer la ligue',
     doneBadge: 'Ligue créée', doneTitle: 'Ta ligue est prête.',
     doneBody: 'Ta page publique est déjà en ligne. Partage-la dans le groupe de la ligue.',
-    copyLink: 'Copier le lien', copied: 'Copié !', addPlayers: 'Ajouter mes joueurs',
+    copyLink: 'Copier le lien', copied: 'Copié !',
     // Live-testing task, Part 6: a season has to exist before matches
     // (and therefore real roster use) mean anything -- see the
     // dashboard's own checklist, which already orders "Créer la saison"
@@ -1181,10 +1181,13 @@ function renderSignupDone(league) {
   <!-- Live-testing task, Part 6: the corrected dependency order (the
        dashboard's own checklist, which this button now leads to) is
        league -> season -> events/roster use -- a season has to exist
-       before adding players means anything real. "Ajouter mes joueurs"
-       is still one tap away, just no longer the headline action. -->
+       before adding players means anything real.
+       B3 bug fix (i18n/onboarding polish task): "Ajouter mes joueurs"
+       removed outright -- a season has to exist before adding players
+       is meaningful (the reason it was already demoted below), so a
+       second action here was just a shortcut to a step that isn't
+       ready yet. "Lancer ma saison" is the one real next action. -->
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="startMySeason" onclick="location.href='/dashboard'">Lancer ma saison</button>
-  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="addPlayers" onclick="location.href='/league/roster'">Ajouter mes joueurs</button>
 </div>
 <script>
 ${signupLangScript()}

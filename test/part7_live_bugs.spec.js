@@ -86,21 +86,24 @@ describe('Bug 1: GET /auth/verify shows a real styled page to a browser, JSON to
 // saison"/"Start my season") instead of /league/roster -- the
 // corrected dependency order (the dashboard's own checklist) is
 // league -> season -> real roster/event use, so starting the season is
-// the real next step, not adding players. "Add my players" is still
-// present as a secondary action, one tap away, just no longer the
-// headline button. See test/part41_signup_done_starts_season.spec.js.
+// the real next step, not adding players.
+// B3 bug fix (i18n/onboarding polish task): "Add my players" removed
+// outright, not just kept as a secondary action -- a season has to
+// exist before adding players is meaningful, so it was never really a
+// second real option here. See
+// test/part41_signup_done_starts_season.spec.js for the full coverage.
 describe('signup done screen: primary action starts the season (live-testing task, Part 6)', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     await applyRealSchema(env);
   });
 
-  it('the done screen\'s primary button targets /dashboard, with /league/roster as a secondary action', async () => {
+  it('the done screen\'s primary button targets /dashboard; "add players" is gone, not just secondary', async () => {
     const { cookie } = await signupAndCreateLeague('bug2.addplayers@example.com', '203.0.113.903', 'Bug 2 League', ['A', 'B']);
     const res = await SELF.fetch('http://example.com/signup?step=done', { headers: { cookie } });
     const html = await res.text();
     expect(html).toContain("onclick=\"location.href='/dashboard'\"");
-    expect(html).toContain("onclick=\"location.href='/league/roster'\"");
+    expect(html).not.toContain("onclick=\"location.href='/league/roster'\"");
   });
 });
 
