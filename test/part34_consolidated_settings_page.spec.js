@@ -567,3 +567,43 @@ describe('B2: structure option wording in both settings cards ("Cette saison" an
     expect(dict.en.structureWeeklyTitle.toLowerCase()).not.toContain('shuffle');
   });
 });
+
+describe('C2: the "This season" card\'s Season name field is prefilled with the current season\'s real name', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it('shows the actual season name as the field\'s value, not the placeholder', async () => {
+    const { cookie, csrfToken } = await signup('c2.prefill@example.com', '203.0.136.001');
+    await createLeague(cookie, csrfToken, { name: 'C2 Prefill League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'Automne 2026' });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    expect(html).toContain('id="season_mgmt_name"');
+    expect(html).toContain('value="Automne 2026"');
+    // The field element itself carries a real value now -- confirms this
+    // isn't just the placeholder text happening to read similarly.
+    const inputTag = (html.match(/<input[^>]*id="season_mgmt_name"[^>]*>/) || [''])[0];
+    expect(inputTag).toContain('value="Automne 2026"');
+  });
+
+  it('a season name containing HTML-sensitive characters is escaped, not left to break the attribute', async () => {
+    const { cookie, csrfToken } = await signup('c2.escape@example.com', '203.0.136.002');
+    await createLeague(cookie, csrfToken, { name: 'C2 Escape League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'Winter "26" <Draft>' });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    const inputTag = (html.match(/<input[^>]*id="season_mgmt_name"[^>]*>/) || [''])[0];
+    expect(inputTag).not.toContain('<Draft>');
+    expect(inputTag).toContain('&lt;Draft&gt;');
+  });
+
+  it('a league with no season yet renders no season-name field at all (no currentSeasonEntry to prefill from, nothing to edit)', async () => {
+    const { cookie, csrfToken } = await signup('c2.noseason@example.com', '203.0.136.003');
+    await createLeague(cookie, csrfToken, { name: 'C2 No Season League', teamNames: ['A', 'B'], tracksStats: true });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    expect(html).not.toContain('id="season_mgmt_name"');
+    expect(html).not.toContain('data-i18n="seasonMgmtTitle"');
+    // Only the "default for new seasons" structure card renders.
+    expect(html).toContain('id="section-structure"');
+  });
+});

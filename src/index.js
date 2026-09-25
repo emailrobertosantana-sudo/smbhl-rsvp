@@ -4244,7 +4244,11 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div id="seasonMgmtOk" class="nl-ok" style="display:none"></div>
     <div class="nl-field" style="max-width:360px">
       <label class="nl-label" for="season_mgmt_name" data-i18n="seasonNameLabel">Nom de la saison</label>
-      <input class="nl-input" id="season_mgmt_name" type="text" data-i18n-ph="seasonNamePh" placeholder="Ex. Saison Hiver 2026">
+      <!-- C2 (state-not-reflected polish task): prefilled with the
+           current season's real name -- this field edits that season
+           in place (see seasonMgmtNameHelp below), so it must show
+           what it's about to edit, not the "create a new one" placeholder. -->
+      <input class="nl-input" id="season_mgmt_name" type="text" data-i18n-ph="seasonNamePh" placeholder="Ex. Saison Hiver 2026" value="${esc(currentSeasonEntry.name)}">
       <p class="nl-help" data-i18n="seasonMgmtNameHelp">Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.</p>
     </div>
     <div class="nl-field">
@@ -4980,6 +4984,12 @@ async function handleLeagueRosterPage(req, env, url) {
       // mid-season player add close to an already-armed game.
       remindersBannerTitle: 'Rappels automatiques actifs',
       remindersBannerDesc: 'Un match approche et les rappels automatiques sont actifs pour ce match. Ajouter un joueur maintenant peut déclencher un envoi.',
+      // C1 (state-not-reflected polish task): the banner used to keep
+      // this active copy and its red border regardless of the actual
+      // toggle -- only the button read auto_reminders_enabled. Paused
+      // state now gets its own neutral-tone copy.
+      remindersBannerTitlePaused: 'Les rappels automatiques sont en pause',
+      remindersBannerDescPaused: "Les rappels automatiques sont en pause pour ce match. Ajouter des joueurs n'enverra rien tant que tu ne les reprends pas.",
       pauseRemindersBtn: 'Suspendre les rappels pour ce match', resumeRemindersBtn: 'Reprendre les rappels pour ce match',
       remindersPausedNote: 'Rappels suspendus pour ce match.',
       filterAll: 'Tous', filterSubs: 'Remplaçants', filterUnassigned: 'Sans équipe',
@@ -5035,6 +5045,8 @@ async function handleLeagueRosterPage(req, env, url) {
       rosterNudgeBtn: 'Create the schedule',
       remindersBannerTitle: 'Automated reminders are active',
       remindersBannerDesc: 'A game is coming up and automated reminders are active for it. Adding a player now may trigger a send.',
+      remindersBannerTitlePaused: 'Automated reminders are paused',
+      remindersBannerDescPaused: "Automated reminders are paused for this game. Adding players won't send anything until you resume.",
       pauseRemindersBtn: 'Pause reminders for this game', resumeRemindersBtn: 'Resume reminders for this game',
       remindersPausedNote: 'Reminders paused for this game.',
       filterAll: 'All', filterSubs: 'Subs', filterUnassigned: 'Unassigned',
@@ -5194,9 +5206,9 @@ async function handleLeagueRosterPage(req, env, url) {
       <button type="button" class="nl-btn nl-btn--primary" id="ro_toggle_panel" data-i18n="addPlayer" onclick="toggleRosterPanel()">Ajouter un joueur</button>
     </div>
   </div>
-  ${reminderWindowEvent ? `<section class="nl-card nl-card--pad-lg" id="ro-reminders-banner" style="border-color:var(--danger,#b3122e)">
-    <div class="h3" data-i18n="remindersBannerTitle">Rappels automatiques actifs</div>
-    <p class="nl-help" data-i18n="remindersBannerDesc">Un match approche et les rappels automatiques sont actifs pour ce match. Ajouter un joueur maintenant peut déclencher un envoi.</p>
+  ${reminderWindowEvent ? `<section class="nl-card nl-card--pad-lg" id="ro-reminders-banner" style="${reminderWindowEvent.auto_reminders_enabled ? 'border-color:var(--danger,#b3122e)' : ''}">
+    <div class="h3" id="ro_reminders_banner_title" data-i18n="${reminderWindowEvent.auto_reminders_enabled ? 'remindersBannerTitle' : 'remindersBannerTitlePaused'}">${reminderWindowEvent.auto_reminders_enabled ? 'Rappels automatiques actifs' : 'Les rappels automatiques sont en pause'}</div>
+    <p class="nl-help" id="ro_reminders_banner_desc" data-i18n="${reminderWindowEvent.auto_reminders_enabled ? 'remindersBannerDesc' : 'remindersBannerDescPaused'}">${reminderWindowEvent.auto_reminders_enabled ? 'Un match approche et les rappels automatiques sont actifs pour ce match. Ajouter un joueur maintenant peut déclencher un envoi.' : "Les rappels automatiques sont en pause pour ce match. Ajouter des joueurs n'enverra rien tant que tu ne les reprends pas."}</p>
     <div style="margin-top:var(--space-2)">
       <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="ro_reminders_pause_btn" onclick="toggleReminderPause(this)" data-i18n="${reminderWindowEvent.auto_reminders_enabled ? 'pauseRemindersBtn' : 'resumeRemindersBtn'}">${reminderWindowEvent.auto_reminders_enabled ? 'Suspendre les rappels pour ce match' : 'Reprendre les rappels pour ce match'}</button>
     </div>
@@ -5363,10 +5375,22 @@ async function toggleReminderPause(btn) {
     });
     var data = await res.json().catch(function() { return {}; });
     if (res.ok && data.ok) {
+      var dict = window.__pageDict ? window.__pageDict() : {};
       var key = next ? 'pauseRemindersBtn' : 'resumeRemindersBtn';
       btn.setAttribute('data-i18n', key);
-      var dict = window.__pageDict ? window.__pageDict() : {};
       btn.textContent = dict[key] || (next ? 'Pause reminders for this game' : 'Resume reminders for this game');
+      // C1 (state-not-reflected polish task): the banner's title,
+      // description, and red styling must follow the same toggle state
+      // as the button -- they used to stay on the active copy/color
+      // regardless of what auto_reminders_enabled actually was.
+      var banner = document.getElementById('ro-reminders-banner');
+      var titleEl = document.getElementById('ro_reminders_banner_title');
+      var descEl = document.getElementById('ro_reminders_banner_desc');
+      var titleKey = next ? 'remindersBannerTitle' : 'remindersBannerTitlePaused';
+      var descKey = next ? 'remindersBannerDesc' : 'remindersBannerDescPaused';
+      if (titleEl) { titleEl.setAttribute('data-i18n', titleKey); titleEl.textContent = dict[titleKey] || ''; }
+      if (descEl) { descEl.setAttribute('data-i18n', descKey); descEl.textContent = dict[descKey] || ''; }
+      if (banner) banner.style.borderColor = next ? 'var(--danger,#b3122e)' : '';
     }
   } catch (e) {}
   btn.disabled = false;

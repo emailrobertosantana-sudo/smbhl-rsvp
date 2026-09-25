@@ -362,6 +362,10 @@ describe('F2 (players/reminders polish task): Players page shows a backstop bann
     expect(html).toContain('id="ro-reminders-banner"');
     expect(html).toContain('data-i18n="remindersBannerTitle"');
     expect(html).toContain('data-i18n="pauseRemindersBtn"');
+    // C1 (state-not-reflected polish task): active state keeps the red
+    // border and active copy -- only correct while emails are actually live.
+    expect(html).toContain('border-color:var(--danger,#b3122e)');
+    expect(html).not.toContain('data-i18n="remindersBannerTitlePaused"');
   });
 
   it('no banner when reminders are off for this league (the F1 default), even with an imminent event', async () => {
@@ -412,5 +416,25 @@ describe('F2 (players/reminders polish task): Players page shows a backstop bann
     expect(html).toContain('id="ro-reminders-banner"');
     expect(html).toContain('data-i18n="resumeRemindersBtn"');
     expect(html).not.toContain('data-i18n="pauseRemindersBtn"');
+    // C1 (state-not-reflected polish task): the banner used to keep its
+    // active-state title/description/red border even once paused -- only
+    // the button read the toggle. Paused state now gets neutral styling
+    // and its own copy, in both languages, checked from the rendered page.
+    expect(html).toContain('data-i18n="remindersBannerTitlePaused">Les rappels automatiques sont en pause<');
+    expect(html).toContain('data-i18n="remindersBannerDescPaused">');
+    expect(html).toContain("Ajouter des joueurs n'enverra rien tant que tu ne les reprends pas.");
+    expect(html).not.toContain('data-i18n="remindersBannerTitle">');
+    expect(html).not.toContain('border-color:var(--danger,#b3122e)');
+
+    // The page ships both languages' dicts in its own inline __I18N
+    // object (client-side language switch) -- this is how every other
+    // language check in this codebase confirms the EN copy, not a
+    // separate ?lang=en fetch (the roster page doesn't read that param).
+    const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
+    const dict = JSON.parse(m[1]);
+    expect(dict.en.remindersBannerTitlePaused).toBe('Automated reminders are paused');
+    expect(dict.en.remindersBannerDescPaused).toBe("Automated reminders are paused for this game. Adding players won't send anything until you resume.");
+    expect(dict.fr.remindersBannerTitlePaused).toBe('Les rappels automatiques sont en pause');
+    expect(dict.fr.remindersBannerDescPaused).toBe("Les rappels automatiques sont en pause pour ce match. Ajouter des joueurs n'enverra rien tant que tu ne les reprends pas.");
   });
 });
