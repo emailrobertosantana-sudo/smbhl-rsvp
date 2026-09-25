@@ -640,6 +640,79 @@ export async function handleLeagueContactUpdate(req, env, url) {
   return Response.json({ ok: true, player_id: playerId, name: row.name, email: row.email, phone: row.phone, role: row.role, is_goalie: !!row.is_goalie, is_backup_goalie: !!row.is_backup_goalie });
 }
 
+/* ---------- Item 3 (players polish task): inactive players ----------
+ * SMBHL has its own version of this (role='archived', with
+ * previous_role/archive_reason/dormant alongside it) -- not reused here
+ * because the league product's role column is a hard invariant elsewhere
+ * in this codebase (exactly 'roster'/'sub_skater', see
+ * createLeagueContactRow's own comment). This is the equivalent CONCEPT
+ * -- keeps history, hidden from active rosters/counts/pools, reactivatable
+ * -- as a new, orthogonal is_active flag instead, matching how is_goalie/
+ * is_backup_goalie already work on this same table.
+ *
+ * setContactActiveState is the ONE mechanism both the manual toggle route
+ * below and Item 4's season-rollover import call -- per this task's own
+ * "one path, not two implementations" instruction for reactivation.
+ */
+export async function setContactActiveState(env, leagueId, playerId, isActive) {
+  await env.DB.prepare(
+    'UPDATE contacts SET is_active = ? WHERE player_id = ? AND league_id = ?'
+  ).bind(isActive ? 1 : 0, playerId, leagueId).run();
+
+  // Going inactive: pull this player out of any upcoming event's
+  // confirmed/pending count -- the same effect a self-service "out"
+  // click has, going through the exact same rsvp write shape
+  // (status/status_by/updated_at) every other admin-driven status
+  // change in this file uses, so teamState/eventWeekStatus/openSpots
+  // (all rsvp-row-driven, not a fresh contacts pull) correctly stop
+  // counting them without needing any changes themselves. Only touches
+  // events that haven't happened yet (date >= today) -- past events are
+  // real history and are never rewritten by this.
+  if (!isActive) {
+    const today = new Date().toISOString().slice(0, 10);
+    await env.DB.prepare(
+      `UPDATE rsvp SET status = 'out', status_by = 'manager', updated_at = ?
+        WHERE player_id = ? AND status != 'out'
+          AND event_id IN (SELECT id FROM events WHERE league_id = ? AND date >= ? AND state != 'cancelled')`
+    ).bind(new Date().toISOString(), playerId, leagueId, today).run();
+  }
+}
+
+export async function handleLeagueContactSetActive(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update contacts for SMBHL.', errorKey: 'ROUTE_BLOCKED_CONTACTS' }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const playerId = String(body.player_id || '').trim();
+  if (!playerId) {
+    return Response.json({ ok: false, error: 'player_id is required.', errorKey: 'PLAYER_ID_REQUIRED' }, { status: 400 });
+  }
+  if (typeof body.is_active !== 'boolean') {
+    return Response.json({ ok: false, error: 'is_active must be true or false.', errorKey: 'IS_ACTIVE_REQUIRED' }, { status: 400 });
+  }
+  const existing = await env.DB.prepare('SELECT player_id FROM contacts WHERE player_id = ? AND league_id = ?').bind(playerId, leagueId).first();
+  if (!existing) {
+    return Response.json({ ok: false, error: 'Player not found.', errorKey: 'PLAYER_NOT_FOUND' }, { status: 404 });
+  }
+
+  await setContactActiveState(env, leagueId, playerId, body.is_active);
+
+  return Response.json({ ok: true, player_id: playerId, is_active: body.is_active });
+}
+
 /* ---------- POST /league/contacts/bulk (Part 6, live-testing task) ----------
  * Bulk roster import: an admin pastes a block of text (from a
  * spreadsheet) into the roster page, which parses it CLIENT-SIDE into

@@ -27,6 +27,7 @@ export const SCHEMA_MANIFEST = {
     "asked_streak",
     "dormant",
     "email",
+    "is_active",
     "is_backup_goalie",
     "is_goalie",
     "is_sub",

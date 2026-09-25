@@ -1,0 +1,29 @@
+-- Migration 044: inactive players (league product).
+--
+-- Apply with:
+--   npx wrangler d1 execute notreligue-demo --remote --file=./migrate-044.sql
+--
+-- WHAT THIS DOES: adds `contacts.is_active INTEGER NOT NULL DEFAULT 1` --
+-- purely additive, no existing column, row, index, or query is touched.
+-- Every existing contact (SMBHL and every league) defaults to 1 (active),
+-- correctly meaning "unchanged" for every row that existed before this
+-- migration.
+--
+-- WHY: a league needs to retire a player who stopped showing up without
+-- erasing their history (past rsvp rows, past-season stats). SMBHL already
+-- has a concept for this, but it overloads `contacts.role` (role =
+-- 'archived', with `previous_role`/`archive_reason`/`dormant` alongside it)
+-- -- appropriate for SMBHL's own much larger role vocabulary, but the
+-- league product's `role` column is a tested, hard invariant elsewhere in
+-- this codebase (exactly 'roster' or 'sub_skater', never a third value --
+-- see createLeagueContactRow's and the roster page's role-toggle's own
+-- comments). A new, orthogonal `is_active` column matches the pattern this
+-- same table already uses for other independent per-player state
+-- (is_goalie, is_backup_goalie) instead of overloading role.
+--
+-- Not applied meaningfully to SMBHL: SMBHL has its own, separate
+-- role='archived' mechanism (season_hub.js's own admin routes) and never
+-- reads or writes this column -- every SMBHL contact stays is_active = 1
+-- forever, since only the league product's own new UI ever sets it to 0.
+
+ALTER TABLE contacts ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;

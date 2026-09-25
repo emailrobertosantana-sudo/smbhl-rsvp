@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -1749,7 +1749,7 @@ async function handleDashboardPage(req, env, url) {
   // not min_goalies (which defaults to 0 for every league regardless of
   // structure).
   const dashHasRosterLimits = !!(leagueRow && leagueRow.min_players != null && leagueRow.max_players != null);
-  const playerCountRow = leagueRow ? await env.DB.prepare('SELECT COUNT(*) AS c FROM contacts WHERE league_id = ?').bind(leagueRow.id).first() : null;
+  const playerCountRow = leagueRow ? await env.DB.prepare('SELECT COUNT(*) AS c FROM contacts WHERE league_id = ? AND is_active = 1').bind(leagueRow.id).first() : null;
   const playerCount = playerCountRow ? Number(playerCountRow.c) || 0 : 0;
 
   const publicUrl = leagueSlug ? `${url.origin}/${leagueSlug}` : `${url.origin}/league/public?league=${leagueRow ? leagueRow.id : ''}`;
@@ -3447,22 +3447,25 @@ async function handleLeagueCommsBroadcast(req, env, url) {
     if (Array.isArray(parsed)) teamNames = parsed;
   } catch (_) {}
 
+  // Item 3 (players polish task): a retired/inactive player never
+  // receives a broadcast, same as they're excluded from every other
+  // email-targeting list on this page (reminders, invite pools).
   let recipients = [];
   if (target === 'all') {
     recipients = (await env.DB.prepare(
-      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND is_active = 1 AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
     ).bind(leagueId).all()).results || [];
   } else if (target === 'roster') {
     recipients = (await env.DB.prepare(
-      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND role = 'roster' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND role = 'roster' AND is_active = 1 AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
     ).bind(leagueId).all()).results || [];
   } else if (target === 'subs') {
     recipients = (await env.DB.prepare(
-      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND role LIKE 'sub_%' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND role LIKE 'sub_%' AND is_active = 1 AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
     ).bind(leagueId).all()).results || [];
   } else if (leagueRow.team_structure === 'fixed' && teamNames.includes(target)) {
     recipients = (await env.DB.prepare(
-      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND preferred_team = ? AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+      `SELECT player_id, name, email FROM contacts WHERE league_id = ? AND preferred_team = ? AND is_active = 1 AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
     ).bind(leagueId, target).all()).results || [];
   } else if (target === 'pending' || target === 'in') {
     if (!eventId) {
@@ -3474,7 +3477,7 @@ async function handleLeagueCommsBroadcast(req, env, url) {
     recipients = (await env.DB.prepare(
       `SELECT DISTINCT c.player_id, c.name, c.email
          FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
-        WHERE r.event_id = ? AND r.status = ? AND c.league_id = ?
+        WHERE r.event_id = ? AND r.status = ? AND c.league_id = ? AND c.is_active = 1
           AND c.email IS NOT NULL AND c.email != '' AND c.opted_out = 0
         ORDER BY c.name`
     ).bind(eventId, target, leagueId).all()).results || [];
@@ -4741,9 +4744,16 @@ async function handleLeagueRosterPage(req, env, url) {
 
   const leagueRow = await env.DB.prepare('SELECT name, team_colors, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
 
-  const contacts = (await env.DB.prepare(
-    'SELECT player_id, name, email, phone, role, preferred_team, is_goalie, is_backup_goalie FROM contacts WHERE league_id = ? ORDER BY name'
+  const allContacts = (await env.DB.prepare(
+    'SELECT player_id, name, email, phone, role, preferred_team, is_goalie, is_backup_goalie, is_active FROM contacts WHERE league_id = ? ORDER BY name'
   ).bind(leagueId).all()).results || [];
+  // Item 3 (players polish task): inactive players keep their history
+  // (rsvp rows, past-season stats) but are hidden from the active
+  // roster -- everywhere below that computes filters/counts/rows works
+  // from `contacts` (active only) exactly as before this task;
+  // `inactiveContacts` only feeds the new collapsed section.
+  const contacts = allContacts.filter(c => c.is_active !== 0);
+  const inactiveContacts = allContacts.filter(c => c.is_active === 0);
 
   // Live-testing task (batch 6), Part 6: onboarding used to stall
   // right here -- after adding a player, submitContact() just
@@ -4842,6 +4852,11 @@ async function handleLeagueRosterPage(req, env, url) {
       // email/phone/can-also-play-goalie -- Role and Position stay the
       // existing inline toggle buttons, unchanged.
       editPlayerBtn: 'Modifier', saveEdit: 'Enregistrer',
+      // Item 3 (players polish task): retiring a player -- keeps all
+      // history, hidden from the active roster/counts/pools, one click
+      // to reactivate. Not a tab alongside All/Subs -- a collapsed
+      // section, hidden by default.
+      inactiveSectionTitle: 'Joueurs inactifs', reactivateBtn: 'Réactiver', deactivateBtn: 'Marquer inactif',
       players: 'Joueurs', unassigned: 'Non assigné', noPlayers: "Aucun joueur pour l'instant.",
       weeklyDrawNote: "Les équipes sont assignées à chaque match, pas ici — voir la page d'un match.",
       // E1 bug fix (players polish task): "Gardien ou joueur?" as a
@@ -4886,6 +4901,7 @@ async function handleLeagueRosterPage(req, env, url) {
       role: 'Role', roleRoster: 'Regular', roleSub: 'Sub',
       teamOpt: 'Team (optional)', teamUnassigned: 'Unassigned', addBtn: 'Add', cancel: 'Cancel',
       editPlayerBtn: 'Edit', saveEdit: 'Save',
+      inactiveSectionTitle: 'Inactive players', reactivateBtn: 'Reactivate', deactivateBtn: 'Mark inactive',
       players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.',
       weeklyDrawNote: 'Teams are assigned per game, not here — see a game’s own page.',
       goalieAxis: 'Position', axisPlayer: 'Player', axisGoalie: 'Goalie',
@@ -4973,6 +4989,7 @@ async function handleLeagueRosterPage(req, env, url) {
           <div style="display:flex;gap:8px;margin-top:10px;">
             <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="saveEdit" onclick="submitEditRow('${esc(c.player_id)}')">Enregistrer</button>
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="cancel" onclick="toggleEditRow('${esc(c.player_id)}')">Annuler</button>
+            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" style="margin-left:auto;color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);" data-i18n="deactivateBtn" onclick="deactivatePlayer('${esc(c.player_id)}', this)">Marquer inactif</button>
           </div>
         </div>
       </td>
@@ -5023,6 +5040,10 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-bulk-table .ro-bulk-skip { color: var(--ink-muted); font-style: italic; }
   .ro-bulk-summary { font-size: 14px; color: var(--ink-muted); }
   .ro-edit-panel { padding: var(--space-3) 0; display: flex; flex-direction: column; gap: var(--space-2); max-width: 480px; }
+  .ro-inactive-toggle { width: 100%; display: flex; align-items: center; gap: 8px; padding: 14px var(--space-4); background: none; border: 0; font: 600 15px/1 var(--font-sans); color: var(--ink); cursor: pointer; text-align: left; }
+  .ro-inactive-chevron { margin-left: auto; transition: transform .15s; }
+  .ro-inactive-toggle[aria-expanded="true"] .ro-inactive-chevron { transform: rotate(180deg); }
+  .ro-inactive-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px var(--space-4); border-top: 1px solid var(--line); }
 </style>${header}
 <main class="dash-main ro-main">
   <div class="ro-top">
@@ -5055,6 +5076,18 @@ async function handleLeagueRosterPage(req, env, url) {
       ${!contacts.length ? `<p class="nl-help" style="padding:var(--space-4);margin:0;" data-i18n="noPlayers">Aucun joueur pour l'instant.</p>` : ''}
       ${teamStructure === 'weekly_draw' ? `<p class="nl-help" style="padding:var(--space-4);margin:0;border-top:1px solid var(--line);" data-i18n="weeklyDrawNote">Les équipes sont assignées à chaque match, pas ici — voir la page d'un match.</p>` : ''}
     </div>
+    ${inactiveContacts.length ? `<div class="ro-table-wrap">
+      <button type="button" class="ro-inactive-toggle" id="ro_inactive_toggle" onclick="toggleInactiveSection()" aria-expanded="false">
+        <span data-i18n="inactiveSectionTitle">Joueurs inactifs</span> (${inactiveContacts.length})
+        <span class="ro-inactive-chevron">▾</span>
+      </button>
+      <div id="ro_inactive_list" style="display:none;">
+        ${inactiveContacts.map(c => `<div class="ro-inactive-row" data-inactive-row="${esc(c.player_id)}">
+          <span>${esc(c.name)}${c.email || c.phone ? `<span class="nl-help" style="display:inline;margin-left:8px;">${esc(c.email || c.phone)}</span>` : ''}</span>
+          <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="reactivateBtn" onclick="reactivatePlayer('${esc(c.player_id)}', this)">Réactiver</button>
+        </div>`).join('')}
+      </div>
+    </div>` : ''}
     <aside class="ro-panel" id="ro_panel" aria-label="Ajouter un joueur">
       <h2 data-i18n="addPlayer">Ajouter un joueur</h2>
       <div id="formErr" class="nl-error" style="display:none"></div>
@@ -5496,6 +5529,38 @@ async function submitEditRow(playerId) {
     errEl.style.display = 'block';
   }
 }
+// Item 3 (players polish task): retiring/reactivating a player --
+// POST /league/contacts/active (leagues.js), the one mechanism both
+// this manual toggle and Item 4's season-rollover import use.
+function toggleInactiveSection() {
+  var list = document.getElementById('ro_inactive_list');
+  var btn = document.getElementById('ro_inactive_toggle');
+  var open = list.style.display === 'none';
+  list.style.display = open ? '' : 'none';
+  btn.setAttribute('aria-expanded', String(open));
+}
+async function setPlayerActive(playerId, isActive, btn) {
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/contacts/active', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ player_id: playerId, is_active: isActive })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { alert(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
+    // Moves the row between the active table and the collapsed
+    // section, and every count/filter pill on the page depends on
+    // which bucket a player is in -- a reload keeps this simple and
+    // always correct, same as every other roster-changing action here.
+    window.location.reload();
+  } catch (e) {
+    alert(window.__errorText('NETWORK_ERROR'));
+    btn.disabled = false;
+  }
+}
+function deactivatePlayer(playerId, btn) { return setPlayerActive(playerId, false, btn); }
+function reactivatePlayer(playerId, btn) { return setPlayerActive(playerId, true, btn); }
 async function submitContact() {
   document.getElementById('formErr').style.display = 'none';
   var name = document.getElementById('r_name').value.trim();
@@ -5594,7 +5659,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   if (leagueRow.reminder_24h_enabled) { armedKindsFr.push('Rappel 24 h avant'); armedKindsEn.push('24h reminder'); }
   if (leagueRow.reminder_12h_enabled) { armedKindsFr.push('Détails 12 h avant'); armedKindsEn.push('12h game details'); }
   const reminderEmailCountRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS c FROM contacts WHERE league_id = ? AND role = 'roster' AND email IS NOT NULL AND email != ''`
+    `SELECT COUNT(*) AS c FROM contacts WHERE league_id = ? AND role = 'roster' AND is_active = 1 AND email IS NOT NULL AND email != ''`
   ).bind(leagueId).first();
   const reminderEmailCount = reminderEmailCountRow ? Number(reminderEmailCountRow.c) || 0 : 0;
   const showReminderWarning = armedKindsFr.length > 0 && reminderEmailCount > 0;
@@ -6193,7 +6258,7 @@ ${tabbar}`;
           `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status
              FROM contacts c
              LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-            WHERE c.league_id = ? AND c.role = 'roster'
+            WHERE c.league_id = ? AND c.role = 'roster' AND c.is_active = 1
             ORDER BY c.name`
         ).bind(ev.id, leagueId).all()).results || []
       : isWeeklyDraw
@@ -6201,14 +6266,14 @@ ${tabbar}`;
           `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, r.status AS status
              FROM contacts c
              JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-            WHERE c.league_id = ? AND r.team = ?
+            WHERE c.league_id = ? AND r.team = ? AND c.is_active = 1
             ORDER BY c.name`
         ).bind(ev.id, leagueId, team).all()).results || []
       : (await env.DB.prepare(
           `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status
              FROM contacts c
              LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-            WHERE c.league_id = ? AND c.preferred_team = ?
+            WHERE c.league_id = ? AND c.preferred_team = ? AND c.is_active = 1
             ORDER BY c.name`
         ).bind(ev.id, leagueId, team).all()).results || [];
     const pendingCount = rosterRows.filter(p => p.status === 'pending').length;
@@ -6278,7 +6343,7 @@ ${tabbar}`;
       `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status
          FROM contacts c
          LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-        WHERE c.league_id = ? AND c.role = 'roster'
+        WHERE c.league_id = ? AND c.role = 'roster' AND c.is_active = 1
         ORDER BY c.name`
     ).bind(ev.id, leagueId).all()).results || [];
     const poolCounts = { in: 0, out: 0, pending: 0 };
@@ -6340,14 +6405,14 @@ ${tabbar}`;
   // including its legitimate "all assigned already" state.
   const anyConfirmedForEvent = isWeeklyDraw ? (await env.DB.prepare(
     `SELECT 1 FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
-      WHERE r.event_id = ? AND c.league_id = ? AND r.status = 'in' LIMIT 1`
+      WHERE r.event_id = ? AND c.league_id = ? AND r.status = 'in' AND c.is_active = 1 LIMIT 1`
   ).bind(ev.id, leagueId).first()) : null;
   if (isWeeklyDraw && anyConfirmedForEvent) {
     const unassignedRows = (await env.DB.prepare(
       `SELECT c.player_id, c.name
          FROM contacts c
          JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-        WHERE c.league_id = ? AND r.status = 'in' AND r.team IS NULL
+        WHERE c.league_id = ? AND r.status = 'in' AND r.team IS NULL AND c.is_active = 1
         ORDER BY c.name`
     ).bind(ev.id, leagueId).all()).results || [];
     const teamOptions = teamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
@@ -8354,7 +8419,7 @@ async function eventWeekStatus(env, leagueId, ev, cfg) {
     `SELECT COALESCE(r.status, 'pending') AS status, COUNT(*) AS cnt
        FROM contacts c
        LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-      WHERE c.league_id = ? AND c.role = 'roster'
+      WHERE c.league_id = ? AND c.role = 'roster' AND c.is_active = 1
       GROUP BY COALESCE(r.status, 'pending')`
   ).bind(ev.id, leagueId).all()).results || [];
   const counts = { in: 0, out: 0, pending: 0 };
@@ -8410,7 +8475,15 @@ function hoursOut(ev) {
 // unchanged. Only handleLeagueInviteSubs's own manual, admin-clicked
 // "invite subs now" button passes true -- see enqueue's own comment for
 // the full root-cause writeup.
-async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false) {
+// Item 3 (players polish task): requireActive defaults to false, so
+// every one of SMBHL's own existing call sites (none of which pass
+// it) keeps its exact current pool, unchanged -- SMBHL has no
+// is_active concept of its own (its own retirement mechanism is
+// role='archived', which already excludes a player from this same
+// pool via poolCondition/role matching, same as before this task).
+// Only handleLeagueInviteSubs (the league product's own sub/goalie
+// invite button) passes true.
+async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false, requireActive = false) {
   const poolCondition = usesIndependentGoalieAxis
     ? (need === 'goalie' ? `c.role = 'sub_skater' AND c.is_goalie = 1` : `c.role = 'sub_skater' AND c.is_goalie != 1`)
     : `c.role = ?`;
@@ -8418,6 +8491,7 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
   const pool = (await env.DB.prepare(
     `SELECT c.player_id FROM contacts c
       WHERE ${poolCondition} AND c.league_id = ? AND c.opted_out = 0 AND c.dormant = 0 AND c.email IS NOT NULL
+        ${requireActive ? 'AND c.is_active = 1' : ''}
         AND c.player_id NOT IN (SELECT player_id FROM rsvp
               WHERE event_id = ? AND player_id IS NOT NULL)
         AND c.player_id NOT IN (SELECT player_id FROM availability WHERE event_id = ?)
@@ -14552,7 +14626,7 @@ async function getNonResponders(env, leagueId, eventId, season = null) {
     `SELECT c.player_id, c.name, c.email, c.token_salt, c.preferred_team
        FROM contacts c
        LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-      WHERE c.league_id = ? AND ${rosterCondition}
+      WHERE c.league_id = ? AND ${rosterCondition} AND c.is_active = 1
         AND c.opted_out = 0 AND c.email IS NOT NULL
         AND (r.status IS NULL OR r.status = 'pending')`
   ).bind(eventId, leagueId).all()).results || [];
@@ -14577,7 +14651,7 @@ async function getConfirmedPlayers(env, leagueId, eventId) {
     `SELECT c.player_id, c.name, c.email, c.token_salt, r.team AS rsvp_team
        FROM contacts c
        JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-      WHERE c.league_id = ? AND r.status = 'in'
+      WHERE c.league_id = ? AND r.status = 'in' AND c.is_active = 1
         AND c.opted_out = 0 AND c.email IS NOT NULL`
   ).bind(eventId, leagueId).all()).results || [];
 }
@@ -15003,7 +15077,7 @@ async function randomAssignEventTeams(env, leagueRow, ev, cfg) {
   const unassigned = (await env.DB.prepare(
     `SELECT c.player_id, c.is_goalie FROM contacts c
        JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
-      WHERE c.league_id = ? AND r.status = 'in' AND r.team IS NULL`
+      WHERE c.league_id = ? AND r.status = 'in' AND r.team IS NULL AND c.is_active = 1`
   ).bind(eventId, leagueId).all()).results || [];
 
   const goalies = shuffleInPlace(unassigned.filter(p => p.is_goalie === 1));
@@ -15584,7 +15658,7 @@ async function handleLeagueInviteSubs(req, env, url) {
   // deployed product. skipQuietHours: true for the same reason as
   // maybeInviteSubsForShortage (enqueue's own comment) -- a real admin
   // just clicked a real "do this now" button.
-  const invited = await callSubs(env, ev, inviteTeamLabel, need, 0, leagueId, sportHasGoalie(cfg.sportType), true);
+  const invited = await callSubs(env, ev, inviteTeamLabel, need, 0, leagueId, sportHasGoalie(cfg.sportType), true, true);
   await drain(env, 40, ev.id);
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, team: inviteTeamLabel, need, invited });
 }
@@ -23499,6 +23573,9 @@ async function handleFetch(req, env, ctx) {
       // comment (leagues.js).
       if (url.pathname === '/league/contacts/update' && req.method === 'POST')
         return await handleLeagueContactUpdate(req, env, url);
+      // Item 3 (players polish task): inactive players.
+      if (url.pathname === '/league/contacts/active' && req.method === 'POST')
+        return await handleLeagueContactSetActive(req, env, url);
       if (url.pathname === '/league/events' && req.method === 'POST')
         return await handleLeagueEventCreate(req, env);
       if (url.pathname === '/league/events/bulk' && req.method === 'POST')

@@ -422,3 +422,195 @@ describe('Item 2: inline player editing (name, email, phone, can-also-play-goali
     expect(selfRes.status).toBe(200);
   });
 });
+
+// Item 3 (players polish task): a retired player keeps all history but
+// is hidden from active rosters, counts, and invite pools; a collapsed
+// (hidden-by-default) section on the Players page, not a tab, is the
+// only place they're reachable. SMBHL has its own version of this
+// (role='archived') -- not reused here since role is a hard invariant
+// elsewhere in this codebase (exactly 'roster'/'sub_skater'); this is
+// the same CONCEPT ported as a new, orthogonal is_active column
+// instead, matching how is_goalie/is_backup_goalie already work.
+describe('Item 3: inactive players', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  async function publishSeason(cookie, csrfToken, body) {
+    return SELF.fetch('http://example.com/league/season/publish', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify(body)
+    });
+  }
+  async function setActive(cookie, csrfToken, playerId, isActive) {
+    return SELF.fetch('http://example.com/league/contacts/active', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ player_id: playerId, is_active: isActive })
+    });
+  }
+
+  it('marking a player inactive removes them from the active roster table and puts them in the collapsed section instead', async () => {
+    const { cookie, csrfToken } = await signup('item3.roster.hide@example.com', '203.0.192.001');
+    await createLeague(cookie, csrfToken, { name: 'Item3 Roster Hide League', teamNames: ['A', 'B'] });
+    const player = await addContact(cookie, csrfToken, { name: 'Roster Hide Player', team: 'A', email: 'rosterhide@example.com' });
+
+    const before = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    expect(before).toContain('Roster Hide Player');
+    expect(before).not.toContain('id="ro_inactive_toggle"');
+
+    const res = await setActive(cookie, csrfToken, player.player_id, false);
+    expect(res.status).toBe(200);
+    expect((await res.json()).is_active).toBe(false);
+
+    const after = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    // Not in the active table's own tbody...
+    const tbodyStart = after.indexOf('id="ro_tbody"');
+    const tbodyEnd = after.indexOf('</tbody>', tbodyStart);
+    expect(after.slice(tbodyStart, tbodyEnd)).not.toContain('Roster Hide Player');
+    // ...but present, collapsed by default, in the inactive section.
+    expect(after).toContain('id="ro_inactive_toggle"');
+    expect(after).toMatch(/id="ro_inactive_list" style="display:none;"/);
+    expect(after).toContain('Roster Hide Player');
+    expect(after).toContain(`data-inactive-row="${player.player_id}"`);
+    expect(after).toContain(`onclick="reactivatePlayer('${player.player_id}', this)"`);
+    // Not a tab alongside All/Subs -- the filter pills are unaffected.
+    expect(after).not.toContain('data-filter="inactive"');
+  });
+
+  it('an inactive player does not appear in an event\'s player list, and does not count toward confirmed/pending totals', async () => {
+    const { cookie, csrfToken } = await signup('item3.event.exclude@example.com', '203.0.192.002');
+    await createLeague(cookie, csrfToken, { name: 'Item3 Event Exclude League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'Item3 Event Exclude Season' });
+    const active = await addContact(cookie, csrfToken, { name: 'Still Active Player', team: 'A', email: 'stillactive@example.com' });
+    const toRetire = await addContact(cookie, csrfToken, { name: 'To Retire Player', team: 'A', email: 'toretire@example.com' });
+    const evRes = await createEvent(cookie, csrfToken, { date: '2099-08-01' });
+    const eventId = (await evRes.json()).event.id;
+    // Confirm both IN before retiring one -- proves retiring actively
+    // removes them from an event they were already part of, not just
+    // that they were never added.
+    await SELF.fetch('http://example.com/league/rsvp/admin', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ event_id: eventId, player_id: active.player_id, status: 'in' })
+    });
+    await SELF.fetch('http://example.com/league/rsvp/admin', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ event_id: eventId, player_id: toRetire.player_id, status: 'in' })
+    });
+
+    const before = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+    expect(before).toContain('To Retire Player');
+    const confirmedMatch = before.match(/<span class="stat tnum">(\d+)<\/span><span data-i18n="confirmed">/);
+    expect(confirmedMatch[1]).toBe('2');
+
+    await setActive(cookie, csrfToken, toRetire.player_id, true); // no-op sanity: reactivating an already-active player is harmless
+    await setActive(cookie, csrfToken, toRetire.player_id, false);
+
+    const after = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+    expect(after).not.toContain('To Retire Player');
+    expect(after).toContain('Still Active Player');
+    const confirmedMatchAfter = after.match(/<span class="stat tnum">(\d+)<\/span><span data-i18n="confirmed">/);
+    expect(confirmedMatchAfter[1]).toBe('1');
+
+    // The rsvp row itself is real history, still queryable directly --
+    // just flipped to 'out' so shortage/count math (which reads rsvp,
+    // not a fresh roster pull) stays correct without needing its own
+    // is_active awareness.
+    const rsvpRow = await env.DB.prepare('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, toRetire.player_id).first();
+    expect(rsvpRow.status).toBe('out');
+  });
+
+  it('an inactive player is never offered by the sub/goalie invite pool', async () => {
+    const { cookie, csrfToken } = await signup('item3.invite.exclude@example.com', '203.0.192.003');
+    await createLeague(cookie, csrfToken, { name: 'Item3 Invite Exclude League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'Item3 Invite Exclude Season', skaters_per_team: 3, min_skaters: 1, goalies_per_team: 0 });
+    const sub = await addContact(cookie, csrfToken, { name: 'Retired Sub Player', role: 'sub_skater', email: 'retiredsub@example.com' });
+    await setActive(cookie, csrfToken, sub.player_id, false);
+    const evRes = await createEvent(cookie, csrfToken, { date: '2099-08-02' });
+    const eventId = (await evRes.json()).event.id;
+
+    const inviteRes = await SELF.fetch('http://example.com/league/events/invite-subs', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ event_id: eventId, team: 'A', need: 'skater' })
+    });
+    expect(inviteRes.status).toBe(200);
+    const outboxRow = await env.DB.prepare("SELECT 1 FROM outbox WHERE event_id = ? AND player_id = ? AND kind = 'sub_call'").bind(eventId, sub.player_id).first();
+    expect(outboxRow).toBeNull();
+  });
+
+  it('reactivation restores a player to the active roster and event player lists', async () => {
+    const { cookie, csrfToken } = await signup('item3.reactivate@example.com', '203.0.192.004');
+    await createLeague(cookie, csrfToken, { name: 'Item3 Reactivate League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'Item3 Reactivate Season' });
+    const player = await addContact(cookie, csrfToken, { name: 'Reactivate Me Player', team: 'A', email: 'reactivateme@example.com' });
+    const evRes = await createEvent(cookie, csrfToken, { date: '2099-08-03' });
+    const eventId = (await evRes.json()).event.id;
+
+    await setActive(cookie, csrfToken, player.player_id, false);
+    const midHtml = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    const midTbodyStart = midHtml.indexOf('id="ro_tbody"');
+    const midTbodyEnd = midHtml.indexOf('</tbody>', midTbodyStart);
+    expect(midHtml.slice(midTbodyStart, midTbodyEnd)).not.toContain('Reactivate Me Player');
+
+    const reactivateRes = await setActive(cookie, csrfToken, player.player_id, true);
+    expect(reactivateRes.status).toBe(200);
+    expect((await reactivateRes.json()).is_active).toBe(true);
+
+    const row = await env.DB.prepare('SELECT is_active FROM contacts WHERE player_id = ?').bind(player.player_id).first();
+    expect(row.is_active).toBe(1);
+
+    const afterHtml = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    const afterTbodyStart = afterHtml.indexOf('id="ro_tbody"');
+    const afterTbodyEnd = afterHtml.indexOf('</tbody>', afterTbodyStart);
+    expect(afterHtml.slice(afterTbodyStart, afterTbodyEnd)).toContain('Reactivate Me Player');
+    // No leftover collapsed section once nobody is inactive anymore.
+    expect(afterHtml).not.toContain('id="ro_inactive_toggle"');
+
+    const eventHtml = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+    expect(eventHtml).toContain('Reactivate Me Player');
+  });
+
+  it('players are league-wide, not season-scoped -- is_active on the contacts row itself, unaffected by publishing a new season', async () => {
+    const { cookie, csrfToken } = await signup('item3.leaguewide@example.com', '203.0.192.005');
+    await createLeague(cookie, csrfToken, { name: 'Item3 League Wide League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'Item3 League Wide Season 1' });
+    const player = await addContact(cookie, csrfToken, { name: 'League Wide Player', team: 'A', email: 'leaguewide@example.com' });
+    await setActive(cookie, csrfToken, player.player_id, false);
+
+    await publishSeason(cookie, csrfToken, { season_name: 'Item3 League Wide Season 2' });
+    const row = await env.DB.prepare('SELECT is_active FROM contacts WHERE player_id = ?').bind(player.player_id).first();
+    expect(row.is_active).toBe(0);
+  });
+
+  it('the deactivate control lives inside the edit panel, not a separate tab, and validates player_id/is_active', async () => {
+    const { cookie, csrfToken } = await signup('item3.control.validate@example.com', '203.0.192.006');
+    await createLeague(cookie, csrfToken, { name: 'Item3 Control Validate League', teamNames: ['A', 'B'] });
+    const player = await addContact(cookie, csrfToken, { name: 'Control Validate Player', team: 'A' });
+
+    const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    expect(html).toContain(`onclick="deactivatePlayer('${player.player_id}', this)"`);
+    expect(html).toContain('data-i18n="deactivateBtn"');
+
+    const missingId = await setActive(cookie, csrfToken, '', false);
+    expect(missingId.status).toBe(400);
+    expect((await missingId.json()).errorKey).toBe('PLAYER_ID_REQUIRED');
+
+    const badType = await SELF.fetch('http://example.com/league/contacts/active', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ player_id: player.player_id, is_active: 'not-a-boolean' })
+    });
+    expect(badType.status).toBe(400);
+    expect((await badType.json()).errorKey).toBe('IS_ACTIVE_REQUIRED');
+
+    const unknownPlayer = await setActive(cookie, csrfToken, 'whatever-not-real', false);
+    expect(unknownPlayer.status).toBe(404);
+    expect((await unknownPlayer.json()).errorKey).toBe('PLAYER_NOT_FOUND');
+  });
+
+  it('SMBHL is blocked from this route', async () => {
+    const { cookie, csrfToken } = await signup('item3.smbhlguard@example.com', '203.0.192.007');
+    const res = await setActive(cookie, csrfToken, 'whatever', false);
+    expect(res.status).toBe(404);
+    expect((await res.json()).errorKey).toBe('NO_LEAGUE_FOUND');
+  });
+});
