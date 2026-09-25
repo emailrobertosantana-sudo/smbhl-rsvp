@@ -16,7 +16,8 @@ import {
   getSeasonConfig,
   getTeamNames,
   getTeamNameFr,
-  getTeamColour
+  getTeamColour,
+  generateRoundRobinRounds
 } from './season_config.js';
 import { SMBHL_LEAGUE_ID, makeEventId } from './league_ids.js';
 
@@ -101,31 +102,19 @@ export function computePlayerMetrics(player, career, recentSeasons = []) {
   };
 }
 
-/**
- * Generates all round-robin pairings for any N teams using the polygon/Berger method
- */
-export function generateRoundRobinRounds(teams) {
-  const list = [...teams];
-  if (list.length % 2 !== 0) {
-    list.push('BYE');
-  }
-  const n = list.length;
-  const rounds = [];
-  for (let round = 0; round < n - 1; round++) {
-    const pairings = [];
-    for (let i = 0; i < n / 2; i++) {
-      const home = list[i];
-      const away = list[n - 1 - i];
-      if (home !== 'BYE' && away !== 'BYE') {
-        if (round % 2 === 0) pairings.push({ home, away });
-        else pairings.push({ home: away, away: home });
-      }
-    }
-    rounds.push(pairings);
-    list.splice(1, 0, list.pop());
-  }
-  return rounds;
-}
+// Generates all round-robin pairings for any N teams using the
+// polygon/Berger method.
+//
+// Fixed-teams scheduling task (Part 3): moved to season_config.js,
+// verbatim, unchanged -- imported above like this file's other
+// season_config.js helpers, and re-exported here (this exact function,
+// not a copy) so every existing external `import { generateRoundRobinRounds }
+// from './season_hub.js'` call site -- and generateScheduleMatrix's own
+// internal use, below -- keeps working completely unchanged, byte-for-
+// byte identical output. The league product (leagues.js) imports the
+// same function from season_config.js directly, rather than reaching
+// into this SMBHL-specific file.
+export { generateRoundRobinRounds };
 
 /**
  * Stratifies skaters into 4 Tiers:

@@ -19,7 +19,7 @@
 import { checkUserSession, checkCsrfToken, hashPassword, sessionResponseHeaders } from './auth.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS } from './league_ids.js';
-import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie } from './season_config.js';
+import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie, generateRoundRobinRounds } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail } from './design_system.js';
 import { hasCapability } from './super_admin.js';
@@ -1928,6 +1928,179 @@ export async function handleLeagueSeasonMoveEvents(req, env) {
   }
 
   return Response.json({ ok: true, league_id: leagueId, from_season: fromSeason, to_season: toSeason, moved });
+}
+
+/* ---------- fixture generator (Part 3, fixed-teams scheduling task) ----------
+ * A real schedule generator for a 'fixed' league -- distinct from
+ * /league/events/bulk (a pure date-repeater, no matchups) -- built on
+ * generateRoundRobinRounds (season_config.js, shared with SMBHL's own
+ * season_hub.js, never a second copy of the pairing math).
+ *
+ * DECIDED (task spec): a PROPOSAL the admin reviews and approves,
+ * never writing events directly -- same posture as SMBHL's own
+ * season_hub.js preview-then-launch flow (handleSeasonGenerateSchedule
+ * / handleSeasonLaunch). buildFixtureProposal is the single source of
+ * truth both routes below call -- preview and approve are always
+ * byte-identical for the same input, and approve NEVER trusts a
+ * client-echoed fixture list back (a tampering vector -- this
+ * regenerates server-side from the same real season team list instead).
+ *
+ * The admin form only collects ONE time and ONE venue (a real
+ * simplification: this does not ask for a second venue for the case
+ * where a round has more than one simultaneous game -- N=4 or 5 teams,
+ * 2 games per round). DECIDED here: those extra simultaneous games in
+ * the same round stay on the same date and venue, staggered by ONE
+ * HOUR increments from the configured time -- avoids a real
+ * date+venue+time collision (Part 2's own slot-conflict rule) without
+ * requiring the admin to configure multiple venues up front. A league
+ * that genuinely plays parallel games in different gyms already has
+ * that covered manually (the schedule page's own create form, Part 2)
+ * -- this generator's job is to get a season on the board fast, not to
+ * replace manual editing.
+ *
+ * `rounds` can exceed one full round-robin cycle (e.g. a 4-team league
+ * wants a 6-round season, longer than that cycle's own 3 rounds) --
+ * the cycle simply repeats (wraps via modulo), not a "true" double
+ * round-robin with a deliberate home/away swap on the second pass.
+ * Simpler, and still a genuinely balanced schedule when `rounds` is a
+ * multiple of the cycle length.
+ */
+function buildFixtureProposal({ teams, rounds, startDate, intervalDays, time, venue }) {
+  const cycle = generateRoundRobinRounds(teams);
+  const proposalRounds = [];
+  for (let r = 0; r < rounds; r++) {
+    const pairings = cycle[r % cycle.length];
+    const date = addDaysToDateStr(startDate, r * intervalDays);
+    const games = pairings.map((p, gameIndex) => {
+      let startTime = null;
+      if (time) {
+        const [hh, mm] = time.split(':').map(Number);
+        const staggeredHour = (hh + gameIndex) % 24;
+        startTime = `${String(staggeredHour).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+      }
+      return { home: p.home, away: p.away, date, start_time: startTime, venue: venue || null };
+    });
+    proposalRounds.push({ round: r + 1, date, games });
+  }
+  return proposalRounds;
+}
+
+function validateFixtureInput(env, body) {
+  const rounds = Number(body.rounds);
+  if (!Number.isFinite(rounds) || rounds < 1) {
+    return { error: { ok: false, error: 'rounds (or weeks) must be at least 1.', errorKey: 'FIXTURE_ROUNDS_REQUIRED' } };
+  }
+  const startDate = String(body.start_date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+    return { error: { ok: false, error: 'start_date is required, in YYYY-MM-DD format.', errorKey: 'DATE_REQUIRED' } };
+  }
+  let intervalDays = Number(body.interval_days);
+  if (!Number.isFinite(intervalDays) || intervalDays < 1) intervalDays = 7;
+  const time = String(body.time || '').trim();
+  if (time && !/^\d{2}:\d{2}$/.test(time)) {
+    return { error: { ok: false, error: 'time must be in HH:MM format.', errorKey: 'START_TIME_FORMAT' } };
+  }
+  const venue = String(body.venue || '').trim() || null;
+  return { value: { rounds: Math.min(Math.floor(rounds), 30), startDate, intervalDays: Math.floor(intervalDays), time: time || null, venue } };
+}
+
+// Shared by both routes below: confirms this is a real, currently-
+// published 'fixed' season with at least 2 real teams -- the fixture
+// generator is meaningless for weekly_draw (teams are drawn per event,
+// not fixed) and headcount (no team concept at all), so both are
+// rejected here rather than silently producing nonsense pairings.
+async function resolveFixtureLeagueTeams(env, leagueId) {
+  const leagueData = await getLeagueDataJson(env, leagueId);
+  if (!leagueData.current_season) {
+    return { error: { ok: false, error: 'Publish a season before generating a schedule.', errorKey: 'SEASON_REQUIRED' } };
+  }
+  const cfg = await getLeagueSeasonConfig(env, leagueId, leagueData.current_season);
+  if ((cfg.teamStructure || 'fixed') !== 'fixed') {
+    return { error: { ok: false, error: 'The fixture generator is only offered for fixed-teams leagues.', errorKey: 'FIXTURE_REQUIRES_FIXED_TEAMS' } };
+  }
+  const teams = getTeamNames(cfg);
+  if (teams.length < 2) {
+    return { error: { ok: false, error: 'This league needs at least 2 teams to generate a schedule.', errorKey: 'FIXTURE_NEEDS_TWO_TEAMS' } };
+  }
+  return { value: { season: leagueData.current_season, teams } };
+}
+
+export async function handleLeagueFixturePreview(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot generate a schedule for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+
+  const teamsResult = await resolveFixtureLeagueTeams(env, leagueId);
+  if (teamsResult.error) return Response.json(teamsResult.error, { status: 409 });
+  const inputResult = validateFixtureInput(env, body);
+  if (inputResult.error) return Response.json(inputResult.error, { status: 400 });
+
+  const { teams } = teamsResult.value;
+  const proposalRounds = buildFixtureProposal({ teams, ...inputResult.value });
+  return Response.json({ ok: true, league_id: leagueId, teams, rounds: proposalRounds });
+}
+
+export async function handleLeagueFixtureApprove(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot generate a schedule for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+
+  const teamsResult = await resolveFixtureLeagueTeams(env, leagueId);
+  if (teamsResult.error) return Response.json(teamsResult.error, { status: 409 });
+  const inputResult = validateFixtureInput(env, body);
+  if (inputResult.error) return Response.json(inputResult.error, { status: 400 });
+
+  // Never trusts a client-supplied fixture list -- regenerated here,
+  // server-side, from the same real season team list the preview
+  // route itself used. A client can only ever approve exactly what
+  // preview would have shown it, never something it fabricated.
+  const { season, teams } = teamsResult.value;
+  const proposalRounds = buildFixtureProposal({ teams, ...inputResult.value });
+
+  const leagueData = await getLeagueDataJson(env, leagueId);
+  const created = [];
+  const skipped = [];
+  for (const round of proposalRounds) {
+    for (const game of round.games) {
+      const result = await createLeagueEventRow(env, leagueId, {
+        date: game.date, start_time: game.start_time || undefined, venue: game.venue || undefined,
+        season, home_team: game.home, away_team: game.away
+      }, leagueData);
+      if (result.ok) {
+        created.push(result.event);
+      } else {
+        skipped.push({ round: round.round, home: game.home, away: game.away, date: game.date, errorKey: result.errorKey });
+      }
+    }
+  }
+
+  return Response.json({ ok: true, league_id: leagueId, createdCount: created.length, skippedCount: skipped.length, created, skipped });
 }
 
 /* ---------- league URL slugs (Part 2, overnight follow-up task) ----------

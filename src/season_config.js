@@ -497,3 +497,41 @@ export function normalizeTeamWithConfig(rawName, config) {
   return null;
 }
 
+/**
+ * Fixed-teams scheduling task (Part 3): moved here from season_hub.js,
+ * verbatim, unchanged -- this is a pure, product-agnostic round-robin
+ * pairing function (a team-name list in, an array of rounds out, each
+ * round an array of {home, away} pairings) with no SMBHL-specific
+ * dependency at all. season_config.js is the shared, product-agnostic
+ * home both season_hub.js (SMBHL) and leagues.js (the league product)
+ * already import from -- this is the "shared algorithm, extracted and
+ * used by both, never copied" home for it, per the one-codebase
+ * principle, rather than leagues.js reaching into season_hub.js (an
+ * SMBHL-specific, ADMIN_KEY-gated file) to borrow it. season_hub.js's
+ * own export of this name is now a re-export of this exact function --
+ * every existing SMBHL call site is completely unaffected; see that
+ * file's own comment.
+ */
+export function generateRoundRobinRounds(teams) {
+  const list = [...teams];
+  if (list.length % 2 !== 0) {
+    list.push('BYE');
+  }
+  const n = list.length;
+  const rounds = [];
+  for (let round = 0; round < n - 1; round++) {
+    const pairings = [];
+    for (let i = 0; i < n / 2; i++) {
+      const home = list[i];
+      const away = list[n - 1 - i];
+      if (home !== 'BYE' && away !== 'BYE') {
+        if (round % 2 === 0) pairings.push({ home, away });
+        else pairings.push({ home: away, away: home });
+      }
+    }
+    rounds.push(pairings);
+    list.splice(1, 0, list.pop());
+  }
+  return rounds;
+}
+

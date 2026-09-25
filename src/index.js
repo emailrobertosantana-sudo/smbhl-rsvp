@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -6517,6 +6517,11 @@ async function handleLeagueSchedulePage(req, env, url) {
   const scheduleTeamNames = scheduleCfg ? getTeamNames(scheduleCfg) : [];
   const scheduleIsFixed = scheduleCfg && (scheduleCfg.teamStructure || 'fixed') === 'fixed';
   const showMatchupPicker = scheduleIsFixed && scheduleTeamNames.length > 2;
+  // Part 3 (fixed-teams scheduling task): the fixture generator is
+  // offered for any 'fixed' league with at least 2 teams -- unlike the
+  // single-event matchup picker above, even a 2-team league benefits
+  // from not hand-creating every week of a season one event at a time.
+  const showFixtureGenerator = scheduleIsFixed && scheduleTeamNames.length >= 2;
 
   const I18N_SCHEDULE = {
     fr: {
@@ -6565,7 +6570,18 @@ async function handleLeagueSchedulePage(req, env, url) {
       // where matchupVs is built): in a shared gym the distinction
       // isn't meaningful, so only "Team A vs Team B" is shown.
       matchupLabel: 'Qui joue?', matchupOptional: '(optionnel -- peut être précisé plus tard)',
-      matchupTeam1: 'Équipe 1', matchupTeam2: 'Équipe 2', matchupVsWord: 'contre'
+      matchupTeam1: 'Équipe 1', matchupTeam2: 'Équipe 2', matchupVsWord: 'contre',
+      // Part 3 (fixed-teams scheduling task): the fixture generator --
+      // a PROPOSAL the admin reviews before anything is written,
+      // reusing generateRoundRobinRounds (shared with SMBHL's own
+      // schedule tool). Only offered for a 'fixed' league.
+      fixtureGenBtn: 'Générer un calendrier', fixtureGenTitle: 'Générer un calendrier (matchs aller-retour)',
+      fixtureGenHelp: 'Crée un calendrier équilibré où chaque équipe affronte les autres tour à tour -- rien n\'est créé avant que tu confirmes.',
+      fixtureGenRounds: 'Nombre de rondes', fixtureGenStartDate: 'Première date', fixtureGenInterval: 'Intervalle (jours)',
+      fixtureGenPreviewBtn: 'Prévisualiser', fixtureGenApproveBtn: 'Créer ces matchs', fixtureGenBackBtn: 'Retour',
+      fixtureGenRoundLabel: 'Ronde {n} -- {date}',
+      fixtureGenSameGymNote: 'Plus d\'un match cette ronde-là -- même lieu, heures décalées d\'une heure entre elles.',
+      fixtureGenResultSummary: '{created} match(s) créé(s).'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
@@ -6593,7 +6609,14 @@ async function handleLeagueSchedulePage(req, env, url) {
       bulkCreateResultSummary: '{created} event(s) created, {skipped} skipped (already existed).',
       crossMidnightWarning: "The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?",
       matchupLabel: "Who's playing?", matchupOptional: '(optional -- can be set later)',
-      matchupTeam1: 'Team 1', matchupTeam2: 'Team 2', matchupVsWord: 'vs'
+      matchupTeam1: 'Team 1', matchupTeam2: 'Team 2', matchupVsWord: 'vs',
+      fixtureGenBtn: 'Generate a schedule', fixtureGenTitle: 'Generate a schedule (round robin)',
+      fixtureGenHelp: "Creates a balanced schedule where every team takes turns playing the others -- nothing is created until you confirm.",
+      fixtureGenRounds: 'Number of rounds', fixtureGenStartDate: 'First date', fixtureGenInterval: 'Interval (days)',
+      fixtureGenPreviewBtn: 'Preview', fixtureGenApproveBtn: 'Create these games', fixtureGenBackBtn: 'Back',
+      fixtureGenRoundLabel: 'Round {n} -- {date}',
+      fixtureGenSameGymNote: 'More than one game this round -- same venue, times staggered an hour apart.',
+      fixtureGenResultSummary: '{created} game(s) created.'
     }
   };
 
@@ -6681,6 +6704,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     <h1 data-i18n="title">Horaire</h1>
     ${needsSeason ? '' : `<div style="display:flex;gap:var(--space-2);flex-wrap:wrap;">
       <button type="button" class="nl-btn nl-btn--secondary" onclick="toggleBulkPanel()" data-i18n="bulkCreateBtn">Créer plusieurs matchs</button>
+      ${showFixtureGenerator ? `<button type="button" class="nl-btn nl-btn--secondary" onclick="toggleFixturePanel()" data-i18n="fixtureGenBtn">Générer un calendrier</button>` : ''}
       <button type="button" class="nl-btn nl-btn--primary" onclick="toggleSchedulePanel()" data-i18n="createEvent">Créer un match</button>
     </div>`}
   </div>
@@ -6810,6 +6834,45 @@ async function handleLeagueSchedulePage(req, env, url) {
         <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleBulkPanel()">Annuler</button>
       </div>
     </aside>
+    ${showFixtureGenerator ? `<aside class="sc-bulk-panel" id="sc_fixture_panel" data-i18n-aria="fixtureGenTitle" aria-label="Générer un calendrier">
+      <h2 data-i18n="fixtureGenTitle">Générer un calendrier (matchs aller-retour)</h2>
+      <p class="nl-help" data-i18n="fixtureGenHelp">Crée un calendrier équilibré où chaque équipe affronte les autres tour à tour -- rien n'est créé avant que tu confirmes.</p>
+      <div id="fixtureGenErr" class="nl-error" style="display:none"></div>
+      <div id="fixtureGenOk" class="nl-ok" style="display:none"></div>
+      <div id="fixture_form_fields">
+        <div class="nl-field">
+          <label class="nl-label" for="fx_rounds" data-i18n="fixtureGenRounds">Nombre de rondes</label>
+          <input class="nl-input" id="fx_rounds" type="number" min="1" max="30" value="${Math.max(1, scheduleTeamNames.length - (scheduleTeamNames.length % 2 === 0 ? 1 : 0))}">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="fx_start_date" data-i18n="fixtureGenStartDate">Première date</label>
+          <input class="nl-input" id="fx_start_date" type="date" required>
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="fx_interval" data-i18n="fixtureGenInterval">Intervalle (jours)</label>
+          <input class="nl-input" id="fx_interval" type="number" min="1" value="7">
+        </div>
+        <div class="sc-two">
+          <div class="nl-field">
+            <label class="nl-label" for="fx_time" data-i18n="startOpt">Heure de début (optionnel)</label>
+            <input class="nl-input" id="fx_time" type="time">
+          </div>
+          <div class="nl-field">
+            <label class="nl-label" for="fx_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
+            <input class="nl-input" id="fx_venue" type="text">
+          </div>
+        </div>
+        <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="fx_preview_btn" data-i18n="fixtureGenPreviewBtn" onclick="previewFixtures()">Prévisualiser</button>
+      </div>
+      <div id="fixture_preview_wrap" style="display:none;">
+        <div id="fixture_preview_results" style="display:flex;flex-direction:column;gap:12px;max-height:360px;overflow-y:auto;"></div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
+          <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="fx_approve_btn" data-i18n="fixtureGenApproveBtn" onclick="approveFixtures()">Créer ces matchs</button>
+          <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="fixtureGenBackBtn" onclick="backToFixtureForm()">Retour</button>
+        </div>
+      </div>
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleFixturePanel()">Annuler</button>
+    </aside>` : ''}
   </div>
   `}
 </main>
@@ -6937,6 +7000,85 @@ async function submitBulkEvents() {
     window.location.reload();
   } catch (e) {
     showBulkErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
+  }
+}
+// Part 3 (fixed-teams scheduling task): the fixture generator --
+// preview (read-only, computes the proposal) then approve (creates
+// the real events) are two separate calls, never a single "create
+// blind" action. FX_LAST_PARAMS holds exactly the params the last
+// successful preview used, so approve sends THOSE SAME params back --
+// the server regenerates the identical proposal itself rather than
+// trusting anything echoed from the client.
+var FX_LAST_PARAMS = null;
+function toggleFixturePanel() { document.getElementById('sc_fixture_panel').classList.toggle('open'); }
+function showFixtureErr(msg) {
+  document.getElementById('fixtureGenOk').style.display = 'none';
+  var el = document.getElementById('fixtureGenErr'); el.textContent = msg; el.style.display = 'block';
+}
+function backToFixtureForm() {
+  document.getElementById('fixture_form_fields').style.display = '';
+  document.getElementById('fixture_preview_wrap').style.display = 'none';
+}
+async function previewFixtures() {
+  document.getElementById('fixtureGenErr').style.display = 'none';
+  document.getElementById('fixtureGenOk').style.display = 'none';
+  var rounds = document.getElementById('fx_rounds').value;
+  var startDate = document.getElementById('fx_start_date').value;
+  var interval = document.getElementById('fx_interval').value;
+  var time = document.getElementById('fx_time').value;
+  var venue = document.getElementById('fx_venue').value.trim();
+  if (!startDate) { showFixtureErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
+  var params = { rounds: Number(rounds), start_date: startDate, interval_days: Number(interval) || 7, time: time || undefined, venue: venue || undefined };
+  var btn = document.getElementById('fx_preview_btn');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/season/fixture-preview', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(params)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { showFixtureErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
+    FX_LAST_PARAMS = params;
+    var dict = window.__pageDict ? window.__pageDict() : {};
+    var out = document.getElementById('fixture_preview_results');
+    out.innerHTML = '';
+    data.rounds.forEach(function(round) {
+      var block = document.createElement('div');
+      var label = (dict.fixtureGenRoundLabel || 'Round {n} -- {date}').split('{n}').join(String(round.round)).split('{date}').join(round.date);
+      var html = '<div class="h3" style="font-size:15px">' + label + '</div>';
+      round.games.forEach(function(g) {
+        html += '<div class="nl-help" style="margin-top:4px">' + g.home + ' ' + (dict.matchupVsWord || 'vs') + ' ' + g.away + (g.start_time ? ' -- ' + g.start_time : '') + (g.venue ? ' (' + g.venue + ')' : '') + '</div>';
+      });
+      if (round.games.length > 1) {
+        html += '<p class="nl-help" style="margin-top:4px;font-style:italic">' + (dict.fixtureGenSameGymNote || '') + '</p>';
+      }
+      block.innerHTML = html;
+      out.appendChild(block);
+    });
+    document.getElementById('fixture_form_fields').style.display = 'none';
+    document.getElementById('fixture_preview_wrap').style.display = '';
+    btn.disabled = false;
+  } catch (e) {
+    showFixtureErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
+  }
+}
+async function approveFixtures() {
+  if (!FX_LAST_PARAMS) return;
+  document.getElementById('fixtureGenErr').style.display = 'none';
+  var btn = document.getElementById('fx_approve_btn');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/season/fixture-approve', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(FX_LAST_PARAMS)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { showFixtureErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
+    window.location.reload();
+  } catch (e) {
+    showFixtureErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
   }
 }
 function toggleDuplicateRow(eventId) {
@@ -24577,6 +24719,14 @@ async function handleFetch(req, env, ctx) {
       // events onto the new current one, part of the rollover flow.
       if (url.pathname === '/league/season/move-events' && req.method === 'POST')
         return await handleLeagueSeasonMoveEvents(req, env);
+      // Part 3 (fixed-teams scheduling task): fixture generator --
+      // preview computes a proposal without writing anything; approve
+      // regenerates the same proposal server-side and creates the real
+      // events. Fixed-teams leagues only.
+      if (url.pathname === '/league/season/fixture-preview' && req.method === 'POST')
+        return await handleLeagueFixturePreview(req, env);
+      if (url.pathname === '/league/season/fixture-approve' && req.method === 'POST')
+        return await handleLeagueFixtureApprove(req, env);
       if (url.pathname === '/league/events' && req.method === 'POST')
         return await handleLeagueEventCreate(req, env);
       if (url.pathname === '/league/events/bulk' && req.method === 'POST')
