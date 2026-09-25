@@ -5672,6 +5672,14 @@ ${tabbar}`;
   const teamStructure = cfg.teamStructure || 'fixed';
   const isHeadcount = teamStructure === 'headcount';
   const isWeeklyDraw = teamStructure === 'weekly_draw';
+  // Group A (weekly_draw pre-draw bug fix task): before a draw, every
+  // confirmed player has rsvp.team = NULL by construction -- a per-team
+  // teamState/openSpots query (the loop below) sees every team as
+  // completely empty and reports it maximally "short" regardless of
+  // real confirmed count. Shown pool-wide instead (poolCardHtml, built
+  // below) until a real draw has happened; per-team cards return
+  // exactly as before once it has.
+  const isWeeklyDrawPreDraw = isWeeklyDraw && !(await weeklyDrawHasAssigned(env, ev.id));
 
   const I18N_DETAIL = {
     fr: {
@@ -5724,7 +5732,7 @@ ${tabbar}`;
   };
 
   const teamCards = [];
-  for (let i = 0; i < teamNames.length; i++) {
+  for (let i = 0; i < teamNames.length && !isWeeklyDrawPreDraw; i++) {
     const team = teamNames[i];
     const st = await teamState(env.DB, ev.id, team, cfg);
     const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
@@ -5801,6 +5809,52 @@ ${tabbar}`;
     </section>`);
   }
 
+  // Group A (weekly_draw pre-draw bug fix task): one pool-wide card
+  // (confirmed-vs-minimum, matching eventWeekStatus's own weekly_draw
+  // math -- weeklyDrawPoolStatus, the model this DELIBERATELY reuses
+  // rather than reimplementing) in place of the N meaningless per-team
+  // cards a draw hasn't happened for yet. Invite buttons target the
+  // pool too (team: '' -- handleLeagueInviteSubs treats an empty/absent
+  // team as "pool-wide" for a weekly_draw league with no draw yet,
+  // independently re-checking that state itself rather than trusting
+  // this page's own determination).
+  let poolCardHtml = '';
+  if (isWeeklyDrawPreDraw) {
+    const poolRsvpRows = (await env.DB.prepare(
+      `SELECT COALESCE(r.status, 'pending') AS status, COUNT(*) AS cnt
+         FROM contacts c
+         LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+        WHERE c.league_id = ? AND c.role = 'roster'
+        GROUP BY COALESCE(r.status, 'pending')`
+    ).bind(ev.id, leagueId).all()).results || [];
+    const poolCounts = { in: 0, out: 0, pending: 0 };
+    for (const r of poolRsvpRows) poolCounts[r.status] = Number(r.cnt) || 0;
+    const pool = await weeklyDrawPoolStatus(env, ev, cfg, poolCounts.in);
+    const poolMeterSpots = Math.min(14, Math.max(pool.meterTarget, poolCounts.in));
+
+    const poolInviteButtons = [];
+    if (pool.openGoalies > 0) poolInviteButtons.push(`<button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="inviteGoalie" onclick="inviteSubs('','goalie',this)">Inviter un gardien</button>`);
+    if (pool.openSkaters > 0) poolInviteButtons.push(`<button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="inviteSkater" onclick="inviteSubs('','skater',this)">Inviter des joueurs</button>`);
+
+    poolCardHtml = `
+    <section class="nl-card nl-card--pad-lg${pool.short ? ' nl-card--short' : ''} ev-team" style="grid-column:1/-1">
+      <div class="ev-th">
+        <h2><span data-i18n="poolTitle">Joueurs</span></h2>
+        ${pool.short
+          ? `<span class="nl-badge nl-badge--short">${BADGE_ICON_ALERT}<span data-i18n="short">Manque</span> ${pool.openGoalies + pool.openSkaters}</span>`
+          : `<span class="nl-badge nl-badge--in">${BADGE_ICON_CHECK}<span data-i18n="complete">Complet</span></span>`}
+      </div>
+      <div class="ev-nums">
+        <div><span class="stat tnum">${poolCounts.in}</span><span data-i18n="confirmed">confirmés</span></div>
+        <div><span class="stat tnum">${pool.openSkaters + pool.openGoalies}</span><span data-i18n="openSpots">places libres</span></div>
+        <div><span class="stat tnum">${poolCounts.pending}</span><span data-i18n="noReply">sans réponse</span></div>
+      </div>
+      <div class="nl-meter">${Array.from({ length: poolMeterSpots }, (_, s) => `<i class="${s < poolCounts.in ? 'in' : 'open'}"></i>`).join('')}</div>
+      ${poolInviteButtons.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${poolInviteButtons.join('')}</div>` : ''}
+      <p class="inviteMsg nl-help" style="display:none;"></p>
+    </section>`;
+  }
+
   // Team-structure task, Part 3: weekly_draw's own "confirmed, not yet
   // assigned" pool -- real query (rsvp.team IS NULL means "no admin
   // assignment yet", not "no rsvp row"; only status='in' rows can even
@@ -5871,7 +5925,7 @@ ${tabbar}`;
     <p id="evRemindersMsg" class="nl-help" style="display:none;margin-top:4px;"></p>
   </div>
   ${unassignedHtml}
-  <div class="ev-teams">${teamCards.join('')}</div>
+  <div class="ev-teams">${poolCardHtml || teamCards.join('')}</div>
 </main>
 ${tabbar}`;
 
@@ -7672,6 +7726,55 @@ export async function teamState(db, eventId, team, cfg) {
 //    goalie=1 among confirmed, no backup-goalie fallback) is used here
 //    since the primary/backup distinction is inherently per-team and
 //    meaningless pool-wide before teams exist.
+// Group A (weekly_draw pre-draw bug fix task): the pool-wide equivalent
+// of teamState/openSpots for a weekly_draw event -- confirmed players
+// have no rsvp.team yet before a draw, so any PER-TEAM shortage query
+// (teamState/openSpots called once per named team) reads every team as
+// completely empty and therefore maximally "short", regardless of how
+// many players have actually confirmed. This was already worked around
+// once, for the dashboard's own week-status card (eventWeekStatus,
+// below) -- pulled out here as its own function so the event-detail
+// page (handleLeagueEventDetailPage) can reuse the EXACT same math for
+// its pre-draw card and invite buttons, rather than a second,
+// potentially-divergent implementation. Threshold model unchanged:
+// still cfg.minSkaters/goaliesPerTeam per team, just multiplied by
+// team count instead of queried per team.
+async function weeklyDrawPoolStatus(env, ev, cfg, confirmedTotal) {
+  const teamNames = getTeamNames(cfg);
+  const goalieRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS c FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND r.status = 'in' AND c.is_goalie = 1`
+  ).bind(ev.id).first();
+  const maxGoaliesPerTeam = cfg.maxGoalies || cfg.goaliesPerTeam || 0;
+  const confirmedGoalies = Math.min(Number(goalieRow && goalieRow.c) || 0, maxGoaliesPerTeam * teamNames.length);
+  const confirmedSkaters = confirmedTotal - confirmedGoalies;
+  const neededSkaters = (cfg.minSkaters || 0) * teamNames.length;
+  const neededGoalies = (cfg.goaliesPerTeam || 0) * teamNames.length;
+  const maxSkaters = (cfg.skatersPerTeam || cfg.minSkaters || 0) * teamNames.length;
+  return {
+    confirmedGoalies, confirmedSkaters, neededGoalies, neededSkaters,
+    openGoalies: Math.max(0, neededGoalies - confirmedGoalies),
+    openSkaters: Math.max(0, neededSkaters - confirmedSkaters),
+    meterTarget: maxGoaliesPerTeam * teamNames.length + maxSkaters,
+    short: confirmedSkaters < neededSkaters || confirmedGoalies < neededGoalies
+  };
+}
+
+// Group A (weekly_draw pre-draw bug fix task): whether at least one
+// player has actually been placed on a real team for this event yet
+// (a manual assign, a bulk random draw, or the auto-draw cron) --
+// writeLeagueRsvpStatus never sets rsvp.team for weekly_draw itself
+// (see that function's own comment), so team IS NOT NULL is an
+// unambiguous, real signal that a draw has happened, not just that
+// someone RSVP'd. Used to decide which state (pre-draw pool-wide,
+// post-draw per-team) an event's detail page and invite buttons show.
+async function weeklyDrawHasAssigned(env, eventId) {
+  const row = await env.DB.prepare(
+    `SELECT 1 FROM rsvp WHERE event_id = ? AND team IS NOT NULL LIMIT 1`
+  ).bind(eventId).first();
+  return !!row;
+}
+
 async function eventWeekStatus(env, leagueId, ev, cfg) {
   const teamNames = getTeamNames(cfg);
   const teamStructure = cfg.teamStructure || 'fixed';
@@ -7690,16 +7793,7 @@ async function eventWeekStatus(env, leagueId, ev, cfg) {
   if (teamStructure === 'headcount') {
     short = (await teamState(env.DB, ev.id, HEADCOUNT_TEAM_NAME, cfg)).short;
   } else if (teamStructure === 'weekly_draw') {
-    const goalieRow = await env.DB.prepare(
-      `SELECT COUNT(*) AS c FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
-        WHERE r.event_id = ? AND r.status = 'in' AND c.is_goalie = 1`
-    ).bind(ev.id).first();
-    const maxGoaliesPerTeam = cfg.maxGoalies || cfg.goaliesPerTeam || 0;
-    const confirmedGoalies = Math.min(Number(goalieRow && goalieRow.c) || 0, maxGoaliesPerTeam * teamNames.length);
-    const confirmedSkaters = counts.in - confirmedGoalies;
-    const neededSkaters = (cfg.minSkaters || 0) * teamNames.length;
-    const neededGoalies = (cfg.goaliesPerTeam || 0) * teamNames.length;
-    short = confirmedSkaters < neededSkaters || confirmedGoalies < neededGoalies;
+    short = (await weeklyDrawPoolStatus(env, ev, cfg, counts.in)).short;
   } else {
     for (const team of teamNames) {
       if ((await teamState(env.DB, ev.id, team, cfg)).short) { short = true; break; }
@@ -14869,8 +14963,8 @@ async function handleLeagueInviteSubs(req, env, url) {
   const eventId = String(body.event_id || '').trim();
   const team = String(body.team || '').trim();
   const need = String(body.need || '').trim();
-  if (!eventId || !team || !['goalie', 'skater'].includes(need)) {
-    return Response.json({ ok: false, error: 'event_id, team, and need (goalie|skater) are required.', errorKey: 'ADMIN_INVITE_SUBS_FIELDS_REQUIRED' }, { status: 400 });
+  if (!eventId || !['goalie', 'skater'].includes(need)) {
+    return Response.json({ ok: false, error: 'event_id and need (goalie|skater) are required.', errorKey: 'ADMIN_INVITE_SUBS_FIELDS_REQUIRED' }, { status: 400 });
   }
 
   const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
@@ -14878,7 +14972,24 @@ async function handleLeagueInviteSubs(req, env, url) {
   if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
-  if (!getTeamNames(cfg).includes(team)) {
+
+  // Group A (weekly_draw pre-draw bug fix task): re-determined here,
+  // server-side, independently of whatever `team` the client sent (the
+  // page's own pre-draw pool card posts '' -- see its own comment --
+  // but this route never trusts that alone; it checks the real event
+  // state itself, the same source of truth handleLeagueEventDetailPage
+  // uses). Pre-draw, a real team name is meaningless (nobody's on any
+  // team yet -- see callSubs' own `team` param, which is a label on the
+  // outbox row / invite email only, never a pool filter), so the
+  // invite is labeled with the league's own name instead. Post-draw
+  // (or any other team structure), behavior is byte-for-byte what it
+  // was before this task: `team` must be one of this league's real,
+  // current team names.
+  let inviteTeamLabel = team;
+  if (cfg.teamStructure === 'weekly_draw' && !(await weeklyDrawHasAssigned(env, eventId))) {
+    const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
+    inviteTeamLabel = (leagueRow && leagueRow.name) || team;
+  } else if (!team || !getTeamNames(cfg).includes(team)) {
     return Response.json({ ok: false, error: 'Unknown team for this league.', errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
   }
 
@@ -14902,9 +15013,9 @@ async function handleLeagueInviteSubs(req, env, url) {
   // deployed product. skipQuietHours: true for the same reason as
   // maybeInviteSubsForShortage (enqueue's own comment) -- a real admin
   // just clicked a real "do this now" button.
-  const invited = await callSubs(env, ev, team, need, 0, leagueId, sportHasGoalie(cfg.sportType), true);
+  const invited = await callSubs(env, ev, inviteTeamLabel, need, 0, leagueId, sportHasGoalie(cfg.sportType), true);
   await drain(env, 40, ev.id);
-  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, team, need, invited });
+  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, team: inviteTeamLabel, need, invited });
 }
 
 async function linksRoute(req, env, url) {
