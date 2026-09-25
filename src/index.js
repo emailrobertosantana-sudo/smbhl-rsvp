@@ -6997,6 +6997,7 @@ ${tabbar}`;
   const teamStructure = cfg.teamStructure || 'fixed';
   const isHeadcount = teamStructure === 'headcount';
   const isWeeklyDraw = teamStructure === 'weekly_draw';
+  const isFixed = teamStructure === 'fixed';
   // Group A (weekly_draw pre-draw bug fix task): before a draw, every
   // confirmed player has rsvp.team = NULL by construction -- a per-team
   // teamState/openSpots query (the loop below) sees every team as
@@ -7005,6 +7006,27 @@ ${tabbar}`;
   // below) until a real draw has happened; per-team cards return
   // exactly as before once it has.
   const isWeeklyDrawPreDraw = isWeeklyDraw && !(await weeklyDrawHasAssigned(env, ev.id));
+  // Part 1 (fixed-teams matchup bug fix task): this page used to loop
+  // over EVERY team in a 'fixed' league for every single event, as if
+  // all of them played that one game -- correct by coincidence for a
+  // 2-team league (both genuinely do play every game) but wrong for
+  // any larger one (a 4-team league showed all 4 team cards, with
+  // rosters/shortage badges/invite buttons, for a game only 2 of them
+  // are actually in). weekly_draw and headcount are unaffected: each
+  // of THEIR team cards already means something else entirely
+  // (weekly_draw's is this week's real draw result; headcount's is
+  // the league's one implicit pool) -- this only ever touches 'fixed'.
+  //
+  // There is no stored matchup yet (Part 2, season-model/scheduling
+  // task, adds ev.home_team/ev.away_team) -- until that lands, a
+  // >2-team fixed event's real matchup is simply unknown. Rather than
+  // guess by showing everyone (the bug) or guess by showing an
+  // arbitrary two, this renders an explicit "no matchup set" state
+  // instead. A 2-team league needs no matchup data at all to know who
+  // plays -- both teams always do -- so it keeps showing both,
+  // unchanged from before this fix.
+  const fixedMatchupUnknown = isFixed && teamNames.length > 2;
+  const cardTeamNames = fixedMatchupUnknown ? [] : teamNames;
 
   const I18N_DETAIL = {
     fr: {
@@ -7046,6 +7068,11 @@ ${tabbar}`;
       // shared across dicts since each page's dict is already
       // self-contained by this codebase's own convention.
       goalieBadge: 'G', goalieTitle: 'Gardien', canAlsoGoalieTitle: 'Peut aussi jouer gardien',
+      // Part 1 (fixed-teams matchup bug fix task): shown instead of
+      // every team's card for a >2-team fixed league until Part 2's
+      // matchup data exists (or is set) for this specific event.
+      noMatchupSetTitle: 'Aucun match déterminé',
+      noMatchupSetDesc: "Cette ligue a plus de deux équipes -- il faut savoir lesquelles jouent ce match avant d'afficher les alignements.",
       ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
     },
     en: {
@@ -7074,6 +7101,8 @@ ${tabbar}`;
       freeTextNoMapLink: "Free text never shows a map link. Pick a saved venue above for that.",
       editSaved: 'Changes saved.',
       goalieBadge: 'G', goalieTitle: 'Goalie', canAlsoGoalieTitle: 'Can also play goalie',
+      noMatchupSetTitle: 'No matchup set',
+      noMatchupSetDesc: "This league has more than two teams -- who's playing needs to be known before rosters can be shown.",
       ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     }
   };
@@ -7099,8 +7128,8 @@ ${tabbar}`;
   }
 
   const teamCards = [];
-  for (let i = 0; i < teamNames.length && !isWeeklyDrawPreDraw; i++) {
-    const team = teamNames[i];
+  for (let i = 0; i < cardTeamNames.length && !isWeeklyDrawPreDraw; i++) {
+    const team = cardTeamNames[i];
     const st = await teamState(env.DB, ev.id, team, cfg);
     const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
     const openSkaters = await openSpots(env.DB, ev.id, team, 'skater', cfg);
@@ -7386,7 +7415,12 @@ ${tabbar}`;
     ${leagueRemindersArmed ? '' : `<p class="nl-help" data-i18n="remindersNoneArmedHelp" style="margin-top:4px;">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).remindersNoneArmedHelp)}</p>`}
     <p id="evRemindersMsg" class="nl-help" style="display:none;margin-top:4px;"></p>
   </div>
-  <div class="ev-teams">${poolCardHtml || teamCards.join('')}</div>
+  <div class="ev-teams">${fixedMatchupUnknown
+    ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
+      <h2 data-i18n="noMatchupSetTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetTitle)}</h2>
+      <p class="nl-help" data-i18n="noMatchupSetDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetDesc)}</p>
+    </section>`
+    : (poolCardHtml || teamCards.join(''))}</div>
   ${unassignedHtml}
 </main>
 ${tabbar}`;
