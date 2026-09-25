@@ -563,6 +563,47 @@ export async function handleLeagueContactUpdate(req, env, url) {
 
   const updates = [];
   const params = [];
+  // Item 2 (player-editing polish task): name/email/phone were create-
+  // only until now -- the only way to fix a typo or add an email after
+  // the fact was delete-and-re-add, which also loses history (rsvp
+  // rows, past-season stats) a real edit doesn't need to touch. Same
+  // validation as createLeagueContactRow (full name required, email
+  // format + in-league dedup, phone sanitized), just against an
+  // existing row instead of a new one.
+  if (body.name !== undefined) {
+    const name = String(body.name || '').trim().split(/\s+/).filter(Boolean).join(' ');
+    if (!name || name.split(' ').length < 2) {
+      return Response.json({ ok: false, error: 'Full name (first and last) is required.', errorKey: 'FULL_NAME_REQUIRED' }, { status: 400 });
+    }
+    if (name.length > 60) {
+      return Response.json({ ok: false, error: 'Name is too long.', errorKey: 'NAME_TOO_LONG' }, { status: 400 });
+    }
+    updates.push('name = ?'); params.push(name);
+  }
+  if (body.email !== undefined) {
+    let email = String(body.email || '').trim();
+    if (email) {
+      const check = sanitizeAndValidateEmail(email);
+      if (!check.valid) {
+        return Response.json({ ok: false, error: check.error, errorKey: 'INVALID_EMAIL' }, { status: 400 });
+      }
+      email = check.email;
+      const dupe = await env.DB.prepare(
+        'SELECT player_id FROM contacts WHERE league_id = ? AND lower(email) = lower(?) AND player_id != ?'
+      ).bind(leagueId, email, playerId).first();
+      if (dupe) {
+        return Response.json({ ok: false, error: 'A contact with this email already exists in your league.', errorKey: 'CONTACT_EMAIL_EXISTS' }, { status: 400 });
+      }
+    } else {
+      email = null;
+    }
+    updates.push('email = ?'); params.push(email);
+  }
+  if (body.phone !== undefined) {
+    let phone = String(body.phone || '').trim();
+    phone = phone ? (phone.replace(/[^\d+().\s-]/g, '').trim() || null) : null;
+    updates.push('phone = ?'); params.push(phone);
+  }
   if (body.role !== undefined) {
     const role = String(body.role || '').trim();
     if (!['roster', 'sub_skater'].includes(role)) {
@@ -595,8 +636,8 @@ export async function handleLeagueContactUpdate(req, env, url) {
   params.push(playerId, leagueId);
   await env.DB.prepare(`UPDATE contacts SET ${updates.join(', ')} WHERE player_id = ? AND league_id = ?`).bind(...params).run();
 
-  const row = await env.DB.prepare('SELECT role, is_goalie, is_backup_goalie FROM contacts WHERE player_id = ?').bind(playerId).first();
-  return Response.json({ ok: true, player_id: playerId, role: row.role, is_goalie: !!row.is_goalie, is_backup_goalie: !!row.is_backup_goalie });
+  const row = await env.DB.prepare('SELECT name, email, phone, role, is_goalie, is_backup_goalie FROM contacts WHERE player_id = ?').bind(playerId).first();
+  return Response.json({ ok: true, player_id: playerId, name: row.name, email: row.email, phone: row.phone, role: row.role, is_goalie: !!row.is_goalie, is_backup_goalie: !!row.is_backup_goalie });
 }
 
 /* ---------- POST /league/contacts/bulk (Part 6, live-testing task) ----------

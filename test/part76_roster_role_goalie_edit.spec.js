@@ -299,3 +299,126 @@ describe('Part 5 (live-testing task, batch 6): roster role/goalie are now editab
     expect(runScript(combined, 'return typeof toggleRosterField;')).toBe('function');
   });
 });
+
+// Item 2 (player-editing polish task): name/email/phone were create-
+// only -- the only way to fix a typo, add an email after the fact, or
+// flag an EXISTING player as "can also play goalie" was delete-and-
+// re-add (which also erases their rsvp/history, a real edit doesn't
+// need to). Per this task's own "built means reachable from a
+// rendered page" standard, these tests check the rendered controls
+// exist and are wired, not just that the backend route works.
+describe('Item 2: inline player editing (name, email, phone, can-also-play-goalie)', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it('the roster page renders an Edit control and a matching hidden edit row (name/email/phone fields) for each player', async () => {
+    const { cookie, csrfToken } = await signup('item2.edit.render@example.com', '203.0.191.001');
+    await createLeague(cookie, csrfToken, { name: 'Item2 Edit Render League', teamNames: ['A', 'B'] });
+    const player = await addContact(cookie, csrfToken, { name: 'Render Edit Player', team: 'A', email: 'renderedit@example.com' });
+
+    const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    expect(html).toContain('data-i18n="editPlayerBtn"');
+    expect(html).toContain(`onclick="toggleEditRow('${player.player_id}')"`);
+    expect(html).toContain(`id="edit_row_${player.player_id}"`);
+    expect(html).toContain(`id="edit_name_${player.player_id}"`);
+    expect(html).toContain(`id="edit_email_${player.player_id}"`);
+    expect(html).toContain(`id="edit_phone_${player.player_id}"`);
+    expect(html).toContain(`onclick="submitEditRow('${player.player_id}')"`);
+    // Hidden by default -- one click to open, matching every other
+    // expand-in-place panel already on this page.
+    expect(html).toMatch(new RegExp(`id="edit_row_${player.player_id}"[^>]*style="display:none;"`));
+    // Role/Position remain their own separate inline toggles -- not
+    // folded into this edit panel.
+    expect(html).toContain(`data-toggle-role="${player.player_id}"`);
+  });
+
+  it('the goalie flag ("can also play goalie") can be changed on an EXISTING player through the rendered edit form, not just the route directly', async () => {
+    const { cookie, csrfToken } = await signup('item2.edit.goalieflag@example.com', '203.0.191.002');
+    await createLeague(cookie, csrfToken, { name: 'Item2 Edit Goalie Flag League', teamNames: ['A', 'B'] });
+    const player = await addContact(cookie, csrfToken, { name: 'Goalie Flag Player', team: 'A', email: 'goalieflag@example.com' });
+
+    const before = await env.DB.prepare('SELECT is_backup_goalie FROM contacts WHERE player_id = ?').bind(player.player_id).first();
+    expect(before.is_backup_goalie).toBe(0);
+
+    const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    // The checkbox the rendered "can also play goalie" control is --
+    // present, unchecked, and inside this player's own edit row.
+    expect(html).toContain(`id="edit_backup_${player.player_id}"`);
+    const rowStart = html.indexOf(`id="edit_row_${player.player_id}"`);
+    const rowEnd = html.indexOf('</tr>', rowStart);
+    const rowHtml = html.slice(rowStart, rowEnd);
+    expect(rowHtml).toContain(`id="edit_backup_${player.player_id}"`);
+    expect(rowHtml).not.toMatch(new RegExp(`id="edit_backup_${player.player_id}"[^>]*checked`));
+
+    // Exactly the request submitEditRow() issues when that checkbox is
+    // ticked and Save is clicked.
+    const res = await SELF.fetch('http://example.com/league/contacts/update', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ player_id: player.player_id, name: player.name, email: 'goalieflag@example.com', phone: '', is_backup_goalie: true })
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.is_backup_goalie).toBe(true);
+
+    const after = await env.DB.prepare('SELECT is_backup_goalie FROM contacts WHERE player_id = ?').bind(player.player_id).first();
+    expect(after.is_backup_goalie).toBe(1);
+
+    // The badge now renders on a fresh load of the same rendered page.
+    const html2 = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    expect(html2).toContain('data-i18n="goalieBadge"');
+  });
+
+  it('the checkbox never renders for a player already flagged as a real goalie (mutually exclusive, matching the add-player form)', async () => {
+    const { cookie, csrfToken } = await signup('item2.edit.realgoalie@example.com', '203.0.191.003');
+    await createLeague(cookie, csrfToken, { name: 'Item2 Edit Real Goalie League', teamNames: ['A', 'B'] });
+    const goalie = await addContact(cookie, csrfToken, { name: 'Real Goalie Player', team: 'A', is_goalie: true });
+
+    const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    const rowStart = html.indexOf(`id="edit_row_${goalie.player_id}"`);
+    const rowEnd = html.indexOf('</tr>', rowStart);
+    expect(html.slice(rowStart, rowEnd)).not.toContain(`id="edit_backup_${goalie.player_id}"`);
+  });
+
+  it('name and email can both be edited through the update route, with the same validation the add-player form already enforces', async () => {
+    const { cookie, csrfToken } = await signup('item2.edit.namevalid@example.com', '203.0.191.004');
+    await createLeague(cookie, csrfToken, { name: 'Item2 Edit Name Valid League', teamNames: ['A', 'B'] });
+    const player = await addContact(cookie, csrfToken, { name: 'Original Name', team: 'A' });
+
+    const renamed = await updateContact(cookie, csrfToken, { player_id: player.player_id, name: 'Updated Name Real' });
+    expect(renamed.status).toBe(200);
+    const renamedRow = await env.DB.prepare('SELECT name FROM contacts WHERE player_id = ?').bind(player.player_id).first();
+    expect(renamedRow.name).toBe('Updated Name Real');
+
+    const badName = await updateContact(cookie, csrfToken, { player_id: player.player_id, name: 'OnlyOneWord' });
+    expect(badName.status).toBe(400);
+    expect((await badName.json()).errorKey).toBe('FULL_NAME_REQUIRED');
+
+    const emailed = await updateContact(cookie, csrfToken, { player_id: player.player_id, email: 'updatedemail@example.com' });
+    expect(emailed.status).toBe(200);
+    const emailedRow = await env.DB.prepare('SELECT email FROM contacts WHERE player_id = ?').bind(player.player_id).first();
+    expect(emailedRow.email).toBe('updatedemail@example.com');
+
+    const badEmail = await updateContact(cookie, csrfToken, { player_id: player.player_id, email: 'not-an-email' });
+    expect(badEmail.status).toBe(400);
+    expect((await badEmail.json()).errorKey).toBe('INVALID_EMAIL');
+  });
+
+  it('editing a player\'s email to one already used by another player in the same league is rejected', async () => {
+    const { cookie, csrfToken } = await signup('item2.edit.emaildupe@example.com', '203.0.191.005');
+    await createLeague(cookie, csrfToken, { name: 'Item2 Edit Email Dupe League', teamNames: ['A', 'B'] });
+    await addContact(cookie, csrfToken, { name: 'Existing Email Player', team: 'A', email: 'taken@example.com' });
+    const player2 = await addContact(cookie, csrfToken, { name: 'Second Player Here', team: 'B', email: 'nottaken@example.com' });
+
+    const res = await updateContact(cookie, csrfToken, { player_id: player2.player_id, email: 'taken@example.com' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).errorKey).toBe('CONTACT_EMAIL_EXISTS');
+
+    // But re-saving a player's own UNCHANGED email is fine (self-dedup
+    // exclusion) -- a plain re-save (e.g. only the phone changed)
+    // must not falsely collide with the player's own existing row.
+    const selfRes = await updateContact(cookie, csrfToken, { player_id: player2.player_id, email: 'nottaken@example.com', phone: '514-555-0100' });
+    expect(selfRes.status).toBe(200);
+  });
+});

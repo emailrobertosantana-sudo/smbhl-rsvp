@@ -4838,6 +4838,10 @@ async function handleLeagueRosterPage(req, env, url) {
       fullName: 'Nom complet', emailOpt: 'Courriel (optionnel)', phoneOpt: 'Téléphone (optionnel)',
       role: 'Rôle', roleRoster: 'Régulier', roleSub: 'Remplaçant',
       teamOpt: 'Équipe (optionnel)', teamUnassigned: 'Non assigné', addBtn: 'Ajouter', cancel: 'Annuler',
+      // Item 2 (player-editing polish task): inline editing for name/
+      // email/phone/can-also-play-goalie -- Role and Position stay the
+      // existing inline toggle buttons, unchanged.
+      editPlayerBtn: 'Modifier', saveEdit: 'Enregistrer',
       players: 'Joueurs', unassigned: 'Non assigné', noPlayers: "Aucun joueur pour l'instant.",
       weeklyDrawNote: "Les équipes sont assignées à chaque match, pas ici — voir la page d'un match.",
       // E1 bug fix (players polish task): "Gardien ou joueur?" as a
@@ -4881,6 +4885,7 @@ async function handleLeagueRosterPage(req, env, url) {
       fullName: 'Full name', emailOpt: 'Email (optional)', phoneOpt: 'Phone (optional)',
       role: 'Role', roleRoster: 'Regular', roleSub: 'Sub',
       teamOpt: 'Team (optional)', teamUnassigned: 'Unassigned', addBtn: 'Add', cancel: 'Cancel',
+      editPlayerBtn: 'Edit', saveEdit: 'Save',
       players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.',
       weeklyDrawNote: 'Teams are assigned per game, not here — see a game’s own page.',
       goalieAxis: 'Position', axisPlayer: 'Player', axisGoalie: 'Goalie',
@@ -4920,6 +4925,11 @@ async function handleLeagueRosterPage(req, env, url) {
   // /league/contacts/update (leagues.js) -- same two INDEPENDENT axes
   // as the "add a player" form already uses (role: roster/sub_skater;
   // is_goalie: gated on showGoalieAxis), each settable on its own.
+  // Item 2 (player-editing polish task): total column count, for the
+  // inline edit row's colspan -- name/role are always present, team/
+  // goalie columns are conditional on the same flags the header row
+  // itself already uses.
+  const rosterColCount = 2 + (showTeams ? 1 : 0) + (showGoalieAxis ? 1 : 0);
   const rows = contacts.map(c => {
     const roleKey = c.role === 'roster' ? 'roleRoster' : 'roleSub';
     const nextRole = c.role === 'roster' ? 'sub_skater' : 'roster';
@@ -4932,12 +4942,47 @@ async function handleLeagueRosterPage(req, env, url) {
     const backupGoalieBadge = (!c.is_goalie && c.is_backup_goalie)
       ? ` <span class="nl-badge nl-badge--sub" style="padding:1px 6px;font-size:11px;" data-i18n="goalieBadge" title="${esc(I18N_ROSTER.fr.canAlsoGoalie)}">G</span>`
       : '';
+    // Item 2: name/email/phone/can-also-play-goalie, expanding this
+    // row in place -- Role and Position stay their own inline toggle
+    // buttons above, untouched. The checkbox only renders under the
+    // same condition the roster ADD form already uses (goalie-capable
+    // sport, and not already flagged as a real goalie).
+    const editBtn = `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="editPlayerBtn" onclick="toggleEditRow('${esc(c.player_id)}')" style="margin-left:8px;">Modifier</button>`;
+    const editRow = `<tr id="edit_row_${esc(c.player_id)}" data-edit-row="${esc(c.player_id)}" style="display:none;">
+      <td colspan="${rosterColCount}">
+        <div class="ro-edit-panel">
+          <div id="editErr_${esc(c.player_id)}" class="nl-error" style="display:none"></div>
+          <div class="su-two">
+            <div class="nl-field">
+              <label class="nl-label" for="edit_name_${esc(c.player_id)}" data-i18n="fullName">Nom complet</label>
+              <input class="nl-input" id="edit_name_${esc(c.player_id)}" type="text" value="${esc(c.name)}">
+            </div>
+            <div class="nl-field">
+              <label class="nl-label" for="edit_email_${esc(c.player_id)}" data-i18n="emailOpt">Courriel (optionnel)</label>
+              <input class="nl-input" id="edit_email_${esc(c.player_id)}" type="email" value="${esc(c.email || '')}">
+            </div>
+          </div>
+          <div class="nl-field">
+            <label class="nl-label" for="edit_phone_${esc(c.player_id)}" data-i18n="phoneOpt">Téléphone (optionnel)</label>
+            <input class="nl-input" id="edit_phone_${esc(c.player_id)}" type="text" value="${esc(c.phone || '')}">
+          </div>
+          ${showGoalieAxis && !c.is_goalie ? `<label style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+            <input type="checkbox" id="edit_backup_${esc(c.player_id)}" ${c.is_backup_goalie ? 'checked' : ''}>
+            <span data-i18n="canAlsoGoalie">${esc(I18N_ROSTER.fr.canAlsoGoalie)}</span>
+          </label>` : ''}
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="saveEdit" onclick="submitEditRow('${esc(c.player_id)}')">Enregistrer</button>
+            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="cancel" onclick="toggleEditRow('${esc(c.player_id)}')">Annuler</button>
+          </div>
+        </div>
+      </td>
+    </tr>`;
     return `<tr data-row-filter="${esc(filterAttr)}">
-      <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}</td>
+      <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}${editBtn}</td>
       ${showTeams ? `<td>${c.preferred_team ? esc(c.preferred_team) : `<span class="nl-help" data-i18n="teamUnassigned">Non assigné</span>`}</td>` : ''}
       <td>${roleBtn}</td>
       ${showGoalieAxis ? `<td>${goalieBtn}${backupGoalieBadge}</td>` : ''}
-    </tr>`;
+    </tr>${editRow}`;
   }).join('');
 
   const bodyHtml = `${dashStyles()}<style>
@@ -4977,6 +5022,7 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-bulk-table th, .ro-bulk-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
   .ro-bulk-table .ro-bulk-skip { color: var(--ink-muted); font-style: italic; }
   .ro-bulk-summary { font-size: 14px; color: var(--ink-muted); }
+  .ro-edit-panel { padding: var(--space-3) 0; display: flex; flex-direction: column; gap: var(--space-2); max-width: 480px; }
 </style>${header}
 <main class="dash-main ro-main">
   <div class="ro-top">
@@ -5352,7 +5398,12 @@ document.querySelectorAll('.ro-f').forEach(function(btn) {
     document.querySelectorAll('.ro-f').forEach(function(x) { x.setAttribute('aria-pressed', 'false'); });
     btn.setAttribute('aria-pressed', 'true');
     var filter = btn.getAttribute('data-filter');
-    document.querySelectorAll('#ro_tbody tr').forEach(function(row) {
+    // Item 2 (player-editing polish task): scoped to rows that declare
+    // a filter bucket -- the new inline-edit row per player has none
+    // (data-edit-row instead), so it's never force-shown by "Tous"/All
+    // or force-hidden by another filter; its own open/closed state is
+    // managed solely by toggleEditRow.
+    document.querySelectorAll('#ro_tbody tr[data-row-filter]').forEach(function(row) {
       row.style.display = (filter === 'all' || row.getAttribute('data-row-filter') === filter) ? '' : 'none';
     });
   });
@@ -5415,6 +5466,36 @@ document.querySelectorAll('[data-toggle-goalie]').forEach(function(btn) {
     }
   });
 });
+// Item 2 (player-editing polish task): name/email/phone/can-also-play-
+// goalie, editable in place -- Role/Position stay the toggle buttons
+// above, untouched. One row expands at a time is not enforced (no
+// reason to force it); each row's own edit panel is independent.
+function toggleEditRow(playerId) {
+  var row = document.getElementById('edit_row_' + playerId);
+  row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+async function submitEditRow(playerId) {
+  var errEl = document.getElementById('editErr_' + playerId);
+  errEl.style.display = 'none';
+  var payload = {
+    name: document.getElementById('edit_name_' + playerId).value.trim(),
+    email: document.getElementById('edit_email_' + playerId).value.trim(),
+    phone: document.getElementById('edit_phone_' + playerId).value.trim()
+  };
+  var backupEl = document.getElementById('edit_backup_' + playerId);
+  if (backupEl) payload.is_backup_goalie = backupEl.checked;
+  try {
+    await toggleRosterField(playerId, payload);
+    // Name/email/phone all show in the row's own display cell, and a
+    // backup-goalie change needs the badge to (dis)appear -- a reload
+    // keeps this simple and always correct, same call already made for
+    // the role toggle above.
+    window.location.reload();
+  } catch (e) {
+    errEl.textContent = String(e.message);
+    errEl.style.display = 'block';
+  }
+}
 async function submitContact() {
   document.getElementById('formErr').style.display = 'none';
   var name = document.getElementById('r_name').value.trim();
