@@ -3315,10 +3315,24 @@ async function handleLeagueCommsData(req, env, url) {
     });
   }
   for (const r of reminderRows) {
+    // E2 (Comms polish task): recipient count used to be rendered in
+    // both languages at once ("N destinataire(s) / recipient(s)") --
+    // sent as a bare number now, the client formats it in the current
+    // language (see renderActivity's recipientCountLabel).
+    //
+    // E3 (Comms polish task): a 0-recipient send used to show the same
+    // green "sent" status as a real send -- indistinguishable from a
+    // genuine success even though nobody received anything. 'kind's
+    // own eligible pool (non-responders for 72h/24h, confirmed players
+    // for 12h) was empty at send time, not a failure -- status is
+    // 'no_recipients' (distinct tone/label, see renderActivity), and
+    // the client fills in the Reason column from that status rather
+    // than a per-row reason string here (there's nothing row-specific
+    // to say beyond "nobody was eligible").
     activity.push({
       kind: r.kind, eventId: r.event_id, eventDate: r.event_date,
-      recipient: `${r.recipient_count} destinataire(s) / recipient(s)`,
-      status: 'sent',
+      recipient: null, recipientCount: r.recipient_count,
+      status: r.recipient_count > 0 ? 'sent' : 'no_recipients',
       reason: null,
       at: r.sent_at
     });
@@ -3563,6 +3577,14 @@ async function handleLeagueCommsPage(req, env, url) {
       statSent: 'Envoyés', statFailed: 'Échecs', statSkipped: 'Ignorés', statPending: 'En attente',
       cadenceTitle: 'Automatismes actifs',
       cad72: 'Rappel 72 h (sans réponse)', cad24: 'Rappel 24 h (sans réponse)', cad12: 'Détails 12 h (confirmés)',
+      // E1 (Comms polish task): the Recent activity table's Type column
+      // used to show the raw internal keys (reminder_72h etc.) instead
+      // of these same labels -- cadTeamAssigned is the one Type value
+      // with no equivalent row in the automations card above (it's a
+      // late-draw follow-up, not a cadence step), everything else in
+      // that column reuses cad72/cad24/cad12 verbatim so the two never
+      // drift apart.
+      cadTeamAssigned: 'Équipe assignée (tirage tardif)',
       cadAutoDraw: 'Tirage automatique des équipes',
       on: 'Activé', off: 'Désactivé',
       cadAutoDrawHoursSuffix: ' h avant le match',
@@ -3571,6 +3593,16 @@ async function handleLeagueCommsPage(req, env, url) {
       colType: 'Type', colRecipient: 'Destinataire', colEvent: 'Match', colStatus: 'Statut', colWhen: 'Quand', colReason: 'Raison',
       emptyState: "Aucune activité pour l'instant -- les envois apparaîtront ici.",
       statusSent: 'Envoyé', statusFailed: 'Échec', statusSkipped: 'Ignoré', statusPending: 'En attente',
+      // E3 (Comms polish task): a 0-recipient automated send used to
+      // show the same green "Envoyé" status as a real send -- reads as
+      // a success even though nobody received anything. Distinct
+      // status + its own Reason text, not green.
+      statusNoRecipients: 'Personne à contacter', noRecipientsReason: "Personne n'était admissible pour cet envoi automatique.",
+      // E2 (Comms polish task): recipient count used to render both
+      // languages at once ("N destinataire(s) / recipient(s)") -- {n}
+      // is substituted client-side with the real count, current
+      // language only.
+      recipientCountLabel: '{n} destinataire(s)',
       btnDrain: '⚡ Envoyer maintenant', drainConfirm: "Déclencher l'envoi immédiat des courriels en attente pour cette ligue ?",
       drainNonePending: 'Rien était en attente -- déjà à jour.',
       drainSentSuffix: 'envoyé(s).', drainFailedSuffix: 'échec(s).',
@@ -3591,6 +3623,7 @@ async function handleLeagueCommsPage(req, env, url) {
       statSent: 'Sent', statFailed: 'Failed', statSkipped: 'Skipped', statPending: 'Pending',
       cadenceTitle: 'Active automations',
       cad72: '72h reminder (no reply)', cad24: '24h reminder (no reply)', cad12: '12h details (confirmed)',
+      cadTeamAssigned: 'Team assigned (late draw)',
       cadAutoDraw: 'Automatic team draw',
       on: 'On', off: 'Off',
       cadAutoDrawHoursSuffix: 'h before the game',
@@ -3599,6 +3632,8 @@ async function handleLeagueCommsPage(req, env, url) {
       colType: 'Type', colRecipient: 'Recipient', colEvent: 'Game', colStatus: 'Status', colWhen: 'When', colReason: 'Reason',
       emptyState: 'No activity yet -- sends will appear here.',
       statusSent: 'Sent', statusFailed: 'Failed', statusSkipped: 'Skipped', statusPending: 'Pending',
+      statusNoRecipients: 'No one to notify', noRecipientsReason: 'No one was eligible for this automated send.',
+      recipientCountLabel: '{n} recipient(s)',
       btnDrain: '⚡ Send now', drainConfirm: 'Trigger immediate delivery of pending emails for this league?',
       drainNonePending: 'Nothing was pending -- already up to date.',
       drainSentSuffix: 'sent.', drainFailedSuffix: 'failed.',
@@ -3682,7 +3717,18 @@ function fmtWhen(iso) {
   try { return new Date(iso).toLocaleString(window.__currentLang === 'en' ? 'en-CA' : 'fr-CA', { dateStyle: 'short', timeStyle: 'short' }); }
   catch (e) { return iso; }
 }
-const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', skipped: '#55585f', pending: '#b45309' };
+// E3 (Comms polish task): no_recipients gets the same neutral grey as
+// skipped -- not green (that would read as a real success), not red
+// (nothing failed, there was just nobody to send to).
+const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', skipped: '#55585f', pending: '#b45309', no_recipients: '#55585f' };
+// E1 (Comms polish task): the same labels the Active automations card
+// uses (d.cad72/cad24/cad12), so Type never drifts from that card's
+// own wording. Built from the current dict each render, not module-
+// level, so a language switch re-labels it correctly.
+function activityKindLabel(d, kind) {
+  var KIND_LABEL = { reminder_72h: d.cad72, reminder_24h: d.cad24, logistics_12h: d.cad12, team_assigned: d.cadTeamAssigned };
+  return KIND_LABEL[kind] || kind;
+}
 function renderStats(stats) {
   var d = window.__pageDict();
   var items = [
@@ -3715,15 +3761,21 @@ function renderActivity(activity) {
   var d = window.__pageDict();
   var el = document.getElementById('comms-activity');
   if (!activity.length) { el.innerHTML = '<p class="nl-help">' + d.emptyState + '</p>'; return; }
-  var statusKey = { sent: 'statusSent', failed: 'statusFailed', skipped: 'statusSkipped', pending: 'statusPending' };
+  var statusKey = { sent: 'statusSent', failed: 'statusFailed', skipped: 'statusSkipped', pending: 'statusPending', no_recipients: 'statusNoRecipients' };
   var rows = activity.map(function(a) {
+    // E2: recipient count is a bare number from the server now --
+    // formatted here, current language only (never both at once).
+    var recipientText = a.recipientCount != null ? d.recipientCountLabel.replace('{n}', a.recipientCount) : (a.recipient || '');
+    // E3: a no_recipients row has nothing row-specific to say beyond
+    // "nobody was eligible" -- filled from the status, not a.reason.
+    var reasonText = a.status === 'no_recipients' ? d.noRecipientsReason : (a.reason || '');
     return '<tr>' +
-      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);">' + esc(a.kind) + '</td>' +
-      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);">' + esc(a.recipient || '') + '</td>' +
+      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);">' + esc(activityKindLabel(d, a.kind)) + '</td>' +
+      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);">' + esc(recipientText) + '</td>' +
       '<td style="padding:8px 10px;border-bottom:1px solid var(--line);">' + esc(a.eventDate || a.eventId || '') + '</td>' +
       '<td style="padding:8px 10px;border-bottom:1px solid var(--line);"><span style="font-weight:700;color:' + (STATUS_COLOR[a.status] || 'inherit') + '">' + (d[statusKey[a.status]] || esc(a.status)) + '</span></td>' +
       '<td style="padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;">' + fmtWhen(a.at) + '</td>' +
-      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);color:var(--danger,#c4153a);font-size:13px;">' + esc(a.reason || '') + '</td>' +
+      '<td style="padding:8px 10px;border-bottom:1px solid var(--line);color:var(--danger,#c4153a);font-size:13px;">' + esc(reasonText) + '</td>' +
       '</tr>';
   }).join('');
   el.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:14px;min-width:640px;">' +
