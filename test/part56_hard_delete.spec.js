@@ -82,7 +82,12 @@ async function seedFullLeagueFootprint(leagueId, eventId, playerId) {
     env.DB.prepare('INSERT INTO settings (key, league_id, value) VALUES (?, ?, ?)').bind(`hd_test_${leagueId}`, leagueId, 'v'),
     env.DB.prepare('INSERT INTO league_reminder_log (event_id, kind, league_id, sent_at) VALUES (?, ?, ?, ?)').bind(eventId, 'reminder_72h', leagueId, now),
     env.DB.prepare('INSERT INTO league_auto_draw_log (event_id, league_id, drawn_at) VALUES (?, ?, ?)').bind(eventId, leagueId, now),
-    env.DB.prepare('INSERT INTO league_team_assigned_email_log (event_id, player_id, sent_at) VALUES (?, ?, ?)').bind(eventId, playerId, now)
+    env.DB.prepare('INSERT INTO league_team_assigned_email_log (event_id, player_id, sent_at) VALUES (?, ?, ?)').bind(eventId, playerId, now),
+    // Demo-cleanup-script task: these two (migrate-041, migrate-040)
+    // were confirmed missing from hard_delete.js's own LEAGUE_SCOPED_TABLES
+    // -- added here so this end-to-end test locks the fix in.
+    env.DB.prepare('INSERT INTO venues (id, league_id, name, created_at) VALUES (?, ?, ?, ?)').bind(`${leagueId}-venue`, leagueId, 'Test Rink', now),
+    env.DB.prepare('INSERT INTO league_mail_failure_log (league_id, event_id, player_id, kind, error, failed_at) VALUES (?, ?, ?, ?, ?, ?)').bind(leagueId, eventId, playerId, 'reminder_72h', 'simulated failure', now)
   ]);
   // poll_votes needs a real poll_id (autoincrement) -- fetch it back. Its
   // own league_id column (migrate-020.sql) defaults to 'smbhl' if
@@ -98,7 +103,8 @@ async function countAllLeagueRows(leagueId) {
   const tables = [
     'events', 'contacts', 'rsvp', 'sheet_reviews', 'team_messages', 'outbox', 'jobs',
     'availability', 'season_costs', 'season_pricing', 'player_dues', 'planned_absences',
-    'polls', 'settings', 'league_reminder_log', 'league_auto_draw_log', 'league_admins'
+    'polls', 'settings', 'league_reminder_log', 'league_auto_draw_log', 'league_admins',
+    'venues', 'league_mail_failure_log'
   ];
   const counts = {};
   for (const t of tables) {

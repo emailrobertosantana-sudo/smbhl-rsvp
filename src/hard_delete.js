@@ -38,11 +38,24 @@ export const HARD_DELETE_UNLOCK_DAYS = 15;
 // built). league_team_assigned_email_log has no league_id column of its
 // own -- it's keyed by event_id, which performLeagueHardDelete captures
 // for this league BEFORE deleting from `events`.
-const LEAGUE_SCOPED_TABLES = [
+//
+// Demo-cleanup-script task: re-derived this list from src/schema_manifest.js
+// (the authoritative, migration-validated table inventory) cross-referenced
+// against every migrate-*.sql through 044 -- 'venues' (migrate-041) and
+// 'league_mail_failure_log' (migrate-040) both have their own real
+// league_id column but were never added here, so hard delete silently
+// left orphaned rows in both forever. Fixed by adding them; every other
+// table in the manifest is accounted for: league_team_assigned_email_log
+// (event_id-keyed, handled below), league_admins/leagues/users (deleted
+// directly, not via this blanket loop), league_hard_delete_log (the audit
+// trail itself -- deliberately NOT deleted, see this file's own top
+// comment), signup_attempts (IP-rate-limiting only, no league_id at all).
+export const LEAGUE_SCOPED_TABLES = [
   'rsvp', 'sheet_reviews', 'team_messages', 'outbox', 'jobs', 'availability',
   'season_costs', 'season_pricing', 'player_dues', 'planned_absences',
   'poll_votes', 'polls', 'events', 'contacts', 'settings',
-  'league_reminder_log', 'league_auto_draw_log', 'league_capability_flags'
+  'league_reminder_log', 'league_auto_draw_log', 'league_capability_flags',
+  'venues', 'league_mail_failure_log'
 ];
 
 export async function checkHardDeleteEligibility(env, leagueId) {
@@ -65,10 +78,18 @@ export function validHardDeleteConfirmPhrases(leagueName) {
   return [`SUPPRIMER ${leagueName}`, `DELETE ${leagueName}`];
 }
 
-// Does the actual erasure. Never called directly by a route -- both
+// Does the actual erasure. Not called directly by a route -- both
 // handleLeagueHardDelete and handleSuperAdminLeagueHardDelete validate
-// eligibility + confirmation first, then call this.
-async function performLeagueHardDelete(env, leagueId, leagueName, deletedByUserId, deletedVia) {
+// eligibility + confirmation first, then call this. Exported (demo-
+// cleanup-script task) so a standalone maintenance script can reuse the
+// exact same cascade -- see scripts/demo_league_cleanup.js's own top
+// comment for why eligibility/confirmation-phrase enforcement, which
+// exists to protect a live admin from fat-fingering their OWN league
+// through the product UI, is deliberately bypassed there instead of
+// reimplemented: that script has its own, different safeguards (a
+// hard-coded demo-only database allowlist, an explicit target list,
+// dry-run-by-default) appropriate to an operator tool, not a public UI.
+export async function performLeagueHardDelete(env, leagueId, leagueName, deletedByUserId, deletedVia) {
   const eventIdRows = (await env.DB.prepare('SELECT id FROM events WHERE league_id = ?').bind(leagueId).all()).results || [];
   let rowsDeleted = 0;
 
