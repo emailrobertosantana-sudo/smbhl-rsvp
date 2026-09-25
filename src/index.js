@@ -1632,6 +1632,9 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // follows it, per this task's own explicit instruction to apply
       // the new wording everywhere these options appear.
       teamsPerGame: 'Sans équipes fixes', noFixedTeams: 'Aucune équipe fixe',
+      // C2 (empty-states polish task): clarifies what the dashboard
+      // tile's bare number counts, for weekly_draw only.
+      teamsPerGameCount: 'équipes disponibles',
       noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.",
       weeklyDrawTeamsDesc: 'Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.',
       // Live-testing task (batch 5), Part 6: the dashboard's own
@@ -1655,6 +1658,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       publicPageDisabled: "Disabled -- no one can see this page.",
       teams: 'Teams', tracksStatsLabel: 'Tracks stats', yes: 'Yes', no: 'No',
       teamsPerGame: 'Pickup with teams', noFixedTeams: 'No fixed teams',
+      teamsPerGameCount: 'team names available',
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
       nextStepsTitle: 'Next steps', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size'
@@ -2115,6 +2119,14 @@ async function handleDashboardPage(req, env, url) {
       ${dashIsHeadcount
         ? `<div class="stat tnum" style="font-size:20px" data-i18n="noFixedTeams">Aucune équipe fixe</div>`
         : `<div class="stat tnum">${teamNames.length}</div>`}
+      <!-- C2 (empty-states polish task): "Pickup with teams" describes
+           the league's STRUCTURE, not literally "teams" the way the
+           fixed-mode tile's own "Équipes" label does -- a bare count
+           under it read as unexplained (what does the 2 count?). This
+           caption is scoped to weekly_draw only: fixed's own "Équipes"
+           label already says exactly what the number is, no caption
+           needed there. -->
+      ${dashIsWeeklyDraw ? `<p class="nl-help" style="margin-top:2px" data-i18n="teamsPerGameCount">équipes disponibles</p>` : ''}
     </section>
     <section class="nl-card nl-card--pad-lg dash-tile"><div class="overline" data-i18n="navRoster">Joueurs</div><div class="stat tnum">${playerCount}</div><a href="/league/roster" data-i18n="navRoster">Joueurs</a></section>`}
     <section class="nl-card nl-card--pad-lg dash-tile">
@@ -6088,6 +6100,18 @@ async function handleLeagueSchedulePage(req, env, url) {
     `SELECT COUNT(*) AS c FROM contacts WHERE league_id = ? AND role = 'roster' AND is_active = 1 AND email IS NOT NULL AND email != ''`
   ).bind(leagueId).first();
   const reminderEmailCount = reminderEmailCountRow ? Number(reminderEmailCountRow.c) || 0 : 0;
+  // C1 (empty-states polish task): the Players page already nudges
+  // FORWARD to Schedule once players exist and no events do yet
+  // (showScheduleNudge). This is the reverse direction -- a season
+  // exists (needsSeason already handles "no season yet" separately)
+  // but the roster is still empty, so creating an event here is
+  // premature. Same active-players definition as the roster page's
+  // own contacts.length (is_active != 0), not the reminder-specific
+  // has-a-real-email count above.
+  const scheduleActivePlayerCountRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS c FROM contacts WHERE league_id = ? AND (is_active IS NULL OR is_active != 0)`
+  ).bind(leagueId).first();
+  const scheduleActivePlayerCount = scheduleActivePlayerCountRow ? Number(scheduleActivePlayerCountRow.c) || 0 : 0;
   const showReminderWarning = armedKindsFr.length > 0 && reminderEmailCount > 0;
   const reminderWarningFr = showReminderWarning
     ? `Ce match enverra automatiquement : ${armedKindsFr.join(' · ')}. Jusqu'à ${reminderEmailCount} joueur(s) avec un courriel enregistré recevront ces envois.`
@@ -6133,6 +6157,13 @@ async function handleLeagueSchedulePage(req, env, url) {
       stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
       needsSeasonTitle: "Lance ta saison d'abord",
       needsSeasonBody: "Il te faut une saison active avant de pouvoir créer des matchs.",
+      // C1 (empty-states polish task): same "Prochaine étape" pattern
+      // as the Players page's own rosterNudge, pointing the other
+      // direction (no players yet, so a match here is premature).
+      nextStep: 'Prochaine étape',
+      scheduleNudgeTitle: "Ajoute d'abord tes joueurs. Prochaine étape : ajoute ton alignement.",
+      scheduleNudgeDesc: 'Une fois tes joueurs ajoutés, tu pourras créer ton horaire et ils pourront commencer à répondre.',
+      scheduleNudgeBtn: 'Ajouter des joueurs',
       goToDashboard: 'Aller au tableau de bord',
       bulkCreateBtn: 'Créer plusieurs matchs', bulkCreateTitle: 'Créer plusieurs matchs',
       bulkCreateHelp: 'Crée une série de matchs chaque semaine, même heure et même lieu.',
@@ -6158,6 +6189,10 @@ async function handleLeagueSchedulePage(req, env, url) {
       stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled',
       needsSeasonTitle: 'Start your season first',
       needsSeasonBody: 'You need an active season before you can create events.',
+      nextStep: 'Next step',
+      scheduleNudgeTitle: 'Add your players first. Next step: add your roster.',
+      scheduleNudgeDesc: "Once your players are added, you can create your schedule and they'll be able to start responding.",
+      scheduleNudgeBtn: 'Add players',
       goToDashboard: 'Go to dashboard',
       bulkCreateBtn: 'Create multiple events', bulkCreateTitle: 'Create multiple events',
       bulkCreateHelp: 'Create a weekly series of events, same time and venue each week.',
@@ -6263,6 +6298,12 @@ async function handleLeagueSchedulePage(req, env, url) {
   </section>
   <div class="sc-list" id="scheduleList">${rowsHtml}</div>
   ` : `
+  ${scheduleActivePlayerCount === 0 ? `<section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
+    <div class="overline" style="color:var(--primary)" data-i18n="nextStep">Prochaine étape</div>
+    <h2 data-i18n="scheduleNudgeTitle">Ajoute d'abord tes joueurs. Prochaine étape : ajoute ton alignement.</h2>
+    <p class="nl-help" data-i18n="scheduleNudgeDesc">Une fois tes joueurs ajoutés, tu pourras créer ton horaire et ils pourront commencer à répondre.</p>
+    <div style="margin-top:var(--space-2)"><a class="nl-btn nl-btn--primary" href="/league/roster" data-i18n="scheduleNudgeBtn">Ajouter des joueurs</a></div>
+  </section>` : ''}
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);">
     <div class="sc-list" id="scheduleList">${rowsHtml}</div>
     <aside class="sc-panel" id="sc_panel" data-i18n-aria="createEvent" aria-label="Créer un match">
