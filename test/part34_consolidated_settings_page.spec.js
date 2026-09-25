@@ -456,29 +456,30 @@ describe('B1: settings roster-size wording matches onboarding, in both cards, fo
     return (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
   }
 
-  it('fixed-teams league: both cards show "each team" wording (matching onboarding\'s rosterSubTeam) for the min/max labels and the help text', async () => {
+  it('fixed-teams league: all three cards show "each team" wording (matching onboarding\'s rosterSubTeam) for the min/max labels and the help text', async () => {
     const html = await settingsHtmlFor({ teamNames: ['A', 'B'] });
     expect(html).toContain('data-i18n="lblMinPlayers">Minimum total de joueurs<');
     expect(html).toContain('data-i18n="lblMaxPlayers">Maximum total de joueurs<');
-    // Both cards render this key for a fixed-structure league -- two
-    // real occurrences, not one.
+    // Three cards render this key for a fixed-structure league --
+    // "Cette saison", "Par défaut pour les nouvelles saisons", and
+    // (E1/E2, season-model polish task) "Démarrer une nouvelle saison".
     const occurrences = html.split('data-i18n="rosterSubTeam"').length - 1;
-    expect(occurrences).toBe(2);
+    expect(occurrences).toBe(3);
     expect(html).toContain("Ces nombres s'appliquent à chaque équipe. Laisse vide si tu n'es pas prêt à décider.");
   });
 
-  it('weekly_draw league: both cards show the real pool wording (rosterSubPool), not the old inaccurate "each game" text', async () => {
+  it('weekly_draw league: all three cards show the real pool wording (rosterSubPool), not the old inaccurate "each game" text', async () => {
     const html = await settingsHtmlFor({ teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'] });
     const occurrences = html.split('data-i18n="rosterSubPool"').length - 1;
-    expect(occurrences).toBe(2);
+    expect(occurrences).toBe(3);
     expect(html).toContain("Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l'ensemble du bassin.");
     expect(html).not.toContain("chaque match, pour l'ensemble des joueurs");
   });
 
-  it('headcount league: both cards show the real no-teams wording (rosterSubHeadcount), distinct from the pool wording', async () => {
+  it('headcount league: all three cards show the real no-teams wording (rosterSubHeadcount), distinct from the pool wording', async () => {
     const html = await settingsHtmlFor({ teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12 });
     const occurrences = html.split('data-i18n="rosterSubHeadcount"').length - 1;
-    expect(occurrences).toBe(2);
+    expect(occurrences).toBe(3);
     expect(html).toContain("Tous les joueurs confirmés comptent dans ce total -- cette ligue n'a pas d'équipes.");
   });
 
@@ -496,10 +497,10 @@ describe('B1: settings roster-size wording matches onboarding, in both cards, fo
     expect(dict.en.rosterSubHeadcount).toBe("Everyone who confirms counts toward this total -- this league has no teams.");
   });
 
-  it('the client-side structure-radio click handler recomputes the SAME 3-way help key, in both cards\' own scripts', async () => {
+  it('the client-side structure-radio click handler recomputes the SAME 3-way help key, in all three cards\' own scripts', async () => {
     const html = await settingsHtmlFor({ teamNames: ['A', 'B'] });
     const occurrences = html.split("val === 'fixed' ? 'rosterSubTeam' : (val === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')").length - 1;
-    expect(occurrences).toBe(2);
+    expect(occurrences).toBe(3);
   });
 
   it('B1 sweep, third location: the signup wizard\'s own step-3 headcount labels also say "total" now', async () => {
@@ -527,12 +528,15 @@ describe('B2: structure option wording in both settings cards ("Cette saison" an
     await applyRealSchema(env);
   });
 
-  it('both cards show the new title/description for all 3 options, in French, with none of the old wording left anywhere on the page', async () => {
+  it('all three cards show the new title/description for all 3 options, in French, with none of the old wording left anywhere on the page', async () => {
     const { cookie, csrfToken } = await signup('b2.settings.fr@example.com', '203.0.135.001');
     await createLeague(cookie, csrfToken, { name: 'B2 Settings FR League', teamNames: ['A', 'B'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'B2 Settings FR Season' });
     const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
 
+    // Three cards now show these options: "Cette saison", "Par défaut
+    // pour les nouvelles saisons", and (E1/E2, season-model polish
+    // task) "Démarrer une nouvelle saison".
     for (const [key, text] of [
       ['structureFixedTitle', 'Équipes fixes'],
       ['structureFixedDesc', 'La même équipe toute la saison, comme une ligue régulière.'],
@@ -542,7 +546,7 @@ describe('B2: structure option wording in both settings cards ("Cette saison" an
       ['structureHeadcountDesc', 'Juste la liste des présents. Vous formez les équipes sur place.']
     ]) {
       const occurrences = html.split(`data-i18n="${key}">${text}<`).length - 1;
-      expect(occurrences, `${key} should render in both cards`).toBe(2);
+      expect(occurrences, `${key} should render in all three cards`).toBe(3);
     }
 
     expect(html).not.toContain('Équipes qui changent');

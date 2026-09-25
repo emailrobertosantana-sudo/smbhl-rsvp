@@ -1449,6 +1449,27 @@ export async function handleLeagueSeasonPublish(req, env) {
     return Response.json({ ok: false, error: 'This route cannot publish to SMBHL\'s data.' }, { status: 403 });
   }
 
+  // E3 (season-model polish task): this route used to let ANY
+  // season_name become current_season unconditionally -- including an
+  // OLD, already-closed season's own name, which would silently
+  // REOPEN it (and overwrite its frozen config with whatever this
+  // request's body happens to contain). DECIDED: seasons stay
+  // sequential, and a closed season is read-only -- the only season
+  // this route may ever "edit in place" is the CURRENT one. A brand
+  // new name (not in `seasons` at all) still creates a genuinely new
+  // season and correctly becomes current, exactly as before. Enforced
+  // here, at the route itself, not only by the UI never offering a
+  // way to type an old name in (the settings page's own season picker
+  // renders read-only precisely because this guard exists server-side
+  // too, not only client-side).
+  const existingForGuard = await getLeagueDataJson(env, leagueId);
+  const targetIsExistingClosedSeason = existingForGuard.current_season
+    && seasonName !== existingForGuard.current_season
+    && Array.isArray(existingForGuard.seasons) && existingForGuard.seasons.some(s => s && s.name === seasonName);
+  if (targetIsExistingClosedSeason) {
+    return Response.json({ ok: false, error: 'This season is closed and read-only. Start a new season instead of republishing a closed one.', errorKey: 'SEASON_CLOSED' }, { status: 409 });
+  }
+
   const leagueRow = await env.DB.prepare('SELECT team_names, team_structure, min_players, max_players, min_goalies, max_goalies FROM leagues WHERE id = ?').bind(leagueId).first();
   let teamNames = [];
   if (leagueRow && leagueRow.team_names) {
@@ -1515,7 +1536,9 @@ export async function handleLeagueSeasonPublish(req, env) {
     return Response.json({ ok: false, error: 'This league has no team names on file yet.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
   }
 
-  const existing = await getLeagueDataJson(env, leagueId);
+  // Reused from the SEASON_CLOSED guard above -- avoids a second KV
+  // read of the same data_json blob for this one request.
+  const existing = existingForGuard;
   const seasons = (Array.isArray(existing.seasons) ? existing.seasons : []).filter(Boolean);
 
   // Roster-size config (Part O): optional. When given, this is what
@@ -1682,19 +1705,51 @@ export async function handleLeagueSeasonPublish(req, env) {
 
   config.teamStructure = effectiveStructure;
 
-  const newSeasonEntry = {
-    name: seasonName,
-    config,
-    standings: seasonTeamNames.map(team => ({ team, gp: 0, w: 0, l: 0, t: 0, pts: 0, gf: 0, ga: 0 })),
-    games: 0
-  };
-
-  const idx = seasons.findIndex(s => s && s.name === seasonName);
-  const overwritten = idx >= 0;
-  if (overwritten) {
-    seasons[idx] = newSeasonEntry;
+  // E1 (season-model polish task): "Enregistrer la saison" (the
+  // Settings "Cette saison" card) is now a genuine rename-in-place,
+  // not indistinguishable from creating a new season -- before this,
+  // ANY name change here (even just fixing a typo) silently created a
+  // SEPARATE new entry (unshift below) and abandoned the old one under
+  // its stale name, still sitting in `seasons`, no longer current --
+  // the exact "ambiguous, easy to do by accident" behaviour this task
+  // was asked to fix. body.rename_current (sent only by that one
+  // button, never by "Démarrer une nouvelle saison") means: keep this
+  // season's own real standings/games, just give the SAME entry a new
+  // name (and, as before, still update its config from this request).
+  // Genuinely creating a new season (rename_current absent/false) is
+  // completely unaffected -- still a fresh entry, standings/games
+  // reset to zero, exactly as before this task.
+  const renameCurrent = !!body.rename_current && existing.current_season && seasonName !== existing.current_season;
+  let overwritten;
+  if (renameCurrent) {
+    const currentIdx = seasons.findIndex(s => s && s.name === existing.current_season);
+    if (currentIdx < 0) {
+      return Response.json({ ok: false, error: 'Current season not found to rename.', errorKey: 'SEASON_NOT_FOUND' }, { status: 404 });
+    }
+    seasons[currentIdx] = { ...seasons[currentIdx], name: seasonName, config };
+    overwritten = true;
+    // Every event already stamped with the OLD season name must follow
+    // the rename -- otherwise they'd silently stop resolving against
+    // this (renamed) season's own config (getLeagueSeasonConfig looks
+    // events up by their own ev.season string), the exact kind of
+    // "everywhere except the schedule rows" mismatch E4 fixed the
+    // other direction of.
+    await env.DB.prepare('UPDATE events SET season = ? WHERE league_id = ? AND season = ?')
+      .bind(seasonName, leagueId, existing.current_season).run();
   } else {
-    seasons.unshift(newSeasonEntry);
+    const newSeasonEntry = {
+      name: seasonName,
+      config,
+      standings: seasonTeamNames.map(team => ({ team, gp: 0, w: 0, l: 0, t: 0, pts: 0, gf: 0, ga: 0 })),
+      games: 0
+    };
+    const idx = seasons.findIndex(s => s && s.name === seasonName);
+    overwritten = idx >= 0;
+    if (overwritten) {
+      seasons[idx] = newSeasonEntry;
+    } else {
+      seasons.unshift(newSeasonEntry);
+    }
   }
 
   const updated = {
@@ -1706,6 +1761,90 @@ export async function handleLeagueSeasonPublish(req, env) {
   await putLeagueDataJson(env, leagueId, updated);
 
   return Response.json({ ok: true, league_id: leagueId, current_season: seasonName, teams: seasonTeamNames, team_structure: effectiveStructure, overwritten });
+}
+
+/* ---------- POST /league/season/move-events (E2, season-model polish
+ * task) ----------
+ * Part of the rollover confirmation flow: when a closing season still
+ * has upcoming, unplayed events, the admin can move them to the new
+ * season instead of leaving them stranded on a now-read-only season
+ * (which the dashboard, built around "the current season," has no way
+ * to manage). Moving an event is just re-pointing its own `season`
+ * column -- RSVPs (rsvp.event_id), reminder logs
+ * (league_reminder_log, PK (event_id, kind)), team-assigned-email logs
+ * and the outbox are ALL keyed by event_id, never by season, so
+ * nothing is orphaned or needs its own update; this is genuinely safe
+ * by construction, not something this route has to work to preserve.
+ * `week` is recomputed (same "count already in the target season + 1"
+ * logic createLeagueEventRow itself uses) since the old season's week
+ * numbering means nothing in the new season's own sequence.
+ *
+ * Moves every upcoming (date >= today), non-cancelled event still on
+ * `from_season` -- the task's own UI is a single yes/no checkbox
+ * ("move them?"), not a per-event picker, so this matches that
+ * one all-or-nothing action rather than accepting an event_id list
+ * the UI never actually offers.
+ */
+export async function handleLeagueSeasonMoveEvents(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot move events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+
+  const fromSeason = String(body.from_season || '').trim();
+  const toSeason = String(body.to_season || '').trim();
+  if (!fromSeason || !toSeason) {
+    return Response.json({ ok: false, error: 'from_season and to_season are required.', errorKey: 'SEASON_NAME_REQUIRED' }, { status: 400 });
+  }
+  if (fromSeason === toSeason) {
+    return Response.json({ ok: false, error: 'from_season and to_season must be different.', errorKey: 'SEASON_MOVE_SAME' }, { status: 400 });
+  }
+
+  // to_season must be the league's own CURRENT season -- this route
+  // exists to support the rollover flow (move a closing season's
+  // future events onto the new current one), not a general-purpose
+  // season reassignment tool. Same read-only-history posture as the
+  // SEASON_CLOSED guard in handleLeagueSeasonPublish above: an event
+  // can be moved ONTO the current season, never onto (or off of, via
+  // some other target) a closed one.
+  const leagueData = await getLeagueDataJson(env, leagueId);
+  if (leagueData.current_season !== toSeason) {
+    return Response.json({ ok: false, error: 'to_season must be this league\'s current season.', errorKey: 'SEASON_MOVE_TARGET_NOT_CURRENT' }, { status: 409 });
+  }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const rows = (await env.DB.prepare(
+    `SELECT id FROM events WHERE league_id = ? AND season = ? AND date >= ? AND state != 'cancelled'`
+  ).bind(leagueId, fromSeason, todayStr).all()).results || [];
+
+  const countRow = await env.DB.prepare(
+    'SELECT COUNT(*) c FROM events WHERE league_id = ? AND season = ?'
+  ).bind(leagueId, toSeason).first();
+  let nextWeek = (countRow?.c || 0) + 1;
+
+  let moved = 0;
+  for (const r of rows) {
+    await env.DB.prepare('UPDATE events SET season = ?, week = ? WHERE id = ? AND league_id = ?')
+      .bind(toSeason, nextWeek, r.id, leagueId).run();
+    nextWeek++;
+    moved++;
+  }
+
+  return Response.json({ ok: true, league_id: leagueId, from_season: fromSeason, to_season: toSeason, moved });
 }
 
 /* ---------- league URL slugs (Part 2, overnight follow-up task) ----------

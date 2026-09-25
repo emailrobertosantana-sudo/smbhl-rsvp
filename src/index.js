@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -4176,6 +4176,52 @@ async function handleLeagueSettingsPage(req, env, url) {
   const currentSeasonEntry = (leagueData.seasons || []).find(s => s && s.name === leagueData.current_season) || null;
   const currentSeasonTeams = currentSeasonEntry && Array.isArray(currentSeasonEntry.config?.teams) ? currentSeasonEntry.config.teams : [];
 
+  // E3 (season-model polish task): a season picker on the "Cette
+  // saison" card -- ?season=<name> views any past, closed season
+  // read-only (port of SMBHL's own <select> season-history pattern,
+  // its own file untouched). Defaults to the current season, exactly
+  // as before this task for every caller that doesn't pass it.
+  // Falls back to current if the name doesn't match a real season
+  // (deleted state, a stale bookmark, or simply absent) -- never a
+  // 404/error for what's ultimately just a display filter.
+  const requestedSeasonName = url.searchParams.get('season');
+  const viewedSeasonEntry = (requestedSeasonName && (leagueData.seasons || []).find(s => s && s.name === requestedSeasonName)) || currentSeasonEntry;
+  const isViewingClosedSeason = !!(viewedSeasonEntry && viewedSeasonEntry.name !== leagueData.current_season);
+  const viewedSeasonTeams = viewedSeasonEntry && Array.isArray(viewedSeasonEntry.config?.teams) ? viewedSeasonEntry.config.teams : [];
+
+  // E4 (season-model polish task -- "the actual underlying bug" behind
+  // E1-E3): the "Cette saison" card used to display leagueRow.team_structure/
+  // min_players/max_players/min_goalies/max_goalies -- the league's own
+  // MUTABLE defaults-for-new-seasons columns, not what THIS season was
+  // actually published with. A structure or roster-limit change made
+  // "for the new season" (via the Par défaut card below, which
+  // correctly keeps reading leagueRow -- that card IS about those
+  // mutable defaults) silently redescribed the CURRENT season's own
+  // card too, even though the season's real, already-published config
+  // (a frozen snapshot -- handleLeagueSeasonPublish's own comment) was
+  // never actually touched. Read back from that same frozen snapshot
+  // instead -- now generalized to whichever season the picker above is
+  // VIEWING (current by default, same values as before this comment's
+  // own E3 addition). weekly_draw stores PER-TEAM numbers (divided
+  // down from the pool total the admin actually typed, ceil/floor --
+  // see handleLeagueSeasonPublish's own toPerTeam comment); multiplying
+  // by the season's own real team count approximates that original
+  // pool total back (not always exact if it didn't divide evenly --
+  // the division itself was already lossy before this fix, not
+  // introduced by it). Falls back to the league's own defaults only
+  // for a season published before config.teamStructure/minSkaters
+  // were always snapshotted (an old, historical season with no
+  // explicit values of its own to show).
+  const seasonCfg = viewedSeasonEntry?.config || {};
+  const seasonStructureForDisplay = seasonCfg.teamStructure || teamStructure;
+  const seasonNumTeamsForDisplay = seasonStructureForDisplay === 'weekly_draw' ? Math.max(1, viewedSeasonTeams.length) : 1;
+  const seasonHasRosterLimits = seasonCfg.minSkaters != null && seasonCfg.skatersPerTeam != null;
+  const seasonMinPlayersDisplay = seasonHasRosterLimits ? seasonCfg.minSkaters * seasonNumTeamsForDisplay : (hasRosterLimits ? leagueRow.min_players : null);
+  const seasonMaxPlayersDisplay = seasonHasRosterLimits ? seasonCfg.skatersPerTeam * seasonNumTeamsForDisplay : (hasRosterLimits ? leagueRow.max_players : null);
+  const seasonHasGoalieLimits = seasonHasRosterLimits || hasRosterLimits;
+  const seasonMinGoaliesDisplay = seasonCfg.goaliesPerTeam != null ? seasonCfg.goaliesPerTeam : (hasRosterLimits ? (leagueRow.min_goalies || 0) : null);
+  const seasonMaxGoaliesDisplay = seasonCfg.maxGoalies != null ? seasonCfg.maxGoalies : (hasRosterLimits && leagueRow.max_goalies != null ? leagueRow.max_goalies : null);
+
   // Live-testing task (batch 5), Part 7: co-admins list, moved here
   // from the dashboard alongside the invite section below.
   const adminEmails = (await env.DB.prepare(
@@ -4230,18 +4276,43 @@ async function handleLeagueSettingsPage(req, env, url) {
       // dashboard home, which used to show this fully expanded -- see
       // handleLeagueSettingsPage's own comment at this section's markup.
       seasonMgmtTitle: 'Cette saison',
-      seasonMgmtDesc: "Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.",
+      seasonMgmtDesc: "Republie la saison actuelle pour la modifier. Pour en créer une nouvelle, utilise « Démarrer une nouvelle saison » ci-dessous.",
       seasonNameLabel: 'Nom de la saison', seasonNamePh: 'Ex. Saison Hiver 2026',
-      seasonMgmtNameHelp: 'Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.',
+      // E1 (season-model polish task): this field is now a genuine
+      // rename-in-place (handleLeagueSeasonPublish's own rename_current
+      // comment) -- it can no longer create a new season, so the old
+      // "a new name creates a new season" half of this help text no
+      // longer applies.
+      seasonMgmtNameHelp: 'Renomme la saison actuelle.',
       seasonStructureHelp: "Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.",
       seasonSaveBtn: 'Enregistrer la saison',
-      // Item 4 (season-rollover polish task): offered right after
-      // creating a genuinely new season -- import last season's
-      // players (active pre-checked, inactive unchecked but listed so
-      // a returning player can be brought back deliberately), or skip.
+      // E3 (season-model polish task): a closed, read-only season
+      // viewed via the picker.
+      seasonHistoryTitle: 'Saison passée',
+      seasonHistoryDesc: "Cette saison est fermée. Consultation seulement -- rien ici ne peut être modifié.",
+      seasonPickerLabel: 'Voir la saison',
+      seasonReadOnlyBanner: '🔒 Saison fermée -- lecture seule.',
+      // E1/E2 (season-model polish task): creating a season is now its
+      // own explicit action, separate from renaming the current one,
+      // and shows the rollover confirmation BEFORE anything changes.
+      newSeasonTitle: 'Démarrer une nouvelle saison',
+      newSeasonDesc: ' fermera et deviendra une saison consultable en lecture seule.',
+      newSeasonStartBtn: 'Démarrer une nouvelle saison',
+      newSeasonNameLabel: 'Nom de la nouvelle saison',
+      newSeasonContinueBtn: 'Continuer',
+      cancel: 'Annuler',
+      rolloverConfirmTitle: 'Confirmer le changement de saison',
+      rolloverConfirmBtn: 'Créer la saison',
+      rolloverExplainNewCurrent: '{new} devient ta saison actuelle.',
+      rolloverExplainOldClosed: '{old} ferme et devient une saison consultable en lecture seule.',
+      rolloverExplainConfigScope: "L'effectif et la structure d'équipe définis ici s'appliquent seulement à {new} -- la saison fermée ne change pas.",
+      rolloverMoveEventsLabel: "{n} matchs à venir sont encore dans {old}. Les déplacer vers {new}? Les matchs laissés dans une saison fermée ne peuvent plus être gérés depuis le tableau de bord.",
+      // Item 4 (season-rollover polish task): offered as part of the
+      // rollover confirmation above -- import last season's players
+      // (active pre-checked, inactive unchecked but listed so a
+      // returning player can be brought back deliberately).
       rolloverTitle: 'Importer les joueurs de la saison précédente?',
       rolloverDesc: "Les joueurs actifs sont précochés. Un joueur non importé devient inactif -- il garde son historique et peut être réactivé plus tard.",
-      rolloverImportBtn: 'Importer', rolloverSkipBtn: 'Ignorer',
       rolloverInactiveTag: 'Inactif',
       structureLabel: 'Comment sont organisées tes équipes?',
       structureTitle: 'Par défaut pour les nouvelles saisons',
@@ -4320,14 +4391,29 @@ async function handleLeagueSettingsPage(req, env, url) {
       addSeasonTeam: 'Add', removeSeasonTeam: 'Remove',
       newTeamPlaceholder: 'New team',
       seasonMgmtTitle: 'This season',
-      seasonMgmtDesc: 'Create an additional season, or republish the current one to edit it. Each season can have its own team structure.',
+      seasonMgmtDesc: 'Republish the current season to edit it. To create a new one, use "Start a new season" below.',
       seasonNameLabel: 'Season name', seasonNamePh: 'E.g. Winter Season 2026',
-      seasonMgmtNameHelp: "A new name creates a new season. The current season's own name edits it.",
+      seasonMgmtNameHelp: "Renames the current season.",
       seasonStructureHelp: "By default, a new season uses your league's usual structure. Change it here just for this season.",
       seasonSaveBtn: 'Save season',
+      seasonHistoryTitle: 'Past season',
+      seasonHistoryDesc: 'This season is closed. View only -- nothing here can be changed.',
+      seasonPickerLabel: 'View season',
+      seasonReadOnlyBanner: '🔒 Closed season -- read only.',
+      newSeasonTitle: 'Start a new season',
+      newSeasonDesc: ' will close and become a read-only, viewable season.',
+      newSeasonStartBtn: 'Start a new season',
+      newSeasonNameLabel: 'New season name',
+      newSeasonContinueBtn: 'Continue',
+      cancel: 'Cancel',
+      rolloverConfirmTitle: 'Confirm the season change',
+      rolloverConfirmBtn: 'Create the season',
+      rolloverExplainNewCurrent: '{new} becomes your current season.',
+      rolloverExplainOldClosed: '{old} closes and becomes a read-only, viewable season.',
+      rolloverExplainConfigScope: 'The roster size and team structure set here apply only to {new} -- the closed season does not change.',
+      rolloverMoveEventsLabel: "{n} upcoming games are still on {old}. Move them to {new}? Games left on a closed season can't be managed from your dashboard.",
       rolloverTitle: 'Import players from the previous season?',
       rolloverDesc: "Active players are pre-checked. A player who isn't imported becomes inactive -- they keep their history and can be reactivated later.",
-      rolloverImportBtn: 'Import', rolloverSkipBtn: 'Skip',
       rolloverInactiveTag: 'Inactive',
       structureLabel: 'How are your teams organized?',
       structureTitle: 'Default for new seasons',
@@ -4392,6 +4478,14 @@ async function handleLeagueSettingsPage(req, env, url) {
   .se-color-swatch { width: 36px; height: 36px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
   .se-color-swatch.on { border-color: var(--ink); box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--ink); }
   .se-color-swatch--current { border: 2px dashed var(--line-strong); }
+  /* E3 (season-model polish task): the read-only state must be
+     visually obvious, not merely enforced server-side -- disabled
+     inputs alone (browser default styling) read as "broken form",
+     not "this is history." Scoped to .se-main (this page only), same
+     "don't touch the shared .su-structure-opt rule" posture as every
+     other Settings-only CSS addition in this file. */
+  .su-structure-opt--readonly { opacity: .6; cursor: default; }
+  .su-structure-opt--readonly:hover { border-color: var(--line-strong); }
   /* Live-testing task (batch 2), Part 9: same fix as the dashboard's
      public-page URL card -- see that rule's own comment. */
   .se-slug-display { font: 500 14px/20px var(--font-sans); color: var(--ink-muted); background: var(--surface-sunken); padding: 10px 12px; border-radius: var(--radius-md); word-break: normal; overflow-wrap: anywhere; }
@@ -4555,32 +4649,53 @@ async function handleLeagueSettingsPage(req, env, url) {
        apart. Both remain: a league can legitimately run one season
        fixed and default to weekly_draw for the next. -->
   <section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)" id="section-structure">
-    <div class="h3" data-i18n="seasonMgmtTitle">Cette saison</div>
-    <p class="nl-help" data-i18n="seasonMgmtDesc">Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.</p>
+    <div class="h3" data-i18n="${isViewingClosedSeason ? 'seasonHistoryTitle' : 'seasonMgmtTitle'}">${isViewingClosedSeason ? 'Saison passée' : 'Cette saison'}</div>
+    <p class="nl-help" data-i18n="${isViewingClosedSeason ? 'seasonHistoryDesc' : 'seasonMgmtDesc'}">${isViewingClosedSeason ? 'Cette saison est fermée. Consultation seulement -- rien ici ne peut être modifié.' : 'Republie la saison actuelle pour la modifier. Pour en créer une nouvelle, utilise "Démarrer une nouvelle saison" ci-dessous.'}</p>
+    <!-- E3 (season-model polish task): a season picker, ported from
+         SMBHL's own real <select> season-history pattern (its file
+         untouched) -- lets an admin view ANY past season for
+         reference. Only rendered when there's real history to pick
+         from (a league's first season alone has nothing to switch
+         to). Navigates via a plain GET (?season=name), so the
+         server-rendered read-only state below is never just a client-
+         side illusion -- reloading, bookmarking, or sharing the URL
+         all land on the same honest, read-only page. -->
+    ${(leagueData.seasons || []).length > 1 ? `<div class="nl-field" style="max-width:360px">
+      <label class="nl-label" for="season_picker" data-i18n="seasonPickerLabel">Voir la saison</label>
+      <select class="nl-select" id="season_picker" onchange="location.href = this.value === ${JSON.stringify(leagueData.current_season)} ? location.pathname : (location.pathname + '?season=' + encodeURIComponent(this.value))">
+        ${(leagueData.seasons || []).map(s => `<option value="${esc(s.name)}"${viewedSeasonEntry && s.name === viewedSeasonEntry.name ? ' selected' : ''}>${esc(s.name)}${s.name === leagueData.current_season ? (' (' + (lang === 'en' ? 'current' : 'actuelle') + ')') : ''}</option>`).join('')}
+      </select>
+    </div>` : ''}
+    ${isViewingClosedSeason ? `<div class="nl-help" style="background:var(--surface-sunken);border-radius:var(--radius-sm);padding:var(--space-3);display:flex;align-items:center;gap:8px;" data-i18n="seasonReadOnlyBanner">🔒 Saison fermée -- lecture seule.</div>` : ''}
     <div id="seasonMgmtErr" class="nl-error" style="display:none"></div>
     <div id="seasonMgmtOk" class="nl-ok" style="display:none"></div>
     <div class="nl-field" style="max-width:360px">
       <label class="nl-label" for="season_mgmt_name" data-i18n="seasonNameLabel">Nom de la saison</label>
-      <!-- C2 (state-not-reflected polish task): prefilled with the
-           current season's real name -- this field edits that season
-           in place (see seasonMgmtNameHelp below), so it must show
-           what it's about to edit, not the "create a new one" placeholder. -->
-      <input class="nl-input" id="season_mgmt_name" type="text" data-i18n-ph="seasonNamePh" placeholder="Ex. Saison Hiver 2026" value="${esc(currentSeasonEntry.name)}">
-      <p class="nl-help" data-i18n="seasonMgmtNameHelp">Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.</p>
+      <!-- E1 (season-model polish task): this field now ONLY renames
+           the season it's editing in place -- typing a different name
+           no longer creates a new one (handleLeagueSeasonPublish's own
+           SEASON_CLOSED guard would reject it anyway unless the name
+           is genuinely brand new, which this field is not meant for
+           any more -- see "Démarrer une nouvelle saison" below, a
+           separate, explicit action). Disabled entirely while viewing
+           a closed season (E3) -- renaming history is exactly the
+           retroactive edit this whole task exists to prevent. -->
+      <input class="nl-input" id="season_mgmt_name" type="text" data-i18n-ph="seasonNamePh" placeholder="Ex. Saison Hiver 2026" value="${esc(viewedSeasonEntry ? viewedSeasonEntry.name : '')}" ${isViewingClosedSeason ? 'disabled' : ''}>
+      <p class="nl-help" data-i18n="seasonMgmtNameHelp">Renomme la saison actuelle.</p>
     </div>
     <div class="nl-field">
       <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>
       <div class="su-structure" id="season_structure_radio">
-        <label class="su-structure-opt${teamStructure === 'fixed' ? ' on' : ''}" data-value="fixed">
-          <input type="radio" name="season_structure" value="fixed" ${teamStructure === 'headcount' || teamStructure === 'weekly_draw' ? '' : 'checked'}>
+        <label class="su-structure-opt${seasonStructureForDisplay === 'fixed' ? ' on' : ''}${isViewingClosedSeason ? ' su-structure-opt--readonly' : ''}" data-value="fixed">
+          <input type="radio" name="season_structure" value="fixed" ${seasonStructureForDisplay === 'headcount' || seasonStructureForDisplay === 'weekly_draw' ? '' : 'checked'} ${isViewingClosedSeason ? 'disabled' : ''}>
           <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue régulière.</span></span>
         </label>
-        <label class="su-structure-opt${teamStructure === 'headcount' ? ' on' : ''}" data-value="headcount">
-          <input type="radio" name="season_structure" value="headcount" ${teamStructure === 'headcount' ? 'checked' : ''}>
+        <label class="su-structure-opt${seasonStructureForDisplay === 'headcount' ? ' on' : ''}${isViewingClosedSeason ? ' su-structure-opt--readonly' : ''}" data-value="headcount">
+          <input type="radio" name="season_structure" value="headcount" ${seasonStructureForDisplay === 'headcount' ? 'checked' : ''} ${isViewingClosedSeason ? 'disabled' : ''}>
           <span><span class="t" data-i18n="structureHeadcountTitle">Sans équipes</span><span class="d" data-i18n="structureHeadcountDesc">Juste la liste des présents. Vous formez les équipes sur place.</span></span>
         </label>
-        <label class="su-structure-opt${teamStructure === 'weekly_draw' ? ' on' : ''}" data-value="weekly_draw">
-          <input type="radio" name="season_structure" value="weekly_draw" ${teamStructure === 'weekly_draw' ? 'checked' : ''}>
+        <label class="su-structure-opt${seasonStructureForDisplay === 'weekly_draw' ? ' on' : ''}${isViewingClosedSeason ? ' su-structure-opt--readonly' : ''}" data-value="weekly_draw">
+          <input type="radio" name="season_structure" value="weekly_draw" ${seasonStructureForDisplay === 'weekly_draw' ? 'checked' : ''} ${isViewingClosedSeason ? 'disabled' : ''}>
           <span><span class="t" data-i18n="structureWeeklyTitle">Sans équipes fixes</span><span class="d" data-i18n="structureWeeklyDesc">Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.</span></span>
         </label>
       </div>
@@ -4588,30 +4703,30 @@ async function handleLeagueSettingsPage(req, env, url) {
     </div>
     <div id="season_headcount_section" style="">
       <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
-      <p class="nl-help" id="season_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : teamStructure === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total -- cette ligue n\'a pas d\'équipes.'}</p>
+      <p class="nl-help" id="season_roster_limits_help" data-i18n="${seasonStructureForDisplay === 'fixed' ? 'rosterSubTeam' : (seasonStructureForDisplay === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${seasonStructureForDisplay === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : seasonStructureForDisplay === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total -- cette ligue n\'a pas d\'équipes.'}</p>
       <div class="su-two">
         <div class="nl-field">
           <label class="nl-label" for="season_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
-          <input class="nl-input" id="season_min_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.min_players) : (isHeadcount ? '8' : ''))}">
+          <input class="nl-input" id="season_min_players" type="number" min="1" value="${esc(seasonMinPlayersDisplay != null ? String(seasonMinPlayersDisplay) : (seasonStructureForDisplay === 'headcount' ? '8' : ''))}" ${isViewingClosedSeason ? 'disabled' : ''}>
         </div>
         <div class="nl-field">
           <label class="nl-label" for="season_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
-          <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.max_players) : (isHeadcount ? '12' : ''))}">
+          <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(seasonMaxPlayersDisplay != null ? String(seasonMaxPlayersDisplay) : (seasonStructureForDisplay === 'headcount' ? '12' : ''))}" ${isViewingClosedSeason ? 'disabled' : ''}>
         </div>
       </div>
       <div class="su-two">
         <div class="nl-field">
           <label class="nl-label" for="season_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
-          <input class="nl-input" id="season_min_goalies" type="number" min="0" value="${esc(hasRosterLimits ? String(leagueRow.min_goalies || 0) : '')}">
+          <input class="nl-input" id="season_min_goalies" type="number" min="0" value="${esc(seasonHasGoalieLimits ? String(seasonMinGoaliesDisplay || 0) : '')}" ${isViewingClosedSeason ? 'disabled' : ''}>
         </div>
         <div class="nl-field">
           <label class="nl-label" for="season_max_goalies" data-i18n="lblMaxGoalies">Maximum de gardiens (optionnel)</label>
-          <input class="nl-input" id="season_max_goalies" type="number" min="0" value="${esc(hasRosterLimits && leagueRow.max_goalies != null ? String(leagueRow.max_goalies) : '')}">
+          <input class="nl-input" id="season_max_goalies" type="number" min="0" value="${esc(seasonHasGoalieLimits && seasonMaxGoaliesDisplay != null ? String(seasonMaxGoaliesDisplay) : '')}" ${isViewingClosedSeason ? 'disabled' : ''}>
         </div>
       </div>
       <p class="nl-help" data-i18n="maxGoaliesHelp">Laisse vide pour utiliser le même nombre que le minimum.</p>
     </div>
-    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>
+    ${isViewingClosedSeason ? '' : `<div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>`}
   </section>` : ''}
 
   <section class="nl-card nl-card--pad-lg"${currentSeasonEntry ? '' : ' id="section-structure"'}>
@@ -4667,24 +4782,96 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="structure_save" data-i18n="save" onclick="submitStructure()">Enregistrer</button></div>
   </section>
 
-  <!-- Item 4 (season-rollover polish task): shown only right after
-       publishing a genuinely NEW season (submitSeasonMgmt's own JS
-       decides that, comparing against CURRENT_SEASON_NAME) -- never on
-       a league's first season (nothing to roll over from) and never on
-       a same-name republish (editing, not rolling over). Deliberately
-       NOT sandwiched between the two structure cards above (G1, prior
-       task) -- an unrelated hidden panel there would break the exact
-       adjacency that task established. -->
-  <section class="nl-card nl-card--pad-lg" id="rollover_import_panel" style="display:none;">
-    <div class="h3" data-i18n="rolloverTitle">Importer les joueurs de la saison précédente?</div>
-    <p class="nl-help" data-i18n="rolloverDesc">Les joueurs actifs sont précochés. Un joueur non importé devient inactif -- il garde son historique et peut être réactivé plus tard.</p>
-    <div id="rolloverErr" class="nl-error" style="display:none"></div>
-    <div id="rollover_list" style="margin-top:12px;max-height:360px;overflow-y:auto;"></div>
-    <div style="display:flex;gap:8px;margin-top:12px;">
-      <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="rollover_import_btn" data-i18n="rolloverImportBtn" onclick="submitRolloverImport()">Importer</button>
-      <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="rolloverSkipBtn" onclick="skipRolloverImport()">Ignorer</button>
+  ${currentSeasonEntry && !isViewingClosedSeason ? `
+  <!-- E1/E2 (season-model polish task): creating a season used to be
+       the SAME "Enregistrer la saison" button in "Cette saison" above,
+       with a genuinely new name -- ambiguous, and easy to do by
+       accident (the field is right there, pre-filled with the current
+       name, one keystroke away from silently starting a new season).
+       Now its own explicit action, only offered while viewing the
+       current season (starting a new one from a history view wouldn't
+       make sense -- E3's own picker moves you back to current first).
+       Placed after both structure cards rather than between them, to
+       keep G1's "Cette saison" / "Par défaut" adjacency intact. -->
+  <section class="nl-card nl-card--pad-lg" id="section-new-season">
+    <div class="h3" data-i18n="newSeasonTitle">Démarrer une nouvelle saison</div>
+    <p class="nl-help" data-i18n="newSeasonDesc">${esc(currentSeasonEntry ? currentSeasonEntry.name : '')} fermera et deviendra une saison consultable en lecture seule.</p>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="new_season_start_btn" data-i18n="newSeasonStartBtn" onclick="startNewSeasonFlow()">Démarrer une nouvelle saison</button></div>
+
+    <div id="new_season_form" style="display:none;margin-top:var(--space-4);">
+      <div class="nl-field" style="max-width:360px">
+        <label class="nl-label" for="new_season_name" data-i18n="newSeasonNameLabel">Nom de la nouvelle saison</label>
+        <input class="nl-input" id="new_season_name" type="text" data-i18n-ph="seasonNamePh" placeholder="Ex. Saison Hiver 2026">
+      </div>
+      <div class="nl-field">
+        <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>
+        <div class="su-structure" id="new_season_structure_radio">
+          <label class="su-structure-opt${teamStructure === 'fixed' ? ' on' : ''}" data-value="fixed">
+            <input type="radio" name="new_season_structure" value="fixed" ${teamStructure === 'headcount' || teamStructure === 'weekly_draw' ? '' : 'checked'}>
+            <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue régulière.</span></span>
+          </label>
+          <label class="su-structure-opt${teamStructure === 'headcount' ? ' on' : ''}" data-value="headcount">
+            <input type="radio" name="new_season_structure" value="headcount" ${teamStructure === 'headcount' ? 'checked' : ''}>
+            <span><span class="t" data-i18n="structureHeadcountTitle">Sans équipes</span><span class="d" data-i18n="structureHeadcountDesc">Juste la liste des présents. Vous formez les équipes sur place.</span></span>
+          </label>
+          <label class="su-structure-opt${teamStructure === 'weekly_draw' ? ' on' : ''}" data-value="weekly_draw">
+            <input type="radio" name="new_season_structure" value="weekly_draw" ${teamStructure === 'weekly_draw' ? 'checked' : ''}>
+            <span><span class="t" data-i18n="structureWeeklyTitle">Sans équipes fixes</span><span class="d" data-i18n="structureWeeklyDesc">Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.</span></span>
+          </label>
+        </div>
+      </div>
+      <div id="new_season_headcount_section">
+        <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
+        <p class="nl-help" id="new_season_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : teamStructure === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total -- cette ligue n\'a pas d\'équipes.'}</p>
+        <div class="su-two">
+          <div class="nl-field">
+            <label class="nl-label" for="new_season_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
+            <input class="nl-input" id="new_season_min_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.min_players) : (isHeadcount ? '8' : ''))}">
+          </div>
+          <div class="nl-field">
+            <label class="nl-label" for="new_season_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
+            <input class="nl-input" id="new_season_max_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.max_players) : (isHeadcount ? '12' : ''))}">
+          </div>
+        </div>
+        <div class="su-two">
+          <div class="nl-field">
+            <label class="nl-label" for="new_season_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
+            <input class="nl-input" id="new_season_min_goalies" type="number" min="0" value="${esc(hasRosterLimits ? String(leagueRow.min_goalies || 0) : '')}">
+          </div>
+          <div class="nl-field">
+            <label class="nl-label" for="new_season_max_goalies" data-i18n="lblMaxGoalies">Maximum de gardiens (optionnel)</label>
+            <input class="nl-input" id="new_season_max_goalies" type="number" min="0" value="${esc(hasRosterLimits && leagueRow.max_goalies != null ? String(leagueRow.max_goalies) : '')}">
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:8px;">
+        <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="new_season_continue_btn" data-i18n="newSeasonContinueBtn" onclick="showRolloverConfirm()">Continuer</button>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="cancel" onclick="cancelNewSeasonFlow()">Annuler</button>
+      </div>
     </div>
-  </section>
+
+    <!-- E2: the rollover moment -- shown BEFORE any state changes,
+         once a new season name/config has been entered above. Nothing
+         is written until rollover_confirm_btn is actually clicked. -->
+    <div id="rollover_confirm_panel" style="display:none;margin-top:var(--space-4);border-top:1px solid var(--line);padding-top:var(--space-4);">
+      <div class="h3" data-i18n="rolloverConfirmTitle">Confirmer le changement de saison</div>
+      <ul class="nl-help" id="rollover_confirm_explainer" style="margin:8px 0;padding-left:20px;"></ul>
+      <div id="rollover_events_wrap" style="display:none;">
+        <label style="display:flex;align-items:flex-start;gap:8px;margin-top:8px;">
+          <input type="checkbox" id="rollover_move_events" checked style="margin-top:3px;">
+          <span id="rollover_move_events_label" class="nl-help"></span>
+        </label>
+      </div>
+      <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rolloverTitle">Importer les joueurs de la saison précédente?</div>
+      <p class="nl-help" data-i18n="rolloverDesc">Les joueurs actifs sont précochés. Un joueur non importé devient inactif -- il garde son historique et peut être réactivé plus tard.</p>
+      <div id="rollover_list" style="margin-top:12px;max-height:360px;overflow-y:auto;"></div>
+      <div id="rolloverErr" class="nl-error" style="display:none;margin-top:8px;"></div>
+      <div style="margin-top:8px;display:flex;gap:8px;">
+        <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="rollover_confirm_btn" data-i18n="rolloverConfirmBtn" onclick="submitRolloverConfirm()">Créer la saison</button>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="cancel" onclick="cancelNewSeasonFlow()">Annuler</button>
+      </div>
+    </div>
+  </section>` : ''}
 
   <section class="nl-card nl-card--pad-lg" id="section-language">
     <div class="h3" data-i18n="langExposure">Langue exposée aux joueurs</div>
@@ -5000,6 +5187,25 @@ document.querySelectorAll('#season_structure_radio label').forEach(function(l) {
     if (helpEl) { helpEl.setAttribute('data-i18n', helpKey); helpEl.textContent = window.__pageDict()[helpKey]; }
   });
 });
+// E1/E2 (season-model polish task): "Démarrer une nouvelle saison"'s
+// own structure picker -- same label-click idiom as the two cards
+// above, so picking a different structure while creating a new season
+// updates its help text live too.
+document.querySelectorAll('#new_season_structure_radio label').forEach(function(l) {
+  l.addEventListener('click', function() {
+    document.querySelectorAll('#new_season_structure_radio label').forEach(function(x) { x.classList.remove('on'); });
+    l.classList.add('on');
+    var val = l.getAttribute('data-value');
+    var helpKey = val === 'fixed' ? 'rosterSubTeam' : (val === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount');
+    var helpEl = document.getElementById('new_season_roster_limits_help');
+    if (helpEl) { helpEl.setAttribute('data-i18n', helpKey); helpEl.textContent = window.__pageDict()[helpKey]; }
+  });
+});
+// E1 (season-model polish task): "Enregistrer la saison" now ONLY
+// renames/edits the CURRENT season in place (rename_current: true) --
+// it can never create a new one, however different the typed name is.
+// Creating a new season is startNewSeasonFlow()/submitRolloverConfirm()
+// below, a fully separate action.
 async function submitSeasonMgmt() {
   var err = document.getElementById('seasonMgmtErr');
   var ok = document.getElementById('seasonMgmtOk');
@@ -5007,7 +5213,7 @@ async function submitSeasonMgmt() {
   var name = document.getElementById('season_mgmt_name').value.trim();
   if (!name) { err.textContent = window.__errorText('SEASON_NAME_REQUIRED_CLIENT'); err.style.display = 'block'; return; }
   var structure = document.querySelector('#season_structure_radio input:checked').value;
-  var payload = { season_name: name, team_structure: structure };
+  var payload = { season_name: name, team_structure: structure, rename_current: true };
   var minPlayersEl = document.getElementById('season_min_players');
   var maxPlayersEl = document.getElementById('season_max_players');
   if (minPlayersEl && minPlayersEl.value !== '') { payload.min_players = Number(minPlayersEl.value); }
@@ -5016,11 +5222,6 @@ async function submitSeasonMgmt() {
   if (minGoaliesEl && minGoaliesEl.value !== '') { payload.min_goalies = Number(minGoaliesEl.value); }
   var maxGoaliesEl = document.getElementById('season_max_goalies');
   if (maxGoaliesEl && maxGoaliesEl.value !== '') { payload.max_goalies = Number(maxGoaliesEl.value); }
-  // Item 4 (season-rollover polish task): a genuinely NEW season name
-  // (not a same-name republish/edit) on a league that already had one
-  // is exactly the case this task's own import offer applies to --
-  // a league's first-ever season has nothing to roll over from.
-  var isNewSeason = !!CURRENT_SEASON_NAME && name !== CURRENT_SEASON_NAME;
   var btn = document.getElementById('season_mgmt_submit');
   btn.disabled = true;
   try {
@@ -5032,29 +5233,71 @@ async function submitSeasonMgmt() {
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
-    if (isNewSeason) {
-      btn.disabled = false;
-      await showRolloverImportPanel();
-    } else {
-      window.location.reload();
-    }
+    window.location.reload();
   } catch (e) {
     err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
 }
-// Item 4 (season-rollover polish task): the checkbox list is built
-// from GET /league/contacts (already returns is_active) rather than a
-// new read endpoint -- one league-wide contact list, same source of
-// truth the Players page itself reads from.
-async function showRolloverImportPanel() {
-  var panel = document.getElementById('rollover_import_panel');
+// E1: reveals the blank "new season" form -- name/structure/roster
+// limits default to the LEAGUE's own mutable defaults (leagueRow.*),
+// never the closing season's own frozen values (this is a genuinely
+// NEW season, not a copy of the old one).
+function startNewSeasonFlow() {
+  document.getElementById('new_season_form').style.display = '';
+  document.getElementById('new_season_start_btn').style.display = 'none';
+}
+function cancelNewSeasonFlow() {
+  document.getElementById('new_season_form').style.display = 'none';
+  document.getElementById('rollover_confirm_panel').style.display = 'none';
+  document.getElementById('new_season_start_btn').style.display = '';
+}
+// E2: the rollover moment -- nothing is written until
+// submitRolloverConfirm() below is actually clicked. Explains what's
+// about to happen, counts this season's own upcoming events (for the
+// move-them-or-not checkbox, checked by default per the task's own
+// decision), and folds the existing player-import mechanism into this
+// SAME screen instead of showing it only after the fact.
+var ROLLOVER_MOVE_EVENT_COUNT = 0;
+async function showRolloverConfirm() {
+  var newName = document.getElementById('new_season_name').value.trim();
+  if (!newName) { window.alert(window.__errorText('SEASON_NAME_REQUIRED_CLIENT')); return; }
+  var dict = window.__pageDict();
+  var explainer = document.getElementById('rollover_confirm_explainer');
+  explainer.innerHTML = '';
+  [
+    dict.rolloverExplainNewCurrent.split('{new}').join(newName),
+    dict.rolloverExplainOldClosed.split('{old}').join(CURRENT_SEASON_NAME),
+    dict.rolloverExplainConfigScope.split('{new}').join(newName)
+  ].forEach(function(t) { var li = document.createElement('li'); li.textContent = t; explainer.appendChild(li); });
+
+  try {
+    var evRes = await fetch('/league/events', { credentials: 'same-origin' });
+    var evData = await evRes.json().catch(function() { return {}; });
+    var todayStr = new Date().toISOString().slice(0, 10);
+    var upcoming = ((evData && evData.events) || []).filter(function(e) {
+      return e.season === CURRENT_SEASON_NAME && e.date >= todayStr && e.state !== 'cancelled';
+    });
+    ROLLOVER_MOVE_EVENT_COUNT = upcoming.length;
+  } catch (e) { ROLLOVER_MOVE_EVENT_COUNT = 0; }
+
+  var eventsWrap = document.getElementById('rollover_events_wrap');
+  if (ROLLOVER_MOVE_EVENT_COUNT > 0) {
+    document.getElementById('rollover_move_events_label').textContent =
+      dict.rolloverMoveEventsLabel.split('{n}').join(String(ROLLOVER_MOVE_EVENT_COUNT)).split('{old}').join(CURRENT_SEASON_NAME).split('{new}').join(newName);
+    document.getElementById('rollover_move_events').checked = true;
+    eventsWrap.style.display = '';
+  } else {
+    eventsWrap.style.display = 'none';
+  }
+
+  // Same contacts list/checkbox mechanism the old, separate
+  // rollover_import_panel used -- moved into this one confirmation.
   var list = document.getElementById('rollover_list');
   list.innerHTML = '';
   try {
     var res = await fetch('/league/contacts', { credentials: 'same-origin' });
     var data = await res.json().catch(function() { return {}; });
     var contacts = (data && data.contacts) || [];
-    var dict = window.__pageDict();
     contacts.forEach(function(c) {
       var row = document.createElement('label');
       row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 0;';
@@ -5069,32 +5312,56 @@ async function showRolloverImportPanel() {
       list.appendChild(row);
     });
   } catch (e) {}
-  panel.style.display = '';
+
+  document.getElementById('new_season_form').style.display = 'none';
+  document.getElementById('rollover_confirm_panel').style.display = '';
 }
-async function submitRolloverImport() {
+async function submitRolloverConfirm() {
   var err = document.getElementById('rolloverErr');
   err.style.display = 'none';
-  var checked = document.querySelectorAll('#rollover_list input[type=checkbox]:checked');
-  var ids = Array.prototype.slice.call(checked).map(function(cb) { return cb.value; });
-  var btn = document.getElementById('rollover_import_btn');
+  var newName = document.getElementById('new_season_name').value.trim();
+  var structure = document.querySelector('#new_season_structure_radio input:checked').value;
+  var payload = { season_name: newName, team_structure: structure };
+  var minPlayersEl = document.getElementById('new_season_min_players');
+  var maxPlayersEl = document.getElementById('new_season_max_players');
+  if (minPlayersEl && minPlayersEl.value !== '') { payload.min_players = Number(minPlayersEl.value); }
+  if (maxPlayersEl && maxPlayersEl.value !== '') { payload.max_players = Number(maxPlayersEl.value); }
+  var minGoaliesEl = document.getElementById('new_season_min_goalies');
+  if (minGoaliesEl && minGoaliesEl.value !== '') { payload.min_goalies = Number(minGoaliesEl.value); }
+  var maxGoaliesEl = document.getElementById('new_season_max_goalies');
+  if (maxGoaliesEl && maxGoaliesEl.value !== '') { payload.max_goalies = Number(maxGoaliesEl.value); }
+  var btn = document.getElementById('rollover_confirm_btn');
   btn.disabled = true;
   try {
-    var res = await fetch('/league/season/rollover-import', {
+    var res = await fetch('/league/season/publish', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+
+    var moveCheckbox = document.getElementById('rollover_move_events');
+    if (ROLLOVER_MOVE_EVENT_COUNT > 0 && moveCheckbox && moveCheckbox.checked) {
+      await fetch('/league/season/move-events', {
+        method: 'POST', credentials: 'same-origin',
+        headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+        body: JSON.stringify({ from_season: CURRENT_SEASON_NAME, to_season: newName })
+      });
+    }
+
+    var checked = document.querySelectorAll('#rollover_list input[type=checkbox]:checked');
+    var ids = Array.prototype.slice.call(checked).map(function(cb) { return cb.value; });
+    await fetch('/league/season/rollover-import', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({ player_ids: ids })
     });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+
     window.location.reload();
   } catch (e) {
     err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
-}
-// Skippable, per this task's own explicit requirement -- an admin
-// starting fresh just moves on, no state is written at all.
-function skipRolloverImport() {
-  window.location.reload();
 }
 async function submitLanguageMode() {
   var err = document.getElementById('langModeErr'); var ok = document.getElementById('langModeOk');
@@ -24193,6 +24460,10 @@ async function handleFetch(req, env, ctx) {
       // Item 4 (season-rollover polish task): import players.
       if (url.pathname === '/league/season/rollover-import' && req.method === 'POST')
         return await handleLeagueSeasonRolloverImport(req, env, url);
+      // E2 (season-model polish task): move a closing season's future
+      // events onto the new current one, part of the rollover flow.
+      if (url.pathname === '/league/season/move-events' && req.method === 'POST')
+        return await handleLeagueSeasonMoveEvents(req, env);
       if (url.pathname === '/league/events' && req.method === 'POST')
         return await handleLeagueEventCreate(req, env);
       if (url.pathname === '/league/events/bulk' && req.method === 'POST')

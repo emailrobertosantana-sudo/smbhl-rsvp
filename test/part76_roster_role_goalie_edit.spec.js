@@ -726,16 +726,17 @@ describe('Item 4: season rollover -- import players', () => {
     expect((await smbhlRes.json()).errorKey).toBe('NO_LEAGUE_FOUND');
   });
 
-  it('the settings page renders the collapsed rollover-import panel (hidden by default) with the checkbox-list wiring, once a season already exists', async () => {
+  it('the settings page renders the collapsed rollover-confirm panel (hidden by default) with the checkbox-list wiring, once a season already exists (E2, season-model polish task: folded into the "Démarrer une nouvelle saison" flow rather than its own standalone panel -- same /league/season/rollover-import route, reused)', async () => {
     const { cookie, csrfToken } = await signup('item4.render@example.com', '203.0.193.006');
     await createLeague(cookie, csrfToken, { name: 'Item4 Render League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'Item4 Render Season 1' });
 
     const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
-    expect(html).toContain('id="rollover_import_panel" style="display:none;"');
+    expect(html).toContain('id="rollover_confirm_panel" style="display:none;');
     expect(html).toContain('data-i18n="rolloverTitle"');
-    expect(html).toContain('onclick="submitRolloverImport()"');
-    expect(html).toContain('onclick="skipRolloverImport()"');
+    expect(html).toContain('onclick="submitRolloverConfirm()"');
+    expect(html).toContain('onclick="cancelNewSeasonFlow()"');
+    expect(html).toContain('id="rollover_list"');
     expect(html).toContain('CURRENT_SEASON_NAME = "Item4 Render Season 1"');
   });
 
