@@ -119,10 +119,10 @@ describe('UI task Part T: GET /league/schedule', () => {
     expect(html).toContain('Freshly Created Venue');
   });
 
-  it('a duplicate-date rejection from the API is a real, surfaceable error', async () => {
+  it('a genuine same date+venue slot rejection from the API is a real, surfaceable error (fixed-teams scheduling task, Part 2: a bare date alone no longer collides -- see league_event_create.spec.js for the now-allowed different-venue/time case)', async () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-06' }) // already used above
+      body: JSON.stringify({ date: '2026-12-06', venue: 'Schedule Page Rink' }) // same date AND venue as above
     });
     expect(res.status).toBe(409);
     const json = await res.json();

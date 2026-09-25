@@ -50,8 +50,21 @@ const DATE_SUFFIX = /(\d{4}-\d{2}-\d{2})$/;
 // events.id for a NEW event: `${leagueId}:${date}`, e.g. 'smbhl:2026-10-04'.
 // Two leagues calling this for the same calendar date always get different
 // strings, because no two leagues share a league_id.
-export function makeEventId(leagueId, date) {
-  return `${leagueId}:${date}`;
+//
+// Fixed-teams scheduling task (Part 2): a league can genuinely play more
+// than one game on the same date (SMBHL's own real example -- Letendre
+// Gym 1 and Gym 2, same day, distinguished by venue, not folded into one
+// event). The FIRST event on a date keeps this exact same id shape,
+// completely unchanged -- every id ever issued before this task, and the
+// common one-event-per-date case going forward, are untouched. A second
+// (or later) event sharing that date gets an optional disambiguator
+// inserted BEFORE the date, not after, so the date stays the string's
+// trailing segment and eventDateFromId's own end-anchored match below
+// keeps working unchanged for every id shape, old or new.
+export function makeEventId(leagueId, date, disambiguator) {
+  return disambiguator && disambiguator > 1
+    ? `${leagueId}:${disambiguator}:${date}`
+    : `${leagueId}:${date}`;
 }
 
 // Recovers the literal ISO date (YYYY-MM-DD) from an events.id value,

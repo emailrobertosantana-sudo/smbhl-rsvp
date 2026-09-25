@@ -179,13 +179,42 @@ describe('Part K: POST /league/events', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects a duplicate date within the SAME league', async () => {
+  it('rejects a genuine same date+venue+time slot collision within the SAME league (fixed-teams scheduling task, Part 2: a date alone no longer rejects -- see the two tests below)', async () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-09-20' })
+      body: JSON.stringify({ date: '2026-09-20', venue: 'League A Rink', start_time: '18:00' })
     });
     expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.errorKey).toBe('EVENT_SLOT_EXISTS');
+  });
+
+  it('Part 2 (fixed-teams scheduling task): a SECOND event on the same date is allowed when it has a DIFFERENT venue -- SMBHL\'s own real "two gyms, same time" case', async () => {
+    const res = await SELF.fetch('http://example.com/league/events', {
+      method: 'POST',
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
+      body: JSON.stringify({ date: '2026-09-20', venue: 'League A Rink 2', start_time: '18:00' })
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    // First event on this date already exists (League A Rink, 18:00) --
+    // this one gets the disambiguated id, inserted BEFORE the date so
+    // eventDateFromId keeps parsing it correctly.
+    expect(json.event.id).toBe(`${leagueA}:2:2026-09-20`);
+    expect(json.event.venue).toBe('League A Rink 2');
+  });
+
+  it('Part 2 (fixed-teams scheduling task): a SECOND event on the same date and venue is allowed when it has a DIFFERENT time', async () => {
+    const res = await SELF.fetch('http://example.com/league/events', {
+      method: 'POST',
+      headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
+      body: JSON.stringify({ date: '2026-09-20', venue: 'League A Rink', start_time: '20:00' })
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.event.venue).toBe('League A Rink');
+    expect(json.event.start_time).toBe('20:00');
   });
 
   it('the SAME date is allowed for a DIFFERENT league (collision-safe ids per league_ids.js)', async () => {

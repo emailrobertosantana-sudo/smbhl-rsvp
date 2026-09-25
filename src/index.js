@@ -1972,26 +1972,38 @@ async function handleDashboardPage(req, env, url) {
     // linking to the existing detail page for anything more. SMBHL's
     // own board is untouched; this is additive to the league product
     // only.
-    let weekStatus = null;
-    let nextEvent = null;
+    // Part 2 (fixed-teams scheduling task): two events can now share a
+    // date (different venue/time -- SMBHL's own real example is two
+    // simultaneous gyms). This card used to pick a single "next event"
+    // via LIMIT 1, which was safe only when a date was structurally
+    // unique per league -- now it would silently hide a same-day
+    // sibling instead of showing it. Fetches every non-cancelled event
+    // on that SAME nearest date (not just the first one found) and
+    // renders one row per event, each with its own real counts.
+    let nextDateEvents = [];
     if (!needsSeason) {
       const today = new Date().toISOString().slice(0, 10);
-      nextEvent = await env.DB.prepare(
-        `SELECT id, date, venue, start_time, season FROM events
-          WHERE league_id = ? AND state != 'cancelled' AND date >= ?
-          ORDER BY date ASC LIMIT 1`
+      const nextOne = await env.DB.prepare(
+        `SELECT date FROM events WHERE league_id = ? AND state != 'cancelled' AND date >= ? ORDER BY date ASC LIMIT 1`
       ).bind(leagueRow.id, today).first();
-      if (nextEvent) {
-        const eventCfg = await getLeagueSeasonConfig(env, leagueRow.id, nextEvent.season);
-        weekStatus = await eventWeekStatus(env, leagueRow.id, nextEvent, eventCfg);
+      if (nextOne) {
+        const sameDate = (await env.DB.prepare(
+          `SELECT id, date, venue, start_time, season FROM events
+            WHERE league_id = ? AND state != 'cancelled' AND date = ?
+            ORDER BY start_time ASC`
+        ).bind(leagueRow.id, nextOne.date).all()).results || [];
+        for (const ev of sameDate) {
+          const eventCfg = await getLeagueSeasonConfig(env, leagueRow.id, ev.season);
+          nextDateEvents.push({ event: ev, status: await eventWeekStatus(env, leagueRow.id, ev, eventCfg) });
+        }
       }
     }
     const weekStatusHtml = needsSeason ? '' : `
     <section class="nl-card nl-card--pad-lg">
       <div class="h3" data-i18n="weekStatusTitle">Cette semaine</div>
-      ${!nextEvent ? `
+      ${!nextDateEvents.length ? `
       <p class="nl-help" style="margin-top:4px" data-i18n="weekStatusNoEvent">Aucun match à venir pour le moment.</p>
-      <div style="margin-top:6px"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/schedule" data-i18n="weekStatusCreateBtn">Créer l'horaire</a></div>` : `
+      <div style="margin-top:6px"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/schedule" data-i18n="weekStatusCreateBtn">Créer l'horaire</a></div>` : nextDateEvents.map(({ event: nextEvent, status: weekStatus }) => `
       <div class="dash-week-when">${dateTimeSpanHtml('span', nextEvent.date, nextEvent.start_time, 'short')}${nextEvent.venue ? `<span class="dash-week-venue">${esc(nextEvent.venue)}</span>` : ''}</div>
       <div class="dash-week-counts">
         <span class="nl-badge nl-badge--in">${weekStatus.confirmed} <span data-i18n="weekStatusConfirmed">confirmés</span></span>
@@ -1999,7 +2011,7 @@ async function handleDashboardPage(req, env, url) {
         <span class="nl-badge nl-badge--pending">${weekStatus.noResponse} <span data-i18n="weekStatusNoResponse">sans réponse</span></span>
         ${weekStatus.short ? `<span class="nl-badge nl-badge--short" data-i18n="weekStatusShort">Manque de joueurs</span>` : ''}
       </div>
-      <div style="margin-top:10px"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/events/detail?e=${encodeURIComponent(nextEvent.id)}" data-i18n="weekStatusDetailBtn">Voir le match</a></div>`}
+      <div style="margin-top:10px;margin-bottom:10px"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/events/detail?e=${encodeURIComponent(nextEvent.id)}" data-i18n="weekStatusDetailBtn">Voir le match</a></div>`).join('<hr style="margin:10px 0;border:none;border-top:1px solid var(--line)">')}
     </section>`;
 
     const remindersAnyOn = !!(leagueRow.reminder_72h_enabled || leagueRow.reminder_24h_enabled || leagueRow.reminder_12h_enabled);
@@ -3102,7 +3114,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
 
   const today = new Date().toISOString().slice(0, 10);
   const events = (await env.DB.prepare(
-    `SELECT date, venue, venue_id, start_time, state FROM events
+    `SELECT id, date, venue, venue_id, start_time, state FROM events
       WHERE league_id = ? AND state != 'cancelled' AND date >= ?
       ORDER BY date ASC LIMIT 20`
   ).bind(leagueId, today).all()).results || [];
@@ -3147,7 +3159,11 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
 
   let poolConfirmed = 0, poolMin = 0, poolMax = 0, poolGoaliesConfirmed = 0, poolGoalieMin = 0;
   if (isHeadcount && nextEvent) {
-    const nextEventId = makeEventId(leagueId, nextEvent.date);
+    // Part 2 (fixed-teams scheduling task): use the real row id, never
+    // recompute one from the date -- two events can now share a date
+    // (different venue/time), so makeEventId(leagueId, date) alone is
+    // no longer guaranteed to be THIS event's own id.
+    const nextEventId = nextEvent.id;
     const st = await teamState(env.DB, nextEventId, HEADCOUNT_TEAM_NAME, cfg);
     poolConfirmed = st.skaters + st.goalies;
     poolMin = cfg.minSkaters || 0;
@@ -3173,7 +3189,11 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const isWeeklyDraw = teamStructure === 'weekly_draw';
   let weeklyDrawAssignments = [];
   if (isWeeklyDraw && nextEvent) {
-    const nextEventId = makeEventId(leagueId, nextEvent.date);
+    // Part 2 (fixed-teams scheduling task): use the real row id, never
+    // recompute one from the date -- two events can now share a date
+    // (different venue/time), so makeEventId(leagueId, date) alone is
+    // no longer guaranteed to be THIS event's own id.
+    const nextEventId = nextEvent.id;
     weeklyDrawAssignments = (await env.DB.prepare(
       `SELECT c.name, r.team FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
         WHERE r.event_id = ? AND r.status = 'in' AND r.team IS NOT NULL
@@ -5519,17 +5539,26 @@ async function handleLeagueRosterPage(req, env, url) {
   let reminderWindowEvent = null;
   if (remindersArmed) {
     const todayStr = new Date().toISOString().slice(0, 10);
-    const nearestEvent = await env.DB.prepare(
-      `SELECT id, date, start_time, venue, auto_reminders_enabled FROM events WHERE league_id = ? AND state != 'cancelled' AND date >= ? ORDER BY date ASC LIMIT 1`
-    ).bind(leagueId, todayStr).first();
-    if (nearestEvent && nearestEvent.start_time) {
-      const widestArmedHours = Math.max(
-        leagueRow.reminder_72h_enabled ? 72 : 0,
-        leagueRow.reminder_24h_enabled ? 24 : 0,
-        leagueRow.reminder_12h_enabled ? 12 : 0
-      );
-      const hoursUntil = (eventStart(nearestEvent).getTime() - Date.now()) / 3600000;
-      if (hoursUntil > 0 && hoursUntil <= widestArmedHours) reminderWindowEvent = nearestEvent;
+    // Part 2 (fixed-teams scheduling task): two events can now share a
+    // date (different venue/time) -- LIMIT 1 here used to be safe only
+    // because "the nearest upcoming event" was structurally unique per
+    // league. Now checks every upcoming event close enough to matter
+    // (10 is generously more than a league could ever have inside a
+    // single <=72h reminder window) instead of picking one arbitrarily
+    // and possibly missing a same-day sibling that's actually the one
+    // inside the armed window.
+    const nearEvents = (await env.DB.prepare(
+      `SELECT id, date, start_time, venue, auto_reminders_enabled FROM events WHERE league_id = ? AND state != 'cancelled' AND date >= ? ORDER BY date ASC, start_time ASC LIMIT 10`
+    ).bind(leagueId, todayStr).all()).results || [];
+    const widestArmedHours = Math.max(
+      leagueRow.reminder_72h_enabled ? 72 : 0,
+      leagueRow.reminder_24h_enabled ? 24 : 0,
+      leagueRow.reminder_12h_enabled ? 12 : 0
+    );
+    for (const candidate of nearEvents) {
+      if (!candidate.start_time) continue;
+      const hoursUntil = (eventStart(candidate).getTime() - Date.now()) / 3600000;
+      if (hoursUntil > 0 && hoursUntil <= widestArmedHours) { reminderWindowEvent = candidate; break; }
     }
   }
 
@@ -6409,10 +6438,10 @@ async function handleLeagueSchedulePage(req, env, url) {
   // real chronological slot, not hide them.
   const scheduleToday = new Date().toISOString().slice(0, 10);
   const upcomingEvents = (await env.DB.prepare(
-    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time FROM events WHERE league_id = ? AND date >= ? ORDER BY date ASC, week ASC'
+    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time, home_team, away_team FROM events WHERE league_id = ? AND date >= ? ORDER BY date ASC, week ASC'
   ).bind(leagueId, scheduleToday).all()).results || [];
   const pastEvents = (await env.DB.prepare(
-    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time FROM events WHERE league_id = ? AND date < ? ORDER BY date DESC, week DESC'
+    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time, home_team, away_team FROM events WHERE league_id = ? AND date < ? ORDER BY date DESC, week DESC'
   ).bind(leagueId, scheduleToday).all()).results || [];
   const events = [...upcomingEvents, ...pastEvents];
   // C4 bug fix (schedule/events polish task): most leagues play at the
@@ -6479,6 +6508,15 @@ async function handleLeagueSchedulePage(req, env, url) {
   // already uses for its own "start your season" prompt.
   const leagueData = await getLeagueDataJson(env, leagueId);
   const needsSeason = !leagueData.current_season;
+  // Part 2 (fixed-teams scheduling task): the create-match form offers
+  // a matchup picker only when it's actually needed -- a 'fixed'
+  // league with more than 2 teams (a 2-team league's matchup is
+  // already implied; both always play). weekly_draw/headcount never
+  // show it at all, matching createLeagueEventRow's own gating.
+  const scheduleCfg = needsSeason ? null : await getLeagueSeasonConfig(env, leagueId, leagueData.current_season);
+  const scheduleTeamNames = scheduleCfg ? getTeamNames(scheduleCfg) : [];
+  const scheduleIsFixed = scheduleCfg && (scheduleCfg.teamStructure || 'fixed') === 'fixed';
+  const showMatchupPicker = scheduleIsFixed && scheduleTeamNames.length > 2;
 
   const I18N_SCHEDULE = {
     fr: {
@@ -6519,7 +6557,15 @@ async function handleLeagueSchedulePage(req, env, url) {
       // D3 (forms polish task): a 10h00 start / 00h30 end used to be
       // accepted silently -- almost always a typo, but a late game can
       // genuinely cross midnight, so this warns rather than blocks.
-      crossMidnightWarning: "L'heure de fin est avant l'heure de début, donc ce match se terminerait après minuit (le lendemain). Continuer quand même?"
+      crossMidnightWarning: "L'heure de fin est avant l'heure de début, donc ce match se terminerait après minuit (le lendemain). Continuer quand même?",
+      // Part 2 (fixed-teams scheduling task): only shown for a 'fixed'
+      // league with more than 2 teams (see showMatchupPicker's own
+      // comment) -- home/away is stored but never LABELLED "home"/
+      // "away" anywhere in the UI (see this task's own decision, noted
+      // where matchupVs is built): in a shared gym the distinction
+      // isn't meaningful, so only "Team A vs Team B" is shown.
+      matchupLabel: 'Qui joue?', matchupOptional: '(optionnel -- peut être précisé plus tard)',
+      matchupTeam1: 'Équipe 1', matchupTeam2: 'Équipe 2', matchupVsWord: 'contre'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
@@ -6545,7 +6591,9 @@ async function handleLeagueSchedulePage(req, env, url) {
       lblEndDate: 'or end date (optional)', bulkCreateSubmit: 'Create the series',
       duplicateBtn: 'Duplicate', duplicateConfirmBtn: 'Confirm',
       bulkCreateResultSummary: '{created} event(s) created, {skipped} skipped (already existed).',
-      crossMidnightWarning: "The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?"
+      crossMidnightWarning: "The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?",
+      matchupLabel: "Who's playing?", matchupOptional: '(optional -- can be set later)',
+      matchupTeam1: 'Team 1', matchupTeam2: 'Team 2', matchupVsWord: 'vs'
     }
   };
 
@@ -6558,6 +6606,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     ? events.map(ev => `<div class="nl-card sc-game-row">
       <a class="sc-game" href="/league/events/detail?e=${encodeURIComponent(ev.id)}">
         <div class="sc-when">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
+        ${ev.home_team && ev.away_team ? `<div class="sc-venue">${esc(ev.home_team)} <span data-i18n="matchupVsWord">contre</span> ${esc(ev.away_team)}</div>` : ''}
         <div class="sc-venue">${ev.venue ? esc(ev.venue) : ''}</div>
         <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
         <span class="sc-chevron">&rsaquo;</span>
@@ -6658,6 +6707,19 @@ async function handleLeagueSchedulePage(req, env, url) {
         <label class="nl-label" for="e_date" data-i18n="date">Date</label>
         <input class="nl-input" id="e_date" type="date" required>
       </div>
+      ${showMatchupPicker ? `<div class="nl-field">
+        <label class="nl-label" for="e_home_team"><span data-i18n="matchupLabel">Qui joue?</span> <span class="nl-help" data-i18n="matchupOptional" style="font-weight:400">(optionnel -- peut être précisé plus tard)</span></label>
+        <div class="sc-two">
+          <select class="nl-select" id="e_home_team" data-i18n-aria="matchupTeam1" aria-label="Équipe 1">
+            <option value="" data-i18n="matchupTeam1">Équipe 1</option>
+            ${scheduleTeamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+          </select>
+          <select class="nl-select" id="e_away_team" data-i18n-aria="matchupTeam2" aria-label="Équipe 2">
+            <option value="" data-i18n="matchupTeam2">Équipe 2</option>
+            ${scheduleTeamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+          </select>
+        </div>
+      </div>` : ''}
       <div class="sc-two">
         <div class="nl-field">
           <label class="nl-label" for="e_start" data-i18n="startOpt">Heure de début (optionnel)</label>
@@ -6795,6 +6857,13 @@ async function submitEvent() {
   // not "opted in."
   var optOutEl = document.getElementById('e_reminders_optout');
   var autoRemindersEnabled = optOutEl ? !optOutEl.checked : true;
+  // Part 2 (fixed-teams scheduling task): only present when
+  // showMatchupPicker rendered it -- absent entirely for weekly_draw/
+  // headcount, and for a 2-team fixed league (matchup already implied).
+  var homeTeamEl = document.getElementById('e_home_team');
+  var awayTeamEl = document.getElementById('e_away_team');
+  var homeTeam = homeTeamEl ? homeTeamEl.value : '';
+  var awayTeam = awayTeamEl ? awayTeamEl.value : '';
   if (!date) { showErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
   // D3 (forms polish task): an end time before the start time almost
   // always means a typo, but a genuinely late game can cross midnight
@@ -6809,7 +6878,7 @@ async function submitEvent() {
     var res = await fetch('/league/events', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined, auto_reminders_enabled: autoRemindersEnabled })
+      body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined, auto_reminders_enabled: autoRemindersEnabled, home_team: homeTeam || undefined, away_team: awayTeam || undefined })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
@@ -7017,16 +7086,18 @@ ${tabbar}`;
   // (weekly_draw's is this week's real draw result; headcount's is
   // the league's one implicit pool) -- this only ever touches 'fixed'.
   //
-  // There is no stored matchup yet (Part 2, season-model/scheduling
-  // task, adds ev.home_team/ev.away_team) -- until that lands, a
-  // >2-team fixed event's real matchup is simply unknown. Rather than
-  // guess by showing everyone (the bug) or guess by showing an
-  // arbitrary two, this renders an explicit "no matchup set" state
-  // instead. A 2-team league needs no matchup data at all to know who
-  // plays -- both teams always do -- so it keeps showing both,
-  // unchanged from before this fix.
-  const fixedMatchupUnknown = isFixed && teamNames.length > 2;
-  const cardTeamNames = fixedMatchupUnknown ? [] : teamNames;
+  // Part 2 (fixed-teams scheduling task) adds the real matchup
+  // (ev.home_team/ev.away_team, migrate-045.sql) -- used here once
+  // set. A >2-team fixed event with no matchup recorded yet (not set
+  // at creation, never edited in since) still renders Part 1's
+  // explicit "no matchup set" state rather than guessing. A 2-team
+  // league needs no matchup data at all to know who plays -- both
+  // teams always do -- so it's unaffected either way, exactly as
+  // before Part 1.
+  const matchupTeams = (isFixed && teamNames.length > 2 && ev.home_team && ev.away_team)
+    ? [ev.home_team, ev.away_team]
+    : null;
+  const fixedMatchupUnknown = isFixed && teamNames.length > 2 && !matchupTeams;
 
   const I18N_DETAIL = {
     fr: {
@@ -7128,8 +7199,16 @@ ${tabbar}`;
   }
 
   const teamCards = [];
-  for (let i = 0; i < cardTeamNames.length && !isWeeklyDrawPreDraw; i++) {
-    const team = cardTeamNames[i];
+  for (let i = 0; i < teamNames.length && !isWeeklyDrawPreDraw; i++) {
+    const team = teamNames[i];
+    // Part 2 (fixed-teams scheduling task): skip a team not in this
+    // event's own matchup, WITHOUT changing `i` -- resolveTeamColor(i)
+    // below is this team's real, permanent color-dot index in the
+    // league's own team list, so looping the full list and skipping
+    // (rather than iterating a fresh 2-element [home,away] array,
+    // which would renumber colors from 0) keeps every team's dot the
+    // same color everywhere else it's shown.
+    if (matchupTeams && !matchupTeams.includes(team)) continue;
     const st = await teamState(env.DB, ev.id, team, cfg);
     const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
     const openSkaters = await openSpots(env.DB, ev.id, team, 'skater', cfg);

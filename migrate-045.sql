@@ -1,0 +1,37 @@
+-- Migration 045: event matchup (home/away team), fixed-teams leagues
+-- only (league product).
+--
+-- Apply with:
+--   npx wrangler d1 execute notreligue-demo --remote --file=./migrate-045.sql
+--
+-- WHAT THIS DOES: adds events.home_team TEXT and events.away_team TEXT --
+-- purely additive, nullable, no default-value change to any existing
+-- column, row, index, or query. Every existing event (SMBHL's and every
+-- league's) simply has NULL for both -- correctly meaning "no matchup
+-- recorded," since the concept didn't exist before this migration.
+--
+-- WHY: "Red vs Blue on Sunday" was not expressible -- createLeagueEventRow
+-- (leagues.js) took date/venue/time only, with no way to record which two
+-- teams a given event is between. A 'fixed' league needs this (see
+-- handleLeagueEventDetailPage's own Part 1 fix in this same task batch,
+-- which this migration lets it use the real matchup instead of an
+-- explicit "no matchup set" placeholder). 'weekly_draw' (teams drawn per
+-- event, not fixed) and 'headcount' (no team concept at all) never read
+-- or write these columns -- both structures keep working completely
+-- unchanged; see createLeagueEventRow's and handleLeagueEventUpdate's own
+-- comments at their write sites (leagues.js).
+--
+-- NOT applied against SMBHL's own production database. notreligue-demo
+-- and smbhl-rsvp are two entirely separate D1 databases (see
+-- wrangler.jsonc's own env.demo.d1_databases block) -- this migration
+-- only ever runs against notreligue-demo, and SMBHL's production schema
+-- is untouched. SMBHL's own schedule generation (season_hub.js) neither
+-- reads nor writes these columns, so it is unaffected regardless.
+--
+-- Before smbhl-rsvp (production) is ever redeployed with code that
+-- assumes these columns exist, this same migration needs to be applied
+-- there too -- flagged in this task's own final report, not done here
+-- (out of this task's authorization, which is demo-only).
+
+ALTER TABLE events ADD COLUMN home_team TEXT;
+ALTER TABLE events ADD COLUMN away_team TEXT;

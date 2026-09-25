@@ -943,10 +943,64 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
     week = (countRow?.c || 0) + 1;
   }
 
-  const eventId = makeEventId(leagueId, date);
-  const existing = await env.DB.prepare('SELECT 1 FROM events WHERE id = ?').bind(eventId).first();
-  if (existing) {
-    return { ok: false, error: 'An event already exists for this date in your league.', errorKey: 'EVENT_DATE_EXISTS' };
+  // Fixed-teams scheduling task (Part 2): "one event is one game between
+  // two teams, not a night containing several" -- a league playing more
+  // than one game in the same timeslot creates SEPARATE events for them,
+  // distinguished by VENUE (SMBHL's own real example: Letendre Gym 1 and
+  // Gym 2, both at 10:30). What's still rejected is a genuine double-
+  // booking: this league, same date, same venue, same start_time as an
+  // event that already exists. NULL venue/time is its own "nothing
+  // recorded" slot -- two such blank events on the same date still
+  // collide, exactly as every event always has (this is the same
+  // rejection the one-event-per-date rule used to give unconditionally,
+  // just narrowed to when it's still a real conflict).
+  const slotConflict = await env.DB.prepare(
+    `SELECT 1 FROM events WHERE league_id = ? AND date = ?
+       AND COALESCE(venue, '') = COALESCE(?, '') AND COALESCE(start_time, '') = COALESCE(?, '')`
+  ).bind(leagueId, date, venue, startTime || null).first();
+  if (slotConflict) {
+    return { ok: false, error: 'An event already exists for this date, venue, and time in your league.', errorKey: 'EVENT_SLOT_EXISTS' };
+  }
+
+  // events.id still must be unique -- the first event on a date keeps
+  // the exact same id shape as before this task; only a second (or
+  // later) one sharing that date gets makeEventId's own disambiguator
+  // (league_ids.js -- inserted before the date, so eventDateFromId's
+  // parsing is unaffected).
+  let eventId = makeEventId(leagueId, date);
+  let disambiguator = 2;
+  while (await env.DB.prepare('SELECT 1 FROM events WHERE id = ?').bind(eventId).first()) {
+    eventId = makeEventId(leagueId, date, disambiguator);
+    disambiguator++;
+  }
+
+  // Fixed-teams scheduling task (Part 2): "Red vs Blue on Sunday" --
+  // home_team/away_team (migrate-045.sql) are only ever meaningful for a
+  // 'fixed' league; a weekly_draw league draws teams per event and a
+  // headcount league has no team concept at all, so both are completely
+  // unaffected -- body.home_team/away_team are simply never looked at
+  // for either, exactly as if this task had never happened. Optional
+  // even for 'fixed': an admin creating events ahead of a schedule
+  // (bulk-create, this route with no matchup yet) can still leave it
+  // unset -- handleLeagueEventDetailPage's own Part 1 fix renders a
+  // "no matchup set" state for a >2-team fixed league until it's set,
+  // rather than requiring it up front.
+  const cfg = await getLeagueSeasonConfig(env, leagueId, season);
+  const isFixed = (cfg.teamStructure || 'fixed') === 'fixed';
+  let homeTeam = null, awayTeam = null;
+  if (isFixed && (body.home_team || body.away_team)) {
+    homeTeam = String(body.home_team || '').trim();
+    awayTeam = String(body.away_team || '').trim();
+    if (!homeTeam || !awayTeam) {
+      return { ok: false, error: 'Both home_team and away_team are required to set a matchup.', errorKey: 'MATCHUP_TEAMS_REQUIRED' };
+    }
+    if (homeTeam === awayTeam) {
+      return { ok: false, error: 'home_team and away_team must be different.', errorKey: 'MATCHUP_TEAMS_SAME' };
+    }
+    const validTeams = getTeamNames(cfg);
+    if (!validTeams.includes(homeTeam) || !validTeams.includes(awayTeam)) {
+      return { ok: false, error: 'home_team and away_team must be real teams in this season.', errorKey: 'MATCHUP_TEAM_UNKNOWN' };
+    }
   }
 
   // Live-testing task (batch 6), Part 10: per-event opt-out of the
@@ -957,9 +1011,9 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
   const autoRemindersEnabled = body.auto_reminders_enabled === false ? 0 : 1;
 
   await env.DB.prepare(
-    `INSERT INTO events (id, season, week, date, venue, venue_id, state, start_time, end_time, league_id, auto_reminders_enabled)
-     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`
-  ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId, autoRemindersEnabled).run();
+    `INSERT INTO events (id, season, week, date, venue, venue_id, state, start_time, end_time, league_id, auto_reminders_enabled, home_team, away_team)
+     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
+  ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId, autoRemindersEnabled, homeTeam, awayTeam).run();
 
   if (autoRemindersEnabled) {
     await applyReminderWindowSkipRule(env, leagueId, { id: eventId, start_time: startTime || null });
@@ -967,7 +1021,7 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
 
   return {
     ok: true,
-    event: { id: eventId, season, week, date, venue, venue_id: venueId, state: 'open', start_time: startTime || null, end_time: endTime || null, auto_reminders_enabled: !!autoRemindersEnabled }
+    event: { id: eventId, season, week, date, venue, venue_id: venueId, state: 'open', start_time: startTime || null, end_time: endTime || null, auto_reminders_enabled: !!autoRemindersEnabled, home_team: homeTeam, away_team: awayTeam }
   };
 }
 
@@ -998,7 +1052,7 @@ export async function handleLeagueEventCreate(req, env) {
   const leagueData = await getLeagueDataJson(env, leagueId);
   const result = await createLeagueEventRow(env, leagueId, body, leagueData);
   if (!result.ok) {
-    const status = result.errorKey === 'EVENT_DATE_EXISTS' ? 409 : 400;
+    const status = result.errorKey === 'EVENT_SLOT_EXISTS' ? 409 : 400;
     return Response.json(result, { status });
   }
   return Response.json({ ok: true, league_id: leagueId, event: result.event });
@@ -1076,7 +1130,7 @@ export async function handleLeagueEventsBulkCreate(req, env) {
     if (created.ok) {
       results.push({ status: 'created', event: created.event });
     } else {
-      results.push({ status: 'skipped', date, reason: created.errorKey === 'EVENT_DATE_EXISTS' ? 'duplicate_date' : 'invalid', error: created.error, errorKey: created.errorKey });
+      results.push({ status: 'skipped', date, reason: created.errorKey === 'EVENT_SLOT_EXISTS' ? 'duplicate_slot' : 'invalid', error: created.error, errorKey: created.errorKey });
     }
     date = addDaysToDateStr(date, INTERVAL_DAYS);
   }
@@ -1134,7 +1188,7 @@ export async function handleLeagueEventDuplicate(req, env) {
     auto_reminders_enabled: source.auto_reminders_enabled === 0 ? false : true
   }, leagueData);
   if (!result.ok) {
-    const status = result.errorKey === 'EVENT_DATE_EXISTS' ? 409 : 400;
+    const status = result.errorKey === 'EVENT_SLOT_EXISTS' ? 409 : 400;
     return Response.json(result, { status });
   }
   return Response.json({ ok: true, league_id: leagueId, event: result.event });
@@ -1256,9 +1310,38 @@ export async function handleLeagueEventUpdate(req, env) {
     venue = venueRow.name;
   }
 
+  // Fixed-teams scheduling task (Part 2): the matchup Part 1's "no
+  // matchup set" state points at getting fixed. Only touched when the
+  // caller actually sends one of these two keys -- omitting both
+  // entirely leaves whatever's already stored unchanged, same partial-
+  // update posture as every other field on this route. Sending both as
+  // blank explicitly CLEARS a matchup (e.g. correcting a mistake) --
+  // sending only one of the two is rejected, same "both or neither"
+  // rule createLeagueEventRow enforces at creation time.
+  let homeTeam = existing.home_team ?? null, awayTeam = existing.away_team ?? null;
+  const cfgForStructure = await getLeagueSeasonConfig(env, leagueId, existing.season);
+  const isFixedEvent = (cfgForStructure.teamStructure || 'fixed') === 'fixed';
+  if (isFixedEvent && (body.home_team !== undefined || body.away_team !== undefined)) {
+    const newHome = String(body.home_team || '').trim();
+    const newAway = String(body.away_team || '').trim();
+    if (!newHome && !newAway) {
+      homeTeam = null; awayTeam = null;
+    } else if (!newHome || !newAway) {
+      return Response.json({ ok: false, error: 'Both home_team and away_team are required to set a matchup.', errorKey: 'MATCHUP_TEAMS_REQUIRED' }, { status: 400 });
+    } else if (newHome === newAway) {
+      return Response.json({ ok: false, error: 'home_team and away_team must be different.', errorKey: 'MATCHUP_TEAMS_SAME' }, { status: 400 });
+    } else {
+      const validTeams = getTeamNames(cfgForStructure);
+      if (!validTeams.includes(newHome) || !validTeams.includes(newAway)) {
+        return Response.json({ ok: false, error: 'home_team and away_team must be real teams in this season.', errorKey: 'MATCHUP_TEAM_UNKNOWN' }, { status: 400 });
+      }
+      homeTeam = newHome; awayTeam = newAway;
+    }
+  }
+
   await env.DB.prepare(
-    `UPDATE events SET start_time = ?, end_time = ?, venue = ?, venue_id = ? WHERE id = ? AND league_id = ?`
-  ).bind(startTime || null, endTime || null, venue, venueId, eventId, leagueId).run();
+    `UPDATE events SET start_time = ?, end_time = ?, venue = ?, venue_id = ?, home_team = ?, away_team = ? WHERE id = ? AND league_id = ?`
+  ).bind(startTime || null, endTime || null, venue, venueId, homeTeam, awayTeam, eventId, leagueId).run();
 
   // Reminder-safety (see this route's own top comment, and the CAUTION
   // in this task): start_time is one of the two inputs
@@ -1277,7 +1360,7 @@ export async function handleLeagueEventUpdate(req, env) {
 
   return Response.json({
     ok: true,
-    event: { id: eventId, venue, venue_id: venueId, start_time: startTime || null, end_time: endTime || null }
+    event: { id: eventId, venue, venue_id: venueId, start_time: startTime || null, end_time: endTime || null, home_team: homeTeam, away_team: awayTeam }
   });
 }
 

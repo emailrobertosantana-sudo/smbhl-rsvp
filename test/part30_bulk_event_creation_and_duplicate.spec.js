@@ -103,7 +103,11 @@ describe('Part 7 (live-testing task): bulk event creation (POST /league/events/b
     expect(json.skippedCount).toBe(1);
     const skipped = json.results.find(r => r.status === 'skipped');
     expect(skipped.date).toBe('2099-10-18');
-    expect(skipped.reason).toBe('duplicate_date');
+    // Fixed-teams scheduling task (Part 2): renamed from 'duplicate_date'
+    // -- a bare date match is no longer what's rejected, a real
+    // date+venue+time slot collision is (both blank here, same as the
+    // pre-existing event above, so this genuinely still collides).
+    expect(skipped.reason).toBe('duplicate_slot');
   });
 
   it('rejects a request with neither an occurrence count nor an end date', async () => {
@@ -152,7 +156,7 @@ describe('Part 7 (live-testing task): duplicate event (POST /league/events/dupli
     expect(json.event.season).toBe(sourceEvent.season);
   });
 
-  it('duplicating onto a date that already has an event is rejected (409), matching the single-create route', async () => {
+  it('duplicating onto a date+venue that already has an event is rejected (409), matching the single-create route (fixed-teams scheduling task, Part 2: the collision is now date+venue+time, not date alone -- duplicate() copies the source\'s own venue, so it collides here because the pre-existing event on the target date shares that same venue)', async () => {
     const { cookie, csrfToken } = await signup('duplicate.event.collision@example.com', '203.0.129.008');
     await createLeagueWithSeason(cookie, csrfToken, 'Duplicate Event Collision League');
     const sourceRes = await SELF.fetch('http://example.com/league/events', {
@@ -162,12 +166,12 @@ describe('Part 7 (live-testing task): duplicate event (POST /league/events/dupli
     const source = (await sourceRes.json()).event;
     await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-08-10' })
+      body: JSON.stringify({ date: '2099-08-10', venue: 'Rink X' })
     });
 
     const { status, json } = await duplicateEvent(cookie, csrfToken, { event_id: source.id, date: '2099-08-10' });
     expect(status).toBe(409);
-    expect(json.errorKey).toBe('EVENT_DATE_EXISTS');
+    expect(json.errorKey).toBe('EVENT_SLOT_EXISTS');
   });
 
   it('cannot duplicate an event belonging to another league', async () => {
