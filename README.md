@@ -299,9 +299,10 @@ Values still hardcoded to SMBHL specifics rather than driven by season config or
    Read-only. Tells you exactly which migrations are pending, before you deploy anything. This is a script — it only helps if you remember to run it. The **runtime guard** below is the part that can't be skipped.
 4. **Deploy:**
    ```powershell
-   npx wrangler deploy              # production — smbhl-rsvp / rsvp.smbhl.com
+   npx wrangler deploy --env=""     # production — smbhl-rsvp / rsvp.smbhl.com
    npx wrangler deploy --env demo   # demo — notreligue-rsvp / rsvp.notreligue.ca
    ```
+   Use `--env=""` for production, not a bare `npx wrangler deploy`. Both resolve to the same thing (wrangler.jsonc's top-level config), but multiple environments are defined in this project, so a bare deploy triggers wrangler's own warning that no target was specified and just so happens to fall back to production — correct, but ambiguous: it reads as a missed `--env demo`, not a deliberate choice. `--env=""` says "production, on purpose" and skips the warning.
 5. **Verify:** load the deployed site. If it 503s with `Schema drift detected`, see below — don't just retry the deploy, it won't help.
 
 ### The schema-drift guard
