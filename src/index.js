@@ -1628,7 +1628,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsLabel: 'équipes', playersLabel: 'joueurs',
       publicPage: 'Page publique', copyLink: 'Copier', copied: 'Copié !',
       publicPageDisabled: 'Désactivée -- personne ne peut voir cette page.',
-      teams: 'Équipes', tracksStatsLabel: 'Statistiques suivies', yes: 'Oui', no: 'Non',
+      teams: 'Équipes', tracksStatsLabel: 'Statistiques suivies :', yes: 'Oui', no: 'Non',
       // B2 (stale-copy polish task): superseding the "Nouvelles
       // équipes chaque match" wording test/part49_teams_per_game_label.spec.js
       // previously locked with a do-not-revert comment (batch 2 Part 5,
@@ -1664,7 +1664,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsLabel: 'teams', playersLabel: 'players',
       publicPage: 'Public page', copyLink: 'Copy', copied: 'Copied!',
       publicPageDisabled: "Disabled -- no one can see this page.",
-      teams: 'Teams', tracksStatsLabel: 'Tracks stats', yes: 'Yes', no: 'No',
+      teams: 'Teams', tracksStatsLabel: 'Tracks stats:', yes: 'Yes', no: 'No',
       teamsPerGame: 'Pickup with teams', noFixedTeams: 'No fixed teams',
       teamsPerGameCount: 'team names available',
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
@@ -1697,8 +1697,24 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // structure section it sits next to thematically), reachable via
       // this small "Modifier" link next to the season badge below. Only
       // the read-only label + edit link stay here.
-      Object.assign(fr, { currentSeasonLabel: 'Saison actuelle', editSeason: 'Modifier' });
-      Object.assign(en, { currentSeasonLabel: 'Current season', editSeason: 'Edit' });
+      // 4c (fixed-teams investigation follow-up batch, small fixes): a
+      // space before the colon is French typography -- English takes
+      // none. The colon now lives IN the label itself (with each
+      // language's own correct spacing) rather than as punctuation
+      // hardcoded once in the surrounding HTML, which could only ever
+      // be right for one language regardless of which one a client-
+      // side toggle actually switched to. Swept the rest of this
+      // file's own hardcoded ` : ` template literals for the same
+      // leak -- one more real instance found and fixed the same way,
+      // the Settings page's own "Statistiques suivies : Oui/Non" label
+      // (tracksStatsLabel, handleLeagueSettingsPage). Every other
+      // " : "-shaped literal found is SMBHL's own dual-display pattern
+      // (French primary text with a separate, already-correctly-
+      // punctuated English <span class="en"> shown alongside it, not a
+      // toggle-and-replace) or already a correctly per-language-
+      // punctuated dict pair (sendPanelDesc) -- neither is this bug.
+      Object.assign(fr, { currentSeasonLabel: 'Saison actuelle :', editSeason: 'Modifier', startNewSeasonLink: 'Démarrer une nouvelle saison' });
+      Object.assign(en, { currentSeasonLabel: 'Current season:', editSeason: 'Edit', startNewSeasonLink: 'Start a new season' });
       // Live-testing task (batch 6), Part 8: "current-week status" card
       // (eventWeekStatus) -- only ever rendered once a season exists
       // (weekStatusHtml itself is '' under needsSeason), so scoped here
@@ -2111,7 +2127,15 @@ async function handleDashboardPage(req, env, url) {
       <div class="dash-status">
         ${needsSeason
           ? `<span class="nl-badge nl-badge--pending" data-i18n="noSeason">Pas de saison active</span>`
-          : `<span><span data-i18n="currentSeasonLabel">Saison actuelle</span> : <b>${esc(currentSeason)}</b> · <a href="/league/settings" data-i18n="editSeason">Modifier</a></span>`}
+          // 4b (fixed-teams investigation follow-up batch, small
+          // fixes): "Start a new season" was only reachable from
+          // Settings -- added here too, always visible, as a plain
+          // link beside Edit (DECIDED: a link, not a button -- the
+          // rollover confirmation screen on Settings already explains
+          // every consequence before anything changes, so an
+          // accidental click is contained, same reasoning that keeps
+          // Edit itself a plain link here rather than a button).
+          : `<span><span data-i18n="currentSeasonLabel">Saison actuelle :</span> <b>${esc(currentSeason)}</b> · <a href="/league/settings" data-i18n="editSeason">Modifier</a> · <a href="/league/settings#section-new-season" data-i18n="startNewSeasonLink">Démarrer une nouvelle saison</a></span>`}
         ${needsSeason ? '' : `<span>${dashIsHeadcount ? '' : `${teamNames.length} <span data-i18n="teamsLabel">équipes</span> · `}${playerCount} <span data-i18n="playersLabel">joueurs</span></span>`}
       </div>
     </div>
@@ -2172,7 +2196,7 @@ async function handleDashboardPage(req, env, url) {
     </div>
     ${dashIsWeeklyDraw ? `<p class="nl-help" style="margin-top:12px" data-i18n="weeklyDrawTeamsDesc">Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.</p>` : ''}`}
     </div>
-    <p class="nl-help" style="margin-top:12px;"><span data-i18n="tracksStatsLabel">Statistiques suivies</span> : <b data-i18n="${leagueRow.tracks_stats ? 'yes' : 'no'}">${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b></p>
+    <p class="nl-help" style="margin-top:12px;"><span data-i18n="tracksStatsLabel">Statistiques suivies :</span> <b data-i18n="${leagueRow.tracks_stats ? 'yes' : 'no'}">${leagueRow.tracks_stats ? 'Oui' : 'Non'}</b></p>
   </section>
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>
@@ -4316,7 +4340,10 @@ async function handleLeagueSettingsPage(req, env, url) {
       // own explicit action, separate from renaming the current one,
       // and shows the rollover confirmation BEFORE anything changes.
       newSeasonTitle: 'Démarrer une nouvelle saison',
-      newSeasonDesc: ' fermera et deviendra une saison consultable en lecture seule.',
+      // 4a: newSeasonDesc removed -- was a static dict string with no
+      // season-name placeholder at all (the name is dynamic data, see
+      // this key's own render site's comment); a client-side language
+      // toggle silently dropped it, leaving a subject-less fragment.
       newSeasonStartBtn: 'Démarrer une nouvelle saison',
       newSeasonNameLabel: 'Nom de la nouvelle saison',
       newSeasonContinueBtn: 'Continuer',
@@ -4421,7 +4448,6 @@ async function handleLeagueSettingsPage(req, env, url) {
       seasonPickerLabel: 'View season',
       seasonReadOnlyBanner: '🔒 Closed season -- read only.',
       newSeasonTitle: 'Start a new season',
-      newSeasonDesc: ' will close and become a read-only, viewable season.',
       newSeasonStartBtn: 'Start a new season',
       newSeasonNameLabel: 'New season name',
       newSeasonContinueBtn: 'Continue',
@@ -4815,7 +4841,18 @@ async function handleLeagueSettingsPage(req, env, url) {
        keep G1's "Cette saison" / "Par défaut" adjacency intact. -->
   <section class="nl-card nl-card--pad-lg" id="section-new-season">
     <div class="h3" data-i18n="newSeasonTitle">Démarrer une nouvelle saison</div>
-    <p class="nl-help" data-i18n="newSeasonDesc">${esc(currentSeasonEntry ? currentSeasonEntry.name : '')} fermera et deviendra une saison consultable en lecture seule.</p>
+    <!-- 4a (fixed-teams investigation follow-up batch, small fixes):
+         this sentence interpolates the current season's own name --
+         dynamic data, not a static dictionary string, so (same
+         "data-date-fr/en" pattern this page's own reminderWarningFr/En
+         and the schedule page already use for the identical problem)
+         it can't go through the generic data-i18n innerHTML swap,
+         which would replace the WHOLE sentence with the static dict
+         string on a client-side language toggle -- silently dropping
+         the season name and leaving a subject-less fragment ("will
+         close and become..."). Both languages' full sentence are
+         pre-rendered here; the toggle only ever swaps which one shows. -->
+    <p class="nl-help" data-date-fr="${esc(`${currentSeasonEntry ? currentSeasonEntry.name : ''} fermera et deviendra une saison consultable en lecture seule.`)}" data-date-en="${esc(`${currentSeasonEntry ? currentSeasonEntry.name : ''} will close and become a read-only, viewable season.`)}">${esc(`${currentSeasonEntry ? currentSeasonEntry.name : ''} ${lang === 'en' ? 'will close and become a read-only, viewable season.' : 'fermera et deviendra une saison consultable en lecture seule.'}`)}</p>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="new_season_start_btn" data-i18n="newSeasonStartBtn" onclick="startNewSeasonFlow()">Démarrer une nouvelle saison</button></div>
 
     <div id="new_season_form" style="display:none;margin-top:var(--space-4);">

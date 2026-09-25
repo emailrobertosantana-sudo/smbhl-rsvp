@@ -537,3 +537,61 @@ describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
     expect(await scheduleHtml(c2)).not.toContain('id="sc_fixture_panel"');
   });
 });
+
+// Part 4 (fixed-teams investigation follow-up batch): small unrelated
+// fixes, done last per the task's own explicit ordering.
+describe('Part 4: small fixes', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+  async function dashboardHtml(cookie) {
+    return (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
+  }
+
+  it('4a: the "Start a new season" description is a complete sentence with the season name at the front, in both languages', async () => {
+    const { cookie, csrfToken } = await signup('p4a.sentence@example.com', '203.0.200.001');
+    await createLeague(cookie, csrfToken, { name: '4a League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'Winter 2026' });
+
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    expect(html).toContain('data-date-fr="Winter 2026 fermera et deviendra une saison consultable en lecture seule."');
+    expect(html).toContain('data-date-en="Winter 2026 will close and become a read-only, viewable season."');
+    // Server-rendered fallback (French by default) also has the real
+    // subject at the front, not a bare fragment.
+    expect(html).toContain('>Winter 2026 fermera et deviendra une saison consultable en lecture seule.<');
+    expect(html).not.toContain('data-i18n="newSeasonDesc"'); // the old, broken static-dict key is gone
+  });
+
+  it('4b: "Start a new season" is reachable from the dashboard header, always visible, as a plain link (not a button)', async () => {
+    const { cookie, csrfToken } = await signup('p4b.dashlink@example.com', '203.0.200.002');
+    await createLeague(cookie, csrfToken, { name: '4b League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+
+    const html = await dashboardHtml(cookie);
+    expect(html).toContain('href="/league/settings#section-new-season" data-i18n="startNewSeasonLink"');
+    // A plain <a> link, not a <button> -- same element family as the
+    // pre-existing "Edit" link right beside it.
+    expect(html).toMatch(/<a href="\/league\/settings#section-new-season"[^>]*>[^<]*<\/a>/);
+  });
+
+  it('4c: no French-style space before the colon in English -- "Current season:" and "Tracks stats:" both correctly punctuated per language', async () => {
+    const { cookie, csrfToken } = await signup('p4c.colonspacing@example.com', '203.0.200.003');
+    await createLeague(cookie, csrfToken, { name: '4c League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+
+    const dashHtml = await dashboardHtml(cookie);
+    const m = dashHtml.match(/var __I18N = (\{[\s\S]*?\});\n/);
+    expect(m).toBeTruthy();
+    const dashDict = JSON.parse(m[1]);
+    expect(dashDict.fr.currentSeasonLabel).toBe('Saison actuelle :'); // French: space before colon
+    expect(dashDict.en.currentSeasonLabel).toBe('Current season:'); // English: no space before colon
+    // The server-rendered (French-default) page never shows the
+    // English no-space form on its own text either.
+    expect(dashHtml).not.toContain('Saison actuelle: '); // no-space variant never leaks into French
+
+    // tracksStatsLabel is this same dashboard page's own dict (not Settings').
+    expect(dashDict.fr.tracksStatsLabel).toBe('Statistiques suivies :');
+    expect(dashDict.en.tracksStatsLabel).toBe('Tracks stats:');
+  });
+});
