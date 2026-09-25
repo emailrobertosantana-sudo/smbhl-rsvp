@@ -339,3 +339,78 @@ describe('Part 10 (live-testing task, batch 6): event creation warns before armi
     }
   });
 });
+
+describe('F2 (players/reminders polish task): Players page shows a backstop banner when adding players close to an armed game', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    env.RSVP_SECRET = RSVP_SECRET;
+    env.RESEND_API_KEY = 'mock-key';
+    env.PUBLIC_URL = 'https://rsvp.notreligue.ca';
+    await applyRealSchema(env);
+  });
+
+  it('shows the banner when the nearest upcoming event is inside the widest armed reminder window', async () => {
+    const { cookie, csrfToken } = await signup('f2.banner.show@example.com', '203.0.197.101');
+    const league = await createLeague(cookie, csrfToken, { name: 'F2 Banner Show League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await enableAllReminders(cookie, csrfToken);
+    // 50h out -- inside the 72h window, outside 24h/12h.
+    const { date, time } = easternDateTimeHoursFromNow(50);
+    await insertEventDirectly(league.id, date, time);
+
+    const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    expect(html).toContain('id="ro-reminders-banner"');
+    expect(html).toContain('data-i18n="remindersBannerTitle"');
+    expect(html).toContain('data-i18n="pauseRemindersBtn"');
+  });
+
+  it('no banner when reminders are off for this league (the F1 default), even with an imminent event', async () => {
+    const { cookie, csrfToken } = await signup('f2.banner.off@example.com', '203.0.197.102');
+    const league = await createLeague(cookie, csrfToken, { name: 'F2 Banner Off League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    // Reminders left at their F1 default (off) -- no enableAllReminders call.
+    const { date, time } = easternDateTimeHoursFromNow(10);
+    await insertEventDirectly(league.id, date, time);
+
+    const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    expect(html).not.toContain('id="ro-reminders-banner"');
+  });
+
+  it('no banner when the nearest event is outside every armed window', async () => {
+    const { cookie, csrfToken } = await signup('f2.banner.faraway@example.com', '203.0.197.103');
+    const league = await createLeague(cookie, csrfToken, { name: 'F2 Banner Faraway League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await enableAllReminders(cookie, csrfToken);
+    // 200h out -- outside all 3 windows.
+    const { date, time } = easternDateTimeHoursFromNow(200);
+    await insertEventDirectly(league.id, date, time);
+
+    const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    expect(html).not.toContain('id="ro-reminders-banner"');
+  });
+
+  it('the banner\'s pause control sets auto_reminders_enabled: false for exactly that event, and flips to a resume label', async () => {
+    const { cookie, csrfToken } = await signup('f2.banner.pause@example.com', '203.0.197.104');
+    const league = await createLeague(cookie, csrfToken, { name: 'F2 Banner Pause League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await enableAllReminders(cookie, csrfToken);
+    const { date, time } = easternDateTimeHoursFromNow(50);
+    const eventId = await insertEventDirectly(league.id, date, time);
+
+    const pauseRes = await SELF.fetch('http://example.com/league/events/reminders', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ event_id: eventId, auto_reminders_enabled: false })
+    });
+    expect(pauseRes.status).toBe(200);
+    const row = await env.DB.prepare('SELECT auto_reminders_enabled FROM events WHERE id = ?').bind(eventId).first();
+    expect(row.auto_reminders_enabled).toBe(0);
+
+    // The banner itself keeps showing (still inside the window) but now
+    // offers "resume" instead of "pause" -- the event query it's built
+    // from reads auto_reminders_enabled fresh on every page load.
+    const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
+    expect(html).toContain('id="ro-reminders-banner"');
+    expect(html).toContain('data-i18n="resumeRemindersBtn"');
+    expect(html).not.toContain('data-i18n="pauseRemindersBtn"');
+  });
+});

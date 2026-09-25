@@ -4665,7 +4665,7 @@ async function handleLeagueRosterPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name, team_colors FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, team_colors, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
 
   const contacts = (await env.DB.prepare(
     'SELECT player_id, name, email, phone, role, preferred_team, is_goalie, is_backup_goalie FROM contacts WHERE league_id = ? ORDER BY name'
@@ -4682,6 +4682,34 @@ async function handleLeagueRosterPage(req, env, url) {
   const eventCountRow = await env.DB.prepare('SELECT COUNT(*) AS c FROM events WHERE league_id = ?').bind(leagueId).first();
   const eventCount = eventCountRow ? Number(eventCountRow.c) || 0 : 0;
   const showScheduleNudge = contacts.length > 0 && eventCount === 0;
+
+  // F2 (players/reminders polish task): F1 defaults reminders off, but
+  // a league that already turned them on can still walk into the same
+  // mid-setup-emailing problem -- adding a player days before a game
+  // that's already inside an armed reminder window. This is that
+  // backstop: find the nearest upcoming event, and if it's inside the
+  // widest currently-armed window (REMINDER_WINDOW_THRESHOLD_HOURS,
+  // reminder_scheduling.js), surface it here with the same per-event
+  // pause/resume control the event-detail page already has
+  // (auto_reminders_enabled via POST /league/events/reminders) --
+  // reusing that existing toggle rather than a new mechanism.
+  const remindersArmed = !!(leagueRow.reminder_72h_enabled || leagueRow.reminder_24h_enabled || leagueRow.reminder_12h_enabled);
+  let reminderWindowEvent = null;
+  if (remindersArmed) {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const nearestEvent = await env.DB.prepare(
+      `SELECT id, date, start_time, venue, auto_reminders_enabled FROM events WHERE league_id = ? AND state != 'cancelled' AND date >= ? ORDER BY date ASC LIMIT 1`
+    ).bind(leagueId, todayStr).first();
+    if (nearestEvent && nearestEvent.start_time) {
+      const widestArmedHours = Math.max(
+        leagueRow.reminder_72h_enabled ? 72 : 0,
+        leagueRow.reminder_24h_enabled ? 24 : 0,
+        leagueRow.reminder_12h_enabled ? 12 : 0
+      );
+      const hoursUntil = (eventStart(nearestEvent).getTime() - Date.now()) / 3600000;
+      if (hoursUntil > 0 && hoursUntil <= widestArmedHours) reminderWindowEvent = nearestEvent;
+    }
+  }
 
   const seasonCfg = await getLeagueSeasonConfig(env, leagueId);
   const teamNames = getTeamNames(seasonCfg);
@@ -4725,6 +4753,12 @@ async function handleLeagueRosterPage(req, env, url) {
       nextStep: 'Prochaine étape', rosterNudgeTitle: 'Tes joueurs sont prêts. Prochaine étape : crée ton horaire.',
       rosterNudgeDesc: 'Ajoute tes premiers matchs pour que tes joueurs puissent commencer à répondre.',
       rosterNudgeBtn: "Créer l'horaire",
+      // F2 (players/reminders polish task): backstop banner for a
+      // mid-season player add close to an already-armed game.
+      remindersBannerTitle: 'Rappels automatiques actifs',
+      remindersBannerDesc: 'Un match approche et les rappels automatiques sont actifs pour ce match. Ajouter un joueur maintenant peut déclencher un envoi.',
+      pauseRemindersBtn: 'Suspendre les rappels pour ce match', resumeRemindersBtn: 'Reprendre les rappels pour ce match',
+      remindersPausedNote: 'Rappels suspendus pour ce match.',
       filterAll: 'Tous', filterSubs: 'Remplaçants', filterUnassigned: 'Sans équipe',
       colPlayer: 'Joueur', colTeam: 'Équipe', colRole: 'Rôle',
       fullName: 'Nom complet', emailOpt: 'Courriel (optionnel)', phoneOpt: 'Téléphone (optionnel)',
@@ -4764,6 +4798,10 @@ async function handleLeagueRosterPage(req, env, url) {
       nextStep: 'Next step', rosterNudgeTitle: 'Your players are ready. Next step: create your schedule.',
       rosterNudgeDesc: 'Add your first games so your players can start responding.',
       rosterNudgeBtn: 'Create the schedule',
+      remindersBannerTitle: 'Automated reminders are active',
+      remindersBannerDesc: 'A game is coming up and automated reminders are active for it. Adding a player now may trigger a send.',
+      pauseRemindersBtn: 'Pause reminders for this game', resumeRemindersBtn: 'Resume reminders for this game',
+      remindersPausedNote: 'Reminders paused for this game.',
       filterAll: 'All', filterSubs: 'Subs', filterUnassigned: 'Unassigned',
       colPlayer: 'Player', colTeam: 'Team', colRole: 'Role',
       fullName: 'Full name', emailOpt: 'Email (optional)', phoneOpt: 'Phone (optional)',
@@ -4874,6 +4912,13 @@ async function handleLeagueRosterPage(req, env, url) {
       <button type="button" class="nl-btn nl-btn--primary" id="ro_toggle_panel" data-i18n="addPlayer" onclick="toggleRosterPanel()">Ajouter un joueur</button>
     </div>
   </div>
+  ${reminderWindowEvent ? `<section class="nl-card nl-card--pad-lg" id="ro-reminders-banner" style="border-color:var(--danger,#b3122e)">
+    <div class="h3" data-i18n="remindersBannerTitle">Rappels automatiques actifs</div>
+    <p class="nl-help" data-i18n="remindersBannerDesc">Un match approche et les rappels automatiques sont actifs pour ce match. Ajouter un joueur maintenant peut déclencher un envoi.</p>
+    <div style="margin-top:var(--space-2)">
+      <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="ro_reminders_pause_btn" onclick="toggleReminderPause(this)" data-i18n="${reminderWindowEvent.auto_reminders_enabled ? 'pauseRemindersBtn' : 'resumeRemindersBtn'}">${reminderWindowEvent.auto_reminders_enabled ? 'Suspendre les rappels pour ce match' : 'Reprendre les rappels pour ce match'}</button>
+    </div>
+  </section>` : ''}
   ${showScheduleNudge ? `<section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
     <div class="overline" style="color:var(--primary)" data-i18n="nextStep">Prochaine étape</div>
     <h2 data-i18n="rosterNudgeTitle">Tes joueurs sont prêts. Prochaine étape : crée ton horaire.</h2>
@@ -5007,6 +5052,31 @@ document.querySelectorAll('#r_goalie_radio label').forEach(function(l) {
 });
 function toggleRosterPanel() {
   document.getElementById('ro_panel').classList.toggle('open');
+}
+// F2 (players/reminders polish task): pause/resume reuses the same
+// per-event auto_reminders_enabled toggle the event-detail page's own
+// toggleEventReminders already writes through (POST
+// /league/events/reminders) -- this banner is just a second, more
+// visible entry point to it, reached from where an admin is about to
+// add a player, not a new mechanism.
+async function toggleReminderPause(btn) {
+  var next = btn.getAttribute('data-i18n') === 'pauseRemindersBtn' ? false : true;
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/events/reminders', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: ${JSON.stringify(reminderWindowEvent ? reminderWindowEvent.id : null)}, auto_reminders_enabled: next })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (res.ok && data.ok) {
+      var key = next ? 'pauseRemindersBtn' : 'resumeRemindersBtn';
+      btn.setAttribute('data-i18n', key);
+      var dict = window.__pageDict ? window.__pageDict() : {};
+      btn.textContent = dict[key] || (next ? 'Pause reminders for this game' : 'Resume reminders for this game');
+    }
+  } catch (e) {}
+  btn.disabled = false;
 }
 // Part 6 (live-testing task): bulk roster import. Parsing happens
 // entirely client-side (pure text transformation, no reason for a
