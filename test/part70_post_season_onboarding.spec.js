@@ -129,7 +129,12 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(step1).toMatch(/Étape 4 sur 7|Step 4 of 7/);
     expect(step1).toContain('id="ob_min_players"');
     expect(step1).toContain('data-i18n="skip"');
-    expect(step1).toContain("onclick=\"window.location.href='/dashboard'\"");
+    // B2 (onboarding polish task): "Skip for now" is a small centered
+    // text link now (su-center), not a full-width button competing
+    // with the primary action -- matches every other secondary action
+    // in .su-bottom across the app (login's "forgot password?", etc.).
+    expect(step1).toContain('<p class="su-center"><a href="/dashboard" data-i18n="skip">');
+    expect(step1).not.toContain('nl-btn--ghost nl-btn--block" data-i18n="skip"');
 
     const step2 = await getOnboarding(cookie, 2);
     expect(step2).toContain('id="ob_teams"');

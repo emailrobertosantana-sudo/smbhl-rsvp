@@ -1858,6 +1858,22 @@ async function handleDashboardPage(req, env, url) {
   const dashTeamStructure = leagueRow ? (leagueRow.team_structure || 'fixed') : 'fixed';
   const dashIsHeadcount = dashTeamStructure === 'headcount';
   const dashIsWeeklyDraw = dashTeamStructure === 'weekly_draw';
+  // B3 (onboarding polish task): "Name the teams" used to always show
+  // done/struck-through on a brand-new league the moment it was
+  // created -- accurate for the STEP having happened, but not for
+  // "the admin actually named anything": the team-names field is
+  // explicitly optional at both signup and onboarding (its own
+  // placeholder/help text says so), and a league that left it
+  // untouched still has "Équipe 1"/"Équipe 2" (or "Team 1"/"Team 2",
+  // depending which language was active when the default got
+  // generated -- checked language-agnostically here, not tied to
+  // the CURRENT viewer's toggle) stored as its real team_names.
+  // Complete only once the names genuinely differ from that generated
+  // default. Reused below by both the pre-season checklist and the
+  // post-season "next steps" card, which already had this exact
+  // check -- one source of truth now instead of two.
+  const defaultTeamNamePattern = /^(Équipe|Team) \d+$/;
+  const stillDefaultTeamNames = !dashIsHeadcount && teamNames.length > 0 && teamNames.every(t => defaultTeamNamePattern.test(t));
   // Live-testing task, Part 5: same hasRosterLimits gate the settings
   // page uses -- see that page's own comment for why min_players/
   // max_players (never null once genuinely set) is the reliable signal,
@@ -1996,7 +2012,18 @@ async function handleDashboardPage(req, env, url) {
                DID happen, just not team-naming) since headcount
                creation requires it up front, same as fixed/weekly_draw
                require team names up front. -->
-          <div class="dash-ck done"><span class="b y">${DASH_ICON_CHECK}</span><span data-i18n="${dashIsHeadcount ? 'ckPlayerCount' : 'ckTeams'}">${dashIsHeadcount ? 'Choisir le nombre de joueurs' : 'Nommer les équipes'}</span></div>
+          <!-- B3 (onboarding polish task): "Nommer les équipes" used to
+               always show done the instant a league was created --
+               team names are optional at signup (the field's own
+               placeholder/help text says so), so "the step happened"
+               didn't mean "the admin actually named anything." Done
+               only once stillDefaultTeamNames says the names genuinely
+               differ from the generated "Équipe 1"/"Team 1" defaults.
+               headcount's own row is unaffected (see this row's
+               original comment below) -- it's a different question
+               (player count, not team names) that genuinely is decided
+               up front. -->
+          <div class="dash-ck${dashIsHeadcount || !stillDefaultTeamNames ? ' done' : ''}"><span class="b ${dashIsHeadcount || !stillDefaultTeamNames ? 'y">' + DASH_ICON_CHECK : 'n">'}</span><span data-i18n="${dashIsHeadcount ? 'ckPlayerCount' : 'ckTeams'}">${dashIsHeadcount ? 'Choisir le nombre de joueurs' : 'Nommer les équipes'}</span></div>
           <!-- Live-testing bug fix (Bug 5): season, not players, is the
                real blocking prerequisite (Bug 4 -- POST /league/events
                fails without one) for the next real step (creating
@@ -2029,8 +2056,8 @@ async function handleDashboardPage(req, env, url) {
     // default/unset, not a one-time flag -- it naturally disappears
     // once everything below has a real answer, and reappears if the
     // gap comes back (e.g. every player removed again).
-    const defaultTeamNamePattern = /^(Équipe|Team) \d+$/;
-    const stillDefaultTeamNames = !dashIsHeadcount && teamNames.length > 0 && teamNames.every(t => defaultTeamNamePattern.test(t));
+    // defaultTeamNamePattern/stillDefaultTeamNames computed once above
+    // (B3), shared with the pre-season checklist.
     const nextStepsItems = !needsSeason ? [
       playerCount === 0 ? { key: 'nsAddPlayers', href: '/league/roster', fr: 'Ajouter des joueurs' } : null,
       stillDefaultTeamNames ? { key: 'nsNameTeams', href: '/onboarding/season?step=2', fr: 'Nommer tes équipes' } : null,
@@ -2493,7 +2520,15 @@ async function handleOnboardingSeasonPage(req, env, url) {
 </main>
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="ob_submit" data-i18n="${isLast ? 'finish' : 'next'}" onclick="obSubmit()">${isLast ? 'Aller au tableau de bord' : 'Continuer'}</button>
-  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="skip" onclick="window.location.href='/dashboard'">Passer pour l'instant</button>
+  <!-- B2 (onboarding polish task): was a full-width .nl-btn--ghost.nl-btn--block,
+       the same width/shape as the primary above it -- visually competing
+       with it rather than reading as the lower-priority escape hatch it
+       is. Every OTHER secondary action in .su-bottom across this app
+       (login's "forgot password?", "no account?", etc.) already uses
+       this exact small centered-text pattern instead; this brings
+       "Skip for now" in line with that established convention rather
+       than inventing a new one. -->
+  <p class="su-center"><a href="/dashboard" data-i18n="skip">Passer pour l'instant</a></p>
 </div>`;
 
   // B1: the step label text is computed per-request (structure/step
