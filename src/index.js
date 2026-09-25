@@ -3858,6 +3858,10 @@ async function handleLeagueSettingsPage(req, env, url) {
     fr: {
       navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter',
       title: 'Paramètres',
+      // G1 (settings polish task): left-hand section nav labels -- short
+      // on purpose, the section's own h3 carries the full label.
+      navIdentity: 'Identité', navVenues: 'Lieux', navTeams: 'Équipes', navStructure: 'Structure',
+      navLanguage: 'Langue', navReminders: 'Rappels', navAutoDraw: 'Tirage auto', navAdmins: 'Co-admins', navDeactivate: 'Désactiver',
       identityTitle: 'Identité de la ligue', lblLeagueName: 'Nom de la ligue',
       lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée -- ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
       lblColor: 'Couleur de la ligue', lblTracksStats: 'Suivre les statistiques', save: 'Enregistrer', saved: 'Enregistré !',
@@ -3871,10 +3875,10 @@ async function handleLeagueSettingsPage(req, env, url) {
       venueNamePh: 'Ex. Aréna Notre-Dame', venueAddressPh: '123 rue Principale, Ville', venueMapLinkPh: 'https://maps.google.com/...',
       addVenue: 'Ajouter le lieu', removeVenue: 'Retirer', noVenuesYet: "Aucun lieu enregistré pour l'instant.",
       viewOnMap: 'Voir sur la carte',
-      teamsTitle: 'Équipes', teamsDesc: "Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue -- republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).",
+      teamsTitle: 'Équipes par défaut', teamsDesc: "Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue -- republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).",
       teamsHeadcountNote: "Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.",
       addTeam: 'Ajouter une équipe', removeTeam: 'Retirer', lblTeamName: 'Nom', lblTeamColor: 'Couleur',
-      seasonTeamsTitle: 'Équipes de la saison en cours',
+      seasonTeamsTitle: 'Équipes de cette saison',
       seasonTeamsDescPrefix: 'Ajoute ou retire une équipe pour la saison « ',
       seasonTeamsDescSuffix: ' » sans toucher aux autres saisons ni réinitialiser le classement.',
       seasonTeamsNoSeason: "Aucune saison publiée pour l'instant.",
@@ -3883,14 +3887,14 @@ async function handleLeagueSettingsPage(req, env, url) {
       // Live-testing task (batch 6), Part 7: moved here from the
       // dashboard home, which used to show this fully expanded -- see
       // handleLeagueSettingsPage's own comment at this section's markup.
-      seasonMgmtTitle: 'Saison actuelle',
+      seasonMgmtTitle: 'Cette saison',
       seasonMgmtDesc: "Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.",
       seasonNameLabel: 'Nom de la saison', seasonNamePh: 'Ex. Saison Hiver 2026',
       seasonMgmtNameHelp: 'Un nouveau nom crée une nouvelle saison. Le nom de la saison actuelle la modifie.',
       seasonStructureHelp: "Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.",
       seasonSaveBtn: 'Enregistrer la saison',
       structureLabel: 'Comment sont organisées tes équipes?',
-      structureTitle: 'Structure par défaut de la ligue',
+      structureTitle: 'Par défaut pour les nouvelles saisons',
       structureDesc: "Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées -- seules les nouvelles saisons utiliseront ce changement.",
       structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
       structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
@@ -3931,6 +3935,8 @@ async function handleLeagueSettingsPage(req, env, url) {
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
       title: 'Settings',
+      navIdentity: 'Identity', navVenues: 'Venues', navTeams: 'Teams', navStructure: 'Structure',
+      navLanguage: 'Language', navReminders: 'Reminders', navAutoDraw: 'Auto-draw', navAdmins: 'Co-admins', navDeactivate: 'Deactivate',
       identityTitle: 'League identity', lblLeagueName: 'League name',
       lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed -- that guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
       lblColor: 'League colour', lblTracksStats: 'Track stats', save: 'Save', saved: 'Saved!',
@@ -3944,23 +3950,23 @@ async function handleLeagueSettingsPage(req, env, url) {
       venueNamePh: 'E.g. Notre-Dame Arena', venueAddressPh: '123 Main St, City', venueMapLinkPh: 'https://maps.google.com/...',
       addVenue: 'Add venue', removeVenue: 'Remove', noVenuesYet: 'No venues saved yet.',
       viewOnMap: 'View on map',
-      teamsTitle: 'Teams', teamsDesc: "Rename your teams and pick their colour. A change here updates the league's default team list -- republish the current season for it to show up everywhere (players, games, public page).",
+      teamsTitle: 'Default teams', teamsDesc: "Rename your teams and pick their colour. A change here updates the league's default team list -- republish the current season for it to show up everywhere (players, games, public page).",
       teamsHeadcountNote: 'This league has no fixed teams -- nothing to name here.',
       addTeam: 'Add a team', removeTeam: 'Remove', lblTeamName: 'Name', lblTeamColor: 'Colour',
-      seasonTeamsTitle: 'Current season teams',
+      seasonTeamsTitle: "This season's teams",
       seasonTeamsDescPrefix: 'Add or remove a team for the “',
       seasonTeamsDescSuffix: '” season without touching any other season or resetting the standings.',
       seasonTeamsNoSeason: 'No season published yet.',
       addSeasonTeam: 'Add', removeSeasonTeam: 'Remove',
       newTeamPlaceholder: 'New team',
-      seasonMgmtTitle: 'Current season',
+      seasonMgmtTitle: 'This season',
       seasonMgmtDesc: 'Create an additional season, or republish the current one to edit it. Each season can have its own team structure.',
       seasonNameLabel: 'Season name', seasonNamePh: 'E.g. Winter Season 2026',
       seasonMgmtNameHelp: "A new name creates a new season. The current season's own name edits it.",
       seasonStructureHelp: "By default, a new season uses your league's usual structure. Change it here just for this season.",
       seasonSaveBtn: 'Save season',
       structureLabel: 'How are your teams organized?',
-      structureTitle: "League's default structure",
+      structureTitle: 'Default for new seasons',
       structureDesc: "Change your league's default structure. Already-published seasons are never affected -- only new seasons will use this change.",
       structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
       structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
@@ -4009,11 +4015,39 @@ async function handleLeagueSettingsPage(req, env, url) {
   /* Live-testing task (batch 2), Part 9: same fix as the dashboard's
      public-page URL card -- see that rule's own comment. */
   .se-slug-display { font: 500 14px/20px var(--font-sans); color: var(--ink-muted); background: var(--surface-sunken); padding: 10px 12px; border-radius: var(--radius-md); word-break: normal; overflow-wrap: anywhere; }
+  /* G1 (settings polish task): this page had grown long with no way to
+     jump around it, so a left-hand section nav sits beside the content
+     on wider screens; on narrow ones (most admins on this page are on
+     a phone) it becomes a horizontal scrollable strip above the
+     content instead of a second, cramped column. */
+  .se-layout { display: flex; align-items: flex-start; gap: var(--space-5); }
+  .se-nav { width: 200px; flex-shrink: 0; position: sticky; top: var(--space-4); display: flex; flex-direction: column; gap: 2px; }
+  .se-nav a { display: block; padding: 6px 10px; border-radius: var(--radius-sm); font: 600 14px/1.3 var(--font-sans); color: var(--ink-muted); text-decoration: none; }
+  .se-nav a:hover { background: var(--surface-sunken); color: var(--ink); }
+  .se-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); }
+  @media (max-width: 800px) {
+    .se-layout { flex-direction: column; }
+    .se-nav { width: 100%; flex-direction: row; overflow-x: auto; position: static; gap: 6px; }
+    .se-nav a { flex-shrink: 0; }
+  }
 </style>${header}
 <main class="dash-main se-main">
   <h1 data-i18n="title">Paramètres</h1>
+  <div class="se-layout">
+    <nav class="se-nav" aria-label="Sections">
+      <a href="#section-identity" data-i18n="navIdentity">Identité</a>
+      <a href="#section-venues" data-i18n="navVenues">Lieux</a>
+      <a href="#section-teams" data-i18n="navTeams">Équipes</a>
+      <a href="#section-structure" data-i18n="navStructure">Structure</a>
+      <a href="#section-language" data-i18n="navLanguage">Langue</a>
+      <a href="#reminders-section" data-i18n="navReminders">Rappels</a>
+      ${teamStructure === 'weekly_draw' ? `<a href="#section-autodraw" data-i18n="navAutoDraw">Tirage auto</a>` : ''}
+      <a href="#section-admins" data-i18n="navAdmins">Co-admins</a>
+      <a href="#section-deactivate" data-i18n="navDeactivate">Désactiver</a>
+    </nav>
+    <div class="se-content">
 
-  <section class="nl-card nl-card--pad-lg">
+  <section class="nl-card nl-card--pad-lg" id="section-identity">
     <div class="h3" data-i18n="identityTitle">Identité de la ligue</div>
     <div id="identityErr" class="nl-error" style="display:none"></div>
     <div id="identityOk" class="nl-ok" style="display:none"></div>
@@ -4050,7 +4084,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="identity_save" data-i18n="save" onclick="submitIdentity()">Enregistrer</button></div>
   </section>
 
-  <section class="nl-card nl-card--pad-lg">
+  <section class="nl-card nl-card--pad-lg" id="section-venues">
     <div class="h3" data-i18n="venuesTitle">Lieux</div>
     <p class="nl-help" data-i18n="venuesDesc">Enregistre tes patinoires ou gymnases une fois, puis choisis-les à la création d'un match au lieu de retaper l'adresse à chaque fois.</p>
     <div id="venuesErr" class="nl-error" style="display:none"></div>
@@ -4078,8 +4112,8 @@ async function handleLeagueSettingsPage(req, env, url) {
   </section>
 
   ${!isHeadcount ? `
-  <section class="nl-card nl-card--pad-lg">
-    <div class="h3" data-i18n="teamsTitle">Équipes</div>
+  <section class="nl-card nl-card--pad-lg" id="section-teams">
+    <div class="h3" data-i18n="teamsTitle">Équipes par défaut</div>
     <p class="nl-help" data-i18n="teamsDesc">Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue -- republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).</p>
     <div id="teamsErr" class="nl-error" style="display:none"></div>
     <div id="teamsOk" class="nl-ok" style="display:none"></div>
@@ -4089,14 +4123,47 @@ async function handleLeagueSettingsPage(req, env, url) {
       <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="teams_save" data-i18n="save" onclick="submitTeams()">Enregistrer</button>
     </div>
   </section>` : `
-  <section class="nl-card nl-card--pad-lg">
-    <div class="h3" data-i18n="teamsTitle">Équipes</div>
+  <section class="nl-card nl-card--pad-lg" id="section-teams">
+    <div class="h3" data-i18n="teamsTitle">Équipes par défaut</div>
     <p class="nl-help" data-i18n="teamsHeadcountNote">Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.</p>
   </section>`}
 
+  ${!isHeadcount && currentSeasonEntry ? `
+  <!-- G1 (settings polish task): moved to sit right next to the
+       "Équipes par défaut" section above -- was previously separated
+       by the whole "Cette saison" card, making it easy to miss that
+       these two team-management blocks are two different scopes
+       (this league's default team list vs. this one season's roster
+       of teams). -->
+  <section class="nl-card nl-card--pad-lg" id="section-season-teams">
+    <div class="h3" data-i18n="seasonTeamsTitle">Équipes de cette saison</div>
+    <p class="nl-help"><span data-i18n="seasonTeamsDescPrefix">Ajoute ou retire une équipe pour la saison «&nbsp;</span><b>${esc(currentSeasonEntry.name)}</b><span data-i18n="seasonTeamsDescSuffix">&nbsp;» sans toucher aux autres saisons ni réinitialiser le classement.</span></p>
+    <div id="seasonTeamsErr" class="nl-error" style="display:none"></div>
+    <div id="seasonTeamsOk" class="nl-ok" style="display:none"></div>
+    <div id="se_season_teams_list" style="margin-top:12px">
+      ${currentSeasonTeams.map(t => `<div class="se-season-team-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px" data-team="${esc(t)}">
+        <span style="flex:1">${esc(t)}</span>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="removeSeasonTeam" onclick="removeSeasonTeamRow(this)">Retirer</button>
+      </div>`).join('')}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <input class="nl-input" id="se_new_season_team" type="text" data-i18n-ph="newTeamPlaceholder" placeholder="Nouvelle équipe" style="flex:1;max-width:260px">
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="addSeasonTeam" onclick="addSeasonTeamRow()">Ajouter</button>
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="season_teams_save" data-i18n="save" onclick="submitSeasonTeams()">Enregistrer</button>
+    </div>
+  </section>` : ''}
+
   ${currentSeasonEntry ? `
-  <section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
-    <div class="h3" data-i18n="seasonMgmtTitle">Saison actuelle</div>
+  <!-- G1 (settings polish task): season-level and default-level
+       structure controls now sit adjacent (this card, then the next
+       one), each plainly labelled which one it is -- "Cette saison"
+       vs "Par défaut pour les nouvelles saisons" -- instead of two
+       near-identical structure pickers separated by an unrelated
+       teams section, which is exactly what made them hard to tell
+       apart. Both remain: a league can legitimately run one season
+       fixed and default to weekly_draw for the next. -->
+  <section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)" id="section-structure">
+    <div class="h3" data-i18n="seasonMgmtTitle">Cette saison</div>
     <p class="nl-help" data-i18n="seasonMgmtDesc">Crée une nouvelle saison, ou republie la saison actuelle pour la modifier. Chaque saison peut avoir sa propre structure d'équipes.</p>
     <div id="seasonMgmtErr" class="nl-error" style="display:none"></div>
     <div id="seasonMgmtOk" class="nl-ok" style="display:none"></div>
@@ -4151,27 +4218,8 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>
   </section>` : ''}
 
-  ${!isHeadcount && currentSeasonEntry ? `
-  <section class="nl-card nl-card--pad-lg">
-    <div class="h3" data-i18n="seasonTeamsTitle">Équipes de la saison en cours</div>
-    <p class="nl-help"><span data-i18n="seasonTeamsDescPrefix">Ajoute ou retire une équipe pour la saison «&nbsp;</span><b>${esc(currentSeasonEntry.name)}</b><span data-i18n="seasonTeamsDescSuffix">&nbsp;» sans toucher aux autres saisons ni réinitialiser le classement.</span></p>
-    <div id="seasonTeamsErr" class="nl-error" style="display:none"></div>
-    <div id="seasonTeamsOk" class="nl-ok" style="display:none"></div>
-    <div id="se_season_teams_list" style="margin-top:12px">
-      ${currentSeasonTeams.map(t => `<div class="se-season-team-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px" data-team="${esc(t)}">
-        <span style="flex:1">${esc(t)}</span>
-        <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="removeSeasonTeam" onclick="removeSeasonTeamRow(this)">Retirer</button>
-      </div>`).join('')}
-    </div>
-    <div style="display:flex;gap:8px;margin-top:8px;">
-      <input class="nl-input" id="se_new_season_team" type="text" data-i18n-ph="newTeamPlaceholder" placeholder="Nouvelle équipe" style="flex:1;max-width:260px">
-      <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="addSeasonTeam" onclick="addSeasonTeamRow()">Ajouter</button>
-      <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="season_teams_save" data-i18n="save" onclick="submitSeasonTeams()">Enregistrer</button>
-    </div>
-  </section>` : ''}
-
-  <section class="nl-card nl-card--pad-lg">
-    <div class="h3" data-i18n="structureTitle">Structure par défaut de la ligue</div>
+  <section class="nl-card nl-card--pad-lg"${currentSeasonEntry ? '' : ' id="section-structure"'}>
+    <div class="h3" data-i18n="structureTitle">Par défaut pour les nouvelles saisons</div>
     <p class="nl-help" data-i18n="structureDesc">Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées -- seules les nouvelles saisons utiliseront ce changement.</p>
     <div id="structureErr" class="nl-error" style="display:none"></div>
     <div id="structureOk" class="nl-ok" style="display:none"></div>
@@ -4223,7 +4271,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="structure_save" data-i18n="save" onclick="submitStructure()">Enregistrer</button></div>
   </section>
 
-  <section class="nl-card nl-card--pad-lg">
+  <section class="nl-card nl-card--pad-lg" id="section-language">
     <div class="h3" data-i18n="langExposure">Langue exposée aux joueurs</div>
     <p class="nl-help" data-i18n="langExposureDesc">Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.</p>
     <div id="langModeErr" class="nl-error" style="display:none"></div>
@@ -4257,7 +4305,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     </div>
   </section>
   ${teamStructure === 'weekly_draw' ? `
-  <section class="nl-card nl-card--pad-lg">
+  <section class="nl-card nl-card--pad-lg" id="section-autodraw">
     <div class="h3" data-i18n="autoDrawTitle">Tirage automatique des équipes</div>
     <p class="nl-help" data-i18n="autoDrawDesc">Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.</p>
     <div id="autoDrawErr" class="nl-error" style="display:none"></div>
@@ -4272,7 +4320,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="auto_draw_hours_save" data-i18n="save" onclick="submitAutoDrawHours()">Enregistrer</button></div>
   </section>` : ''}
-  <section class="nl-card nl-card--pad-lg">
+  <section class="nl-card nl-card--pad-lg" id="section-admins">
     <div class="h3" data-i18n="coAdmins">Co-administrateurs</div>
     <div class="nl-list" style="margin:12px 0">
       ${adminEmails.map(e => `<div class="nl-row"><span class="grow">${esc(e)}</span></div>`).join('')}
@@ -4285,7 +4333,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="invite_submit" data-i18n="inviteBtn" onclick="submitInvite()">Inviter</button></div>
   </section>
-  <section class="nl-card nl-card--pad-lg" style="border-color:var(--danger,#b3122e)">
+  <section class="nl-card nl-card--pad-lg" style="border-color:var(--danger,#b3122e)" id="section-deactivate">
     <div class="h3" data-i18n="deactivateLeague">Désactiver la ligue</div>
     <p class="nl-help" data-i18n="deactivateDesc">Cette action désactive ta ligue. Tes données sont conservées, mais l'accès à la gestion est bloqué.</p>
     <div id="deactivateErr" class="nl-error" style="display:none"></div>
@@ -4309,6 +4357,8 @@ async function handleLeagueSettingsPage(req, env, url) {
     <p class="nl-help" data-i18n="hardDeleteDesc">Efface pour de bon toutes les données de la ligue (parties, joueurs, présences, etc.). Aucune récupération possible. Nécessite que la ligue soit déjà désactivée depuis 15 jours.</p>
     <p class="nl-help" data-i18n="hardDeleteNotDeactivated">Désactive d'abord ta ligue ci-dessus pour débloquer la suppression définitive.</p>
   </section>
+    </div>
+  </div>
 </main>
 ${tabbar}`;
 

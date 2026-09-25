@@ -346,3 +346,90 @@ describe('Part 1 (live-testing task): consolidated settings page', () => {
     });
   });
 });
+
+describe('G1 (settings polish task): left-hand section nav, and the two near-duplicate control pairs made adjacent and plainly labelled', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it('shows a left-hand section nav with an anchor link to every real section on the page', async () => {
+    const { cookie, csrfToken } = await signup('g1.nav@example.com', '203.0.133.101');
+    await createLeague(cookie, csrfToken, { name: 'G1 Nav League', teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'G1 Nav Season' });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+
+    expect(html).toContain('class="se-nav"');
+    for (const id of ['section-identity', 'section-venues', 'section-teams', 'section-structure', 'section-language', 'reminders-section', 'section-autodraw', 'section-admins', 'section-deactivate']) {
+      expect(html).toContain(`href="#${id}"`);
+      expect(html).toContain(`id="${id}"`);
+    }
+  });
+
+  it('the auto-draw nav link only appears for a weekly_draw league (the section itself is also gated)', async () => {
+    const { cookie, csrfToken } = await signup('g1.nav.fixed@example.com', '203.0.133.102');
+    await createLeague(cookie, csrfToken, { name: 'G1 Nav Fixed League', teamNames: ['A', 'B'], tracksStats: true });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    expect(html).not.toContain('href="#section-autodraw"');
+    expect(html).not.toContain('id="section-autodraw"');
+  });
+
+  it('"Cette saison" (season-level structure) and "Par défaut pour les nouvelles saisons" (default-level structure) render adjacent, both present, plainly labelled', async () => {
+    const { cookie, csrfToken } = await signup('g1.structure.adjacent@example.com', '203.0.133.103');
+    await createLeague(cookie, csrfToken, { name: 'G1 Structure Adjacent League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'G1 Structure Season' });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+
+    expect(html).toContain('data-i18n="seasonMgmtTitle"');
+    expect(html).toContain('data-i18n="structureTitle"');
+    // Both structure pickers (season_structure_radio, se_structure_radio)
+    // still exist -- neither control was removed, only relabelled and
+    // repositioned so an admin can tell them apart.
+    expect(html).toContain('id="season_structure_radio"');
+    expect(html).toContain('id="se_structure_radio"');
+
+    // Adjacency: the very next section after the season-structure card
+    // closes is the default-structure card -- nothing else in between.
+    const seasonCloseIdx = html.indexOf('</section>', html.indexOf('id="section-structure"'));
+    const gapAfterSeason = html.slice(seasonCloseIdx, seasonCloseIdx + 600);
+    expect(gapAfterSeason).toContain('id="se_structure_radio"');
+    expect(gapAfterSeason.indexOf('<section class="nl-card')).toBeGreaterThan(-1);
+  });
+
+  it('"Équipes par défaut" and "Équipes de cette saison" render adjacent, both present, plainly labelled', async () => {
+    const { cookie, csrfToken } = await signup('g1.teams.adjacent@example.com', '203.0.133.104');
+    await createLeague(cookie, csrfToken, { name: 'G1 Teams Adjacent League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'G1 Teams Season' });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+
+    expect(html).toContain('data-i18n="teamsTitle"');
+    expect(html).toContain('data-i18n="seasonTeamsTitle"');
+    expect(html).toContain('id="se_teams_list"');
+    expect(html).toContain('id="se_season_teams_list"');
+
+    // Adjacency: the very next section after the default-teams card
+    // closes is the season-teams card -- nothing else in between.
+    const teamsCloseIdx = html.indexOf('</section>', html.indexOf('id="section-teams"'));
+    const gapAfterTeams = html.slice(teamsCloseIdx, teamsCloseIdx + 600);
+    expect(gapAfterTeams).toContain('id="section-season-teams"');
+  });
+
+  it('both languages carry the new labels correctly (server-rendered fallback, not just the i18n dict)', async () => {
+    const { cookie, csrfToken } = await signup('g1.i18n@example.com', '203.0.133.105');
+    await createLeague(cookie, csrfToken, { name: 'G1 I18n League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'G1 I18n Season' });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    expect(html).toContain('data-i18n="seasonMgmtTitle">Cette saison<');
+    expect(html).toContain('data-i18n="structureTitle">Par défaut pour les nouvelles saisons<');
+    expect(html).toContain('data-i18n="teamsTitle">Équipes par défaut<');
+    expect(html).toContain('data-i18n="seasonTeamsTitle">Équipes de cette saison<');
+
+    const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
+    expect(m).toBeTruthy();
+    const dict = JSON.parse(m[1]);
+    expect(dict.en.seasonMgmtTitle).toBe('This season');
+    expect(dict.en.structureTitle).toBe('Default for new seasons');
+    expect(dict.en.teamsTitle).toBe('Default teams');
+    expect(dict.en.seasonTeamsTitle).toBe("This season's teams");
+  });
+});
