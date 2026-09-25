@@ -1926,7 +1926,7 @@ async function handleDashboardPage(req, env, url) {
         ${needsSeason
           ? `<span class="nl-badge nl-badge--pending" data-i18n="noSeason">Pas de saison active</span>`
           : `<span><span data-i18n="currentSeasonLabel">Saison actuelle</span> : <b>${esc(currentSeason)}</b> · <a href="/league/settings" data-i18n="editSeason">Modifier</a></span>`}
-        <span>${dashIsHeadcount ? '' : `${teamNames.length} <span data-i18n="teamsLabel">équipes</span> · `}${playerCount} <span data-i18n="playersLabel">joueurs</span></span>
+        ${needsSeason ? '' : `<span>${dashIsHeadcount ? '' : `${teamNames.length} <span data-i18n="teamsLabel">équipes</span> · `}${playerCount} <span data-i18n="playersLabel">joueurs</span></span>`}
       </div>
     </div>
   </div>
@@ -1940,13 +1940,28 @@ async function handleDashboardPage(req, env, url) {
   ${weekStatusHtml}
   ${nextStepsHtml}
   <div class="dash-tiles">
+    <!-- B1 bug fix (dashboard/schedule/events polish task): before a
+         season exists, these two tiles describe nothing real yet --
+         "Fresh teams every game / 2" and "Players / 0" are just the
+         league's own static signup-time config, not anything about an
+         actual season in progress, and read as broken/empty rather than
+         informative. The Getting Started checklist and next-step card
+         (startGridHtml, above) already carry this screen pre-season;
+         these tiles start showing once there's a real season to
+         describe. Public Page tile is unaffected -- whether the public
+         page is enabled and its URL are both meaningful regardless of
+         season state. Wording (teamsPerGame/"Fresh teams every game")
+         is UNCHANGED -- see test/part49_teams_per_game_label.spec.js's
+         own do-not-revert comment; this only hides the tile earlier
+         than it used to show, never touches what it says. -->
+    ${needsSeason ? '' : `
     <section class="nl-card nl-card--pad-lg dash-tile">
       <div class="overline" data-i18n="${dashIsWeeklyDraw ? 'teamsPerGame' : 'teams'}">${dashIsWeeklyDraw ? 'Nouvelles équipes chaque match' : 'Équipes'}</div>
       ${dashIsHeadcount
         ? `<div class="stat tnum" style="font-size:20px" data-i18n="noFixedTeams">Aucune équipe fixe</div>`
         : `<div class="stat tnum">${teamNames.length}</div>`}
     </section>
-    <section class="nl-card nl-card--pad-lg dash-tile"><div class="overline" data-i18n="navRoster">Joueurs</div><div class="stat tnum">${playerCount}</div><a href="/league/roster" data-i18n="navRoster">Joueurs</a></section>
+    <section class="nl-card nl-card--pad-lg dash-tile"><div class="overline" data-i18n="navRoster">Joueurs</div><div class="stat tnum">${playerCount}</div><a href="/league/roster" data-i18n="navRoster">Joueurs</a></section>`}
     <section class="nl-card nl-card--pad-lg dash-tile">
       <div class="overline" data-i18n="publicPage">Page publique</div>
       ${leagueRow.public_page_enabled

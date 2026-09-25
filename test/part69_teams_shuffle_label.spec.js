@@ -57,6 +57,15 @@ async function createLeague(cookie, csrfToken, body) {
   });
   return (await res.json()).league;
 }
+// B1 bug fix (dashboard/schedule/events polish task): this tile is now
+// hidden entirely before a season exists (see part49's own version of
+// this same comment). Every test here now publishes a season first.
+async function publishSeason(cookie, csrfToken, seasonName) {
+  return SELF.fetch('http://example.com/league/season/publish', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify({ season_name: seasonName })
+  });
+}
 
 describe('Part 5 (live-testing task, batch 5): the weekly_draw team-count tile label is now clear', () => {
   beforeAll(async () => {
@@ -76,6 +85,7 @@ describe('Part 5 (live-testing task, batch 5): the weekly_draw team-count tile l
   it('a weekly_draw league\'s dashboard renders the new label next to its real team count', async () => {
     const { cookie, csrfToken } = await signup('shufflelabel.weekly@example.com', '203.0.184.001');
     await createLeague(cookie, csrfToken, { name: 'Weekly Shuffle League', teamNames: ['A', 'B'], teamStructure: 'weekly_draw' });
+    await publishSeason(cookie, csrfToken, 'Weekly Shuffle Season');
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
     expect(html).toContain('data-i18n="teamsPerGame">Nouvelles équipes chaque match<');
     expect(html).not.toContain('Équipes (par match)');
@@ -97,6 +107,7 @@ describe('Part 5 (live-testing task, batch 5): the weekly_draw team-count tile l
   it('a headcount league\'s dashboard is untouched -- still "Équipes" + "Aucune équipe fixe", never the weekly_draw tile at all', async () => {
     const { cookie, csrfToken } = await signup('shufflelabel.headcount@example.com', '203.0.184.003');
     await createLeague(cookie, csrfToken, { name: 'Headcount League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 20 });
+    await publishSeason(cookie, csrfToken, 'Headcount Season');
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
     expect(html).toContain('data-i18n="teams">Équipes<');
     expect(html).toContain('data-i18n="noFixedTeams">Aucune équipe fixe<');
