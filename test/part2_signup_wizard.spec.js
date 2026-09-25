@@ -111,4 +111,31 @@ describe('Part 2: signup wizard, step-by-step', () => {
     expect(doneNoLeagueRes.status).toBe(302);
     expect(doneNoLeagueRes.headers.get('location') || '').toContain('/signup?step=2');
   });
+
+  // A2 bug fix (onboarding polish task): the slug becomes the league's
+  // permanent public address the moment it's created -- nothing warned
+  // the admin at step 2, the one point it's still editable. The live
+  // preview (su_slug auto-filling from su_league_name as you type) was
+  // already there; this locks the new warning text, in both languages,
+  // and confirms the live-preview wiring is still present.
+  it('A2: step 2 warns the slug becomes permanent, in both languages, and the live-preview wiring is still there', async () => {
+    const signupRes = await SELF.fetch('http://example.com/auth/signup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.703' },
+      body: JSON.stringify({ email: 'wizard.a2.slugwarn@example.com', password: 'a-strong-password-1' })
+    });
+    const cookie = extractCookie(signupRes);
+
+    const htmlFr = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
+    expect(htmlFr).toContain("Devient permanente à la création de ta ligue -- ça garantit que les liens que tu partages continuent toujours de fonctionner.");
+    expect(htmlFr).not.toContain('Tu peux la changer');
+
+    const htmlEn = await (await SELF.fetch('http://example.com/signup?step=2&lang=en', { headers: { cookie } })).text();
+    expect(htmlEn).toContain("Becomes permanent once your league is created -- that guarantees the links you share always keep working.");
+    expect(htmlEn).not.toContain('You can change it');
+
+    // Live preview: su_league_name's own input listener still writes
+    // into su_slug via slugify() as the admin types.
+    expect(htmlFr).toContain("document.getElementById('su_slug').value = window.NotreLigue.slugify(this.value)");
+  });
 });

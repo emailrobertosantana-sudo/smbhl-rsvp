@@ -77,6 +77,28 @@ describe('Part 6 (live-testing task): signup completion screen starts the season
     expect((html.match(/class="su-bottom"[\s\S]*?<\/div>/) || [''])[0].match(/<button/g) || []).toHaveLength(1);
   });
 
+  // A1 bug fix (onboarding polish task): the done screen used to say the
+  // public page was "already live" and invite sharing it -- misleading,
+  // since it's genuinely empty (no schedule, no roster) the moment a
+  // league is created. Reframed to set the right expectation instead.
+  it('A1: the done screen sets the right expectation -- the page is empty for now, not "already live" ready to share', async () => {
+    const { cookie, csrfToken } = await signup('done.a1.copy.fr@example.com', '203.0.151.014');
+    await createLeague(cookie, csrfToken, { name: 'Done A1 Copy League', teamNames: ['A', 'B'], tracksStats: true });
+    const htmlFr = await (await SELF.fetch('http://example.com/signup?step=done', { headers: { cookie } })).text();
+    expect(htmlFr).toContain("La page de ta ligue se trouve à cette adresse. Elle est vide pour l'instant et se remplit automatiquement au fur et à mesure que tu ajoutes ton calendrier et ton alignement. Partage-la une fois ta saison en place.");
+    expect(htmlFr).not.toContain('déjà en ligne');
+
+    const { cookie: cookieEn, csrfToken: csrfEn } = await signup('done.a1.copy.en@example.com', '203.0.151.015');
+    await createLeague(cookieEn, csrfEn, { name: 'Done A1 Copy League EN', teamNames: ['A', 'B'], tracksStats: true });
+    const htmlEn = await (await SELF.fetch('http://example.com/signup?step=done&lang=en', { headers: { cookie: cookieEn } })).text();
+    expect(htmlEn).toContain("Your league's page is at this address. It's empty for now, and fills in automatically as you add your schedule and roster. Share it when your season is set up.");
+    expect(htmlEn).not.toContain('already live');
+
+    // The URL and Copy link button stay -- only the framing text changed.
+    expect(htmlFr).toContain('id="su_public_url"');
+    expect(htmlFr).toContain('id="su_copy"');
+  });
+
   it('clicking through to /dashboard actually shows the season-start form as the headline next step', async () => {
     const { cookie, csrfToken } = await signup('done.followthrough@example.com', '203.0.151.011');
     await createLeague(cookie, csrfToken, { name: 'Done Followthrough League', teamNames: ['A', 'B'], tracksStats: true });

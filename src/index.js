@@ -616,7 +616,16 @@ const I18N_SIGNUP = {
     pwHelp: '8 caractères minimum.', continueBtn: 'Continuer', alreadySignedUp: 'Déjà inscrit?', login: 'Se connecter',
     step2: 'Étape 2 sur 3', title2: 'Parle-nous de ta ligue',
     lblLeagueName: 'Nom de la ligue', lblSlug: 'Adresse de ta page',
-    slugHelp: 'Créée à partir du nom. Tu peux la changer.',
+    // A2 bug fix (onboarding polish task): the old text ("tu peux la
+    // changer") was actively wrong -- true only before submitting; once
+    // the league is created this address is permanent (same fact the
+    // Settings page already states correctly, see its own slugHelp).
+    // Nothing warned the admin at the one moment editing it is still
+    // possible. Live preview itself already existed (su_league_name's
+    // own input listener updates su_slug as you type) -- this is just
+    // the missing warning line, phrased consistently with Settings'
+    // own justification (permanent = shared links always keep working).
+    slugHelp: 'Devient permanente à la création de ta ligue -- ça garantit que les liens que tu partages continuent toujours de fonctionner.',
     structureLabel: 'Comment sont organisées tes équipes?',
     structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
     structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
@@ -630,7 +639,14 @@ const I18N_SIGNUP = {
     lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.',
     createLeague: 'Créer la ligue',
     doneBadge: 'Ligue créée', doneTitle: 'Ta ligue est prête.',
-    doneBody: 'Ta page publique est déjà en ligne. Partage-la dans le groupe de la ligue.',
+    // A1 bug fix (onboarding polish task): the public page is genuinely
+    // empty the moment a league is created (no schedule, no roster) --
+    // "déjà en ligne... partage-la" read as an invitation to share
+    // something with nothing on it, a bad first impression. Reframed to
+    // set the right expectation: the URL is real and permanent, it
+    // fills in as the admin actually does the setup, share it once
+    // there's something to see.
+    doneBody: "La page de ta ligue se trouve à cette adresse. Elle est vide pour l'instant et se remplit automatiquement au fur et à mesure que tu ajoutes ton calendrier et ton alignement. Partage-la une fois ta saison en place.",
     copyLink: 'Copier le lien', copied: 'Copié !',
     // Live-testing task, Part 6: a season has to exist before matches
     // (and therefore real roster use) mean anything -- see the
@@ -645,7 +661,7 @@ const I18N_SIGNUP = {
     pwHelp: '8 characters minimum.', continueBtn: 'Continue', alreadySignedUp: 'Already signed up?', login: 'Log in',
     step2: 'Step 2 of 3', title2: 'Tell us about your league',
     lblLeagueName: 'League name', lblSlug: 'Your page address',
-    slugHelp: 'Created from the name. You can change it.',
+    slugHelp: "Becomes permanent once your league is created -- that guarantees the links you share always keep working.",
     structureLabel: 'How are your teams organized?',
     structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
     structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
@@ -659,7 +675,7 @@ const I18N_SIGNUP = {
     lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately.",
     createLeague: 'Create the league',
     doneBadge: 'League created', doneTitle: 'Your league is ready.',
-    doneBody: 'Your public page is already live. Share it in the league group chat.',
+    doneBody: "Your league's page is at this address. It's empty for now, and fills in automatically as you add your schedule and roster. Share it when your season is set up.",
     copyLink: 'Copy link', copied: 'Copied!',
     startMySeason: 'Start my season',
     already: 'Already signed up?'
@@ -938,7 +954,7 @@ function renderSignupStep2(langParam) {
   <div class="nl-field">
     <label class="nl-label" for="su_slug" data-i18n="lblSlug">Adresse de ta page</label>
     <div class="nl-prefix"><span>notreligue.ca/</span><input class="nl-input" id="su_slug"></div>
-    <p class="nl-help" data-i18n="slugHelp">Créée à partir du nom. Tu peux la changer.</p>
+    <p class="nl-help" data-i18n="slugHelp">Devient permanente à la création de ta ligue -- ça garantit que les liens que tu partages continuent toujours de fonctionner.</p>
   </div>
   <div class="nl-field">
     <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>
@@ -1192,7 +1208,7 @@ function renderSignupDone(league, langParam) {
   <div class="su-done">
     <span class="nl-badge nl-badge--in" data-i18n="doneBadge">Ligue créée</span>
     <h1 data-i18n="doneTitle">Ta ligue est prête.</h1>
-    <p class="nl-help" data-i18n="doneBody">Ta page publique est déjà en ligne. Partage-la dans le groupe de la ligue.</p>
+    <p class="nl-help" data-i18n="doneBody">La page de ta ligue se trouve à cette adresse. Elle est vide pour l'instant et se remplit automatiquement au fur et à mesure que tu ajoutes ton calendrier et ton alignement. Partage-la une fois ta saison en place.</p>
     <div class="su-url" id="su_public_url">notreligue.ca/${esc(league.slug)}</div>
     <button type="button" class="nl-btn nl-btn--secondary nl-btn--block" id="su_copy" data-i18n="copyLink" onclick="copyLink()">Copier le lien</button>
   </div>
@@ -2113,8 +2129,21 @@ function buildOnboardingI18n() {
   const fr = {
     skip: 'Passer pour l\'instant', next: 'Continuer', finish: 'Aller au tableau de bord', saveErr: 'Une erreur est survenue. Réessaie.',
     rosterTitle: 'Combien de joueurs?', rosterSubTeam: 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.',
-    rosterSubEvent: 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs. Laisse vide si tu n\'es pas prêt à décider.',
-    lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
+    // A3 bug fix (onboarding polish task): the old shared "rosterSubEvent"
+    // text ("chaque match, pour l'ensemble des joueurs") didn't make
+    // clear this is a TOTAL for the night, not per team -- ambiguous
+    // exactly where it mattered most (weekly_draw, where real per-team
+    // cards exist elsewhere in the product and could make "per team"
+    // seem like the natural reading). Split in two instead of one shared
+    // string: weekly_draw genuinely pools players and draws them into
+    // teams (the task's own wording, used verbatim); headcount has no
+    // teams to draw into at all (noFixedTeamsDesc elsewhere already says
+    // so) -- reusing the draw-specific wording there would itself be
+    // inaccurate, so it gets its own variant making the same "total, not
+    // per team" point without claiming a team draw that doesn't happen.
+    rosterSubPool: "Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l'ensemble du bassin.",
+    rosterSubHeadcount: "Tous les joueurs confirmés comptent dans ce total -- cette ligue n'a pas d'équipes.",
+    lblMinPlayers: 'Minimum total de joueurs', lblMaxPlayers: 'Maximum total de joueurs',
     lblMinGoalies: 'Minimum de gardiens (optionnel)', lblMaxGoalies: 'Maximum de gardiens (optionnel)',
     teamsTitle: 'Confirme les noms des équipes', teamsSubDefault: 'Choisis les vrais noms de tes équipes -- tu pourras les changer plus tard dans Paramètres.',
     teamsSubWeekly: 'Ces équipes changent à chaque match, mais leurs noms restent les mêmes toute la saison. Tu peux garder « Équipe 1, 2… » et revenir plus tard.',
@@ -2126,8 +2155,9 @@ function buildOnboardingI18n() {
   const en = {
     skip: 'Skip for now', next: 'Continue', finish: 'Go to dashboard', saveErr: 'Something went wrong. Please try again.',
     rosterTitle: 'How many players?', rosterSubTeam: 'These numbers apply to each team. Leave blank if you\'re not ready to decide.',
-    rosterSubEvent: 'These numbers apply to each game, across every player. Leave blank if you\'re not ready to decide.',
-    lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
+    rosterSubPool: 'Everyone who confirms goes into one pool and gets drawn into teams. These numbers cover the whole pool.',
+    rosterSubHeadcount: "Everyone who confirms counts toward this total -- this league has no teams.",
+    lblMinPlayers: 'Minimum total players', lblMaxPlayers: 'Maximum total players',
     lblMinGoalies: 'Minimum goalies (optional)', lblMaxGoalies: 'Maximum goalies (optional)',
     teamsTitle: 'Confirm your team names', teamsSubDefault: 'Pick the real names of your teams -- you can change them later in Settings.',
     teamsSubWeekly: 'These teams change every game, but their names stay the same all season. You can keep "Team 1, 2…" and come back later.',
@@ -2186,26 +2216,43 @@ async function handleOnboardingSeasonPage(req, env, url) {
   let stepHtml = '';
   if (step === 'roster') {
     const isTeamShaped = teamStructure === 'fixed';
+    // A3: 3-way, not a boolean -- 'fixed' is genuinely per-team;
+    // 'weekly_draw' and 'headcount' both need "total, not per team"
+    // wording, but headcount doesn't have a draw to describe (see this
+    // key's own comment, buildOnboardingI18n).
+    const rosterSubKey = isTeamShaped ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount');
     stepHtml = `
   <div class="su-title">
     <h1 data-i18n="rosterTitle">Combien de joueurs?</h1>
-    <p class="nl-help" data-i18n="${isTeamShaped ? 'rosterSubTeam' : 'rosterSubEvent'}">${isTeamShaped ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs. Laisse vide si tu n\'es pas prêt à décider.'}</p>
+    <p class="nl-help" data-i18n="${rosterSubKey}">${esc(fr[rosterSubKey])}</p>
   </div>
   <div id="formErr" class="nl-error" style="display:none"></div>
   <div class="su-two">
     <div class="nl-field">
-      <label class="nl-label" for="ob_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
+      <label class="nl-label" for="ob_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
       <input class="nl-input" id="ob_min_players" type="number" min="1" value="${esc(leagueRow.min_players != null ? String(leagueRow.min_players) : '')}">
     </div>
     <div class="nl-field">
-      <label class="nl-label" for="ob_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
+      <label class="nl-label" for="ob_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
       <input class="nl-input" id="ob_max_players" type="number" min="1" value="${esc(leagueRow.max_players != null ? String(leagueRow.max_players) : '')}">
     </div>
   </div>
   <div class="su-two">
     <div class="nl-field">
       <label class="nl-label" for="ob_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
-      <input class="nl-input" id="ob_min_goalies" type="number" min="0" value="${esc(leagueRow.min_goalies != null ? String(leagueRow.min_goalies) : '')}">
+      <!-- A4 bug fix (onboarding polish task): leagues.min_goalies is a
+           REAL prefilled 0 at creation (handleLeagueCreate's own JS
+           default, INSERTed into the column -- confirmed by reading that
+           code, not a placeholder/empty state), for every team structure
+           except a headcount league whose admin explicitly set it at
+           signup. Defaulting the DISPLAYED value to 1 whenever the
+           stored value is still the untouched 0 means a league that
+           actually needs a goalie isn't silently configured with none --
+           the admin sees 1 pre-filled and can still change it back to 0
+           deliberately. A genuinely non-zero stored value (e.g. a
+           headcount league that set 2 at signup) is shown as-is,
+           unaffected. -->
+      <input class="nl-input" id="ob_min_goalies" type="number" min="0" value="${esc(leagueRow.min_goalies ? String(leagueRow.min_goalies) : '1')}">
     </div>
     <div class="nl-field">
       <label class="nl-label" for="ob_max_goalies" data-i18n="lblMaxGoalies">Maximum de gardiens (optionnel)</label>

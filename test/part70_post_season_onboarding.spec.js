@@ -149,6 +149,78 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(step2).toContain('data-i18n="teamsSubWeekly"');
   });
 
+  // A3 bug fix (onboarding polish task): the roster step's helper text
+  // used to be shared between weekly_draw and headcount ("chaque match,
+  // pour l'ensemble des joueurs") -- didn't make clear this is a TOTAL
+  // for the night, not per team, which mattered most for weekly_draw
+  // (real per-team cards exist elsewhere in the product). Now split:
+  // weekly_draw states the pool-then-draw model explicitly; headcount
+  // gets its own accurate variant (no team draw exists for it at all);
+  // fixed is genuinely per-team and stays as it was.
+  it('A3: roster step wording is genuinely different per team structure -- pool/draw for weekly_draw, no-teams for headcount, per-team for fixed', async () => {
+    const { cookie: cookieFixed, csrfToken: csrfFixed } = await signup('ob.a3.fixed@example.com', '203.0.185.020');
+    await createLeague(cookieFixed, csrfFixed, { name: 'A3 Fixed League', teamNames: ['A', 'B'] });
+    await publishSeason(cookieFixed, csrfFixed, { season_name: 'S1' });
+    const fixedStep1 = await getOnboarding(cookieFixed, 1);
+    expect(fixedStep1).toContain('data-i18n="rosterSubTeam"');
+    expect(fixedStep1).toContain('Minimum total de joueurs');
+
+    const { cookie: cookieWeekly, csrfToken: csrfWeekly } = await signup('ob.a3.weekly@example.com', '203.0.185.021');
+    await createLeague(cookieWeekly, csrfWeekly, { name: 'A3 Weekly League', teamStructure: 'weekly_draw', teamNames: ['Équipe 1', 'Équipe 2'] });
+    await publishSeason(cookieWeekly, csrfWeekly, { season_name: 'S1' });
+    const weeklyStep1 = await getOnboarding(cookieWeekly, 1);
+    expect(weeklyStep1).toContain('data-i18n="rosterSubPool"');
+    expect(weeklyStep1).toContain("Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l'ensemble du bassin.");
+    expect(weeklyStep1).not.toContain('data-i18n="rosterSubHeadcount"');
+
+    const { cookie: cookieHc, csrfToken: csrfHc } = await signup('ob.a3.headcount@example.com', '203.0.185.022');
+    await createLeague(cookieHc, csrfHc, { name: 'A3 Headcount League', teamStructure: 'headcount', minPlayers: 6, maxPlayers: 12 });
+    await publishSeason(cookieHc, csrfHc, { season_name: 'S1' });
+    const hcStep1 = await getOnboarding(cookieHc, 1);
+    expect(hcStep1).toContain('data-i18n="rosterSubHeadcount"');
+    expect(hcStep1).toContain("Tous les joueurs confirmés comptent dans ce total -- cette ligue n'a pas d'équipes.");
+    // Never claims a team draw for headcount, which has no teams at all
+    // (the embedded __I18N dict always carries every key regardless of
+    // which is shown -- what matters is which one the visible element
+    // actually uses).
+    expect(hcStep1).not.toContain('data-i18n="rosterSubPool"');
+
+    // English side, spot-checked on the weekly_draw case.
+    const weeklyStep1En = await (await SELF.fetch('http://example.com/onboarding/season?step=1&lang=en', { headers: { cookie: cookieWeekly } })).text();
+    expect(weeklyStep1En).toContain('Minimum total players');
+    expect(weeklyStep1En).toContain('Maximum total players');
+  });
+
+  // A4 bug fix (onboarding polish task): leagues.min_goalies is a REAL
+  // stored 0 at creation (handleLeagueCreate's own default), not a
+  // placeholder -- confirmed directly against the DB here. The
+  // onboarding screen now shows 1 instead of that untouched 0, so a
+  // league that needs a goalie isn't silently left configured with
+  // none; a genuinely non-zero stored value is unaffected.
+  it('A4: min_goalies is a real stored 0 at creation, and the onboarding screen now defaults its own field to 1 instead of showing that 0', async () => {
+    const { cookie, csrfToken } = await signup('ob.a4.goalie@example.com', '203.0.185.023');
+    const league = await createLeague(cookie, csrfToken, { name: 'A4 Goalie League', teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+
+    const row = await env.DB.prepare('SELECT min_goalies FROM leagues WHERE id = ?').bind(league.id).first();
+    expect(row.min_goalies).toBe(0); // confirmed: a real stored value, not null/placeholder
+
+    const step1 = await getOnboarding(cookie, 1);
+    expect(step1).toContain('id="ob_min_goalies" type="number" min="0" value="1"');
+  });
+
+  it('A4: a genuinely non-zero stored min_goalies is shown as-is, not overridden to 1', async () => {
+    const { cookie, csrfToken } = await signup('ob.a4.nonzero@example.com', '203.0.185.024');
+    const league = await createLeague(cookie, csrfToken, { name: 'A4 Nonzero League', teamStructure: 'headcount', minPlayers: 6, maxPlayers: 12, minGoalies: 2 });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+
+    const row = await env.DB.prepare('SELECT min_goalies FROM leagues WHERE id = ?').bind(league.id).first();
+    expect(row.min_goalies).toBe(2);
+
+    const step1 = await getOnboarding(cookie, 1);
+    expect(step1).toContain('id="ob_min_goalies" type="number" min="0" value="2"');
+  });
+
   it('headcount structure: only 3 steps -- team names step is skipped entirely', async () => {
     const { cookie, csrfToken } = await signup('ob.headcount@example.com', '203.0.185.005');
     await createLeague(cookie, csrfToken, { name: 'Onboarding Headcount League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 16 });
