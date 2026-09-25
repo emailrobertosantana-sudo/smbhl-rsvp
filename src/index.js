@@ -660,11 +660,31 @@ const I18N_SIGNUP = {
     createLeague: 'Create the league',
     doneBadge: 'League created', doneTitle: 'Your league is ready.',
     doneBody: 'Your public page is already live. Share it in the league group chat.',
-    copyLink: 'Copy link', copied: 'Copied!', addPlayers: 'Add my players',
+    copyLink: 'Copy link', copied: 'Copied!',
     startMySeason: 'Start my season',
     already: 'Already signed up?'
   }
 };
+
+// i18n bug fix (B1): <title>/<meta description> are set server-side,
+// BEFORE the client-side applyLanguage() script ever runs -- and that
+// script only ever swaps [data-i18n] BODY content, never document.title
+// (see its own definition, nlAuthScript). Every signup screen used to
+// hardcode the French title/description unconditionally, so the browser
+// tab kept reading "Créer un compte" even on an explicitly-English
+// signup page. renderSignupPage's own dispatcher already threads a real
+// ?lang= query param through every step (redirects, __navWithLang) --
+// this just finally uses it for the one piece of text that mechanism
+// never reached. langParam is exactly what url.searchParams.get('lang')
+// returns: 'en', 'fr', or null/anything else, which this treats as 'fr'
+// (the existing default -- unchanged for every link that doesn't carry
+// ?lang= yet, e.g. a bookmark or a fresh /signup visit).
+function signupDoc(langParam) {
+  const lang = langParam === 'en' ? 'en' : 'fr';
+  return lang === 'en'
+    ? { title: 'Create an account', description: 'Your weekend league, without the paperwork.', lang }
+    : { title: 'Créer un compte', description: 'Ta ligue du dimanche, sans la paperasse.', lang };
+}
 
 // Shared style block every signup screen (steps 1-3 and the done
 // screen) embeds, plus a header builder -- steps 1-3 show the Notre
@@ -832,7 +852,7 @@ function signupStepper(current) {
   return `<div class="nl-steps" role="progressbar" aria-valuemin="1" aria-valuemax="3" aria-valuenow="${current}">${dots}</div>`;
 }
 
-function renderSignupStep1() {
+function renderSignupStep1(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
@@ -899,10 +919,10 @@ async function submitStep1() {
   }
 }
 </script>`;
-  return nlDocument({ title: 'Créer un compte', description: 'Ta ligue du dimanche, sans la paperasse.', bodyHtml });
+  return nlDocument({ ...signupDoc(langParam), bodyHtml });
 }
 
-function renderSignupStep2() {
+function renderSignupStep2(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
@@ -1013,10 +1033,10 @@ async function submitStep2() {
   window.__navWithLang('/signup?step=3');
 }
 </script>`;
-  return nlDocument({ title: 'Créer un compte', description: 'Ta ligue du dimanche, sans la paperasse.', bodyHtml });
+  return nlDocument({ ...signupDoc(langParam), bodyHtml });
 }
 
-function renderSignupStep3() {
+function renderSignupStep3(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
@@ -1163,10 +1183,10 @@ async function submitStep3() {
   }
 }
 </script>`;
-  return nlDocument({ title: 'Créer un compte', description: 'Ta ligue du dimanche, sans la paperasse.', bodyHtml });
+  return nlDocument({ ...signupDoc(langParam), bodyHtml });
 }
 
-function renderSignupDone(league) {
+function renderSignupDone(league, langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader(league.name)}
 <main class="su-body">
   <div class="su-done">
@@ -1202,7 +1222,8 @@ function copyLink() {
   }
 }
 </script>`;
-  return nlDocument({ title: 'Ligue créée · Notre Ligue', bodyHtml });
+  const lang = langParam === 'en' ? 'en' : 'fr';
+  return nlDocument({ title: lang === 'en' ? 'League created · Notre Ligue' : 'Ligue créée · Notre Ligue', bodyHtml, lang });
 }
 
 // Session-aware dispatcher: step 1 (account creation) needs no
@@ -1227,12 +1248,12 @@ async function renderSignupPage(req, env, url) {
          WHERE a.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
       ).bind(session.userId).first();
       if (!league) return Response.redirect(`${url.origin}/signup?step=2${langQS}`, 302);
-      return new Response(renderSignupDone(league), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      return new Response(renderSignupDone(league, langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     }
-    if (step === '3') return new Response(renderSignupStep3(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
-    return new Response(renderSignupStep2(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    if (step === '3') return new Response(renderSignupStep3(langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    return new Response(renderSignupStep2(langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
-  return new Response(renderSignupStep1(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  return new Response(renderSignupStep1(langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
 // Login / forgot-password / reset-password (design system Part 2).

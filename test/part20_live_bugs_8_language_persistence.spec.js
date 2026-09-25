@@ -125,4 +125,52 @@ describe('Live-testing Part 1: language toggle consistency across signup and the
     expect(html).toContain("new URLSearchParams(location.search).get('lang')");
     expect(html).toContain('window.__navWithLang');
   });
+
+  // B1 bug fix (i18n polish task): the browser tab <title> is set
+  // server-side, before applyLanguage() (the shared client script
+  // above) ever runs -- and that script only ever swaps [data-i18n]
+  // BODY content, never document.title. Every signup step used to
+  // hardcode the French title/description regardless of ?lang=, so an
+  // explicitly-English signup page still showed "Créer un compte" in
+  // the browser tab. Locks the real fix (signupDoc(), index.js) through
+  // an actual HTTP fetch of the raw HTML -- not a DOM/JS assertion --
+  // so it can't silently regress back to a hardcoded string.
+  it('B1: step 1\'s <title> and <html lang> follow ?lang=, not a hardcoded French default', async () => {
+    const fr = await (await SELF.fetch('http://example.com/signup?step=1')).text();
+    expect(fr).toContain('<title>Créer un compte</title>');
+    expect(fr).toContain('<html lang="fr-CA">');
+
+    const en = await (await SELF.fetch('http://example.com/signup?step=1&lang=en')).text();
+    expect(en).toContain('<title>Create an account</title>');
+    expect(en).toContain('<html lang="en-CA">');
+  });
+
+  it('B1: steps 2/3 and the done screen (session-gated) also follow ?lang=, not a hardcoded French default', async () => {
+    const signupRes = await SELF.fetch('http://example.com/auth/signup', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.150.001' },
+      body: JSON.stringify({ email: 'b1.title.signupflow@example.com', password: 'a-strong-password-1' })
+    });
+    const cookie = extractCookie(signupRes);
+    const csrfToken = extractCsrfToken(signupRes);
+
+    const step2En = await (await SELF.fetch('http://example.com/signup?step=2&lang=en', { headers: { cookie } })).text();
+    expect(step2En).toContain('<title>Create an account</title>');
+    expect(step2En).toContain('<html lang="en-CA">');
+    const step2Fr = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
+    expect(step2Fr).toContain('<title>Créer un compte</title>');
+    expect(step2Fr).toContain('<html lang="fr-CA">');
+
+    const step3En = await (await SELF.fetch('http://example.com/signup?step=3&lang=en', { headers: { cookie } })).text();
+    expect(step3En).toContain('<title>Create an account</title>');
+
+    await SELF.fetch('http://example.com/leagues/create', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ name: 'B1 Title League', teamNames: ['A', 'B'], tracksStats: true })
+    });
+    const doneEn = await (await SELF.fetch('http://example.com/signup?step=done&lang=en', { headers: { cookie } })).text();
+    expect(doneEn).toContain('<title>League created · Notre Ligue</title>');
+    expect(doneEn).toContain('<html lang="en-CA">');
+    const doneFr = await (await SELF.fetch('http://example.com/signup?step=done', { headers: { cookie } })).text();
+    expect(doneFr).toContain('<title>Ligue créée · Notre Ligue</title>');
+  });
 });
