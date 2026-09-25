@@ -4,8 +4,9 @@ import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail } from './design_system.js';
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
-import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber } from './league_ids.js';
+import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
+import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
@@ -3134,11 +3135,16 @@ async function handleLeagueCommsData(req, env, url) {
   ).bind(leagueId, ACTIVITY_LIMIT).all()).results || [];
 
   // 72h/24h/12h automated waves -- one row per (event, kind) already
-  // sent; recipient_count is how many succeeded.
+  // sent; recipient_count is how many succeeded. skipped = 0: reminder-
+  // window-skip-on-create bug fix task -- league_reminder_log can now
+  // also hold a deliberate-skip row (window already elapsed at event
+  // creation, see reminder_scheduling.js); excluded here so this activity
+  // list keeps meaning exactly what it always has ("genuinely sent"),
+  // rather than silently relabeling a skip as a 0-recipient send.
   const reminderRows = (await env.DB.prepare(
     `SELECT r.kind, r.event_id, r.sent_at, r.recipient_count, e.date AS event_date
        FROM league_reminder_log r LEFT JOIN events e ON e.id = r.event_id
-      WHERE r.league_id = ? ORDER BY r.sent_at DESC LIMIT ?`
+      WHERE r.league_id = ? AND r.skipped = 0 ORDER BY r.sent_at DESC LIMIT ?`
   ).bind(leagueId, ACTIVITY_LIMIT).all()).results || [];
 
   // Late-draw team-assigned catch-up follow-ups (no league_id column
@@ -6125,22 +6131,11 @@ function formatFixtureText(matches, team, isGoalie) {
   return `\n${header}${matchLines}\n${shirt}\n`;
 }
 
-/* ---------- time, in the league's timezone ---------- */
+/* ---------- time, in the league's timezone ----------
+ * TZ/localParts/eventStart now live in league_ids.js (imported below)
+ * -- moved there so leagues.js can compute a real event's hoursUntil
+ * too, without a circular import. See that file's own comment. */
 
-const TZ = 'America/Toronto';
-function localParts(d = new Date()) {
-  const f = new Intl.DateTimeFormat('en-CA', {
-    timeZone: TZ, weekday: 'short', hour: '2-digit', minute: '2-digit',
-    year: 'numeric', month: '2-digit', day: '2-digit', hour12: false
-  }).formatToParts(d);
-  const g = t => (f.find(p => p.type === t) || {}).value;
-  return {
-    weekday: g('weekday'),
-    hour: parseInt(g('hour'), 10),
-    minute: parseInt(g('minute'), 10),
-    date: `${g('year')}-${g('month')}-${g('day')}`
-  };
-}
 const reached = (p, h, m = 0) => p.hour > h || (p.hour === h && p.minute >= m);
 
 function formatMsgTime(isoString) {
@@ -7572,26 +7567,6 @@ async function drain(env, limit = 40, filterEventId = null, filterLeagueId = nul
     }
   }
   return { due: due.length, sent, failed };
-}
-
-export function eventStart(ev) {
-  if (!ev.start_time) return null;
-  // ev.id is the literal date for every one of SMBHL's existing events
-  // ('2026-09-20'). Since migrate-020.sql / league_ids.js, a NEW event's id
-  // may instead be league-prefixed ('smbhl:2026-10-04') — eventDateFromId()
-  // recovers the trailing date either way, so this keeps working unchanged
-  // for old ids and correctly for new ones.
-  const dateStr = eventDateFromId(ev.id);
-  const [hh, mm] = ev.start_time.split(':').map(Number);
-  for (const off of [4, 5]) {
-    const guess = new Date(`${dateStr}T${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00Z`);
-    if (isNaN(guess.getTime())) return null;
-    const utc = new Date(guess.getTime() + off * 3600000);
-    const p = localParts(utc);
-    if (p.date === dateStr && p.hour === hh && p.minute === mm) return utc;
-  }
-  const fallback = new Date(`${dateStr}T${ev.start_time}:00-05:00`);
-  return isNaN(fallback.getTime()) ? null : fallback;
 }
 
 /* ---------- shortage ---------- */
@@ -13956,8 +13931,13 @@ async function leagueOptInOutLinks(env, leagueId, ev, contact) {
 // fires at most once per (event, player) regardless of how many times
 // that player's team assignment changes afterward.
 async function maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, team) {
+  // skipped = 0: reminder-window-skip-on-create bug fix task --
+  // league_reminder_log can now also hold a row for a step deliberately
+  // never sent (its window had already elapsed at event creation, see
+  // reminder_scheduling.js). A skip must NOT count as "already sent the
+  // 12h logistics email without the team info" -- it never sent at all.
   const alreadyLogged12h = await env.DB.prepare(
-    `SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = 'logistics_12h'`
+    `SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = 'logistics_12h' AND skipped = 0`
   ).bind(ev.id).first();
   if (!alreadyLogged12h) return; // normal case: the draw beat the 12h email, team was already in it.
 
@@ -14004,12 +13984,16 @@ async function maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, 
 // -- a 70h-out event only qualifies for reminder_72h, never also
 // reminder_24h/logistics_12h just because it's already <= 72h out.
 // Returns the number of emails actually sent, per kind.
-const LEAGUE_REMINDER_THRESHOLD_HOURS = { reminder_72h: 72, reminder_24h: 24, logistics_12h: 12 };
+// Threshold hours now live in reminder_scheduling.js (reminder-window-
+// skip-on-create/reschedule bug fix task) -- that file's own
+// applyReminderWindowSkipRule needs the identical 3 numbers to decide
+// whether a step's window has already elapsed at event-creation time,
+// and a single source of truth means the two can never drift apart.
 async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil) {
   const kindToColumn = { reminder_72h: 'reminder_72h_enabled', reminder_24h: 'reminder_24h_enabled', logistics_12h: 'reminder_12h_enabled' };
   const results = {};
   for (const kind of ['reminder_72h', 'reminder_24h', 'logistics_12h']) {
-    if (hoursUntil > LEAGUE_REMINDER_THRESHOLD_HOURS[kind]) { results[kind] = 0; continue; }
+    if (hoursUntil > REMINDER_WINDOW_THRESHOLD_HOURS[kind]) { results[kind] = 0; continue; }
     if (!leagueRow[kindToColumn[kind]]) { results[kind] = 0; continue; }
     const already = await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(ev.id, kind).first();
     if (already) { results[kind] = 0; continue; }

@@ -16,9 +16,9 @@ import {
   eventDateFromId,
   makeContactId,
   contactIdLikePattern,
-  extractTrailingNumber
+  extractTrailingNumber,
+  eventStart
 } from '../src/league_ids.js';
-import { eventStart } from '../src/index.js';
 import { applyRealSchema } from './support/real_schema.js';
 
 describe('league_ids.js — pure ID-scheme helpers', () => {

@@ -23,6 +23,7 @@ import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie } 
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail } from './design_system.js';
 import { hasCapability } from './super_admin.js';
+import { applyReminderWindowSkipRule } from './reminder_scheduling.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -665,8 +666,18 @@ export async function handleLeagueContactsBulkCreate(req, env) {
  *
  * Field decisions:
  *   - date: required, must already be YYYY-MM-DD — the same shape
- *     eventStart() (index.js) and makeEventId/eventDateFromId
- *     (league_ids.js) all assume.
+ *     eventStart() and makeEventId/eventDateFromId (both league_ids.js)
+ *     all assume.
+ *
+ * Reminder-window-skip-on-create bug fix: after the INSERT below,
+ * applyReminderWindowSkipRule (reminder_scheduling.js) marks any
+ * cadence step whose send window has already elapsed as of THIS
+ * moment as skipped, rather than leaving it to fire in one backlogged
+ * burst on the next cron tick -- see that function's own comment for
+ * the full root cause. Skipped only when auto_reminders_enabled is
+ * actually on for this event; when it's off, runLeagueReminders never
+ * looks at this event at all (its own query filters on that column),
+ * so there is nothing to mark.
  *   - season: optional; defaults to the league's own current_season
  *     (getLeagueDataJson) if not given, since a league will normally have
  *     already published one via /league/season/publish first. If neither
@@ -761,6 +772,10 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
     `INSERT INTO events (id, season, week, date, venue, venue_id, state, start_time, end_time, league_id, auto_reminders_enabled)
      VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`
   ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId, autoRemindersEnabled).run();
+
+  if (autoRemindersEnabled) {
+    await applyReminderWindowSkipRule(env, leagueId, { id: eventId, start_time: startTime || null });
+  }
 
   return {
     ok: true,

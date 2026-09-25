@@ -69,6 +69,30 @@ async function createEventHoursFromNow(cookie, csrfToken, hoursFromNow) {
   return json.event.id;
 }
 
+// Reminder-window-skip-on-create bug fix task: createEventHoursFromNow
+// (above) goes through the real /league/events route, which now runs
+// applyReminderWindowSkipRule on every create -- correct for testing
+// THAT new behavior, but wrong for a handful of pre-existing tests
+// below whose actual purpose is to test runLeagueReminders'/
+// sendLeagueReminderWave's own cron-tick logic in isolation, using
+// "create the event, then immediately run the cron" only as a proxy
+// for "this event has existed for a while and the cron's regular tick
+// now finds it within a window" -- a scenario the new creation-time
+// hook doesn't apply to (it only fires once, at creation). This
+// inserts the event directly into `events`, bypassing the league
+// product's own event-creation route (and therefore the new hook)
+// entirely, the same way the SMBHL-isolation test elsewhere in this
+// file already does its own direct insert.
+let directEventCounter = 0;
+async function insertEventDirectlyHoursFromNow(leagueId, hoursFromNow) {
+  const { date, time } = easternDateTimeHoursFromNow(hoursFromNow);
+  const id = `${leagueId}:direct-${++directEventCounter}:${date}`;
+  await env.DB.prepare(
+    `INSERT INTO events (id, season, week, date, venue, state, start_time, league_id) VALUES (?, 'Direct Season', 1, ?, 'Direct Venue', 'open', ?, ?)`
+  ).bind(id, date, time, leagueId).run();
+  return id;
+}
+
 async function addPlayer(cookie, csrfToken, name, team, email) {
   const res = await SELF.fetch('http://example.com/league/contacts', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -161,7 +185,10 @@ describe('Part 2: per-league automated reminders', () => {
 
   it('a 72h-out event with a non-responder sends the 72h reminder only to that non-responder, and logs it', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.r72@example.com', '203.0.113.954', 'R72 League', ['A', 'B']);
-    const eventId = await createEventHoursFromNow(cookie, csrfToken, 70);
+    // Direct insert, not createEventHoursFromNow -- see that helper's
+    // own comment: this tests the cron catching an event that already
+    // existed within its window, not the new creation-time skip hook.
+    const eventId = await insertEventDirectlyHoursFromNow(leagueId, 70);
     await addPlayer(cookie, csrfToken, 'Non Responder One', 'A', 'nonresp@example.com');
     const confirmedId = await addPlayer(cookie, csrfToken, 'Already In Player', 'A', 'alreadyin@example.com');
     await SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -180,8 +207,8 @@ describe('Part 2: per-league automated reminders', () => {
   });
 
   it('running the cron again for the same event does not re-send the 72h reminder (idempotent via the log)', async () => {
-    const { cookie, csrfToken } = await signupAndCreateLeague('reminders.idempotent@example.com', '203.0.113.955', 'Idempotent League', ['A', 'B']);
-    await createEventHoursFromNow(cookie, csrfToken, 70);
+    const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.idempotent@example.com', '203.0.113.955', 'Idempotent League', ['A', 'B']);
+    await insertEventDirectlyHoursFromNow(leagueId, 70);
     await addPlayer(cookie, csrfToken, 'Idempotent Non Responder', 'A', 'idem@example.com');
 
     const first = await withMailMock(() => runLeagueReminders(env));
@@ -204,8 +231,8 @@ describe('Part 2: per-league automated reminders', () => {
   });
 
   it('a 24h-out event sends the 24h reminder to non-responders only', async () => {
-    const { cookie, csrfToken } = await signupAndCreateLeague('reminders.r24@example.com', '203.0.113.957', 'R24 League', ['A', 'B']);
-    const eventId = await createEventHoursFromNow(cookie, csrfToken, 20);
+    const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.r24@example.com', '203.0.113.957', 'R24 League', ['A', 'B']);
+    const eventId = await insertEventDirectlyHoursFromNow(leagueId, 20);
     await addPlayer(cookie, csrfToken, 'R24 Non Responder', 'A', 'r24nonresp@example.com');
     const outId = await addPlayer(cookie, csrfToken, 'R24 Already Out', 'A', 'r24out@example.com');
     await SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -222,8 +249,8 @@ describe('Part 2: per-league automated reminders', () => {
   });
 
   it('a 12h-out event sends the logistics email to CONFIRMED players only, never to non-responders', async () => {
-    const { cookie, csrfToken } = await signupAndCreateLeague('reminders.r12@example.com', '203.0.113.958', 'R12 League', ['A', 'B']);
-    const eventId = await createEventHoursFromNow(cookie, csrfToken, 10);
+    const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.r12@example.com', '203.0.113.958', 'R12 League', ['A', 'B']);
+    const eventId = await insertEventDirectlyHoursFromNow(leagueId, 10);
     const confirmedId = await addPlayer(cookie, csrfToken, 'R12 Confirmed', 'A', 'r12confirmed@example.com');
     await addPlayer(cookie, csrfToken, 'R12 Non Responder', 'A', 'r12nonresp@example.com');
     await SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -256,7 +283,7 @@ describe('Part 2: per-league automated reminders', () => {
   });
 
   it('the manual "send now" trigger sends immediately outside the automatic windows, and does not block the automatic 72h reminder from firing later', async () => {
-    const { cookie, csrfToken } = await signupAndCreateLeague('reminders.manual@example.com', '203.0.113.960', 'Manual League', ['A', 'B']);
+    const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.manual@example.com', '203.0.113.960', 'Manual League', ['A', 'B']);
     // Far outside any automatic window (way more than 72h out).
     const eventId = await createEventHoursFromNow(cookie, csrfToken, 200);
     await addPlayer(cookie, csrfToken, 'Manual Target', 'A', 'manualtarget@example.com');
@@ -285,7 +312,7 @@ describe('Part 2: per-league automated reminders', () => {
     // too) still works fine after a manual send elsewhere -- proves the
     // manual trigger and the automatic cron are two real, independent
     // paths, not that automation is broken by having been used.
-    const secondEventId = await createEventHoursFromNow(cookie, csrfToken, 70);
+    const secondEventId = await insertEventDirectlyHoursFromNow(leagueId, 70);
     await addPlayer(cookie, csrfToken, 'Manual Target Two', 'A', 'manualtarget2@example.com');
     const { sentMails: autoMails } = await withMailMock(() => runLeagueReminders(env));
     const ownMails = autoMails.filter(m => m.to.includes('manualtarget2@example.com'));

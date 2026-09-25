@@ -144,3 +144,60 @@ export const RESERVED_SLUGS = new Set([
   'rsvp', 'signup', 'team-rsvp', 'verify', 'robots.txt', 'favicon.ico',
   'well-known', 'static', 'assets', 'public'
 ]);
+
+/* ---------- time, in the league's timezone ----------
+ * Moved here from index.js (reminder-window-skip-on-create/reschedule
+ * bug fix task): leagues.js needs eventStart() too -- to compute an
+ * event's real hoursUntil at the moment it's created, for the same
+ * reason index.js's cron already needs it -- but leagues.js can't
+ * import from index.js (index.js imports FROM leagues.js; the reverse
+ * would be a cycle). league_ids.js was already the natural shared home
+ * -- this file's own top-of-file comment already named eventStart() as
+ * the other piece of code (besides id generation) that has to
+ * understand events.id's date-suffix shape. localParts/TZ moved
+ * alongside it since eventStart depends on it; index.js now imports
+ * both from here instead of defining them locally -- every existing
+ * call site in index.js (localParts has several beyond eventStart)
+ * keeps working unchanged, just via import instead of a local
+ * definition.
+ */
+export const TZ = 'America/Toronto';
+export function localParts(d = new Date()) {
+  const f = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, weekday: 'short', hour: '2-digit', minute: '2-digit',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour12: false
+  }).formatToParts(d);
+  const g = t => (f.find(p => p.type === t) || {}).value;
+  return {
+    weekday: g('weekday'),
+    hour: parseInt(g('hour'), 10),
+    minute: parseInt(g('minute'), 10),
+    date: `${g('year')}-${g('month')}-${g('day')}`
+  };
+}
+
+// Real UTC instant an event actually starts, given its own id (date
+// suffix) and start_time -- guesses the UTC offset (EST=5h/EDT=4h) by
+// checking which one, once applied, actually lands back on the same
+// local date/time America/Toronto would report; falls back to a fixed
+// -05:00 offset if neither guess round-trips (should not happen for a
+// real date, kept only as a last resort rather than returning null).
+export function eventStart(ev) {
+  if (!ev.start_time) return null;
+  // ev.id is the literal date for every one of SMBHL's existing events
+  // ('2026-09-20'). Since migrate-020.sql / league_ids.js, a NEW event's id
+  // may instead be league-prefixed ('smbhl:2026-10-04') — eventDateFromId()
+  // recovers the trailing date either way, so this keeps working unchanged
+  // for old ids and correctly for new ones.
+  const dateStr = eventDateFromId(ev.id);
+  const [hh, mm] = ev.start_time.split(':').map(Number);
+  for (const off of [4, 5]) {
+    const guess = new Date(`${dateStr}T${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00Z`);
+    if (isNaN(guess.getTime())) return null;
+    const utc = new Date(guess.getTime() + off * 3600000);
+    const p = localParts(utc);
+    if (p.date === dateStr && p.hour === hh && p.minute === mm) return utc;
+  }
+  const fallback = new Date(`${dateStr}T${ev.start_time}:00-05:00`);
+  return isNaN(fallback.getTime()) ? null : fallback;
+}

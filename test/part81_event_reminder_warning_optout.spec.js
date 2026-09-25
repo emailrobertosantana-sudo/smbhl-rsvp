@@ -65,6 +65,26 @@ async function createEvent(cookie, csrfToken, body) {
     body: JSON.stringify(body)
   });
 }
+// Reminder-window-skip-on-create bug fix task: createEvent (above) goes
+// through the real /league/events route, which now marks any cadence
+// step whose window has already elapsed AT CREATION as skipped (see
+// reminder_scheduling.js) -- correct new behavior, but it means an
+// event created 30h out (inside the 72h window) no longer sends its
+// 72h reminder on the very next cron tick, since that reminder is now
+// deliberately skipped rather than fired late. This test's own purpose
+// is the auto_reminders_enabled opt-out, not the creation-time skip
+// mechanism (covered by test/part_reminder_window_skip.spec.js), so
+// the "armed" side inserts directly, bypassing the new hook, to
+// represent an event that already existed for a while before this
+// cron tick -- same pattern used in part8_league_reminders.spec.js.
+let directEventCounter = 0;
+async function insertEventDirectly(leagueId, date, time) {
+  const id = `${leagueId}:direct-${++directEventCounter}:${date}`;
+  await env.DB.prepare(
+    `INSERT INTO events (id, season, week, date, venue, state, start_time, league_id) VALUES (?, 'Direct Season', 1, ?, 'Direct Venue', 'open', ?, ?)`
+  ).bind(id, date, time, leagueId).run();
+  return id;
+}
 async function disableAllReminders(cookie, csrfToken) {
   return SELF.fetch('http://example.com/league/reminders/settings', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -178,7 +198,7 @@ describe('Part 10 (live-testing task, batch 6): event creation warns before armi
     const optOutPlayer = await addContact(cookie, csrfToken, { name: 'Opted Out Event Player', role: 'roster', team: 'A', email: 'optedout@example.com' });
 
     const { date: armedDate, time: armedTime } = easternDateTimeHoursFromNow(30);
-    const armedEv = await (await createEvent(cookie, csrfToken, { date: armedDate, start_time: armedTime })).json();
+    const armedEventId = await insertEventDirectly(league.id, armedDate, armedTime);
     const armedPlayer = await addContact(cookie, csrfToken, { name: 'Armed Event Player', role: 'roster', team: 'A', email: 'armed@example.com' });
 
     // Contacts are league-wide, not per-event -- without this, EITHER
@@ -193,7 +213,7 @@ describe('Part 10 (live-testing task, batch 6): event creation warns before armi
         body: JSON.stringify({ event_id: eventId, player_id: playerId, status: 'in' })
       });
     }
-    await setRsvpIn(armedEv.event.id, optOutPlayer.player_id);
+    await setRsvpIn(armedEventId, optOutPlayer.player_id);
     await setRsvpIn(optOutEv.event.id, armedPlayer.player_id);
 
     const { sentMails } = await withMailMock(() => runLeagueReminders(env));
@@ -206,7 +226,7 @@ describe('Part 10 (live-testing task, batch 6): event creation warns before armi
     // client-side.
     const optOutLog = await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ?').bind(optOutEv.event.id).first();
     expect(optOutLog).toBeFalsy();
-    const armedLog = await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(armedEv.event.id, 'reminder_72h').first();
+    const armedLog = await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(armedEventId, 'reminder_72h').first();
     expect(armedLog).toBeTruthy();
   });
 

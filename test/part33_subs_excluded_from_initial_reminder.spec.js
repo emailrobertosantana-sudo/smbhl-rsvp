@@ -64,6 +64,23 @@ function hoursFromNowDateTime(hours) {
   const d = new Date(Date.now() + hours * 3600000);
   return { date: d.toISOString().slice(0, 10), time: d.toISOString().slice(11, 16) };
 }
+// Reminder-window-skip-on-create bug fix task: creating an event via
+// the real /league/events route now marks any cadence step whose
+// window has already elapsed AT CREATION as skipped (see
+// reminder_scheduling.js) -- an event created 50h out (inside the 72h
+// window) no longer fires its 72h reminder on the very next cron tick.
+// This inserts directly, bypassing that new hook, for the one test
+// below whose actual purpose is confirming who the cron emails, not
+// the creation-time skip mechanism.
+let directEventCounter = 0;
+async function insertEventDirectlyHoursFromNow(leagueId, hours) {
+  const { date, time } = hoursFromNowDateTime(hours);
+  const id = `${leagueId}:direct-${++directEventCounter}:${date}`;
+  await env.DB.prepare(
+    `INSERT INTO events (id, season, week, date, venue, state, start_time, league_id) VALUES (?, 'Direct Season', 1, ?, 'Direct Venue', 'open', ?, ?)`
+  ).bind(id, date, time, leagueId).run();
+  return id;
+}
 async function withMailMock(fn) {
   const sent = [];
   const mockFetch = globalThis.fetch;
@@ -124,11 +141,7 @@ describe('Part 10 (live-testing task): subs never get the initial reminder, only
     const roster = await addPlayer(cookie, csrfToken, 'Pending Roster Player', 'pendingroster@example.com', { team: 'A' });
     const sub = await addPlayer(cookie, csrfToken, 'Never Emailed Sub', 'neveremailedsub@example.com', { role: 'sub_skater' });
 
-    const { date, time } = hoursFromNowDateTime(50);
-    await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date, start_time: time })
-    });
+    await insertEventDirectlyHoursFromNow(league.id, 50);
 
     const { sentMails } = await withMailMock(() => runLeagueReminders(env));
     const recipients = sentMails.map(m => m.to);

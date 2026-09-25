@@ -1,0 +1,34 @@
+-- Migration 043: reminder-window-skip-on-create/reschedule bug fix.
+--
+-- Apply with:
+--   npx wrangler d1 execute notreligue-demo --remote --file=./migrate-043.sql
+--
+-- WHAT THIS DOES: adds `league_reminder_log.skipped INTEGER NOT NULL
+-- DEFAULT 0` -- purely additive, no existing column, row, index, or query
+-- is touched. Every existing row (every reminder genuinely sent before this
+-- migration) defaults to 0, correctly meaning "a real send", not a skip.
+--
+-- WHY: confirmed live on demo -- creating a league event whose game is only
+-- a few days out fired every reminder wave whose hours-before threshold had
+-- already elapsed, all in one burst, on the very next cron tick. Root
+-- cause: runLeagueReminders'/sendLeagueReminderWave's own dedup check
+-- (src/index.js) only ever asks "does a league_reminder_log row already
+-- exist for this event+kind" -- with no way to distinguish "genuinely
+-- sent" from "deliberately never going to send" if a caller doesn't
+-- separately mark the difference. src/reminder_scheduling.js's new
+-- applyReminderWindowSkipRule, called from src/leagues.js on event
+-- creation, now inserts a `skipped = 1` row for any cadence step whose
+-- window has already elapsed at the moment the event is created (or its
+-- date changes), reusing this table's EXISTING (event_id, kind) dedup gate
+-- so runLeagueReminders needs zero changes -- it already never re-sends
+-- anything with an existing row, whether that row is a real send or a
+-- deliberate skip. `skipped` only exists to let this distinction be
+-- queried/audited afterward (e.g. via wrangler d1 execute, or a future
+-- Comms-view display) -- the cron's own dedup logic never reads it.
+--
+-- Not applied meaningfully to SMBHL: SMBHL has zero rows in
+-- league_reminder_log (see migrate-026.sql's own comment -- SMBHL is not
+-- part of this system at all), so this column stays entirely unused for
+-- SMBHL's data, exactly like every other column in this table.
+
+ALTER TABLE league_reminder_log ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0;

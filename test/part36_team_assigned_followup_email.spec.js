@@ -63,6 +63,24 @@ async function createEventHoursFromNow(cookie, csrfToken, hoursFromNow) {
   });
   return (await res.json()).event;
 }
+// Reminder-window-skip-on-create bug fix task: createEventHoursFromNow
+// (above) goes through the real /league/events route, which now marks
+// any cadence step whose window has already elapsed AT CREATION as
+// skipped (see reminder_scheduling.js) -- an event created 10h out
+// (inside all 3 windows) no longer fires its 12h logistics email on
+// the very next cron tick. This inserts directly, bypassing that new
+// hook, for the tests below whose actual purpose is the team-assigned
+// follow-up (which depends on the 12h wave having genuinely SENT, not
+// merely been evaluated), not the creation-time skip mechanism.
+let directEventCounter = 0;
+async function insertEventDirectlyHoursFromNow(leagueId, hoursFromNow) {
+  const { date, time } = easternDateTimeHoursFromNow(hoursFromNow);
+  const id = `${leagueId}:direct-${++directEventCounter}:${date}`;
+  await env.DB.prepare(
+    `INSERT INTO events (id, season, week, date, venue, state, start_time, league_id) VALUES (?, 'Direct Season', 1, ?, 'Direct Venue', 'open', ?, ?)`
+  ).bind(id, date, time, leagueId).run();
+  return { id };
+}
 async function addPlayer(cookie, csrfToken, name, email) {
   const res = await SELF.fetch('http://example.com/league/contacts', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -100,7 +118,7 @@ describe('Part 3 (live-testing task): team-assigned follow-up email for the late
   it('draw BEFORE the 12h email: team is included in that one email, no follow-up is sent', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateWeeklyDrawLeague('followup.before@example.com', '203.0.135.001', 'Followup Before League');
     const player = await addPlayer(cookie, csrfToken, 'Before Draw Player', 'beforedrawplayer@example.com');
-    const ev = await createEventHoursFromNow(cookie, csrfToken, 10);
+    const ev = await insertEventDirectlyHoursFromNow(leagueId, 10);
     await SELF.fetch('http://example.com/league/rsvp/admin', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ event_id: ev.id, player_id: player.player_id, status: 'in' })
@@ -131,7 +149,7 @@ describe('Part 3 (live-testing task): team-assigned follow-up email for the late
   it('draw AFTER the 12h email: the logistics email has no team, then a follow-up arrives with it', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateWeeklyDrawLeague('followup.after@example.com', '203.0.135.002', 'Followup After League');
     const player = await addPlayer(cookie, csrfToken, 'After Draw Player', 'afterdrawplayer@example.com');
-    const ev = await createEventHoursFromNow(cookie, csrfToken, 10);
+    const ev = await insertEventDirectlyHoursFromNow(leagueId, 10);
     await SELF.fetch('http://example.com/league/rsvp/admin', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ event_id: ev.id, player_id: player.player_id, status: 'in' })
@@ -165,12 +183,12 @@ describe('Part 3 (live-testing task): team-assigned follow-up email for the late
   it('the follow-up is idempotent -- reassigning the same player again does not re-send it', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateWeeklyDrawLeague('followup.idempotent@example.com', '203.0.135.003', 'Followup Idempotent League');
     const player = await addPlayer(cookie, csrfToken, 'Idempotent Followup Player', 'idempotentfollowup@example.com');
-    const ev = await createEventHoursFromNow(cookie, csrfToken, 10);
+    const ev = await insertEventDirectlyHoursFromNow(leagueId, 10);
     await SELF.fetch('http://example.com/league/rsvp/admin', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ event_id: ev.id, player_id: player.player_id, status: 'in' })
     });
-    await runLeagueReminders(env); // logs the 12h wave for this event
+    await runLeagueReminders(env); // logs the 12h wave for this event (a genuine send -- direct insert, not the creation-time skip hook)
 
     await withMailMock(() =>
       SELF.fetch('http://example.com/league/events/random-assign', {
@@ -195,7 +213,7 @@ describe('Part 3 (live-testing task): team-assigned follow-up email for the late
   it('the manual per-player assign route (not just bulk draw) also triggers the late-case follow-up', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateWeeklyDrawLeague('followup.manual@example.com', '203.0.135.004', 'Followup Manual League');
     const player = await addPlayer(cookie, csrfToken, 'Manual Assign Followup Player', 'manualassignfollowup@example.com');
-    const ev = await createEventHoursFromNow(cookie, csrfToken, 10);
+    const ev = await insertEventDirectlyHoursFromNow(leagueId, 10);
     await SELF.fetch('http://example.com/league/rsvp/admin', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ event_id: ev.id, player_id: player.player_id, status: 'in' })

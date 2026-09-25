@@ -74,6 +74,24 @@ async function createEventHoursFromNow(cookie, csrfToken, hoursFromNow) {
   });
   return (await res.json()).event.id;
 }
+// Reminder-window-skip-on-create bug fix task: createEventHoursFromNow
+// (above) goes through the real /league/events route, which now marks
+// any cadence step whose window has already elapsed AT CREATION as
+// skipped (see reminder_scheduling.js) -- an event created 70h out no
+// longer fires its 72h reminder on the very next cron tick. This
+// inserts directly, bypassing that new hook, for the one test below
+// whose actual purpose is the cron's own send behavior, not the
+// creation-time skip mechanism (see part8_league_reminders.spec.js's
+// own version of this same helper for the full rationale).
+let directEventCounter = 0;
+async function insertEventDirectlyHoursFromNow(leagueId, hoursFromNow) {
+  const { date, time } = easternDateTimeHoursFromNow(hoursFromNow);
+  const id = `${leagueId}:direct-${++directEventCounter}:${date}`;
+  await env.DB.prepare(
+    `INSERT INTO events (id, season, week, date, venue, state, start_time, league_id) VALUES (?, 'Direct Season', 1, ?, 'Direct Venue', 'open', ?, ?)`
+  ).bind(id, date, time, leagueId).run();
+  return id;
+}
 async function addPlayer(cookie, csrfToken, name, team, email) {
   const res = await SELF.fetch('http://example.com/league/contacts', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -239,8 +257,8 @@ describe('Live-testing bugs, round 3: broken email sending', () => {
     });
 
     it('the automated cron wave (runLeagueReminders) is unaffected by the return-shape change -- still sums to a plain count', async () => {
-      const { cookie, csrfToken } = await signupAndCreateLeague('bugs3.autowave@example.com', '203.0.118.006', 'Auto Wave League', ['A', 'B']);
-      const eventId = await createEventHoursFromNow(cookie, csrfToken, 70);
+      const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('bugs3.autowave@example.com', '203.0.118.006', 'Auto Wave League', ['A', 'B']);
+      const eventId = await insertEventDirectlyHoursFromNow(leagueId, 70);
       await addPlayer(cookie, csrfToken, 'Auto Wave Target', 'A', 'autowavetarget@example.com');
       const { sentMails } = await withMailMock(() => runLeagueReminders(env));
       expect(sentMails.some(m => m.to.includes('autowavetarget@example.com'))).toBe(true);
