@@ -6034,6 +6034,12 @@ ${tabbar}`;
       venueOpt: 'Lieu (optionnel)', venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun -- texte libre ci-dessous',
       freeTextNoMapLink: "Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.",
       editSaved: 'Modifications enregistrées.',
+      // Item 1 (admin-confirm-players polish task): distinguishing
+      // goalies in the roster list -- same "G" badge concept/wording
+      // as the Players page (I18N_ROSTER), reused here rather than
+      // shared across dicts since each page's dict is already
+      // self-contained by this codebase's own convention.
+      goalieBadge: 'G', goalieTitle: 'Gardien', canAlsoGoalieTitle: 'Peut aussi jouer gardien',
       ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
     },
     en: {
@@ -6059,6 +6065,7 @@ ${tabbar}`;
       venueOpt: 'Venue (optional)', venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None -- free text below',
       freeTextNoMapLink: "Free text never shows a map link. Pick a saved venue above for that.",
       editSaved: 'Changes saved.',
+      goalieBadge: 'G', goalieTitle: 'Goalie', canAlsoGoalieTitle: 'Can also play goalie',
       ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     }
   };
@@ -6071,6 +6078,17 @@ ${tabbar}`;
     out: `<span class="nl-badge nl-badge--out">${BADGE_ICON_MINUS}<span data-i18n="statusOut">Absent</span></span>`,
     pending: `<span class="nl-badge nl-badge--pending">${BADGE_ICON_CLOCK}<span data-i18n="statusPending">Pas répondu</span></span>`
   };
+  // Item 1 (admin-confirm-players polish task): a real goalie gets the
+  // "in"-toned G badge, a player flagged "can also play goalie" (E2,
+  // players polish task) gets the same badge in the quieter "sub"
+  // tone -- same distinction, same data-i18n keys the Players page
+  // already established, just a compact inline badge here instead of
+  // a full label button (this row has no room for one).
+  function eventRowGoalieBadge(c) {
+    if (c.is_goalie) return ` <span class="nl-badge nl-badge--in" style="padding:1px 6px;font-size:11px;" data-i18n="goalieBadge" title="${esc(I18N_DETAIL.fr.goalieTitle)}">G</span>`;
+    if (c.is_backup_goalie) return ` <span class="nl-badge nl-badge--sub" style="padding:1px 6px;font-size:11px;" data-i18n="goalieBadge" title="${esc(I18N_DETAIL.fr.canAlsoGoalieTitle)}">G</span>`;
+    return '';
+  }
 
   const teamCards = [];
   for (let i = 0; i < teamNames.length && !isWeeklyDrawPreDraw; i++) {
@@ -6091,7 +6109,7 @@ ${tabbar}`;
     // here must come from THIS event's own rsvp row, not the contact.
     const rosterRows = isHeadcount
       ? (await env.DB.prepare(
-          `SELECT c.player_id, c.name, COALESCE(r.status, 'pending') AS status
+          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status
              FROM contacts c
              LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
             WHERE c.league_id = ? AND c.role = 'roster'
@@ -6099,14 +6117,14 @@ ${tabbar}`;
         ).bind(ev.id, leagueId).all()).results || []
       : isWeeklyDraw
       ? (await env.DB.prepare(
-          `SELECT c.player_id, c.name, r.status AS status
+          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, r.status AS status
              FROM contacts c
              JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
             WHERE c.league_id = ? AND r.team = ?
             ORDER BY c.name`
         ).bind(ev.id, leagueId, team).all()).results || []
       : (await env.DB.prepare(
-          `SELECT c.player_id, c.name, COALESCE(r.status, 'pending') AS status
+          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status
              FROM contacts c
              LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
             WHERE c.league_id = ? AND c.preferred_team = ?
@@ -6120,7 +6138,7 @@ ${tabbar}`;
 
     const rosterListHtml = rosterRows.length
       ? rosterRows.map(p => `<div class="ev-p">
-          <span>${esc(p.name)}</span>
+          <span>${esc(p.name)}${eventRowGoalieBadge(p)}</span>
           <div style="display:flex;align-items:center;gap:8px;">
             ${STATUS_BADGE[p.status] || STATUS_BADGE.pending}
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
@@ -6161,21 +6179,41 @@ ${tabbar}`;
   // this page's own determination).
   let poolCardHtml = '';
   if (isWeeklyDrawPreDraw) {
-    const poolRsvpRows = (await env.DB.prepare(
-      `SELECT COALESCE(r.status, 'pending') AS status, COUNT(*) AS cnt
+    // Item 1 (admin-confirm-players polish task): this used to be
+    // aggregate-only (a GROUP BY count query) -- correct for the
+    // summary tile above, but it meant a weekly_draw league had NO
+    // admin-confirm UI at all before its first draw (the common state
+    // right after creating an event), unlike fixed/headcount/
+    // post-draw weekly_draw, which already had per-row IN/OUT via the
+    // per-team loop below. Now fetches full rows so the SAME
+    // setPlayerStatus-wired list those other cases already have can
+    // render here too -- one pool, not per-team lists, per the task.
+    const poolPlayerRows = (await env.DB.prepare(
+      `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status
          FROM contacts c
          LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
         WHERE c.league_id = ? AND c.role = 'roster'
-        GROUP BY COALESCE(r.status, 'pending')`
+        ORDER BY c.name`
     ).bind(ev.id, leagueId).all()).results || [];
     const poolCounts = { in: 0, out: 0, pending: 0 };
-    for (const r of poolRsvpRows) poolCounts[r.status] = Number(r.cnt) || 0;
+    for (const p of poolPlayerRows) poolCounts[p.status] = (poolCounts[p.status] || 0) + 1;
     const pool = await weeklyDrawPoolStatus(env, ev, cfg, poolCounts.in);
     const poolMeterSpots = Math.min(14, Math.max(pool.meterTarget, poolCounts.in));
 
     const poolInviteButtons = [];
     if (pool.openGoalies > 0) poolInviteButtons.push(`<button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="inviteGoalie" onclick="inviteSubs('','goalie',this)">Inviter un gardien</button>`);
     if (pool.openSkaters > 0) poolInviteButtons.push(`<button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="inviteSkater" onclick="inviteSubs('','skater',this)">Inviter des joueurs</button>`);
+
+    const poolPlayerListHtml = poolPlayerRows.length
+      ? poolPlayerRows.map(p => `<div class="ev-p" data-pool-player-row="${esc(p.player_id)}">
+          <span>${esc(p.name)}${eventRowGoalieBadge(p)}</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            ${STATUS_BADGE[p.status] || STATUS_BADGE.pending}
+            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
+            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
+          </div>
+        </div>`).join('')
+      : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
 
     poolCardHtml = `
     <section class="nl-card nl-card--pad-lg${pool.short ? ' nl-card--short' : ''} ev-team" style="grid-column:1/-1">
@@ -6193,6 +6231,7 @@ ${tabbar}`;
       <div class="nl-meter">${Array.from({ length: poolMeterSpots }, (_, s) => `<i class="${s < poolCounts.in ? 'in' : 'open'}"></i>`).join('')}</div>
       ${poolInviteButtons.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${poolInviteButtons.join('')}</div>` : ''}
       <p class="inviteMsg nl-help" style="display:none;"></p>
+      <div class="ev-ppl" id="ev_pool_list" style="margin-top:var(--space-3)">${poolPlayerListHtml}</div>
     </section>`;
   }
 

@@ -203,3 +203,131 @@ describe('A1/A2: weekly_draw pre-draw vs post-draw event status and invite targe
     expect((await missingTeamRes.json()).errorKey).toBe('TEAM_UNKNOWN');
   });
 });
+
+// Item 1 (admin-confirm-players polish task): the previous batch's
+// E3 test claimed this whole feature (admin IN/OUT rows on the league
+// event page) was already built and reachable -- true for fixed/
+// headcount/post-draw weekly_draw (the per-team loop, handled by
+// test/part3_admin_rsvp_edit.spec.js), but FALSE for a weekly_draw
+// event before its first draw: that state renders poolCardHtml, which
+// used to be aggregate-counts-only (a GROUP BY query, no player rows
+// at all) -- exactly the state a brand-new weekly_draw event starts
+// in. This proves the CONTROLS THEMSELVES are present and wired on
+// the rendered page in that specific state, not just that the
+// underlying route works when called directly.
+describe('Item 1 (players/admin-confirm polish task): weekly_draw pre-draw pool gets real per-player IN/OUT rows, not aggregate-only', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    env.RSVP_SECRET = 'test-weekly-draw-predraw-rsvp-secret';
+    await applyRealSchema(env);
+  });
+
+  it('renders one row per roster player with wired setPlayerStatus IN/OUT buttons, before any draw has happened', async () => {
+    const { cookie, csrfToken } = await signup('item1.predraw.rows@example.com', '203.0.141.001');
+    const league = await createWeeklyDrawLeague(cookie, csrfToken, 'Item1 Predraw Rows League');
+    const p1 = await addPlayer(cookie, csrfToken, 'Predraw Row Player One', 'predraw1@example.com');
+    const p2 = await addPlayer(cookie, csrfToken, 'Predraw Row Player Two', 'predraw2@example.com');
+    const eventId = await createEvent(cookie, csrfToken, '2099-06-01');
+
+    const html = await detailHtml(cookie, eventId);
+    // Genuinely still pre-draw (poolTitle, not per-team cards).
+    expect(html).toContain('data-i18n="poolTitle"');
+    // Both players actually appear as real rows, each with its own
+    // wired IN/OUT control -- not just aggregate counts.
+    expect(html).toContain(`data-pool-player-row="${p1.player_id}"`);
+    expect(html).toContain(`data-pool-player-row="${p2.player_id}"`);
+    expect(html).toContain(`setPlayerStatus('${p1.player_id}','in',this)`);
+    expect(html).toContain(`setPlayerStatus('${p1.player_id}','out',this)`);
+    expect(html).toContain(`setPlayerStatus('${p2.player_id}','in',this)`);
+    expect(html).toContain('Predraw Row Player One');
+    expect(html).toContain('Predraw Row Player Two');
+  });
+
+  it('confirming a player IN through this pre-draw pool list is silent (no email) and the RSVP row + outbox both prove it', async () => {
+    const { cookie, csrfToken } = await signup('item1.predraw.silent@example.com', '203.0.141.002');
+    const league = await createWeeklyDrawLeague(cookie, csrfToken, 'Item1 Predraw Silent League');
+    const player = await addPlayer(cookie, csrfToken, 'Predraw Silent Player', 'predrawsilent@example.com');
+    const eventId = await createEvent(cookie, csrfToken, '2099-06-02');
+
+    const originalFetch = globalThis.fetch;
+    const sentMails = [];
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes('api.resend.com')) { sentMails.push(JSON.parse(opts.body)); return new Response(JSON.stringify({ id: 'mock' }), { status: 200 }); }
+      return originalFetch(url, opts);
+    };
+    let res;
+    try {
+      // Exactly the request the rendered IN button issues.
+      res = await SELF.fetch('http://example.com/league/rsvp/admin', {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+        body: JSON.stringify({ event_id: eventId, player_id: player.player_id, status: 'in' })
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(res.status).toBe(200);
+    expect(sentMails.length).toBe(0);
+
+    const rsvpRow = await env.DB.prepare('SELECT status, status_by FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, player.player_id).first();
+    expect(rsvpRow.status).toBe('in');
+    expect(rsvpRow.status_by).toBe('manager');
+    const outboxRow = await env.DB.prepare('SELECT * FROM outbox WHERE event_id = ? AND player_id = ?').bind(eventId, player.player_id).first();
+    expect(outboxRow).toBeNull();
+
+    // The row on the page now reflects it immediately (server-rendered
+    // status badge, re-fetched after the change -- setPlayerStatus's
+    // own reload is how the real UI does this).
+    const html = await detailHtml(cookie, eventId);
+    const rowIdx = html.indexOf(`data-pool-player-row="${player.player_id}"`);
+    const rowEnd = html.indexOf('</div>', html.indexOf('</div>', rowIdx) + 6);
+    expect(html.slice(rowIdx, rowEnd)).toContain('data-i18n="statusIn"');
+  });
+
+  it('goalies and "can also play goalie" players are distinguishable in the pre-draw pool list', async () => {
+    const { cookie, csrfToken } = await signup('item1.predraw.goalie@example.com', '203.0.141.003');
+    const league = await createWeeklyDrawLeague(cookie, csrfToken, 'Item1 Predraw Goalie League');
+    const goalieRes = await SELF.fetch('http://example.com/league/contacts', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ name: 'Predraw Real Goalie', email: 'predrawgoalie@example.com', is_goalie: true })
+    });
+    const goalie = (await goalieRes.json()).contact;
+    const backupRes = await SELF.fetch('http://example.com/league/contacts', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ name: 'Predraw Backup Goalie Player', email: 'predrawbackup@example.com', is_goalie: false, is_backup_goalie: true })
+    });
+    const backup = (await backupRes.json()).contact;
+    const eventId = await createEvent(cookie, csrfToken, '2099-06-03');
+
+    const html = await detailHtml(cookie, eventId);
+    const goalieRowStart = html.indexOf(`data-pool-player-row="${goalie.player_id}"`);
+    const goalieRowEnd = html.indexOf('</div>', html.indexOf('</div>', goalieRowStart) + 6);
+    expect(html.slice(goalieRowStart, goalieRowEnd)).toContain('data-i18n="goalieBadge"');
+
+    const backupRowStart = html.indexOf(`data-pool-player-row="${backup.player_id}"`);
+    const backupRowEnd = html.indexOf('</div>', html.indexOf('</div>', backupRowStart) + 6);
+    expect(html.slice(backupRowStart, backupRowEnd)).toContain('data-i18n="goalieBadge"');
+  });
+
+  it('the fixed/headcount/post-draw per-team list also shows the goalie badge now (same distinguishability, consistent list)', async () => {
+    const { cookie, csrfToken } = await signup('item1.fixed.goalie@example.com', '203.0.141.004');
+    const res = await SELF.fetch('http://example.com/leagues/create', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ name: 'Item1 Fixed Goalie League', teamNames: ['A', 'B'], tracksStats: true })
+    });
+    const league = (await res.json()).league;
+    await SELF.fetch('http://example.com/league/season/publish', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ season_name: 'Item1 Fixed Goalie Season' })
+    });
+    const goalieRes = await SELF.fetch('http://example.com/league/contacts', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ name: 'Fixed Real Goalie', team: 'A', email: 'fixedgoalie@example.com', is_goalie: true })
+    });
+    const goalie = (await goalieRes.json()).contact;
+    const eventId = await createEvent(cookie, csrfToken, '2099-06-04');
+
+    const html = await detailHtml(cookie, eventId);
+    expect(html).toContain(`setPlayerStatus('${goalie.player_id}','in',this)`);
+    expect(html).toContain('data-i18n="goalieBadge"');
+  });
+});
