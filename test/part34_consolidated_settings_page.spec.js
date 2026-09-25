@@ -433,3 +433,137 @@ describe('G1 (settings polish task): left-hand section nav, and the two near-dup
     expect(dict.en.seasonTeamsTitle).toBe("This season's teams");
   });
 });
+
+// B1 (stale-copy polish task): an earlier task fixed the roster-size
+// labels/helper text on the ONBOARDING season page ("Minimum total
+// players", and a 3-way pool/team/headcount-accurate helper) but the
+// same wording on Settings was never updated -- still "Minimum
+// players" and the old, inaccurate 2-way "each team" vs "each game,
+// across every player" split (which lumped weekly_draw's real pool and
+// headcount's no-teams-at-all case together). Fixed to match
+// onboarding exactly, in BOTH settings cards that show these fields
+// ("Cette saison" and "Par défaut pour les nouvelles saisons").
+describe('B1: settings roster-size wording matches onboarding, in both cards, for every structure', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  async function settingsHtmlFor(structureBody, extraSeasonFields = {}) {
+    const { cookie, csrfToken } = await signup(`b1.${JSON.stringify(structureBody)}.${Math.random()}@example.com`, `203.0.134.${Math.floor(Math.random() * 900 + 100)}`);
+    await createLeague(cookie, csrfToken, { name: `B1 League ${Math.random()}`, tracksStats: true, ...structureBody });
+    await publishSeason(cookie, csrfToken, { season_name: 'B1 Season', ...extraSeasonFields });
+    return (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+  }
+
+  it('fixed-teams league: both cards show "each team" wording (matching onboarding\'s rosterSubTeam) for the min/max labels and the help text', async () => {
+    const html = await settingsHtmlFor({ teamNames: ['A', 'B'] });
+    expect(html).toContain('data-i18n="lblMinPlayers">Minimum total de joueurs<');
+    expect(html).toContain('data-i18n="lblMaxPlayers">Maximum total de joueurs<');
+    // Both cards render this key for a fixed-structure league -- two
+    // real occurrences, not one.
+    const occurrences = html.split('data-i18n="rosterSubTeam"').length - 1;
+    expect(occurrences).toBe(2);
+    expect(html).toContain("Ces nombres s'appliquent à chaque équipe. Laisse vide si tu n'es pas prêt à décider.");
+  });
+
+  it('weekly_draw league: both cards show the real pool wording (rosterSubPool), not the old inaccurate "each game" text', async () => {
+    const html = await settingsHtmlFor({ teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'] });
+    const occurrences = html.split('data-i18n="rosterSubPool"').length - 1;
+    expect(occurrences).toBe(2);
+    expect(html).toContain("Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l'ensemble du bassin.");
+    expect(html).not.toContain("chaque match, pour l'ensemble des joueurs");
+  });
+
+  it('headcount league: both cards show the real no-teams wording (rosterSubHeadcount), distinct from the pool wording', async () => {
+    const html = await settingsHtmlFor({ teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12 });
+    const occurrences = html.split('data-i18n="rosterSubHeadcount"').length - 1;
+    expect(occurrences).toBe(2);
+    expect(html).toContain("Tous les joueurs confirmés comptent dans ce total -- cette ligue n'a pas d'équipes.");
+  });
+
+  it('English: the labels and every structure\'s help text match onboarding\'s own EN wording exactly', async () => {
+    const { cookie, csrfToken } = await signup('b1.english@example.com', '203.0.134.201');
+    await createLeague(cookie, csrfToken, { name: 'B1 English League', teamStructure: 'weekly_draw', teamNames: ['Red', 'Blue'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'B1 English Season' });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
+    const dict = JSON.parse(m[1]);
+    expect(dict.en.lblMinPlayers).toBe('Minimum total players');
+    expect(dict.en.lblMaxPlayers).toBe('Maximum total players');
+    expect(dict.en.rosterSubTeam).toBe("These numbers apply to each team. Leave blank if you're not ready to decide.");
+    expect(dict.en.rosterSubPool).toBe('Everyone who confirms goes into one pool and gets drawn into teams. These numbers cover the whole pool.');
+    expect(dict.en.rosterSubHeadcount).toBe("Everyone who confirms counts toward this total -- this league has no teams.");
+  });
+
+  it('the client-side structure-radio click handler recomputes the SAME 3-way help key, in both cards\' own scripts', async () => {
+    const html = await settingsHtmlFor({ teamNames: ['A', 'B'] });
+    const occurrences = html.split("val === 'fixed' ? 'rosterSubTeam' : (val === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')").length - 1;
+    expect(occurrences).toBe(2);
+  });
+
+  it('B1 sweep, third location: the signup wizard\'s own step-3 headcount labels also say "total" now', async () => {
+    const res = await SELF.fetch('http://example.com/auth/signup', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.134.202' },
+      body: JSON.stringify({ email: 'b1.signupstep3@example.com', password: 'a-strong-password-1' })
+    });
+    const cookie = (res.headers.get('set-cookie') || '').split(';')[0];
+    const html = await (await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie } })).text();
+    expect(html).toContain('data-i18n="lblMinPlayers">Minimum total de joueurs<');
+    expect(html).toContain('data-i18n="lblMaxPlayers">Maximum total de joueurs<');
+  });
+});
+
+// B2 (stale-copy polish task): "Teams shuffle" was jargon, "No teams"
+// was inaccurate (those leagues do form teams, just at the venue
+// rather than in the app). New wording applied everywhere the three
+// structure options appear -- this locks the two settings cards
+// specifically (onboarding/signup and the dashboard tile are locked in
+// their own dedicated test files: part9_team_structure_signup.spec.js,
+// part49_teams_per_game_label.spec.js, part69_teams_shuffle_label.spec.js).
+describe('B2: structure option wording in both settings cards ("Cette saison" and "Par défaut pour les nouvelles saisons")', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it('both cards show the new title/description for all 3 options, in French, with none of the old wording left anywhere on the page', async () => {
+    const { cookie, csrfToken } = await signup('b2.settings.fr@example.com', '203.0.135.001');
+    await createLeague(cookie, csrfToken, { name: 'B2 Settings FR League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'B2 Settings FR Season' });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+
+    for (const [key, text] of [
+      ['structureFixedTitle', 'Équipes fixes'],
+      ['structureFixedDesc', 'La même équipe toute la saison, comme une ligue régulière.'],
+      ['structureWeeklyTitle', 'Sans équipes fixes'],
+      ['structureWeeklyDesc', 'Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.'],
+      ['structureHeadcountTitle', 'Sans équipes'],
+      ['structureHeadcountDesc', 'Juste la liste des présents. Vous formez les équipes sur place.']
+    ]) {
+      const occurrences = html.split(`data-i18n="${key}">${text}<`).length - 1;
+      expect(occurrences, `${key} should render in both cards`).toBe(2);
+    }
+
+    expect(html).not.toContain('Équipes qui changent');
+    expect(html).not.toContain('Aucune équipe<');
+    expect(html).not.toContain('comme une ligue classique');
+    expect(html).not.toContain('parfait pour une partie improvisée');
+  });
+
+  it('both cards show the new title/description for all 3 options, in English', async () => {
+    const { cookie, csrfToken } = await signup('b2.settings.en@example.com', '203.0.135.002');
+    await createLeague(cookie, csrfToken, { name: 'B2 Settings EN League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'B2 Settings EN Season' });
+    const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
+    const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
+    const dict = JSON.parse(m[1]);
+    expect(dict.en.structureFixedTitle).toBe('Fixed teams');
+    expect(dict.en.structureFixedDesc).toBe('The same team all season, like a regular league.');
+    expect(dict.en.structureWeeklyTitle).toBe('Pickup with teams');
+    expect(dict.en.structureWeeklyDesc).toBe('Pickup, but split into teams each game — drawn automatically or set by you.');
+    expect(dict.en.structureHeadcountTitle).toBe('No teams');
+    expect(dict.en.structureHeadcountDesc).toBe("Just a list of who's in. You sort out sides at the venue.");
+    expect(dict.en.structureWeeklyTitle.toLowerCase()).not.toContain('shuffle');
+  });
+});

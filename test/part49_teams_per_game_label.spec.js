@@ -12,11 +12,17 @@
 // unrelated rather than "2 nouvelles équipes, chaque match". Reworded
 // again, to "Nouvelles équipes chaque match" / "Fresh teams every
 // game" -- reusing weeklyDrawTeamsDesc's own established wording for
-// this identical concept. The ORIGINAL lesson from this file still
-// holds and is still enforced below: never revert to a bare
-// "(par match)"/"(per game)" qualifier with no verb, since that
-// specific form is what read as a team COUNT per game rather than
-// teams being reformed.
+// this identical concept.
+//
+// SUPERSEDED AGAIN (B2, stale-copy polish task): the structure-picker
+// itself changed its own wording for this option ("Équipes qui
+// changent"/"Teams shuffle" -- jargon -- became "Sans équipes fixes"/
+// "Pickup with teams"), and this tile is explicitly meant to keep
+// reusing that exact phrase (see its own comment, handleDashboardPage).
+// This is a DELIBERATE, task-directed supersession, not a reversion to
+// the original ambiguous "(par match)"/"(per game)" form the two
+// entries above were about -- that specific lesson (never a bare
+// qualifier with no verb) still holds and is still checked below.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
@@ -68,13 +74,13 @@ describe('Part 5 (live-testing task, batch 2): dashboard team-count label is cle
     await applyRealSchema(env);
   });
 
-  it('weekly_draw: the overline reuses "Nouvelles équipes chaque match" (batch 5\'s reword), never the old ambiguous "(par match)" form', async () => {
+  it('weekly_draw: the overline reuses "Sans équipes fixes" (B2\'s reword, matching the structure-picker\'s own current wording), never the old ambiguous "(par match)" form', async () => {
     const { cookie, csrfToken } = await signup('teamlabel.weekly@example.com', '203.0.165.001');
     await createLeague(cookie, csrfToken, { name: 'Team Label Weekly League', teamStructure: 'weekly_draw', teamNames: ['A', 'B'], tracksStats: true });
     await publishSeason(cookie, csrfToken, 'Team Label Weekly Season');
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
     expect(html).toContain('data-i18n="teamsPerGame"');
-    expect(html).toContain('Nouvelles équipes chaque match');
+    expect(html).toContain('Sans équipes fixes');
     expect(html).not.toContain('Équipes (par match)');
   });
 

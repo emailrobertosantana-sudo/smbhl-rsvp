@@ -205,10 +205,12 @@ describe('Team structure, Part 1: schema + signup', () => {
       expect(html).toContain('value="headcount"');
       expect(html).toContain('value="weekly_draw"');
       expect(html).toContain('Équipes fixes');
-      expect(html).toContain('Aucune équipe');
-      // Live-testing Part 3: title copy rewritten for clarity/voice --
-      // was "Équipes chaque semaine", now "Équipes qui changent".
-      expect(html).toContain('Équipes qui changent');
+      // B2 (stale-copy polish task): "Aucune équipe"/"Équipes qui
+      // changent" (jargon, and inaccurate -- those leagues do form
+      // teams, just at the venue) superseded by "Sans équipes"/"Sans
+      // équipes fixes".
+      expect(html).toContain('Sans équipes');
+      expect(html).toContain('Sans équipes fixes');
       expect(html).not.toContain('>fixed<');
       expect(html).not.toContain('>headcount<');
     });

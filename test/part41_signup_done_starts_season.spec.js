@@ -6,7 +6,10 @@
 // season has to exist before adding players (or creating events) means
 // anything real -- the dashboard blocks event creation entirely without
 // one (needsSeason). This test locks in the corrected primary action:
-// "Lancer ma saison" / "Start my season", pointing at /dashboard, which
+// "Créer ma saison" / "Create my season" (B3, stale-copy polish task --
+// was "Lancer ma saison"/"Start my season", a different verb than the
+// "Create the season"/"Create a season" action and checklist item the
+// dashboard itself actually uses), pointing at /dashboard, which
 // itself renders the season-start form as the headline "next step" the
 // moment a league has none yet. "Ajouter mes joueurs" stays available,
 // just as a secondary, non-primary action.
@@ -52,7 +55,7 @@ describe('Part 6 (live-testing task): signup completion screen starts the season
     ['headcount', { teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 }],
     ['weekly_draw', { teamStructure: 'weekly_draw', teamNames: ['A', 'B'] }]
   ]) {
-    it(`${structure}: the primary button is "Lancer ma saison" targeting /dashboard`, async () => {
+    it(`${structure}: the primary button is "Créer ma saison" targeting /dashboard`, async () => {
       const { cookie, csrfToken } = await signup(`done.primary.${structure}@example.com`, `203.0.151.00${structure === 'fixed' ? 1 : structure === 'headcount' ? 2 : 3}`);
       await createLeague(cookie, csrfToken, { name: `Done Primary ${structure} League`, tracksStats: true, ...extra });
       const html = await (await SELF.fetch('http://example.com/signup?step=done', { headers: { cookie } })).text();
@@ -60,6 +63,7 @@ describe('Part 6 (live-testing task): signup completion screen starts the season
       expect(primaryMatch).not.toBeNull();
       expect(primaryMatch[0]).toContain("onclick=\"location.href='/dashboard'\"");
       expect(primaryMatch[0]).toContain('data-i18n="startMySeason"');
+      expect(html).toContain('>Créer ma saison</button>');
     });
   }
 
@@ -68,7 +72,7 @@ describe('Part 6 (live-testing task): signup completion screen starts the season
   // has to exist before adding players is meaningful (the reason it was
   // already demoted below primary), so "Lancer ma saison" is the one
   // real next action on this screen now.
-  it('"Ajouter mes joueurs" is gone entirely -- "Lancer ma saison" is the only action on this screen', async () => {
+  it('"Ajouter mes joueurs" is gone entirely -- "Créer ma saison" is the only action on this screen', async () => {
     const { cookie, csrfToken } = await signup('done.secondary@example.com', '203.0.151.010');
     await createLeague(cookie, csrfToken, { name: 'Done Secondary League', teamNames: ['A', 'B'], tracksStats: true });
     const html = await (await SELF.fetch('http://example.com/signup?step=done', { headers: { cookie } })).text();

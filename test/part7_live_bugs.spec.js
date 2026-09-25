@@ -82,8 +82,9 @@ describe('Bug 1: GET /auth/verify shows a real styled page to a browser, JSON to
 });
 
 // Bug 2 (superseded by the live-testing task, Part 6): the done
-// screen's PRIMARY button now targets /dashboard ("Lancer ma
-// saison"/"Start my season") instead of /league/roster -- the
+// screen's PRIMARY button now targets /dashboard ("Créer ma
+// saison"/"Create my season" -- B3, stale-copy polish task) instead of
+// /league/roster -- the
 // corrected dependency order (the dashboard's own checklist) is
 // league -> season -> real roster/event use, so starting the season is
 // the real next step, not adding players.

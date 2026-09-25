@@ -627,14 +627,22 @@ const I18N_SIGNUP = {
     // own justification (permanent = shared links always keep working).
     slugHelp: 'Devient permanente à la création de ta ligue -- ça garantit que les liens que tu partages continuent toujours de fonctionner.',
     structureLabel: 'Comment sont organisées tes équipes?',
-    structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
-    structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
-    structureWeeklyTitle: 'Équipes qui changent', structureWeeklyDesc: 'De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.',
+    // B2 (stale-copy polish task): "Équipes qui changent"/"Teams
+    // shuffle" was jargon, and "Aucune équipe"/"No teams" was
+    // inaccurate -- those leagues DO form teams, just at the venue
+    // rather than in the app. Final wording, applied everywhere these
+    // three options appear (onboarding, both settings cards, the
+    // dashboard Teams tile via teamsPerGame -- see that key's own
+    // comment).
+    structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue régulière.',
+    structureWeeklyTitle: 'Sans équipes fixes', structureWeeklyDesc: 'Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.',
+    structureHeadcountTitle: 'Sans équipes', structureHeadcountDesc: 'Juste la liste des présents. Vous formez les équipes sur place.',
     back: 'Retour',
     step3: 'Étape 3 sur 3', title3: "Combien d'équipes?",
     teamNamesLabel: 'Noms des équipes', teamPlaceholder: 'Équipe ', teamHelp: 'Pas encore décidé? Garde « Équipe 1, 2… ».',
     title3Headcount: 'Combien de joueurs?',
-    lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
+    // B1 (stale-copy polish task): "total" to match onboarding/settings.
+    lblMinPlayers: 'Minimum total de joueurs', lblMaxPlayers: 'Maximum total de joueurs',
     minMaxHelp: "On invite des remplaçants automatiquement quand tu es sous le minimum.",
     lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.',
     createLeague: 'Créer la ligue',
@@ -652,7 +660,12 @@ const I18N_SIGNUP = {
     // (and therefore real roster use) mean anything -- see the
     // dashboard's own checklist, which already orders "Créer la saison"
     // before "Ajouter les joueurs" for exactly this reason.
-    startMySeason: 'Lancer ma saison',
+    // B3 (stale-copy polish task): this button opens the dashboard,
+    // whose real action is "Créer la saison" (startSeasonBtn) and whose
+    // checklist item is "Créer la saison" (ckSeason) -- "Lancer" didn't
+    // match either, so the verb the admin lands on read like a
+    // different action than the one they just clicked.
+    startMySeason: 'Créer ma saison',
     already: 'Déjà inscrit?'
   },
   en: {
@@ -664,20 +677,20 @@ const I18N_SIGNUP = {
     slugHelp: "Becomes permanent once your league is created -- that guarantees the links you share always keep working.",
     structureLabel: 'How are your teams organized?',
     structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
-    structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
-    structureWeeklyTitle: 'Teams shuffle', structureWeeklyDesc: 'Fresh teams every game — we can even build them for you, automatically.',
+    structureWeeklyTitle: 'Pickup with teams', structureWeeklyDesc: 'Pickup, but split into teams each game — drawn automatically or set by you.',
+    structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in. You sort out sides at the venue.",
     back: 'Back',
     step3: 'Step 3 of 3', title3: 'How many teams?',
     teamNamesLabel: 'Team names', teamPlaceholder: 'Team ', teamHelp: 'Not decided yet? Keep "Team 1, 2...".',
     title3Headcount: 'How many players?',
-    lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
+    lblMinPlayers: 'Minimum total players', lblMaxPlayers: 'Maximum total players',
     minMaxHelp: 'Subs are invited automatically when you drop below the minimum.',
     lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately.",
     createLeague: 'Create the league',
     doneBadge: 'League created', doneTitle: 'Your league is ready.',
     doneBody: "Your league's page is at this address. It's empty for now, and fills in automatically as you add your schedule and roster. Share it when your season is set up.",
     copyLink: 'Copy link', copied: 'Copied!',
-    startMySeason: 'Start my season',
+    startMySeason: 'Create my season',
     already: 'Already signed up?'
   }
 };
@@ -978,15 +991,15 @@ function renderSignupStep2(langParam) {
     <div class="su-structure" id="su_structure_radio">
       <label class="su-structure-opt on" data-value="fixed">
         <input type="radio" name="su_structure" value="fixed" checked>
-        <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue classique.</span></span>
+        <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue régulière.</span></span>
       </label>
       <label class="su-structure-opt" data-value="headcount">
         <input type="radio" name="su_structure" value="headcount">
-        <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de qui embarque — parfait pour une partie improvisée.</span></span>
+        <span><span class="t" data-i18n="structureHeadcountTitle">Sans équipes</span><span class="d" data-i18n="structureHeadcountDesc">Juste la liste des présents. Vous formez les équipes sur place.</span></span>
       </label>
       <label class="su-structure-opt" data-value="weekly_draw">
         <input type="radio" name="su_structure" value="weekly_draw">
-        <span><span class="t" data-i18n="structureWeeklyTitle">Équipes qui changent</span><span class="d" data-i18n="structureWeeklyDesc">De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.</span></span>
+        <span><span class="t" data-i18n="structureWeeklyTitle">Sans équipes fixes</span><span class="d" data-i18n="structureWeeklyDesc">Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.</span></span>
       </label>
     </div>
   </div>
@@ -1093,11 +1106,11 @@ function renderSignupStep3(langParam) {
   <div id="su_headcount_section" style="display:none">
     <div class="su-two">
       <div class="nl-field">
-        <label class="nl-label" for="su_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
+        <label class="nl-label" for="su_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
         <input class="nl-input" id="su_min_players" type="number" min="1" value="8">
       </div>
       <div class="nl-field">
-        <label class="nl-label" for="su_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
+        <label class="nl-label" for="su_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
         <input class="nl-input" id="su_max_players" type="number" min="1" value="12">
       </div>
     </div>
@@ -1239,8 +1252,11 @@ function renderSignupDone(league, langParam) {
        removed outright -- a season has to exist before adding players
        is meaningful (the reason it was already demoted below), so a
        second action here was just a shortcut to a step that isn't
-       ready yet. "Lancer ma saison" is the one real next action. -->
-  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="startMySeason" onclick="location.href='/dashboard'">Lancer ma saison</button>
+       ready yet. "Créer ma saison" (B3, stale-copy polish task -- was
+       "Lancer ma saison", a different verb than the "Créer la saison"
+       action/checklist item this button actually leads to) is the one
+       real next action. -->
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="startMySeason" onclick="location.href='/dashboard'">Créer ma saison</button>
 </div>
 <script>
 ${signupLangScript()}
@@ -1511,30 +1527,17 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       publicPage: 'Page publique', copyLink: 'Copier', copied: 'Copié !',
       publicPageDisabled: 'Désactivée -- personne ne peut voir cette page.',
       teams: 'Équipes', tracksStatsLabel: 'Statistiques suivies', yes: 'Oui', no: 'Non',
-      // Live-testing task (batch 2), Part 5: "Équipes (par match)" read
-      // as "how many teams show up in each match" rather than the
-      // intended "teams are formed per match, not permanent" -- reuses
-      // the exact phrase the structure-picker itself already uses for
-      // this same concept (structureWeeklyTitle) for consistency.
-      // Live-testing task (batch 5), Part 5: this overline pairs with a
-      // big number right below it (the same KPI-tile pattern this
-      // dashboard uses for "Joueurs"/playerCount) -- "Équipes qui
-      // changent" over a bare "2" didn't say WHEN they change, so the
-      // pairing read as unrelated rather than "2 nouvelles équipes,
-      // chaque match".
-      //
-      // IMPORTANT: do NOT revert to "Équipes (par match)" here --
-      // test/part49_teams_per_game_label.spec.js (an earlier task,
-      // batch 2 Part 5) already tried and deliberately rejected that
-      // exact wording: it was misread as "how many teams play in each
-      // match" rather than "these teams are reformed, not permanent".
-      // That test still runs and still enforces this. Instead this
-      // reuses "Nouvelles équipes" (new teams), the same word
-      // weeklyDrawTeamsDesc/structureWeeklyDesc below already use for
-      // this identical concept -- "new" inherently signals reformation
-      // the way a bare "(per game)" count never did, so pairing it
-      // with "chaque match" doesn't reintroduce the original ambiguity.
-      teamsPerGame: 'Nouvelles équipes chaque match', noFixedTeams: 'Aucune équipe fixe',
+      // B2 (stale-copy polish task): superseding the "Nouvelles
+      // équipes chaque match" wording test/part49_teams_per_game_label.spec.js
+      // previously locked with a do-not-revert comment (batch 2 Part 5,
+      // then batch 5 Part 5) -- that history is kept here for context,
+      // not as a rule still in force. This still reuses the exact
+      // phrase the structure-picker itself uses for this same concept
+      // (structureWeeklyTitle), just the picker's own wording changed
+      // ("Équipes qui changent" -> "Sans équipes fixes"), so this tile
+      // follows it, per this task's own explicit instruction to apply
+      // the new wording everywhere these options appear.
+      teamsPerGame: 'Sans équipes fixes', noFixedTeams: 'Aucune équipe fixe',
       noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.",
       weeklyDrawTeamsDesc: 'Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.',
       // Live-testing task (batch 5), Part 6: the dashboard's own
@@ -1557,7 +1560,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       publicPage: 'Public page', copyLink: 'Copy', copied: 'Copied!',
       publicPageDisabled: "Disabled -- no one can see this page.",
       teams: 'Teams', tracksStatsLabel: 'Tracks stats', yes: 'Yes', no: 'No',
-      teamsPerGame: 'Fresh teams every game', noFixedTeams: 'No fixed teams',
+      teamsPerGame: 'Pickup with teams', noFixedTeams: 'No fixed teams',
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
       nextStepsTitle: 'Next steps', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size'
@@ -1986,7 +1989,7 @@ async function handleDashboardPage(req, env, url) {
          than it used to show, never touches what it says. -->
     ${needsSeason ? '' : `
     <section class="nl-card nl-card--pad-lg dash-tile">
-      <div class="overline" data-i18n="${dashIsWeeklyDraw ? 'teamsPerGame' : 'teams'}">${dashIsWeeklyDraw ? 'Nouvelles équipes chaque match' : 'Équipes'}</div>
+      <div class="overline" data-i18n="${dashIsWeeklyDraw ? 'teamsPerGame' : 'teams'}">${dashIsWeeklyDraw ? 'Sans équipes fixes' : 'Équipes'}</div>
       ${dashIsHeadcount
         ? `<div class="stat tnum" style="font-size:20px" data-i18n="noFixedTeams">Aucune équipe fixe</div>`
         : `<div class="stat tnum">${teamNames.length}</div>`}
@@ -3948,15 +3951,22 @@ async function handleLeagueSettingsPage(req, env, url) {
       structureLabel: 'Comment sont organisées tes équipes?',
       structureTitle: 'Par défaut pour les nouvelles saisons',
       structureDesc: "Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées -- seules les nouvelles saisons utiliseront ce changement.",
-      structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue classique.',
-      structureHeadcountTitle: 'Aucune équipe', structureHeadcountDesc: 'Juste une liste de qui embarque — parfait pour une partie improvisée.',
-      structureWeeklyTitle: 'Équipes qui changent', structureWeeklyDesc: 'De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.',
-      lblMinPlayers: 'Minimum de joueurs', lblMaxPlayers: 'Maximum de joueurs',
+      structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue régulière.',
+      structureWeeklyTitle: 'Sans équipes fixes', structureWeeklyDesc: 'Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.',
+      structureHeadcountTitle: 'Sans équipes', structureHeadcountDesc: 'Juste la liste des présents. Vous formez les équipes sur place.',
+      // B1 (stale-copy polish task): matches the onboarding season
+      // page's own wording exactly (buildOnboardingI18n) -- "total" in
+      // the labels, and the same 3-way help text split (fixed teams /
+      // weekly_draw pool / headcount, no teams at all) instead of the
+      // old two-way fixed-vs-"every-other-structure" text that lumped
+      // pool and headcount together inaccurately.
+      lblMinPlayers: 'Minimum total de joueurs', lblMaxPlayers: 'Maximum total de joueurs',
       lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.',
       lblMaxGoalies: 'Maximum de gardiens (optionnel)', maxGoaliesHelp: "Laisse vide pour utiliser le même nombre que le minimum.",
       rosterLimitsTitle: 'Effectif de l\'équipe',
-      rosterLimitsPerTeamHelp: 'Ces nombres s\'appliquent à chaque équipe.',
-      rosterLimitsPerEventHelp: 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs (pas par équipe).',
+      rosterSubTeam: 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.',
+      rosterSubPool: "Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l'ensemble du bassin.",
+      rosterSubHeadcount: "Tous les joueurs confirmés comptent dans ce total -- cette ligue n'a pas d'équipes.",
       langExposure: 'Langue exposée aux joueurs',
       langExposureDesc: 'Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.',
       langBoth: 'Les deux (FR/EN)', langFrOnly: 'Français seulement', langEnOnly: 'Anglais seulement',
@@ -4025,14 +4035,15 @@ async function handleLeagueSettingsPage(req, env, url) {
       structureTitle: 'Default for new seasons',
       structureDesc: "Change your league's default structure. Already-published seasons are never affected -- only new seasons will use this change.",
       structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
-      structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in — perfect for pickup games.",
-      structureWeeklyTitle: 'Teams shuffle', structureWeeklyDesc: 'Fresh teams every game — we can even build them for you, automatically.',
-      lblMinPlayers: 'Minimum players', lblMaxPlayers: 'Maximum players',
+      structureWeeklyTitle: 'Pickup with teams', structureWeeklyDesc: 'Pickup, but split into teams each game — drawn automatically or set by you.',
+      structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in. You sort out sides at the venue.",
+      lblMinPlayers: 'Minimum total players', lblMaxPlayers: 'Maximum total players',
       lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately.",
       lblMaxGoalies: 'Maximum goalies (optional)', maxGoaliesHelp: 'Leave blank to use the same number as the minimum.',
       rosterLimitsTitle: 'Roster size',
-      rosterLimitsPerTeamHelp: 'These numbers apply to each team.',
-      rosterLimitsPerEventHelp: 'These numbers apply to each game, across every player (not per team).',
+      rosterSubTeam: 'These numbers apply to each team. Leave blank if you\'re not ready to decide.',
+      rosterSubPool: 'Everyone who confirms goes into one pool and gets drawn into teams. These numbers cover the whole pool.',
+      rosterSubHeadcount: "Everyone who confirms counts toward this total -- this league has no teams.",
       langExposure: 'Language exposed to players',
       langExposureDesc: "Controls whether your players' public page and RSVP page show a FR/EN toggle, or a single fixed language.",
       langBoth: 'Both (FR/EN)', langFrOnly: 'French only', langEnOnly: 'English only',
@@ -4241,29 +4252,29 @@ async function handleLeagueSettingsPage(req, env, url) {
       <div class="su-structure" id="season_structure_radio">
         <label class="su-structure-opt${teamStructure === 'fixed' ? ' on' : ''}" data-value="fixed">
           <input type="radio" name="season_structure" value="fixed" ${teamStructure === 'headcount' || teamStructure === 'weekly_draw' ? '' : 'checked'}>
-          <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue classique.</span></span>
+          <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue régulière.</span></span>
         </label>
         <label class="su-structure-opt${teamStructure === 'headcount' ? ' on' : ''}" data-value="headcount">
           <input type="radio" name="season_structure" value="headcount" ${teamStructure === 'headcount' ? 'checked' : ''}>
-          <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de qui embarque — parfait pour une partie improvisée.</span></span>
+          <span><span class="t" data-i18n="structureHeadcountTitle">Sans équipes</span><span class="d" data-i18n="structureHeadcountDesc">Juste la liste des présents. Vous formez les équipes sur place.</span></span>
         </label>
         <label class="su-structure-opt${teamStructure === 'weekly_draw' ? ' on' : ''}" data-value="weekly_draw">
           <input type="radio" name="season_structure" value="weekly_draw" ${teamStructure === 'weekly_draw' ? 'checked' : ''}>
-          <span><span class="t" data-i18n="structureWeeklyTitle">Équipes qui changent</span><span class="d" data-i18n="structureWeeklyDesc">De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.</span></span>
+          <span><span class="t" data-i18n="structureWeeklyTitle">Sans équipes fixes</span><span class="d" data-i18n="structureWeeklyDesc">Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.</span></span>
         </label>
       </div>
       <p class="nl-help" data-i18n="seasonStructureHelp">Par défaut, une nouvelle saison utilise la structure habituelle de ta ligue. Change-la ici seulement pour cette saison.</p>
     </div>
     <div id="season_headcount_section" style="">
       <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
-      <p class="nl-help" id="season_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp'}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe.' : 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs (pas par équipe).'}</p>
+      <p class="nl-help" id="season_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : teamStructure === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total -- cette ligue n\'a pas d\'équipes.'}</p>
       <div class="su-two">
         <div class="nl-field">
-          <label class="nl-label" for="season_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
+          <label class="nl-label" for="season_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
           <input class="nl-input" id="season_min_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.min_players) : (isHeadcount ? '8' : ''))}">
         </div>
         <div class="nl-field">
-          <label class="nl-label" for="season_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
+          <label class="nl-label" for="season_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
           <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.max_players) : (isHeadcount ? '12' : ''))}">
         </div>
       </div>
@@ -4295,28 +4306,28 @@ async function handleLeagueSettingsPage(req, env, url) {
              one, which showed this card as on for weekly_draw too. -->
         <label class="su-structure-opt${teamStructure === 'fixed' ? ' on' : ''}" data-value="fixed">
           <input type="radio" name="se_structure" value="fixed" ${teamStructure === 'headcount' || teamStructure === 'weekly_draw' ? '' : 'checked'}>
-          <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue classique.</span></span>
+          <span><span class="t" data-i18n="structureFixedTitle">Équipes fixes</span><span class="d" data-i18n="structureFixedDesc">La même équipe toute la saison, comme une ligue régulière.</span></span>
         </label>
         <label class="su-structure-opt${teamStructure === 'headcount' ? ' on' : ''}" data-value="headcount">
           <input type="radio" name="se_structure" value="headcount" ${teamStructure === 'headcount' ? 'checked' : ''}>
-          <span><span class="t" data-i18n="structureHeadcountTitle">Aucune équipe</span><span class="d" data-i18n="structureHeadcountDesc">Juste une liste de qui embarque — parfait pour une partie improvisée.</span></span>
+          <span><span class="t" data-i18n="structureHeadcountTitle">Sans équipes</span><span class="d" data-i18n="structureHeadcountDesc">Juste la liste des présents. Vous formez les équipes sur place.</span></span>
         </label>
         <label class="su-structure-opt${teamStructure === 'weekly_draw' ? ' on' : ''}" data-value="weekly_draw">
           <input type="radio" name="se_structure" value="weekly_draw" ${teamStructure === 'weekly_draw' ? 'checked' : ''}>
-          <span><span class="t" data-i18n="structureWeeklyTitle">Équipes qui changent</span><span class="d" data-i18n="structureWeeklyDesc">De nouvelles équipes à chaque match — on peut même les former pour toi, automatiquement.</span></span>
+          <span><span class="t" data-i18n="structureWeeklyTitle">Sans équipes fixes</span><span class="d" data-i18n="structureWeeklyDesc">Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.</span></span>
         </label>
       </div>
     </div>
     <div id="se_headcount_fields" style="">
       <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
-      <p class="nl-help" id="se_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp'}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe.' : 'Ces nombres s\'appliquent à chaque match, pour l\'ensemble des joueurs (pas par équipe).'}</p>
+      <p class="nl-help" id="se_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : teamStructure === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total -- cette ligue n\'a pas d\'équipes.'}</p>
       <div class="su-two">
         <div class="nl-field">
-          <label class="nl-label" for="se_min_players" data-i18n="lblMinPlayers">Minimum de joueurs</label>
+          <label class="nl-label" for="se_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
           <input class="nl-input" id="se_min_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.min_players) : (isHeadcount ? '8' : ''))}">
         </div>
         <div class="nl-field">
-          <label class="nl-label" for="se_max_players" data-i18n="lblMaxPlayers">Maximum de joueurs</label>
+          <label class="nl-label" for="se_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
           <input class="nl-input" id="se_max_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.max_players) : (isHeadcount ? '12' : ''))}">
         </div>
       </div>
@@ -4592,10 +4603,11 @@ document.querySelectorAll('#se_structure_radio label').forEach(function(l) {
     l.classList.add('on');
     // Live-testing task, Part 5: roster limits are shown -- and
     // settable -- for every structure now, not headcount alone; only
-    // the help text's wording changes (per-team vs per-event pool),
-    // matching the shape this league's own selected structure uses.
+    // the help text's wording changes. B1 (stale-copy polish task):
+    // 3-way now, matching onboarding -- fixed teams, weekly_draw's
+    // single pool, or headcount's no-teams-at-all count.
     var val = l.getAttribute('data-value');
-    var helpKey = val === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp';
+    var helpKey = val === 'fixed' ? 'rosterSubTeam' : (val === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount');
     var helpEl = document.getElementById('se_roster_limits_help');
     helpEl.setAttribute('data-i18n', helpKey);
     helpEl.textContent = window.__pageDict()[helpKey];
@@ -4652,7 +4664,7 @@ document.querySelectorAll('#season_structure_radio label').forEach(function(l) {
     document.querySelectorAll('#season_structure_radio label').forEach(function(x) { x.classList.remove('on'); });
     l.classList.add('on');
     var val = l.getAttribute('data-value');
-    var helpKey = val === 'fixed' ? 'rosterLimitsPerTeamHelp' : 'rosterLimitsPerEventHelp';
+    var helpKey = val === 'fixed' ? 'rosterSubTeam' : (val === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount');
     var helpEl = document.getElementById('season_roster_limits_help');
     if (helpEl) { helpEl.setAttribute('data-i18n', helpKey); helpEl.textContent = window.__pageDict()[helpKey]; }
   });
@@ -4993,7 +5005,10 @@ async function handleLeagueRosterPage(req, env, url) {
       // neutral "Position"; the options themselves (axisPlayer/
       // axisGoalie) are unchanged, still "Joueur"/"Gardien".
       goalieAxis: 'Position', axisPlayer: 'Joueur', axisGoalie: 'Gardien',
-      goalieAxisHelp: 'Indépendant de Régulier/Remplaçant — un gardien peut être régulier ou remplaçant.',
+      // B4 (stale-copy polish task): goalieAxisHelp ("Indépendant de
+      // Régulier/Remplaçant...") removed entirely -- read like internal
+      // documentation, and Role/Position are already visually separate
+      // controls with their own labels.
       colGoalie: 'Position',
       // E2 (players polish task): a "Joueur" who can also cover goalie --
       // common in ball hockey. Independent of the Position axis itself
@@ -5032,7 +5047,6 @@ async function handleLeagueRosterPage(req, env, url) {
       players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.',
       weeklyDrawNote: 'Teams are assigned per game, not here — see a game’s own page.',
       goalieAxis: 'Position', axisPlayer: 'Player', axisGoalie: 'Goalie',
-      goalieAxisHelp: "Independent of Regular/Sub — a goalie can be regular or sub.",
       colGoalie: 'Position',
       canAlsoGoalie: 'Can also play goalie',
       goalieBadge: 'G',
@@ -5252,7 +5266,6 @@ async function handleLeagueRosterPage(req, env, url) {
           <label data-value="player" class="on"><span data-i18n="axisPlayer">Joueur</span></label>
           <label data-value="goalie"><span data-i18n="axisGoalie">Gardien</span></label>
         </div>
-        <p class="nl-help" data-i18n="goalieAxisHelp">Indépendant de Régulier/Remplaçant — un gardien peut être régulier ou remplaçant.</p>
         <label id="r_backup_goalie_wrap" style="display:flex;align-items:center;gap:8px;margin-top:10px;">
           <input type="checkbox" id="r_backup_goalie">
           <span data-i18n="canAlsoGoalie">Peut aussi jouer gardien</span>

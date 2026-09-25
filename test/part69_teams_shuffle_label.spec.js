@@ -26,6 +26,14 @@
 // "Teams", generic) paired with either the real team count (fixed) or
 // "No fixed teams" text (headcount). Neither of those needed a
 // reword; only the weekly_draw-specific wording was the reported bug.
+//
+// SUPERSEDED (B2, stale-copy polish task): the structure-picker's own
+// option wording for weekly_draw changed ("Équipes qui changent"/
+// "Teams shuffle" -> "Sans équipes fixes"/"Pickup with teams"), and
+// this tile is explicitly meant to keep reusing that exact phrase.
+// This is a deliberate, task-directed supersession -- the lesson this
+// file's own history is about (never a bare "(par match)"/"(per
+// game)" qualifier with no verb) still holds and is still checked.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
@@ -75,8 +83,8 @@ describe('Part 5 (live-testing task, batch 5): the weekly_draw team-count tile l
 
   it('buildDashI18n: teamsPerGame no longer says "shuffle" in isolation, and never reverts to the previously-rejected "(par match)" form', () => {
     const { fr, en } = buildDashI18n({ state: 'active', needsSeason: false, leagueName: 'Shuffle League' });
-    expect(fr.teamsPerGame).toBe('Nouvelles équipes chaque match');
-    expect(en.teamsPerGame).toBe('Fresh teams every game');
+    expect(fr.teamsPerGame).toBe('Sans équipes fixes');
+    expect(en.teamsPerGame).toBe('Pickup with teams');
     expect(en.teamsPerGame.toLowerCase()).not.toContain('shuffle');
     expect(fr.teamsPerGame).not.toContain('(par match)');
     expect(en.teamsPerGame).not.toContain('(per game)');
@@ -87,7 +95,7 @@ describe('Part 5 (live-testing task, batch 5): the weekly_draw team-count tile l
     await createLeague(cookie, csrfToken, { name: 'Weekly Shuffle League', teamNames: ['A', 'B'], teamStructure: 'weekly_draw' });
     await publishSeason(cookie, csrfToken, 'Weekly Shuffle Season');
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
-    expect(html).toContain('data-i18n="teamsPerGame">Nouvelles équipes chaque match<');
+    expect(html).toContain('data-i18n="teamsPerGame">Sans équipes fixes<');
     expect(html).not.toContain('Équipes (par match)');
   });
 

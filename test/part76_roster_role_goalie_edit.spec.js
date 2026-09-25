@@ -151,7 +151,7 @@ describe('Part 5 (live-testing task, batch 6): roster role/goalie are now editab
   // admin already writes for this exact concept) -- new here is only
   // the league product's own write path and display.
   describe('E2: "can also play goalie"', () => {
-    it('the add-player form shows the checkbox only under Player, hidden under Goalie, with the explanatory Regular/Sub line kept', async () => {
+    it('the add-player form shows the checkbox only under Player, hidden under Goalie; the Regular/Sub helper line is gone (B4 -- Role and Position are already visually separate controls with their own labels)', async () => {
       const { cookie, csrfToken } = await signup('rosteredit.e2.form@example.com', '203.0.190.021');
       await createLeague(cookie, csrfToken, { name: 'E2 Form League', teamNames: ['X', 'Y'] });
       const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
@@ -159,9 +159,12 @@ describe('Part 5 (live-testing task, batch 6): roster role/goalie are now editab
       expect(html).toContain('data-i18n="canAlsoGoalie"');
       expect(html).toContain("document.getElementById('r_backup_goalie_wrap')");
       expect(html).toContain("backupWrap.style.display = r_goalie ? 'none' : ''");
-      // The existing Regular/Sub independence note is kept, unchanged.
-      expect(html).toContain('data-i18n="goalieAxisHelp"');
-      expect(html).toContain('Indépendant de Régulier/Remplaçant');
+      // B4 (stale-copy polish task): the Regular/Sub independence note was
+      // removed entirely, both languages -- Role and Position are already
+      // visually separate controls with their own labels.
+      expect(html).not.toContain('data-i18n="goalieAxisHelp"');
+      expect(html).not.toContain('Indépendant de Régulier/Remplaçant');
+      expect(html).not.toContain('Independent of Regular/Sub');
     });
 
     it('POST /league/contacts persists is_backup_goalie=1 for a Player, and the table shows the G badge', async () => {
