@@ -212,6 +212,52 @@ async function getStandingsTooltip(env) {
   }
 }
 
+// Server-side language persistence task: the admin FR/EN toggle
+// (window.__setLang, nlAuthScript below) was client-side only --
+// localStorage plus an instant DOM update after the page had already
+// rendered server-side in French, meaning nlDocument() (design_system.js)
+// never had a language signal at render time and every <title>/<meta
+// description> came out hardcoded French regardless of the admin's
+// actual preference. This resolves that signal server-side, in
+// priority order: (1) the nl_lang cookie -- not HttpOnly, written by
+// window.__setLang the moment the toggle is used, and ALSO synced
+// from an already-chosen localStorage preference on ordinary page
+// load (see nlAuthScript's own comment on why: a returning admin who
+// picked English before this cookie existed must not see a flash of
+// French chrome on every subsequent visit just because they haven't
+// clicked the toggle again since this shipped); (2) the browser's own
+// Accept-Language header, highest-quality fr/en tag; (3) French --
+// the primary market, and the safe default when the header is absent,
+// ambiguous, or names neither language.
+//
+// League-product admin pages only (every nlDocument() call site this
+// task touches). SMBHL's own page() shell below has its own,
+// completely separate language init and is untouched by this
+// function. The signup wizard's own ?lang= URL-param threading
+// (nlAuthScript's own comment explains why a URL param, not just
+// localStorage, is needed there) is also untouched -- this cookie is
+// an ADDITIONAL signal for the server's very first render, not a
+// replacement for it.
+function resolveServerLang(req) {
+  const cookieHeader = req.headers.get('cookie') || '';
+  const cookieMatch = cookieHeader.match(/(?:^|;\s*)nl_lang=([^;]+)/);
+  if (cookieMatch) {
+    const v = decodeURIComponent(cookieMatch[1]);
+    if (v === 'fr' || v === 'en') return v;
+  }
+  const accept = req.headers.get('accept-language') || '';
+  const tags = accept.split(',').map(part => {
+    const [tag, qPart] = part.trim().split(';');
+    const q = qPart && qPart.trim().startsWith('q=') ? parseFloat(qPart.trim().slice(2)) : 1;
+    return { tag: (tag || '').trim().toLowerCase(), q: Number.isFinite(q) ? q : 1 };
+  }).sort((a, b) => b.q - a.q);
+  for (const { tag } of tags) {
+    if (tag.startsWith('en')) return 'en';
+    if (tag.startsWith('fr')) return 'fr';
+  }
+  return 'fr';
+}
+
 // hideLangSwitch: Part 4 foundation -- a league whose language_mode is
 // 'fr' or 'en' only (default 'both' for every league, including
 // SMBHL's own DEFAULT_SEASON_CONFIG.league and every league created
@@ -457,7 +503,8 @@ const I18N_HOME = {
     mockShort: 'Short 2', mockSubsInvited: '3 subs invited'
   }
 };
-function renderMarketingHomepage() {
+function renderMarketingHomepage(req) {
+  const lang = resolveServerLang(req);
   const bodyHtml = `
 <style>
   .nl-hero .nl-header { background: transparent; border-bottom-color: #2a2e36; max-width: var(--content-wide); margin: 0 auto; padding: 0 var(--space-6); }
@@ -576,8 +623,11 @@ ${nlAuthScript(I18N_HOME)}
 </script>`;
   return nlDocument({
     title: 'Notre Ligue',
-    description: "Ta ligue du dimanche, sans la paperasse. Présences, remplaçants et équipes, automatiquement.",
-    bodyHtml
+    description: lang === 'en'
+      ? "Notre Ligue texts your players, counts who's in and finds subs when a team is short. You just play."
+      : "Ta ligue du dimanche, sans la paperasse. Présences, remplaçants et équipes, automatiquement.",
+    bodyHtml,
+    lang
   });
 }
 
@@ -639,6 +689,7 @@ const I18N_SIGNUP = {
     structureHeadcountTitle: 'Sans équipes', structureHeadcountDesc: 'Juste la liste des présents. Vous formez les équipes sur place.',
     back: 'Retour',
     step3: 'Étape 3 sur 3', title3: "Combien d'équipes?",
+    teamCountGroupAria: "Nombre d'équipes", decreaseTeamsAria: 'Moins', increaseTeamsAria: 'Plus',
     teamNamesLabel: 'Noms des équipes', teamPlaceholder: 'Équipe ', teamHelp: 'Pas encore décidé? Garde « Équipe 1, 2… ».',
     title3Headcount: 'Combien de joueurs?',
     // B1 (stale-copy polish task): "total" to match onboarding/settings.
@@ -681,6 +732,7 @@ const I18N_SIGNUP = {
     structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in. You sort out sides at the venue.",
     back: 'Back',
     step3: 'Step 3 of 3', title3: 'How many teams?',
+    teamCountGroupAria: 'Number of teams', decreaseTeamsAria: 'Decrease', increaseTeamsAria: 'Increase',
     teamNamesLabel: 'Team names', teamPlaceholder: 'Team ', teamHelp: 'Not decided yet? Keep "Team 1, 2...".',
     title3Headcount: 'How many players?',
     lblMinPlayers: 'Minimum total players', lblMaxPlayers: 'Maximum total players',
@@ -840,10 +892,22 @@ window.__errorText = function(errorKey, fallback, vars) {
     }
   } catch(e) {}
   window.__currentLang = lang;
+  // Server-side language persistence task: not HttpOnly (this exact
+  // script writes it), read by resolveServerLang() (src/index.js) on
+  // every subsequent request so nlDocument()'s <title>/<meta
+  // description> stop defaulting to French for an admin who already
+  // chose English. Synced here on ordinary page load too, not only
+  // from __setLang below -- an admin who picked a language before this
+  // cookie existed (localStorage/navigator-language-resolved lang)
+  // must not see a flash of French chrome on their very next visit
+  // just because they haven't clicked the toggle again since this
+  // shipped.
+  try { document.cookie = 'nl_lang=' + lang + '; path=/; max-age=31536000; samesite=lax'; } catch (e) {}
   window.__setLang = function(l) {
     if (l !== 'fr' && l !== 'en') return;
     window.__currentLang = l;
     try { localStorage.setItem('smbhl_admin_lang', l); } catch(e) {}
+    try { document.cookie = 'nl_lang=' + l + '; path=/; max-age=31536000; samesite=lax'; } catch (e) {}
     applyLanguage(l);
   };
   // Carries the CURRENT language forward on an internal same-app
@@ -872,6 +936,16 @@ window.__errorText = function(errorKey, fallback, vars) {
     document.querySelectorAll('[data-i18n-ph]').forEach(function(el) {
       var k = el.getAttribute('data-i18n-ph');
       if (dict[k] != null) el.placeholder = dict[k];
+    });
+    // Server-side language persistence task: same gap as data-i18n-ph
+    // above, but for aria-label -- an i18n sweep found signup step 3's
+    // team-count stepper (aria-label="Nombre d'équipes"/"Moins"/"Plus")
+    // hardcoded French, invisible to sighted admins toggling the
+    // page's visible text but wrong for a screen reader on the EN
+    // language. Same dict, same lookup, new attribute.
+    document.querySelectorAll('[data-i18n-aria]').forEach(function(el) {
+      var k = el.getAttribute('data-i18n-aria');
+      if (dict[k] != null) el.setAttribute('aria-label', dict[k]);
     });
     // Live-testing task (batch 2), Part 6: dates/times are dynamic data,
     // not a static dictionary string, so they can't go through the
@@ -1083,6 +1157,8 @@ async function submitStep2() {
 }
 
 function renderSignupStep3(langParam) {
+  const lang = langParam === 'en' ? 'en' : 'fr';
+  const i18nStep3 = I18N_SIGNUP[lang];
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
@@ -1092,10 +1168,10 @@ function renderSignupStep3(langParam) {
   <div class="su-title"><h1 id="su_step3_title" data-i18n="title3">Combien d'équipes?</h1></div>
   <div id="formErr" class="nl-error" style="display:none"></div>
   <div id="su_teams_section">
-    <div class="su-count" role="group" aria-label="Nombre d'équipes">
-      <button type="button" aria-label="Moins" onclick="changeCount(-1)">−</button>
+    <div class="su-count" role="group" data-i18n-aria="teamCountGroupAria" aria-label="${esc(i18nStep3.teamCountGroupAria)}">
+      <button type="button" data-i18n-aria="decreaseTeamsAria" aria-label="${esc(i18nStep3.decreaseTeamsAria)}" onclick="changeCount(-1)">−</button>
       <output id="su_team_count_out">4</output>
-      <button type="button" aria-label="Plus" onclick="changeCount(1)">+</button>
+      <button type="button" data-i18n-aria="increaseTeamsAria" aria-label="${esc(i18nStep3.increaseTeamsAria)}" onclick="changeCount(1)">+</button>
     </div>
     <div class="nl-field">
       <span class="nl-label" data-i18n="teamNamesLabel">Noms des équipes</span>
@@ -1325,7 +1401,8 @@ const I18N_LOGIN = {
   }
 };
 
-function renderLoginPage() {
+function renderLoginPage(req) {
+  const lang = resolveServerLang(req);
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-title">
@@ -1381,7 +1458,12 @@ async function submitLogin() {
   }
 }
 </script>`;
-  return nlDocument({ title: 'Se connecter', description: 'Connecte-toi pour gérer ta ligue.', bodyHtml });
+  return nlDocument({
+    title: lang === 'en' ? 'Log in' : 'Se connecter',
+    description: lang === 'en' ? 'Log in to manage your league.' : 'Connecte-toi pour gérer ta ligue.',
+    bodyHtml,
+    lang
+  });
 }
 
 // Always shows the same generic confirmation after submitting, whether
@@ -1402,7 +1484,8 @@ const I18N_FORGOT = {
   }
 };
 
-function renderForgotPasswordPage() {
+function renderForgotPasswordPage(req) {
+  const lang = resolveServerLang(req);
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-title">
@@ -1450,14 +1533,15 @@ async function submitForgot() {
   }
 }
 </script>`;
-  return nlDocument({ title: 'Mot de passe oublié', description: '', bodyHtml });
+  return nlDocument({ title: lang === 'en' ? 'Forgot password' : 'Mot de passe oublié', description: '', bodyHtml, lang });
 }
 
 // Reached via the emailed reset link's ?token=. The token itself is
 // opaque to this page -- it's just forwarded verbatim to POST
 // /auth/reset-password, which does the real verification (never
 // decoded or trusted client-side here).
-function renderResetPasswordPage(token) {
+function renderResetPasswordPage(token, req) {
+  const lang = resolveServerLang(req);
   const I18N_RESET = {
     fr: { title: 'Nouveau mot de passe', lblPassword: 'Nouveau mot de passe', pwHelp: '8 caractères minimum.', submit: 'Réinitialiser' },
     en: { title: 'New password', lblPassword: 'New password', pwHelp: '8 characters minimum.', submit: 'Reset' }
@@ -1503,7 +1587,7 @@ async function submitReset() {
   }
 }
 </script>`;
-  return nlDocument({ title: 'Nouveau mot de passe', description: '', bodyHtml });
+  return nlDocument({ title: lang === 'en' ? 'New password' : 'Nouveau mot de passe', description: '', bodyHtml, lang });
 }
 
 // Scoped to exactly which dashboard state is rendering (state: 'none' |
@@ -1734,6 +1818,7 @@ function dashStyles() {
 }
 
 async function handleDashboardPage(req, env, url) {
+  const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
   if (!session) {
     return Response.redirect(url.origin + '/login', 302);
@@ -2133,7 +2218,7 @@ async function submitHardDelete() {
 if (document.getElementById('hardDeleteStatus')) loadHardDeleteStatus();
 `;
 
-  return new Response(nlDocument({ title: leagueRow ? `Tableau de bord — ${leagueRow.name}` : 'Tableau de bord', description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+  return new Response(nlDocument({ title: leagueRow ? `${lang === 'en' ? 'Dashboard' : 'Tableau de bord'} — ${leagueRow.name}` : (lang === 'en' ? 'Dashboard' : 'Tableau de bord'), description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -2218,6 +2303,7 @@ function buildOnboardingI18n() {
 }
 
 async function handleOnboardingSeasonPage(req, env, url) {
+  const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
 
@@ -2468,7 +2554,7 @@ async function obSubmit() {
   }
 }`;
 
-  return new Response(nlDocument({ title: `Bienvenue — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+  return new Response(nlDocument({ title: `${lang === 'en' ? 'Welcome' : 'Bienvenue'} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -2844,9 +2930,10 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
 // of the requirement, and a plain-text response reads exactly like a
 // broken link. Status stays 404: from the requester's own point of
 // view there is, correctly, no page to find either way.
-function publicPageNotAvailableResponse() {
-  const bodyHtml = `<div style="display:flex;align-items:center;justify-content:center;min-height:100dvh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">Cette page n'est pas publique</h1></div>`;
-  return new Response(nlDocument({ title: 'Page non publique', description: '', bodyHtml }), {
+function publicPageNotAvailableResponse(req) {
+  const lang = resolveServerLang(req);
+  const bodyHtml = `<div style="display:flex;align-items:center;justify-content:center;min-height:100dvh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">${lang === 'en' ? 'This page is not public' : "Cette page n'est pas publique"}</h1></div>`;
+  return new Response(nlDocument({ title: lang === 'en' ? 'Not public' : 'Page non publique', description: '', bodyHtml, lang }), {
     status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -2856,22 +2943,27 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   if (!leagueId) return new Response('league is required', { status: 400 });
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
-  if (!leagueRow) return publicPageNotAvailableResponse();
+  if (!leagueRow) return publicPageNotAvailableResponse(req);
   // Live-testing task (batch 2), Part 10: checked before deactivation
   // deliberately -- a disabled public page reads identically to a
   // nonexistent one (see publicPageNotAvailableResponse's own comment),
   // while a DEACTIVATED league (below) is a genuinely different,
   // already-distinguishable state (that response already names the
   // league's own situation explicitly, unlike this one).
-  if (!leagueRow.public_page_enabled) return publicPageNotAvailableResponse();
+  if (!leagueRow.public_page_enabled) return publicPageNotAvailableResponse(req);
   // Live-testing task, Part 2: only 'arene' and 'clean' actually render
   // (see PUBLIC_THEME_ARENE_CSS's own comment) -- anything else
   // (unset, a future 'classic'/'warm' not implemented yet, or bad data)
   // falls back to 'arene', every league's real default.
   const theme = leagueRow.public_theme === 'clean' ? 'clean' : 'arene';
   if (leagueRow.deactivated_at) {
-    const bodyHtml410 = `<div style="display:flex;align-items:center;justify-content:center;min-height:100dvh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">Cette ligue n'est plus active</h1></div>`;
-    return new Response(nlDocument({ title: 'Ligue désactivée', description: '', bodyHtml: bodyHtml410 }), {
+    // Distinct from the forcedLang below (that's the LEAGUE's own
+    // configured language_mode; this notice has no toggle and no
+    // league config to consult, so it uses the visitor's own
+    // cookie/Accept-Language signal instead -- see resolveServerLang.
+    const deactivatedLang = resolveServerLang(req);
+    const bodyHtml410 = `<div style="display:flex;align-items:center;justify-content:center;min-height:100dvh;text-align:center;padding:24px;"><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">${deactivatedLang === 'en' ? 'This league is no longer active' : "Cette ligue n'est plus active"}</h1></div>`;
+    return new Response(nlDocument({ title: deactivatedLang === 'en' ? 'League deactivated' : 'Ligue désactivée', description: '', bodyHtml: bodyHtml410, lang: deactivatedLang }), {
       status: 410, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
     });
   }
@@ -3559,6 +3651,7 @@ async function handleLeagueCommsBroadcast(req, env, url) {
 // not a second place to change it (the task's own "reuse ... rather
 // than adding new" principle applied to UI, not just data).
 async function handleLeagueCommsPage(req, env, url) {
+  const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
   const leagueId = await resolveSessionLeagueId(req, env, url);
@@ -3899,12 +3992,13 @@ async function drainNow() {
 }
 `;
 
-  return new Response(nlDocument({ title: `Communications — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+  return new Response(nlDocument({ title: `Communications — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
 
 async function handleLeagueSettingsPage(req, env, url) {
+  const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
 
@@ -4923,12 +5017,13 @@ async function submitDeactivate() {
   }
 }`;
 
-  return new Response(nlDocument({ title: `${I18N_SETTINGS.fr.title} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+  return new Response(nlDocument({ title: `${(I18N_SETTINGS[lang] || I18N_SETTINGS.fr).title} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
 
 async function handleLeagueRosterPage(req, env, url) {
+  const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
 
@@ -5301,7 +5396,7 @@ async function handleLeagueRosterPage(req, env, url) {
         </div>`).join('')}
       </div>
     </div>` : ''}
-    <aside class="ro-panel${contacts.length === 0 ? ' open' : ''}" id="ro_panel" aria-label="Ajouter un joueur">
+    <aside class="ro-panel${contacts.length === 0 ? ' open' : ''}" id="ro_panel" data-i18n-aria="addPlayer" aria-label="Ajouter un joueur">
       <h2 data-i18n="addPlayer">Ajouter un joueur</h2>
       <div id="formErr" class="nl-error" style="display:none"></div>
       <div class="nl-field">
@@ -5824,7 +5919,7 @@ async function submitContact() {
   }
 }`;
 
-  return new Response(nlDocument({ title: `Joueurs — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+  return new Response(nlDocument({ title: `${lang === 'en' ? 'Players' : 'Joueurs'} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -5845,6 +5940,7 @@ async function submitContact() {
 // ScreenEventStatus's own reference genuinely does match this app's
 // real data model (per-team shortage, not fixtures).
 async function handleLeagueSchedulePage(req, env, url) {
+  const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
 
@@ -6078,7 +6174,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   ` : `
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);">
     <div class="sc-list" id="scheduleList">${rowsHtml}</div>
-    <aside class="sc-panel" id="sc_panel" aria-label="Créer un match">
+    <aside class="sc-panel" id="sc_panel" data-i18n-aria="createEvent" aria-label="Créer un match">
       <h2 data-i18n="createEvent">Créer un match</h2>
       <div id="formErr" class="nl-error" style="display:none"></div>
       <div class="nl-field">
@@ -6124,7 +6220,7 @@ async function handleLeagueSchedulePage(req, env, url) {
         <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleSchedulePanel()">Annuler</button>
       </div>
     </aside>
-    <aside class="sc-bulk-panel" id="sc_bulk_panel" aria-label="Créer plusieurs matchs">
+    <aside class="sc-bulk-panel" id="sc_bulk_panel" data-i18n-aria="bulkCreateTitle" aria-label="Créer plusieurs matchs">
       <h2 data-i18n="bulkCreateTitle">Créer plusieurs matchs</h2>
       <p class="nl-help" data-i18n="bulkCreateHelp">Crée une série de matchs chaque semaine, même heure et même lieu.</p>
       <div id="bulkEventErr" class="nl-error" style="display:none"></div>
@@ -6319,7 +6415,7 @@ async function confirmDuplicate(eventId) {
   }
 }`;
 
-  return new Response(nlDocument({ title: `Horaire — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+  return new Response(nlDocument({ title: `${lang === 'en' ? 'Schedule' : 'Horaire'} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -6342,6 +6438,7 @@ async function confirmDuplicate(eventId) {
 // reference's one combined button doesn't, so both are kept, shown only
 // when that specific need is actually open).
 async function handleLeagueEventDetailPage(req, env, url) {
+  const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login', 302);
 
@@ -6368,7 +6465,7 @@ async function handleLeagueEventDetailPage(req, env, url) {
   <h1 data-i18n="notFound">Match introuvable</h1>
 </main>
 ${tabbar}`;
-    return new Response(nlDocument({ title: `Match introuvable — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml404 + `<script>${nlAuthScript(I18N_404)}</script>` }), {
+    return new Response(nlDocument({ title: `${lang === 'en' ? 'Event not found' : 'Match introuvable'} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml404 + `<script>${nlAuthScript(I18N_404)}</script>`, lang }), {
       status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
     });
   }
@@ -7002,7 +7099,7 @@ async function setPlayerStatus(playerId, status, btn) {
   }
 }`;
 
-  return new Response(nlDocument({ title: `${formatEventDate(ev.date, 'fr', 'short')} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` }), {
+  return new Response(nlDocument({ title: `${formatEventDate(ev.date, lang, 'short')} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -23863,11 +23960,11 @@ async function handleFetch(req, env, ctx) {
       if ((url.pathname === '/signup' || url.pathname === '/signup/') && req.method === 'GET')
         return await renderSignupPage(req, env, url);
       if ((url.pathname === '/login' || url.pathname === '/login/') && req.method === 'GET')
-        return new Response(renderLoginPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+        return new Response(renderLoginPage(req), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/forgot-password' || url.pathname === '/forgot-password/') && req.method === 'GET')
-        return new Response(renderForgotPasswordPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+        return new Response(renderForgotPasswordPage(req), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/reset-password' || url.pathname === '/reset-password/') && req.method === 'GET')
-        return new Response(renderResetPasswordPage(url.searchParams.get('token')), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+        return new Response(renderResetPasswordPage(url.searchParams.get('token'), req), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/dashboard' || url.pathname === '/dashboard/') && req.method === 'GET')
         return await handleDashboardPage(req, env, url);
       // Live-testing task (batch 5), Part 6: continuation of onboarding
@@ -24494,7 +24591,7 @@ async function handleFetch(req, env, ctx) {
         if (url.hostname.includes('smbhl.com')) {
           return Response.redirect('https://smbhl.com', 302);
         }
-        return new Response(renderMarketingHomepage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+        return new Response(renderMarketingHomepage(req), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       }
       // Part 2: last-resort GET route for a league's short public URL
       // (notreligue.ca/dmbhl), checked ONLY after every fixed route
