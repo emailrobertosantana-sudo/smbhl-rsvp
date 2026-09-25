@@ -248,6 +248,13 @@ describe('Part 10 (live-testing task, batch 6): event creation warns before armi
     const { cookie, csrfToken } = await signup('optout.toggle@example.com', '203.0.197.006');
     await createLeague(cookie, csrfToken, { name: 'Reminder Toggle League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    // A2 (reminder-state polish task): the switch now reflects whether
+    // anything would ACTUALLY send -- the AND of this event's own flag
+    // (armed by default) and the league's own cadence (F1: off by
+    // default). Armed explicitly here so "before: true" reflects a
+    // real armed state, not the same per-event-only bug this task fixed
+    // (see the dedicated A2 test below for that mismatch itself).
+    await enableAllReminders(cookie, csrfToken);
     const ev = await (await createEvent(cookie, csrfToken, { date: '2099-07-03' })).json();
 
     const before = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(ev.event.id)}`, { headers: { cookie } })).text();

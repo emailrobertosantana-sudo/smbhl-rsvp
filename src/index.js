@@ -661,10 +661,10 @@ ${nlAuthScript(I18N_HOME)}
  */
 const I18N_SIGNUP = {
   fr: {
-    step1: 'Étape 1 sur 3', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.',
+    step1: 'Étape 1 sur 7', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.',
     lblEmail: 'Courriel', lblPassword: 'Mot de passe', showPw: 'Afficher', hidePw: 'Cacher',
     pwHelp: '8 caractères minimum.', continueBtn: 'Continuer', alreadySignedUp: 'Déjà inscrit?', login: 'Se connecter',
-    step2: 'Étape 2 sur 3', title2: 'Parle-nous de ta ligue',
+    step2: 'Étape 2 sur 7', title2: 'Parle-nous de ta ligue',
     lblLeagueName: 'Nom de la ligue', lblSlug: 'Adresse de ta page',
     // A2 bug fix (onboarding polish task): the old text ("tu peux la
     // changer") was actively wrong -- true only before submitting; once
@@ -688,7 +688,7 @@ const I18N_SIGNUP = {
     structureWeeklyTitle: 'Sans équipes fixes', structureWeeklyDesc: 'Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.',
     structureHeadcountTitle: 'Sans équipes', structureHeadcountDesc: 'Juste la liste des présents. Vous formez les équipes sur place.',
     back: 'Retour',
-    step3: 'Étape 3 sur 3', title3: "Combien d'équipes?",
+    step3: 'Étape 3 sur 7', title3: "Combien d'équipes?",
     teamCountGroupAria: "Nombre d'équipes", decreaseTeamsAria: 'Moins', increaseTeamsAria: 'Plus',
     teamNamesLabel: 'Noms des équipes', teamPlaceholder: 'Équipe ', teamHelp: 'Pas encore décidé? Garde « Équipe 1, 2… ».',
     title3Headcount: 'Combien de joueurs?',
@@ -720,10 +720,10 @@ const I18N_SIGNUP = {
     already: 'Déjà inscrit?'
   },
   en: {
-    step1: 'Step 1 of 3', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.',
+    step1: 'Step 1 of 7', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.',
     lblEmail: 'Email', lblPassword: 'Password', showPw: 'Show', hidePw: 'Hide',
     pwHelp: '8 characters minimum.', continueBtn: 'Continue', alreadySignedUp: 'Already signed up?', login: 'Log in',
-    step2: 'Step 2 of 3', title2: 'Tell us about your league',
+    step2: 'Step 2 of 7', title2: 'Tell us about your league',
     lblLeagueName: 'League name', lblSlug: 'Your page address',
     slugHelp: "Becomes permanent once your league is created -- that guarantees the links you share always keep working.",
     structureLabel: 'How are your teams organized?',
@@ -731,7 +731,7 @@ const I18N_SIGNUP = {
     structureWeeklyTitle: 'Pickup with teams', structureWeeklyDesc: 'Pickup, but split into teams each game — drawn automatically or set by you.',
     structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in. You sort out sides at the venue.",
     back: 'Back',
-    step3: 'Step 3 of 3', title3: 'How many teams?',
+    step3: 'Step 3 of 7', title3: 'How many teams?',
     teamCountGroupAria: 'Number of teams', decreaseTeamsAria: 'Decrease', increaseTeamsAria: 'Increase',
     teamNamesLabel: 'Team names', teamPlaceholder: 'Team ', teamHelp: 'Not decided yet? Keep "Team 1, 2...".',
     title3Headcount: 'How many players?',
@@ -967,17 +967,12 @@ window.__errorText = function(errorKey, fallback, vars) {
 }
 function signupLangScript() { return nlAuthScript(I18N_SIGNUP); }
 
-function signupStepper(current) {
-  const dots = [1, 2, 3].map(i => `<i class="${i < current ? 'done' : i === current ? 'on' : ''}"></i>`).join('');
-  return `<div class="nl-steps" role="progressbar" aria-valuemin="1" aria-valuemax="3" aria-valuenow="${current}">${dots}</div>`;
-}
-
 function renderSignupStep1(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" data-i18n="step1">Étape 1 sur 3</div>
-    ${signupStepper(1)}
+    <div class="overline" data-i18n="step1">Étape 1 sur 7</div>
+    ${flowStepper(1, 7)}
   </div>
   <div class="su-title">
     <h1 data-i18n="title1">Créons ton compte</h1>
@@ -1046,8 +1041,8 @@ function renderSignupStep2(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" data-i18n="step2">Étape 2 sur 3</div>
-    ${signupStepper(2)}
+    <div class="overline" data-i18n="step2">Étape 2 sur 7</div>
+    ${flowStepper(2, 7)}
   </div>
   <div class="su-title"><h1 data-i18n="title2">Parle-nous de ta ligue</h1></div>
   <div id="formErr" class="nl-error" style="display:none"></div>
@@ -1162,8 +1157,8 @@ function renderSignupStep3(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" data-i18n="step3">Étape 3 sur 3</div>
-    ${signupStepper(3)}
+    <div class="overline" id="su_step3_label" data-i18n="step3">Étape 3 sur 7</div>
+    <div id="su_step3_prog">${flowStepper(3, 7)}</div>
   </div>
   <div class="su-title"><h1 id="su_step3_title" data-i18n="title3">Combien d'équipes?</h1></div>
   <div id="formErr" class="nl-error" style="display:none"></div>
@@ -1218,8 +1213,23 @@ if (isHeadcount) {
   document.getElementById('su_teams_section').style.display = 'none';
   document.getElementById('su_headcount_section').style.display = '';
   document.getElementById('su_step3_title').setAttribute('data-i18n', 'title3Headcount');
-  document.getElementById('su_step3_title').textContent = window.__pageDict().title3Headcount;
+  // B1: headcount's real total is 6 (no onboarding "teams" step), not
+  // fixed's 7 -- server-rendered with 7 as the honest default (team
+  // structure isn't known until this exact draft loads client-side).
+  // data-i18n removed so a later FR/EN toggle's [data-i18n] sweep
+  // doesn't clobber this back to the shared dict's "of 7" -- kept in
+  // sync on toggle via applyHeadcountStepLabel below instead.
+  document.getElementById('su_step3_label').removeAttribute('data-i18n');
+  var prog = document.getElementById('su_step3_prog').querySelector('.nl-steps');
+  prog.setAttribute('aria-valuemax', '6');
+  if (prog.children.length > 6) prog.removeChild(prog.lastElementChild);
 }
+function applyHeadcountStepLabel() {
+  if (!isHeadcount) return;
+  document.getElementById('su_step3_title').textContent = window.__pageDict().title3Headcount;
+  document.getElementById('su_step3_label').textContent = window.__currentLang === 'en' ? 'Step 3 of 6' : 'Étape 3 sur 6';
+}
+applyHeadcountStepLabel();
 var teamCount = 4;
 function teamsEl() { return document.getElementById('su_teams'); }
 function renderTeams() {
@@ -1242,7 +1252,7 @@ function changeCount(delta) {
   document.getElementById('su_team_count_out').textContent = String(teamCount);
   renderTeams();
 }
-window.__onLangApplied = function() { renderTeams(); };
+window.__onLangApplied = function() { renderTeams(); applyHeadcountStepLabel(); };
 renderTeams();
 function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 function clearError() { document.getElementById('formErr').style.display = 'none'; }
@@ -2252,7 +2262,36 @@ function onboardingStepsFor(teamStructure) {
   return teamStructure === 'headcount' ? ['roster', 'reminders', 'stats'] : ['roster', 'teams', 'reminders', 'stats'];
 }
 
-function onboardingStepper(current, total) {
+// B1 (onboarding polish task): ONE continuous step count spanning the
+// whole account-creation journey, signup step 1 through onboarding's
+// last screen (stats). Signup used to always claim "of 3" even though
+// weekly_draw skips signup's own step 3 entirely (straight from step
+// 2 to done); onboarding's own 3-4 screens had a progress bar but no
+// step NUMBER at all. The done screen deliberately stays uncounted --
+// it never had a stepper (a one-off confirmation, not a form step).
+// Total varies by team structure, only known once it's actually
+// chosen on step 2:
+//   fixed:       signup 1,2,3 + onboarding roster,teams,reminders,stats = 7
+//   headcount:   signup 1,2,3 + onboarding roster,reminders,stats       = 6
+//   weekly_draw: signup 1,2   + onboarding roster,teams,reminders,stats = 6
+// Steps 1/2 render before a structure is chosen -- they show the
+// pre-selected 'fixed' structure's total (7) as the honest current
+// best guess (never an impossible/unreachable number); the real total
+// takes over the moment a structure is actually chosen (client-side
+// on step 3 for fixed/headcount -- see su_step3_title's own swap
+// logic -- or server-side straight from step 2 for weekly_draw, which
+// knows its structure by the time onboarding starts).
+const FLOW_TOTAL_STEPS = { fixed: 7, headcount: 6, weekly_draw: 6 };
+const FLOW_STEP_NUMBER = {
+  fixed: { signup3: 3, roster: 4, teams: 5, reminders: 6, stats: 7 },
+  headcount: { signup3: 3, roster: 4, reminders: 5, stats: 6 },
+  weekly_draw: { roster: 3, teams: 4, reminders: 5, stats: 6 }
+};
+function flowStepLabel(lang, current, total) {
+  return lang === 'en' ? `Step ${current} of ${total}` : `Étape ${current} sur ${total}`;
+}
+
+function flowStepper(current, total) {
   const dots = Array.from({ length: total }, (_, i) => i + 1)
     .map(i => `<i class="${i < current ? 'done' : i === current ? 'on' : ''}"></i>`).join('');
   return `<div class="nl-steps" role="progressbar" aria-valuemin="1" aria-valuemax="${total}" aria-valuenow="${current}">${dots}</div>`;
@@ -2280,7 +2319,10 @@ function buildOnboardingI18n() {
     lblMinGoalies: 'Minimum de gardiens (optionnel)', lblMaxGoalies: 'Maximum de gardiens (optionnel)',
     teamsTitle: 'Confirme les noms des équipes', teamsSubDefault: 'Choisis les vrais noms de tes équipes -- tu pourras les changer plus tard dans Paramètres.',
     teamsSubWeekly: 'Ces équipes changent à chaque match, mais leurs noms restent les mêmes toute la saison. Tu peux garder « Équipe 1, 2… » et revenir plus tard.',
-    remindersTitle: 'Rappels automatiques', remindersSub: 'Déjà activés par défaut -- désactive ceux que tu ne veux pas.',
+    // A1 (onboarding polish task): F1 made new leagues start with
+    // reminders OFF -- this copy still claimed the opposite. Reframed
+    // as opting in, since that's what this screen actually is now.
+    remindersTitle: 'Rappels automatiques', remindersSub: "Désactivés par défaut. Active ceux que tu veux -- tu peux changer ça n'importe quand dans les réglages.",
     reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder12Label: 'Détails 12 h avant (confirmés)',
     statsTitle: 'Suivre les statistiques?', statsSub: 'Buts, passes, gardiens. Tu pourras l\'activer plus tard dans Paramètres.',
     lblStats: 'Suivre les statistiques?'
@@ -2294,7 +2336,7 @@ function buildOnboardingI18n() {
     lblMinGoalies: 'Minimum goalies (optional)', lblMaxGoalies: 'Maximum goalies (optional)',
     teamsTitle: 'Confirm your team names', teamsSubDefault: 'Pick the real names of your teams -- you can change them later in Settings.',
     teamsSubWeekly: 'These teams change every game, but their names stay the same all season. You can keep "Team 1, 2…" and come back later.',
-    remindersTitle: 'Automated reminders', remindersSub: 'Already on by default -- turn off the ones you don\'t want.',
+    remindersTitle: 'Automated reminders', remindersSub: "Off by default. Turn on the ones you want -- you can change this any time in Settings.",
     reminder72Label: '72h reminder (no reply yet)', reminder24Label: '24h reminder (no reply yet)', reminder12Label: '12h details (confirmed players)',
     statsTitle: 'Track stats?', statsSub: 'Goals, assists, goalies. You can turn it on later in Settings.',
     lblStats: 'Track stats?'
@@ -2436,10 +2478,16 @@ async function handleOnboardingSeasonPage(req, env, url) {
   </div>`;
   }
 
+  // B1 (onboarding polish task): absolute step number/total across the
+  // WHOLE flow (signup + onboarding), not onboarding's own local 1-4 --
+  // see FLOW_STEP_NUMBER/FLOW_TOTAL_STEPS's own comment.
+  const flowTotal = FLOW_TOTAL_STEPS[teamStructure] || FLOW_TOTAL_STEPS.fixed;
+  const flowStep = (FLOW_STEP_NUMBER[teamStructure] || FLOW_STEP_NUMBER.fixed)[step] || stepNum;
   const bodyHtml = `${signupStyles()}${signupHeader(leagueRow.name)}
 <main class="su-body">
   <div class="su-prog">
-    ${onboardingStepper(stepNum, steps.length)}
+    <div class="overline" data-i18n="flowStepLabel">${esc(flowStepLabel(lang, flowStep, flowTotal))}</div>
+    ${flowStepper(flowStep, flowTotal)}
   </div>
   ${stepHtml}
 </main>
@@ -2448,8 +2496,16 @@ async function handleOnboardingSeasonPage(req, env, url) {
   <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="skip" onclick="window.location.href='/dashboard'">Passer pour l'instant</button>
 </div>`;
 
+  // B1: the step label text is computed per-request (structure/step
+  // dependent), not a fixed dict string -- overridden onto a copy of
+  // the shared dict just before embedding, so a client-side FR/EN
+  // toggle still re-renders it correctly (same number, right language).
+  const flowI18n = {
+    fr: { ...fr, flowStepLabel: flowStepLabel('fr', flowStep, flowTotal) },
+    en: { ...en, flowStepLabel: flowStepLabel('en', flowStep, flowTotal) }
+  };
   const script = `
-${nlAuthScript({ fr, en })}
+${nlAuthScript(flowI18n)}
 var OB_STEP = ${JSON.stringify(step)};
 var OB_IS_LAST = ${isLast ? 'true' : 'false'};
 var OB_NEXT_URL = ${isLast ? 'null' : JSON.stringify(`/onboarding/season?step=${nextStepNum}`)};
@@ -6447,10 +6503,25 @@ async function handleLeagueEventDetailPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name, team_colors FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, team_colors, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
   const eventId = url.searchParams.get('e');
   const ev = eventId ? await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
     .bind(eventId, leagueId).first() : null;
+  // A2 (reminder-state polish task): "will this event's players
+  // actually get an automated reminder" is the AND of two independent
+  // flags -- the league's own cadence toggles (which reminder KINDS
+  // are armed at all, same reminder_72h/24h/12h_enabled columns Comms'
+  // Active Automations card reads) and this event's own opt-out
+  // (auto_reminders_enabled, defaults to 1/armed on every new event
+  // regardless of the league's cadence). A brand-new league (F1:
+  // reminders OFF by default) still creates every event with
+  // auto_reminders_enabled=1 -- so this switch used to show "on" from
+  // that raw per-event column alone while Comms correctly showed every
+  // cadence off, for the exact same league, at the exact same time.
+  // sendLeagueReminderWave (this file) already requires BOTH before
+  // sending anything for real; this switch now reflects that same
+  // real requirement instead of just the per-event column.
+  const leagueRemindersArmed = !!(leagueRow.reminder_72h_enabled || leagueRow.reminder_24h_enabled || leagueRow.reminder_12h_enabled);
 
   const { header, tabbar } = dashChrome(leagueRow.name, 'schedule');
 
@@ -6480,6 +6551,17 @@ ${tabbar}`;
   const venues = await getLeagueVenues(env, leagueId);
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  // A3 (reminder-state polish task): "Send a reminder now" used to
+  // email the whole non-responder list on one click, no confirmation,
+  // no undo. This is the SAME query handleLeagueSendReminderNow itself
+  // uses to compute "eligible" (getNonResponders, reminder_72h's own
+  // recipient set -- the kind this manual button always sends) --
+  // computed here at render time so the confirmation can show a real
+  // count before the click, not just after the send already happened.
+  // May go slightly stale between page load and click (an RSVP arrives
+  // in between); acceptable for a "roughly how many" warning, same
+  // tradeoff the event-creation reminder warning already makes.
+  const remindNowRecipientCount = (await getNonResponders(env, leagueId, ev.id, ev.season)).length;
   const teamNames = getTeamNames(cfg);
   const totalTarget = (cfg.skatersPerTeam || 0) + (cfg.goaliesPerTeam || 0);
   // Team-structure task, Part 3: 'headcount' has exactly one real team
@@ -6514,6 +6596,13 @@ ${tabbar}`;
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Envoyer un rappel maintenant',
       remindersEnabledLabel: 'Rappels automatiques pour ce match',
+      // A2 (reminder-state polish task): shown instead of the switch
+      // acting on the toggle when no reminder kind is armed league-wide
+      // -- same source of truth Comms' Active Automations card reads.
+      remindersNoneArmedHelp: "Aucun type de rappel n'est activé pour cette ligue. Active-les dans Comms pour t'en servir.",
+      // A3 (reminder-state polish task): confirmed before sending --
+      // no undo once this goes out.
+      remindNowConfirm: 'Ceci enverra un courriel à {n} joueurs. Envoyer maintenant?',
       remindSentOne: 'Rappel envoyé à 1 joueur.', remindSentMany: 'Rappel envoyé à {n} joueurs.', remindSentNone: "Tout le monde a déjà répondu, rien à envoyer.",
       remindSendFailed: "Échec de l'envoi à {n} joueur(s). Réessaie plus tard ou contacte le soutien si le problème persiste.",
       remindSentPartial: 'Rappel envoyé à {sent} joueur(s), mais {failed} envoi(s) ont échoué.',
@@ -6548,6 +6637,8 @@ ${tabbar}`;
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Send a reminder now',
       remindersEnabledLabel: 'Automated reminders for this game',
+      remindersNoneArmedHelp: 'No reminder types are turned on for this league. Turn them on in Comms to use this.',
+      remindNowConfirm: 'This will email {n} players. Send now?',
       remindSentOne: 'Reminder sent to 1 player.', remindSentMany: 'Reminder sent to {n} players.', remindSentNone: 'Everyone has already answered, nothing to send.',
       remindSendFailed: 'Failed to send to {n} player(s). Try again later, or contact support if this keeps happening.',
       remindSentPartial: 'Reminder sent to {sent} player(s), but {failed} send(s) failed.',
@@ -6869,8 +6960,9 @@ ${tabbar}`;
     <p id="remindNowMsg" class="nl-help" style="display:none;margin-top:8px;"></p>
     <div class="nl-toggle" style="margin-top:10px;max-width:360px">
       <div><div class="nl-label" data-i18n="remindersEnabledLabel">Rappels automatiques pour ce match</div></div>
-      <button type="button" class="nl-switch" role="switch" aria-checked="${ev.auto_reminders_enabled ? 'true' : 'false'}" id="ev_reminders_switch" onclick="toggleEventReminders(this)"></button>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${ev.auto_reminders_enabled && leagueRemindersArmed ? 'true' : 'false'}" id="ev_reminders_switch" onclick="toggleEventReminders(this)" ${leagueRemindersArmed ? '' : 'disabled'}></button>
     </div>
+    ${leagueRemindersArmed ? '' : `<p class="nl-help" data-i18n="remindersNoneArmedHelp" style="margin-top:4px;">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).remindersNoneArmedHelp)}</p>`}
     <p id="evRemindersMsg" class="nl-help" style="display:none;margin-top:4px;"></p>
   </div>
   <div class="ev-teams">${poolCardHtml || teamCards.join('')}</div>
@@ -6880,6 +6972,10 @@ ${tabbar}`;
 
   const script = `
 ${nlAuthScript(I18N_DETAIL)}
+// A3 (reminder-state polish task): computed server-side at render time
+// (getNonResponders, same query the send route itself uses) so the
+// confirmation below can show a real count before the click.
+var EV_REMIND_NOW_COUNT = ${JSON.stringify(remindNowRecipientCount)};
 // C2 (schedule/events polish task): edit everything except the date.
 function toggleEventEdit() {
   var panel = document.getElementById('ev_edit_panel');
@@ -6983,6 +7079,10 @@ async function randomAssignTeams(btn) {
   }
 }
 async function sendReminderNow(btn) {
+  // A3 (reminder-state polish task): one click used to email the whole
+  // roster immediately, no undo. Confirmed first, real count included.
+  var dict = window.__pageDict();
+  if (!window.confirm(dict.remindNowConfirm.split('{n}').join(String(EV_REMIND_NOW_COUNT)))) return;
   var msg = document.getElementById('remindNowMsg');
   btn.disabled = true;
   try {
@@ -6992,7 +7092,6 @@ async function sendReminderNow(btn) {
       body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)} })
     });
     var data = await res.json().catch(function() { return {}; });
-    var dict = window.__pageDict();
     // Bug 2 fix (live-testing): "genuinely nothing to send" (eligible
     // === 0) used to be indistinguishable from "there were real
     // recipients but every send failed" (eligible > 0, sent === 0) --

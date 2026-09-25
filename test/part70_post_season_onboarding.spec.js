@@ -118,7 +118,15 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const step1 = await getOnboarding(cookie, 1);
-    expect(step1).toContain('aria-valuemax="4"');
+    // B1 (onboarding polish task): the stepper now counts the WHOLE
+    // flow (signup + onboarding), not onboarding's own local 1-4 --
+    // fixed's real total is 7 (signup 1,2,3 + onboarding roster,teams,
+    // reminders,stats), and this onboarding roster step is #4 in that
+    // count.
+    expect(step1).toContain('aria-valuemax="7"');
+    expect(step1).toContain('aria-valuenow="4"');
+    expect(step1).toContain('data-i18n="flowStepLabel"');
+    expect(step1).toMatch(/Étape 4 sur 7|Step 4 of 7/);
     expect(step1).toContain('id="ob_min_players"');
     expect(step1).toContain('data-i18n="skip"');
     expect(step1).toContain("onclick=\"window.location.href='/dashboard'\"");
@@ -227,7 +235,12 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const step1 = await getOnboarding(cookie, 1);
-    expect(step1).toContain('aria-valuemax="3"');
+    // B1: headcount's real flow-wide total is 6 (signup 1,2,3 +
+    // onboarding roster,reminders,stats -- no "teams" step), and this
+    // onboarding roster step is #4 in that count.
+    expect(step1).toContain('aria-valuemax="6"');
+    expect(step1).toContain('aria-valuenow="4"');
+    expect(step1).toMatch(/Étape 4 sur 6|Step 4 of 6/);
 
     // step=2 for headcount is 'reminders' (teams was skipped), not 'teams'
     const step2 = await getOnboarding(cookie, 2);
