@@ -5170,6 +5170,15 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-who b { display: block; font-weight: 600; }
   .ro-who span { font-size: 13px; color: var(--ink-muted); }
   .ro-panel { display: none; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); flex-direction: column; gap: var(--space-4); max-width: 400px; }
+  /* D1 (forms polish task): this panel's visibility is governed
+     entirely by the .open class (added server-side when the roster is
+     empty, toggled client-side by the Add a player button otherwise).
+     There used to also be an unconditional "@media (min-width: 900px)
+     { .ro-panel { display: flex; } }" rule here that forced it open on
+     any desktop-width viewport regardless of .open -- not a real
+     two-column layout (.ro-grid is a single 1fr column at every
+     width), just a stray leftover that made the button do nothing on
+     desktop. Do not reintroduce a width-based override here. */
   .ro-panel.open { display: flex; }
   .ro-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
   .ro-radio { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--space-2); }
@@ -5182,7 +5191,6 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-radio label { display: flex; align-items: center; justify-content: center; height: 44px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-md); font: 600 13px/1 var(--font-sans); cursor: pointer; text-align: center; padding: 0 var(--space-3); }
   .ro-radio input { position: absolute; opacity: 0; pointer-events: none; }
   .ro-radio label.on { border: 2px solid var(--primary); background: var(--primary-tint); color: var(--primary); }
-  @media (min-width: 900px) { .ro-panel { display: flex; } }
   .ro-bulk-overlay { display: none; position: fixed; inset: 0; background: rgba(15,15,20,0.55); z-index: 100; align-items: flex-start; justify-content: center; padding: var(--space-5) var(--space-4); overflow-y: auto; }
   .ro-bulk-overlay.open { display: flex; }
   .ro-bulk-card { background: var(--surface-raised); border-radius: var(--radius-lg); padding: var(--space-5); max-width: 720px; width: 100%; display: flex; flex-direction: column; gap: var(--space-4); }
@@ -5203,7 +5211,7 @@ async function handleLeagueRosterPage(req, env, url) {
     <div><h1 data-i18n="title">Joueurs</h1></div>
     <div style="display:flex;gap:var(--space-2);flex-wrap:wrap;">
       <button type="button" class="nl-btn nl-btn--secondary" id="ro_toggle_bulk" data-i18n="bulkImport" onclick="toggleBulkImport()">Importer d'un tableur</button>
-      <button type="button" class="nl-btn nl-btn--primary" id="ro_toggle_panel" data-i18n="addPlayer" onclick="toggleRosterPanel()">Ajouter un joueur</button>
+      <button type="button" class="nl-btn nl-btn--primary" id="ro_toggle_panel" data-i18n="addPlayer" onclick="openRosterPanel()">Ajouter un joueur</button>
     </div>
   </div>
   ${reminderWindowEvent ? `<section class="nl-card nl-card--pad-lg" id="ro-reminders-banner" style="${reminderWindowEvent.auto_reminders_enabled ? 'border-color:var(--danger,#b3122e)' : ''}">
@@ -5241,7 +5249,7 @@ async function handleLeagueRosterPage(req, env, url) {
         </div>`).join('')}
       </div>
     </div>` : ''}
-    <aside class="ro-panel" id="ro_panel" aria-label="Ajouter un joueur">
+    <aside class="ro-panel${contacts.length === 0 ? ' open' : ''}" id="ro_panel" aria-label="Ajouter un joueur">
       <h2 data-i18n="addPlayer">Ajouter un joueur</h2>
       <div id="formErr" class="nl-error" style="display:none"></div>
       <div class="nl-field">
@@ -5292,7 +5300,7 @@ async function handleLeagueRosterPage(req, env, url) {
       </div>` : ''}
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="r_submit" data-i18n="addBtn" onclick="submitContact()">Ajouter</button>
-        <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleRosterPanel()">Annuler</button>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="closeRosterPanel()">Annuler</button>
       </div>
     </aside>
   </div>
@@ -5355,8 +5363,23 @@ document.querySelectorAll('#r_goalie_radio label').forEach(function(l) {
     }
   });
 });
-function toggleRosterPanel() {
-  document.getElementById('ro_panel').classList.toggle('open');
+// D1 (forms polish task): the panel starts open server-side only when
+// the roster is empty (see the ro-panel class above); otherwise this
+// button opens it on first click. If it's already open, clicking again
+// used to do nothing (masked for years by the stray @media rule that
+// forced it open regardless) -- now it focuses the first field instead.
+function openRosterPanel() {
+  var panel = document.getElementById('ro_panel');
+  var nameField = document.getElementById('r_name');
+  if (panel.classList.contains('open')) {
+    if (nameField) nameField.focus();
+  } else {
+    panel.classList.add('open');
+    if (nameField) nameField.focus();
+  }
+}
+function closeRosterPanel() {
+  document.getElementById('ro_panel').classList.remove('open');
 }
 // F2 (players/reminders polish task): pause/resume reuses the same
 // per-event auto_reminders_enabled toggle the event-detail page's own
@@ -5877,7 +5900,11 @@ async function handleLeagueSchedulePage(req, env, url) {
       lblStartDate: 'Première date', lblOccurrences: 'Nombre de matchs',
       lblEndDate: 'ou date de fin (optionnel)', bulkCreateSubmit: 'Créer la série',
       duplicateBtn: 'Dupliquer', duplicateConfirmBtn: 'Confirmer',
-      bulkCreateResultSummary: '{created} match(s) créé(s), {skipped} ignoré(s) (déjà existant).'
+      bulkCreateResultSummary: '{created} match(s) créé(s), {skipped} ignoré(s) (déjà existant).',
+      // D3 (forms polish task): a 10h00 start / 00h30 end used to be
+      // accepted silently -- almost always a typo, but a late game can
+      // genuinely cross midnight, so this warns rather than blocks.
+      crossMidnightWarning: "L'heure de fin est avant l'heure de début, donc ce match se terminerait après minuit (le lendemain). Continuer quand même?"
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
@@ -5898,7 +5925,8 @@ async function handleLeagueSchedulePage(req, env, url) {
       lblStartDate: 'First date', lblOccurrences: 'Number of events',
       lblEndDate: 'or end date (optional)', bulkCreateSubmit: 'Create the series',
       duplicateBtn: 'Duplicate', duplicateConfirmBtn: 'Confirm',
-      bulkCreateResultSummary: '{created} event(s) created, {skipped} skipped (already existed).'
+      bulkCreateResultSummary: '{created} event(s) created, {skipped} skipped (already existed).',
+      crossMidnightWarning: "The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?"
     }
   };
 
@@ -5950,8 +5978,6 @@ async function handleLeagueSchedulePage(req, env, url) {
   .sc-panel.open { display: flex; }
   .sc-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
   .sc-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
-  .sc-time-presets { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
-  .sc-time-presets .nl-btn { padding: 2px 10px; min-height: unset; }
   /* C3 bug fix (schedule/events polish task): this panel used to force
      itself open on desktop (display: flex unconditionally above
      900px), completely defeating its own toggle button/'open' class
@@ -6010,17 +6036,12 @@ async function handleLeagueSchedulePage(req, env, url) {
       <div class="sc-two">
         <div class="nl-field">
           <label class="nl-label" for="e_start" data-i18n="startOpt">Heure de début (optionnel)</label>
+          <!-- D2 (forms polish task): the :00/:15/:30/:45 quick-set
+               buttons that used to sit here were removed -- they
+               wrapped badly and weren't useful. Prefill from the last
+               used start time (below) is kept; the native time picker
+               handles everything else. -->
           <input class="nl-input" id="e_start" type="time" value="${esc(lastUsedStartTime)}">
-          <!-- C4 (schedule/events polish task): quick-set buttons for the
-               common case (:00/:15/:30/:45 within whatever hour is
-               already set) -- the native picker underneath stays fully
-               usable for any other value; these just save the common
-               case a few clicks. Deliberately start-time only (see
-               setTimePreset's own comment for why end time doesn't get
-               these). -->
-          <div class="sc-time-presets">
-            ${['00', '15', '30', '45'].map(m => `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" onclick="setTimePreset('e_start','${m}')">:${m}</button>`).join('')}
-          </div>
         </div>
         <div class="nl-field">
           <label class="nl-label" for="e_end" data-i18n="endOpt">Heure de fin (optionnel)</label>
@@ -6029,12 +6050,12 @@ async function handleLeagueSchedulePage(req, env, url) {
       </div>
       ${venues.length ? `<div class="nl-field">
         <label class="nl-label" for="e_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
-        <select class="nl-select" id="e_venue_select">
+        <select class="nl-select" id="e_venue_select" onchange="onVenueSelectChange()">
           <option value="" data-i18n="venueSelectNone">Aucun -- texte libre ci-dessous</option>
           ${venues.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('')}
         </select>
       </div>` : ''}
-      <div class="nl-field">
+      <div class="nl-field" id="e_venue_wrap">
         <label class="nl-label" for="e_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
         <input class="nl-input" id="e_venue" type="text">
         ${venues.length ? `<p class="nl-help" data-i18n="freeTextNoMapLink">Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.</p>` : ''}
@@ -6080,12 +6101,12 @@ async function handleLeagueSchedulePage(req, env, url) {
       </div>
       ${venues.length ? `<div class="nl-field">
         <label class="nl-label" for="be_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
-        <select class="nl-select" id="be_venue_select">
+        <select class="nl-select" id="be_venue_select" onchange="onBulkVenueSelectChange()">
           <option value="" data-i18n="venueSelectNone">Aucun -- texte libre ci-dessous</option>
           ${venues.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('')}
         </select>
       </div>` : ''}
-      <div class="nl-field">
+      <div class="nl-field" id="be_venue_wrap">
         <label class="nl-label" for="be_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
         <input class="nl-input" id="be_venue" type="text">
         ${venues.length ? `<p class="nl-help" data-i18n="freeTextNoMapLink">Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.</p>` : ''}
@@ -6110,20 +6131,23 @@ ${tabbar}`;
   const script = `
 ${nlAuthScript(I18N_SCHEDULE)}
 function toggleSchedulePanel() { document.getElementById('sc_panel').classList.toggle('open'); }
-// C4 (schedule/events polish task): sets the MINUTE part of a time
-// input to one of the four quarter-hour presets, keeping whatever hour
-// is already there (from the "most recently used" prefill, or
-// whatever the admin already typed) -- an odd start time (the task's
-// own explicit requirement) is still just a normal edit in the native
-// picker underneath, this never restricts it. Only wired to start time
-// (e_start) -- end time is usually just "start + an hour or two" and
-// doesn't repeat week to week the same predictable way start time
-// does, so a prefill/preset pair for it would mostly just be noise;
-// its native picker is unchanged.
-function setTimePreset(inputId, minutes) {
-  var input = document.getElementById(inputId);
-  var hour = (input.value && input.value.indexOf(':') !== -1) ? input.value.split(':')[0] : '18';
-  input.value = hour + ':' + minutes;
+// D4 (forms polish task): mutually exclusive with the free-text venue
+// field below -- picking a saved venue hides the free-text field and
+// its help line entirely, rather than leaving them visible/editable
+// alongside a selection that would win anyway.
+function onVenueSelectChange() {
+  var select = document.getElementById('e_venue_select');
+  var wrap = document.getElementById('e_venue_wrap');
+  var freeText = document.getElementById('e_venue');
+  if (select.value) { freeText.value = ''; wrap.style.display = 'none'; }
+  else { wrap.style.display = ''; }
+}
+function onBulkVenueSelectChange() {
+  var select = document.getElementById('be_venue_select');
+  var wrap = document.getElementById('be_venue_wrap');
+  var freeText = document.getElementById('be_venue');
+  if (select.value) { freeText.value = ''; wrap.style.display = 'none'; }
+  else { wrap.style.display = ''; }
 }
 function showErr(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 async function submitEvent() {
@@ -6147,6 +6171,13 @@ async function submitEvent() {
   var optOutEl = document.getElementById('e_reminders_optout');
   var autoRemindersEnabled = optOutEl ? !optOutEl.checked : true;
   if (!date) { showErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
+  // D3 (forms polish task): an end time before the start time almost
+  // always means a typo, but a genuinely late game can cross midnight
+  // -- warn (don't block) so the admin can confirm it's intentional.
+  if (start_time && end_time && end_time < start_time) {
+    var dict = window.__pageDict ? window.__pageDict() : {};
+    if (!window.confirm(dict.crossMidnightWarning || 'The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?')) return;
+  }
   var btn = document.getElementById('e_submit');
   btn.disabled = true;
   try {
@@ -6186,6 +6217,12 @@ async function submitBulkEvents() {
   var optOutEl = document.getElementById('be_reminders_optout');
   var autoRemindersEnabled = optOutEl ? !optOutEl.checked : true;
   if (!startDate) { showBulkErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
+  // D3 (forms polish task): same non-blocking midnight-crossing warning
+  // as the single-event form -- applies to every event the series creates.
+  if (start_time && end_time && end_time < start_time) {
+    var dict = window.__pageDict ? window.__pageDict() : {};
+    if (!window.confirm(dict.crossMidnightWarning || 'The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?')) return;
+  }
   var btn = document.getElementById('be_submit');
   btn.disabled = true;
   try {
@@ -6667,9 +6704,9 @@ ${tabbar}`;
         ${venues.map(v => `<option value="${esc(v.id)}"${v.id === ev.venue_id ? ' selected' : ''}>${esc(v.name)}</option>`).join('')}
       </select>
     </div>` : ''}
-    <div class="nl-field">
+    <div class="nl-field" id="ev_edit_venue_wrap" style="${ev.venue_id ? 'display:none' : ''}">
       <label class="nl-label" for="ev_edit_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
-      <input class="nl-input" id="ev_edit_venue" type="text" value="${esc(ev.venue_id ? '' : (ev.venue || ''))}" ${ev.venue_id ? 'disabled' : ''}>
+      <input class="nl-input" id="ev_edit_venue" type="text" value="${esc(ev.venue_id ? '' : (ev.venue || ''))}">
       ${venues.length ? `<p class="nl-help" data-i18n="freeTextNoMapLink">Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.</p>` : ''}
     </div>
     <div style="display:flex;gap:8px;">
@@ -6699,15 +6736,16 @@ function toggleEventEdit() {
   var panel = document.getElementById('ev_edit_panel');
   panel.style.display = panel.style.display === 'none' ? '' : 'none';
 }
+// D4 (forms polish task): the saved-venue dropdown and the free-text
+// venue field are mutually exclusive, not just "free text disabled but
+// still shown" -- the field and its help line now hide entirely while
+// a saved venue is selected, same posture on the create/bulk/edit forms.
 function onEditVenueSelectChange() {
   var select = document.getElementById('ev_edit_venue_select');
+  var wrap = document.getElementById('ev_edit_venue_wrap');
   var freeText = document.getElementById('ev_edit_venue');
-  // A saved venue's name is the source of truth while one is picked --
-  // same posture as the create-event form -- so free text is disabled
-  // (and cleared) while a saved venue is selected, and re-enabled the
-  // moment "None" is chosen again.
-  if (select.value) { freeText.value = ''; freeText.disabled = true; }
-  else { freeText.disabled = false; }
+  if (select.value) { freeText.value = ''; wrap.style.display = 'none'; }
+  else { wrap.style.display = ''; }
 }
 async function submitEventEdit() {
   var errEl = document.getElementById('editFormErr');

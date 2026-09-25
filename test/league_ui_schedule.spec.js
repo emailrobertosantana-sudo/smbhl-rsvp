@@ -207,24 +207,23 @@ describe('UI task Part T: GET /league/schedule', () => {
     expect(html).not.toMatch(/class="sc-panel open"|class="open sc-panel"/);
   });
 
-  // C4 bug fix (schedule/events polish task): (a) quarter-hour preset
-  // buttons beside start time, native picker unchanged underneath;
-  // (b) the start-time field is prefilled with the league's own most
-  // recently used event start time (most leagues play at the same
-  // time every week), blank when there's no prior event with one yet.
-  describe('C4: start-time presets and remembered start time', () => {
-    it('the create form has quarter-hour preset buttons for start time, and no equivalent for end time', async () => {
+  // C4 bug fix (schedule/events polish task) originally added (a)
+  // quarter-hour preset buttons beside start time and (b) prefill from
+  // the league's own most recently used event start time. D2 (forms
+  // polish task) removed (a) outright -- the buttons wrapped badly and
+  // weren't useful -- while keeping (b), which is what the "remembered
+  // start time" tests below still lock.
+  describe('C4/D2: start-time presets removed, remembered start time kept', () => {
+    it('D2: the quarter-hour preset buttons/function are gone from the create form', async () => {
       const c = await signupAndCreateLeague('uischedule.c4.presets@example.com', '203.0.113.366', 'UI Schedule Presets League', ['A', 'B']);
       await SELF.fetch('http://example.com/league/season/publish', {
         method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
         body: JSON.stringify({ season_name: 'Presets Season' })
       });
       const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
-      expect(html).toContain("setTimePreset('e_start','00')");
-      expect(html).toContain("setTimePreset('e_start','15')");
-      expect(html).toContain("setTimePreset('e_start','30')");
-      expect(html).toContain("setTimePreset('e_start','45')");
-      expect(html).not.toContain("setTimePreset('e_end'");
+      expect(html).not.toContain("setTimePreset(");
+      expect(html).not.toContain('function setTimePreset');
+      expect(html).not.toContain('sc-time-presets');
       // The native input itself is untouched -- no step attribute
       // restricting it, still a real HTML time picker for any value.
       expect(html).toContain('id="e_start" type="time"');
