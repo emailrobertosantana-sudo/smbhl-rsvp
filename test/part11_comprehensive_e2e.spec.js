@@ -93,6 +93,10 @@ describe('Part 11: the entire second-league journey, end to end', () => {
     smbhlDataJsonSnapshot = JSON.parse(await env.SHEETS_KV.get('data_json'));
   });
 
+  // Flaky-timeout fix: this single test walks dozens of sequential real
+  // requests through the entire product (signup through SMBHL-isolation
+  // proof) -- the heaviest single test in the suite, most exposed to
+  // vitest's 5000ms default under parallel test-suite load.
   it('walks the entire flow end to end, and proves SMBHL is provably unaffected by all of it', async () => {
     env.PUBLIC_URL = 'https://notreligue.ca';
     try {
@@ -365,5 +369,5 @@ describe('Part 11: the entire second-league journey, end to end', () => {
     } finally {
       env.PUBLIC_URL = originalPublicUrl;
     }
-  });
+  }, 20000);
 });

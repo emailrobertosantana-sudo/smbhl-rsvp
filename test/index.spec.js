@@ -2137,6 +2137,9 @@ describe("SMBHL Worker", () => {
 			expect(data.planned_absences.some(a => a.player_id === "P100")).toBe(true);
 		});
 
+		// Flaky-timeout fix: 10 sequential real requests through the full
+		// Worker -- can intermittently exceed vitest's 5000ms default under
+		// parallel test-suite load.
 		it("returns HTTP 429 when an IP exceeds 10 failed admin login attempts", async () => {
 			const attackerIp = "198.51.100.42";
 			for (let i = 0; i < 10; i++) {
@@ -2153,7 +2156,7 @@ describe("SMBHL Worker", () => {
 			expect(lockedRes.status).toBe(429);
 			const txt = await lockedRes.text();
 			expect(txt).toContain("Too many failed attempts");
-		});
+		}, 15000);
 
 		it("does not send automated email right away when subs are assigned or reassigned > 24h out; only sends with final reminder", async () => {
 			const eventId = "2026-11-15"; // Way in the future (> 24 hours)
@@ -3958,6 +3961,9 @@ describe("SMBHL Worker", () => {
 			}
 		});
 
+		// Flaky-timeout fix: 10+ sequential real requests through the full
+		// Worker -- can intermittently exceed vitest's 5000ms default under
+		// parallel test-suite load.
 		it("allows correct admin key to unlock immediately and clear lockout even after 10 failed attempts", async () => {
 			const fakeIp = "192.168.1.99";
 			// Trigger 10 failed attempts from this IP
@@ -3985,8 +3991,11 @@ describe("SMBHL Worker", () => {
 				headers: { "cf-connecting-ip": fakeIp }
 			}), env);
 			expect(queryRes.status).toBe(200);
-		});
+		}, 15000);
 
+		// Flaky-timeout fix: several sequential real requests, including a
+		// 15-iteration loop -- can intermittently exceed vitest's 5000ms
+		// default under parallel test-suite load.
 		it("persists admin authentication via cookie and supports Cloudflare Access authenticated email without lockouts", async () => {
 			const fakeIp = "192.168.1.100";
 
@@ -4044,7 +4053,7 @@ describe("SMBHL Worker", () => {
 			}), env);
 			expect(unlockRes.status).toBe(200);
 			expect(await unlockRes.text()).toContain('id="gate" style="display:none"');
-		});
+		}, 15000);
 
 		it("renders /admin/season page with navigation tabs and protects /admin/season/data", async () => {
 			// 1. GET /admin/season renders Season Hub

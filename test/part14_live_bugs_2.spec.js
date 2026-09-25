@@ -164,6 +164,9 @@ describe('Live-testing issues, round 2', () => {
   });
 
   describe('Issue 4: weekly_draw random draw', () => {
+    // Flaky-timeout fix: 5 iterations x 2 sequential real requests each
+    // (10 total) plus the draw call -- can intermittently exceed vitest's
+    // 5000ms default under parallel test-suite load.
     it('assigns every confirmed unassigned player, only to real team names, covering the whole pool', async () => {
       const { cookie, csrfToken } = await signup('bugs2.randomdraw.basic@example.com', '203.0.117.008');
       await createLeague(cookie, csrfToken, { name: 'Random Draw Basic League', teamNames: ['Red', 'Blue'], tracksStats: true, teamStructure: 'weekly_draw' });
@@ -191,7 +194,7 @@ describe('Live-testing issues, round 2', () => {
       // Every confirmed player got covered.
       const assignedIds = rows.map(r => r.player_id).sort();
       expect(assignedIds).toEqual([...players].sort());
-    });
+    }, 15000);
 
     it('distributes goalies evenly across teams (2 goalies, 2 teams -> exactly 1 goalie per team)', async () => {
       const { cookie, csrfToken } = await signup('bugs2.randomdraw.goalies@example.com', '203.0.117.009');

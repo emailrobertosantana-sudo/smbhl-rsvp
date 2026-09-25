@@ -114,12 +114,16 @@ describe('Part 7 (live-testing task): bulk event creation (POST /league/events/b
     expect(json.errorKey).toBe('BULK_EVENTS_RECURRENCE_REQUIRED');
   });
 
+  // Flaky-timeout fix: this one HTTP call fans out into 52 sequential
+  // server-side event-row creations (collision check + insert each) --
+  // can intermittently exceed vitest's 5000ms default under parallel
+  // test-suite load. Slow by nature, not broken.
   it('caps occurrences at 52 even if a larger number is requested', async () => {
     const { cookie, csrfToken } = await signup('bulk.events.cap@example.com', '203.0.129.005');
     await createLeagueWithSeason(cookie, csrfToken, 'Bulk Events Cap League');
     const { json } = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-04', occurrences: 300 });
     expect(json.createdCount).toBe(52);
-  });
+  }, 15000);
 
   it('this route cannot be used against SMBHL', async () => {
     const { cookie, csrfToken } = await signup('bulk.events.smbhl.blocked@example.com', '203.0.129.006');

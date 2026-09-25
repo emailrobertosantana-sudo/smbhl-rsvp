@@ -32,6 +32,11 @@ describe('Part 7: login rate limiting', () => {
     }
   });
 
+  // Flaky-timeout fix: 10 sequential real login attempts, each a full
+  // request through the Worker (including a password verification), can
+  // intermittently exceed vitest's 5000ms default under parallel test-
+  // suite load -- slow by nature, not broken. Per-test timeout raised
+  // only here, not globally.
   it('blocks further login attempts from the same IP once the limit is exceeded (429)', async () => {
     const ip = '203.0.113.463';
     for (let i = 0; i < 10; i++) {
@@ -45,7 +50,7 @@ describe('Part 7: login rate limiting', () => {
       body: JSON.stringify({ email: 'part7.ratelimit@example.com', password: 'a-strong-password-1' }) // even the RIGHT password
     });
     expect(res.status).toBe(429);
-  });
+  }, 15000);
 
   it("a different IP is completely unaffected by another IP's rate limit", async () => {
     const res = await SELF.fetch('http://example.com/auth/login', {
@@ -55,6 +60,8 @@ describe('Part 7: login rate limiting', () => {
     expect(res.status).toBe(200);
   });
 
+  // Flaky-timeout fix: same 10-sequential-login-attempt mechanism as the
+  // test above -- same exposure to the default 5000ms under load.
   it("the login rate limit is a genuinely separate counter from signup's -- hitting one doesn't affect the other", async () => {
     const ip = '203.0.113.465';
     for (let i = 0; i < 10; i++) {
@@ -76,5 +83,5 @@ describe('Part 7: login rate limiting', () => {
       body: JSON.stringify({ email: 'part7.separate.counter@example.com', password: 'a-strong-password-1' })
     });
     expect(signupRes.status).toBe(200);
-  });
+  }, 15000);
 });

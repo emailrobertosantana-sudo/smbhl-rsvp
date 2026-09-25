@@ -146,6 +146,9 @@ describe('Part 11 (live-testing task, batch 6): public page shows past events al
     expect(html).toContain('data-i18n="standings"');
   });
 
+  // Flaky-timeout fix: 12 sequential real event-creation requests, each
+  // a full round trip through the Worker -- can intermittently exceed
+  // vitest's 5000ms default under parallel test-suite load.
   it('shows at most 10 recent past events, most recent first', async () => {
     const { cookie, csrfToken } = await signup('pastevents.limit@example.com', '203.0.200.007');
     const league = await createLeague(cookie, csrfToken, { name: 'Past Events Limit League', teamNames: ['A', 'B'] });
@@ -163,7 +166,7 @@ describe('Part 11 (live-testing task, batch 6): public page shows past events al
     const decemberIdx = html.indexOf('Rink 12');
     const marchIdx = html.indexOf('Rink 3');
     expect(decemberIdx).toBeLessThan(marchIdx);
-  });
+  }, 15000);
 
   it('a map link surfaces on a past event too, when its venue resolves one', async () => {
     const { cookie, csrfToken } = await signup('pastevents.maplink@example.com', '203.0.200.008');
