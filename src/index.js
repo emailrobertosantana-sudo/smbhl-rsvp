@@ -1801,8 +1801,8 @@ async function handleDashboardPage(req, env, url) {
     <section class="nl-card nl-card--pad-lg">
       <div class="h3" data-i18n="weekStatusTitle">Cette semaine</div>
       ${!nextEvent ? `
-      <p class="nl-help" style="margin-top:8px" data-i18n="weekStatusNoEvent">Aucun match à venir pour le moment.</p>
-      <div style="margin-top:8px"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/schedule" data-i18n="weekStatusCreateBtn">Créer l'horaire</a></div>` : `
+      <p class="nl-help" style="margin-top:4px" data-i18n="weekStatusNoEvent">Aucun match à venir pour le moment.</p>
+      <div style="margin-top:6px"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/schedule" data-i18n="weekStatusCreateBtn">Créer l'horaire</a></div>` : `
       <div class="dash-week-when">${dateTimeSpanHtml('span', nextEvent.date, nextEvent.start_time, 'short')}${nextEvent.venue ? `<span class="dash-week-venue">${esc(nextEvent.venue)}</span>` : ''}</div>
       <div class="dash-week-counts">
         <span class="nl-badge nl-badge--in">${weekStatus.confirmed} <span data-i18n="weekStatusConfirmed">confirmés</span></span>
