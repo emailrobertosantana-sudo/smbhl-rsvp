@@ -4130,6 +4130,22 @@ export function deriveGoalieRecord(ev, team) {
   return 'tie';
 }
 
+// Stats correctness task (2a): a goalie's goals_against IS the
+// opposing team's own recorded score -- there is no split-game case
+// (one goalie per team per game), so once a real result exists this
+// is always derivable, never a second, possibly-disagreeing source of
+// truth. Returns null only when it genuinely CAN'T be derived (no
+// score recorded yet, or the player's team doesn't resolve to either
+// side) -- handleLeaguePlayerStatsUpsert falls back to the client's
+// own submitted number only in that case; a resolvable value is
+// ALWAYS the derived one, regardless of what the client sent.
+export function deriveGoalsAgainst(ev, team) {
+  if (!ev.result_entered_at || ev.home_score == null || ev.away_score == null) return null;
+  if (team === ev.home_team) return ev.away_score;
+  if (team === ev.away_team) return ev.home_score;
+  return null;
+}
+
 export async function handleLeaguePlayerStatsUpsert(req, env) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
@@ -4187,20 +4203,34 @@ export async function handleLeaguePlayerStatsUpsert(req, env) {
     }
     const goals = role === 'skater' ? Math.max(0, Math.floor(Number(entry.goals) || 0)) : 0;
     const assists = role === 'skater' ? Math.max(0, Math.floor(Number(entry.assists) || 0)) : 0;
-    let goalsAgainst = null;
-    if (role === 'goalie') {
-      goalsAgainst = Number(entry.goals_against);
-      if (!Number.isFinite(goalsAgainst) || goalsAgainst < 0) {
-        return Response.json({ ok: false, error: `goals_against is required (zero or more) for a goalie entry (player ${playerId}).`, errorKey: 'INVALID_GOALS_AGAINST' }, { status: 400 });
-      }
-      goalsAgainst = Math.floor(goalsAgainst);
-    }
     // Which side they were on -- the event's own per-event assignment
     // (weekly_draw's rsvp.team) if set, else the league's permanent
     // one (fixed's contacts.preferred_team). Needed to derive a
-    // goalie's win/loss/tie later; harmless to record for a skater
-    // too (never displayed as anything other than context).
+    // goalie's win/loss/tie (and now goals_against, below); harmless
+    // to record for a skater too (never displayed as anything other
+    // than context).
     const team = confirmed.event_team || confirmed.preferred_team || null;
+    let goalsAgainst = null;
+    if (role === 'goalie') {
+      // Stats correctness task (2a): goals_against is the opposing
+      // team's own recorded score -- ALWAYS derived once resolvable,
+      // never taken from the client even if it sent one (a client
+      // whose page was open before the score was entered could submit
+      // a now-contradicting number). Only falls back to the client's
+      // own value when it genuinely can't be derived yet (no score
+      // recorded, or team unresolved) -- the pre-score manual-entry
+      // path this feature doesn't remove.
+      const derived = deriveGoalsAgainst(ev, team);
+      if (derived !== null) {
+        goalsAgainst = derived;
+      } else {
+        goalsAgainst = Number(entry.goals_against);
+        if (!Number.isFinite(goalsAgainst) || goalsAgainst < 0) {
+          return Response.json({ ok: false, error: `goals_against is required (zero or more) for a goalie entry (player ${playerId}).`, errorKey: 'INVALID_GOALS_AGAINST' }, { status: 400 });
+        }
+        goalsAgainst = Math.floor(goalsAgainst);
+      }
+    }
 
     await env.DB.prepare(
       `INSERT INTO player_game_stats (event_id, player_id, league_id, team, role, goals, assists, goals_against, updated_at)

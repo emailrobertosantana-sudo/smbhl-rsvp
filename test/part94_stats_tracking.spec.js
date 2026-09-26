@@ -18,7 +18,7 @@
 // tracking, deliberately not the model for this.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { deriveGoalieRecord, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, buildBracketAdvancement, buildEliminationBracket } from '../src/leagues.js';
+import { deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, buildBracketAdvancement, buildEliminationBracket } from '../src/leagues.js';
 import { applyRealSchema } from './support/real_schema.js';
 
 const AUTH_SECRET = 'test-part94-stats-tracking-secret';
@@ -827,5 +827,181 @@ describe('Stats tracking, Part 5: playoff seeding resolver', () => {
 
     const html = await eventDetailHtml(cookie, final.id);
     expect(html).toContain('data-i18n="playoffAwaitingSeedingTitle"'); // still says so, rather than guessing
+  });
+});
+
+// Stats correctness task, Part 2a/2b: goalie goals-against must be
+// DERIVED from the recorded score, never a free entry that can
+// contradict it (2a) -- there is no split-game case, one goalie per
+// team per game. Player goals get a live running tally against the
+// team's own recorded score, WARNING on mismatch rather than blocking
+// (2b) -- some goals genuinely go unattributed off a paper scoresheet.
+describe('Stats correctness task, Part 2a: goalie goals-against is derived, not entered', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it("deriveGoalsAgainst returns the OPPOSING team's own recorded score, and null when it genuinely cannot be derived", async () => {
+    const ev = { result_entered_at: '2026-01-01T00:00:00Z', home_team: 'Rouge', away_team: 'Bleu', home_score: 14, away_score: 5 };
+    expect(deriveGoalsAgainst(ev, 'Rouge')).toBe(5); // Rouge's goalie faced Bleu's 5 goals
+    expect(deriveGoalsAgainst(ev, 'Bleu')).toBe(14); // Bleu's goalie faced Rouge's 14 goals
+    expect(deriveGoalsAgainst(ev, 'Vert')).toBeNull(); // team doesn't resolve to either side
+    const noResult = { ...ev, result_entered_at: null, home_score: null, away_score: null };
+    expect(deriveGoalsAgainst(noResult, 'Rouge')).toBeNull(); // nothing to derive from yet
+  });
+
+  it("once a real result is recorded, the server ALWAYS derives goals_against -- a contradicting client-submitted number is silently overridden, matching the recorded score", async () => {
+    const { cookie, csrfToken } = await signup('p2a.derive@example.com', '203.0.207.001');
+    await createLeague(cookie, csrfToken, { name: 'Derive League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const goalie = await addContact(cookie, csrfToken, { name: 'Rouge Goalie Player', role: 'roster', team: 'Rouge' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
+
+    // The live-observed bug: Red 14 -- Black 5, and the form still let
+    // a number that contradicts the score through.
+    await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 14, away_score: 5 }); // Rouge (home) wins 14-5
+
+    const res = await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 99 }] }); // deliberately wrong
+    expect(res.status).toBe(200);
+    expect(res.json.saved[0].goals_against).toBe(5); // derived (Bleu's score), the client's 99 ignored
+
+    const row = await env.DB.prepare('SELECT goals_against FROM player_game_stats WHERE event_id = ? AND player_id = ?').bind(ev.id, goalie.player_id).first();
+    expect(row.goals_against).toBe(5);
+  });
+
+  it('the event page shows the derived goals-against read-only (not an editable input) once a real result exists, matching the recorded score exactly', async () => {
+    const { cookie, csrfToken } = await signup('p2a.readonly@example.com', '203.0.207.002');
+    await createLeague(cookie, csrfToken, { name: 'Readonly League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const goalie = await addContact(cookie, csrfToken, { name: 'Bleu Goalie Player', role: 'roster', team: 'Bleu' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
+    await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 0 }] }); // pre-score manual entry, still allowed
+
+    // Before the score exists, the field is a plain editable input.
+    let html = await eventDetailHtml(cookie, ev.id);
+    expect(html).toMatch(/class="nl-input ps-goals-against" type="number" min="0"/);
+    expect(html).not.toContain('ps-goals-against" type="number" readonly');
+
+    // Once the score is recorded, it becomes read-only and shows the
+    // real derived number -- Bleu conceded Rouge's 14 goals.
+    await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 14, away_score: 5 });
+    html = await eventDetailHtml(cookie, ev.id);
+    expect(html).toMatch(/class="nl-input ps-goals-against" type="number" readonly[^>]*value="14"/);
+    expect(html).toContain('data-i18n-title="goalsAgainstDerivedTitle"');
+  });
+
+  it("both languages' explanatory tooltip text, verbatim", async () => {
+    const { cookie, csrfToken } = await signup('p2a.i18n@example.com', '203.0.207.003');
+    await createLeague(cookie, csrfToken, { name: 'I18n League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const goalie = await addContact(cookie, csrfToken, { name: 'Tooltip Goalie Player', role: 'roster', team: 'Rouge' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
+    await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 0 }] });
+    await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 3, away_score: 1 });
+
+    const html = await eventDetailHtml(cookie, ev.id);
+    const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
+    const dict = JSON.parse(m[1]);
+    expect(dict.fr.goalsAgainstDerivedTitle).toBe("Calculé automatiquement à partir du résultat du match -- le nombre de buts de l'équipe adverse.");
+    expect(dict.en.goalsAgainstDerivedTitle).toBe("Calculated automatically from the recorded result -- the opposing team's own score.");
+  });
+});
+
+describe('Stats correctness task, Part 2b: goals-vs-score running tally, warns on mismatch, quiet on match', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it('the tally scaffolding (one line per side, real team name and target score) only appears once a real result exists', async () => {
+    const { cookie, csrfToken } = await signup('p2b.scaffold@example.com', '203.0.208.001');
+    await createLeague(cookie, csrfToken, { name: 'Scaffold League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const p1 = await addContact(cookie, csrfToken, { name: 'Tally Player One', role: 'roster', team: 'Rouge' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    await setRsvp(cookie, csrfToken, ev.id, p1.player_id, 'in');
+
+    let html = await eventDetailHtml(cookie, ev.id);
+    expect(html).not.toContain('id="ps_goal_tally"'); // no score yet -- nothing to validate against
+
+    await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 14, away_score: 5 });
+    html = await eventDetailHtml(cookie, ev.id);
+    expect(html).toContain('id="ps_tally_home" data-team="Rouge" data-target="14"');
+    expect(html).toContain('id="ps_tally_away" data-team="Bleu" data-target="5"');
+    // Wired to recompute live as the admin types, and on every goalie toggle.
+    expect(html).toContain('oninput="updateGoalTally()"');
+    expect(html).toContain('function updateGoalTally()');
+    expect(html).toContain("updateGoalTally(); // a goalie's own goals never count toward the team's tally");
+  });
+
+  it('the tally logic sums entered goals per team and only flags a mismatch when the sum differs from the recorded score -- never blocking, either way', async () => {
+    const { cookie, csrfToken } = await signup('p2b.logic@example.com', '203.0.208.002');
+    await createLeague(cookie, csrfToken, { name: 'Logic League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const p1 = await addContact(cookie, csrfToken, { name: 'Logic Player One', role: 'roster', team: 'Rouge' });
+    const p2 = await addContact(cookie, csrfToken, { name: 'Logic Player Two', role: 'roster', team: 'Rouge' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    await setRsvp(cookie, csrfToken, ev.id, p1.player_id, 'in');
+    await setRsvp(cookie, csrfToken, ev.id, p2.player_id, 'in');
+    await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 14, away_score: 5 });
+
+    // A deliberate mismatch: entered goals for Rouge total 8, but the
+    // recorded score is 14 -- some goals unattributed. Saved anyway
+    // (never blocked), and the page's own pre-filled values are what
+    // the client-side tally would sum from on load.
+    await postPlayerStats(cookie, csrfToken, {
+      event_id: ev.id,
+      entries: [
+        { player_id: p1.player_id, role: 'skater', goals: 5, assists: 0 },
+        { player_id: p2.player_id, role: 'skater', goals: 3, assists: 0 }
+      ]
+    });
+    let html = await eventDetailHtml(cookie, ev.id);
+    expect(html).toMatch(/ps-goals" type="number" min="0" style="width:60px" value="5" oninput="updateGoalTally\(\)"/);
+    expect(html).toMatch(/ps-goals" type="number" min="0" style="width:60px" value="3" oninput="updateGoalTally\(\)"/);
+    // The mismatch styling itself is client-computed (sum !== target),
+    // never blocking the save that already succeeded above.
+    expect(html).toContain("el.style.color = sum === target ? '' : 'var(--danger)'");
+
+    // Now a matching total (5 + 9 = 14) -- quiet on match, same logic.
+    const p3 = await addContact(cookie, csrfToken, { name: 'Logic Player Three', role: 'roster', team: 'Rouge' });
+    await setRsvp(cookie, csrfToken, ev.id, p3.player_id, 'in');
+    await postPlayerStats(cookie, csrfToken, {
+      event_id: ev.id,
+      entries: [
+        { player_id: p1.player_id, role: 'skater', goals: 5, assists: 0 },
+        { player_id: p2.player_id, role: 'skater', goals: 3, assists: 0 },
+        { player_id: p3.player_id, role: 'skater', goals: 6, assists: 0 }
+      ]
+    });
+    html = await eventDetailHtml(cookie, ev.id);
+    expect(html).toMatch(/ps-goals" type="number" min="0" style="width:60px" value="6" oninput="updateGoalTally\(\)"/);
+    // 5 + 3 + 6 = 14, matching Rouge's own recorded score exactly.
+  });
+
+  it("a goalie row is excluded from its own team's goals tally", async () => {
+    const { cookie, csrfToken } = await signup('p2b.goalieexcl@example.com', '203.0.208.003');
+    await createLeague(cookie, csrfToken, { name: 'Goalie Excl League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const goalie = await addContact(cookie, csrfToken, { name: 'Excl Goalie Player', role: 'roster', team: 'Rouge' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
+    await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 14, away_score: 5 });
+    await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 0 }] });
+
+    const html = await eventDetailHtml(cookie, ev.id);
+    // The goalie-toggle check inside updateGoalTally is what excludes
+    // this row from the sum -- locked here as a source-level guard.
+    expect(html).toContain('if (goalieToggle && goalieToggle.checked) return;');
   });
 });

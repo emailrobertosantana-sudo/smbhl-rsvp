@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -8242,8 +8242,15 @@ ${tabbar}`;
   let confirmedPlayers = [];
   let existingPlayerStats = new Map();
   if (leagueRow.tracks_player_stats) {
+    // Stats correctness task (2a/2b): each row's own team-for-this-
+    // event, same resolution order handleLeaguePlayerStatsUpsert
+    // itself uses (weekly_draw's rsvp.team when set, else fixed's
+    // permanent contacts.preferred_team) -- needed both to derive a
+    // goalie's own goals-against read-only, and to tally a team's own
+    // players' goals against its recorded score (2b).
     confirmedPlayers = (await env.DB.prepare(
-      `SELECT c.player_id, c.name FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+      `SELECT c.player_id, c.name, COALESCE(r.team, c.preferred_team) AS team
+         FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
         WHERE r.event_id = ? AND r.status = 'in' AND c.league_id = ? ORDER BY c.name`
     ).bind(ev.id, leagueId).all()).results || [];
     const statRows = (await env.DB.prepare(
@@ -8251,6 +8258,12 @@ ${tabbar}`;
     ).bind(ev.id).all()).results || [];
     existingPlayerStats = new Map(statRows.map(r => [r.player_id, r]));
   }
+  // 2a: a goalie's goals_against is always derivable once the event
+  // has a real recorded result against a real two-sided matchup --
+  // see deriveGoalsAgainst's own comment (leagues.js). null (e.g. no
+  // score yet) keeps the field a manual, editable input -- the same
+  // path this had before the score existed.
+  const scoreRecordedForDerivation = !!(ev.result_entered_at && ev.home_score != null && ev.away_score != null && ev.home_team && ev.away_team);
 
   const I18N_DETAIL = {
     fr: {
@@ -8323,6 +8336,15 @@ ${tabbar}`;
       playerStatsNoConfirmed: "Aucun joueur confirmé pour ce match pour l'instant.",
       colGoals: 'Buts', colAssists: 'Passes', colGoalie: 'Gardien', colGoalsAgainst: 'Buts alloués',
       goalieNeedsResults: "Active les résultats des matchs pour ce match pour pouvoir entrer des statistiques de gardien.",
+      // Stats correctness task (2a): the goalie's own goals-against
+      // field is read-only once derived from the recorded score --
+      // this tooltip explains why it can't be typed into.
+      goalsAgainstDerivedTitle: "Calculé automatiquement à partir du résultat du match -- le nombre de buts de l'équipe adverse.",
+      // 2b: a running tally of goals ENTERED for each team against its
+      // own recorded score, updated live as the admin types -- a
+      // mismatch warns (never blocks, since some goals genuinely go
+      // unattributed on a paper scoresheet).
+      psTallyLine: '{team} : {sum} sur {target} but(s) attribué(s)',
       ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
     },
     en: {
@@ -8365,6 +8387,8 @@ ${tabbar}`;
       playerStatsNoConfirmed: 'No players confirmed for this game yet.',
       colGoals: 'Goals', colAssists: 'Assists', colGoalie: 'Goalie', colGoalsAgainst: 'Goals against',
       goalieNeedsResults: 'Turn on game results for this league to enter goalie stats.',
+      goalsAgainstDerivedTitle: "Calculated automatically from the recorded result -- the opposing team's own score.",
+      psTallyLine: '{team}: {sum} of {target} goal(s) attributed',
       ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     }
   };
@@ -8727,15 +8751,29 @@ ${tabbar}`;
       ${confirmedPlayers.map(p => {
         const existing = existingPlayerStats.get(p.player_id);
         const isGoalie = existing && existing.role === 'goalie';
-        return `<div class="ev-p" data-player-stat-row="${esc(p.player_id)}" style="align-items:center;flex-wrap:wrap;">
+        // 2a (stats correctness task): once the event has a real
+        // recorded score, a goalie's own goals-against is ALWAYS the
+        // opposing team's score -- derived and shown read-only, never
+        // a free number that could contradict the result on record.
+        // Still a plain editable input before the score exists (the
+        // one case nothing can be derived from yet).
+        const derivedGA = scoreRecordedForDerivation ? deriveGoalsAgainst(ev, p.team) : null;
+        const gaValue = derivedGA != null ? derivedGA : (isGoalie && existing.goals_against != null ? existing.goals_against : '');
+        return `<div class="ev-p" data-player-stat-row="${esc(p.player_id)}" data-team="${esc(p.team || '')}" style="align-items:center;flex-wrap:wrap;">
         <span style="min-width:140px">${esc(p.name)}</span>
         <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" class="ps-goalie-toggle" ${isGoalie ? 'checked' : ''} ${leagueRow.tracks_results ? '' : 'disabled'} onchange="psToggleGoalie(this)"> <span data-i18n="colGoalie">Gardien</span></label>
-        <label class="ps-skater-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? 'display:none' : ''}"><span data-i18n="colGoals">Buts</span> <input class="nl-input ps-goals" type="number" min="0" style="width:60px" value="${existing && existing.role !== 'goalie' ? esc(String(existing.goals)) : ''}"></label>
+        <label class="ps-skater-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? 'display:none' : ''}"><span data-i18n="colGoals">Buts</span> <input class="nl-input ps-goals" type="number" min="0" style="width:60px" value="${existing && existing.role !== 'goalie' ? esc(String(existing.goals)) : ''}" oninput="updateGoalTally()"></label>
         <label class="ps-skater-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? 'display:none' : ''}"><span data-i18n="colAssists">Passes</span> <input class="nl-input ps-assists" type="number" min="0" style="width:60px" value="${existing && existing.role !== 'goalie' ? esc(String(existing.assists)) : ''}"></label>
-        <label class="ps-goalie-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? '' : 'display:none'}"><span data-i18n="colGoalsAgainst">Buts alloués</span> <input class="nl-input ps-goals-against" type="number" min="0" style="width:60px" value="${isGoalie && existing.goals_against != null ? esc(String(existing.goals_against)) : ''}"></label>
+        <label class="ps-goalie-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? '' : 'display:none'}"><span data-i18n="colGoalsAgainst">Buts alloués</span> ${derivedGA != null
+          ? `<input class="nl-input ps-goals-against" type="number" readonly style="width:60px;background:var(--surface-sunken)" value="${esc(String(gaValue))}" data-i18n-title="goalsAgainstDerivedTitle" title="${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).goalsAgainstDerivedTitle)}">`
+          : `<input class="nl-input ps-goals-against" type="number" min="0" style="width:60px" value="${esc(String(gaValue))}">`}</label>
       </div>`;
       }).join('')}
     </div>
+    ${scoreRecordedForDerivation ? `<div id="ps_goal_tally" style="margin-top:8px;display:flex;flex-direction:column;gap:2px;">
+      <p class="nl-help" id="ps_tally_home" data-team="${esc(ev.home_team)}" data-target="${ev.home_score}"></p>
+      <p class="nl-help" id="ps_tally_away" data-team="${esc(ev.away_team)}" data-target="${ev.away_score}"></p>
+    </div>` : ''}
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="playerStatsSaveBtn" onclick="submitPlayerStats()">Enregistrer les statistiques</button></div>
     `}
   </section>` : ''}
@@ -8916,7 +8954,43 @@ function psToggleGoalie(checkbox) {
   var isGoalie = checkbox.checked;
   Array.prototype.forEach.call(row.querySelectorAll('.ps-skater-fields'), function(el) { el.style.display = isGoalie ? 'none' : ''; });
   Array.prototype.forEach.call(row.querySelectorAll('.ps-goalie-fields'), function(el) { el.style.display = isGoalie ? '' : 'none'; });
+  updateGoalTally(); // a goalie's own goals never count toward the team's tally
 }
+// 2b (stats correctness task): a live running tally of goals ENTERED
+// for each team against its OWN recorded score -- warns on mismatch
+// (never blocks; some goals genuinely go unattributed on a paper
+// scoresheet). Assists have no fixed total to check against, so no
+// equivalent here. Re-run on every goals input and every goalie
+// toggle (a goalie's own row never counts toward its team's tally).
+function updateGoalTally() {
+  var wrap = document.getElementById('ps_goal_tally');
+  if (!wrap) return;
+  var dict = window.__pageDict ? window.__pageDict() : {};
+  var sums = {};
+  var rows = document.querySelectorAll('[data-player-stat-row]');
+  Array.prototype.forEach.call(rows, function(row) {
+    var team = row.getAttribute('data-team');
+    if (!team) return;
+    var goalieToggle = row.querySelector('.ps-goalie-toggle');
+    if (goalieToggle && goalieToggle.checked) return;
+    var goalsInput = row.querySelector('.ps-goals');
+    var goals = goalsInput ? (Number(goalsInput.value) || 0) : 0;
+    sums[team] = (sums[team] || 0) + goals;
+  });
+  ['home', 'away'].forEach(function(side) {
+    var el = document.getElementById('ps_tally_' + side);
+    if (!el) return;
+    var team = el.getAttribute('data-team');
+    var target = Number(el.getAttribute('data-target'));
+    var sum = sums[team] || 0;
+    var text = (dict.psTallyLine || '{team}: {sum} of {target} goal(s) attributed')
+      .split('{team}').join(team).split('{sum}').join(String(sum)).split('{target}').join(String(target));
+    el.textContent = text;
+    el.style.color = sum === target ? '' : 'var(--danger)';
+    el.style.fontWeight = sum === target ? '' : '600';
+  });
+}
+updateGoalTally();
 async function submitPlayerStats() {
   var err = document.getElementById('playerStatsErr'); var ok = document.getElementById('playerStatsOk');
   err.style.display = 'none'; ok.style.display = 'none';
