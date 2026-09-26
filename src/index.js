@@ -3578,6 +3578,15 @@ function publicPageNotAvailableResponse(req) {
   });
 }
 
+// Public page QA batch (C1): a HEAD request gets exactly the GET
+// response's status and headers with no body (RFC 9110 s9.3.2) --
+// including the 404/410 "not public"/"deactivated" pages, so HEAD can
+// never disagree with GET about whether a page exists.
+function headAware(req, resp) {
+  if (req.method !== 'HEAD') return resp;
+  return new Response(null, { status: resp.status, statusText: resp.statusText, headers: resp.headers });
+}
+
 async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const leagueId = resolvedLeagueId || url.searchParams.get('league');
   if (!leagueId) return new Response('league is required', { status: 400 });
@@ -26185,8 +26194,8 @@ async function handleFetch(req, env, ctx) {
         return await leagueRsvpPost(req, env, url);
       // Part 4: public, read-only league page. No session/ADMIN_KEY at
       // all -- deliberately as unauthenticated as /league/rsvp above.
-      if (url.pathname === '/league/public' && req.method === 'GET')
-        return await handleLeaguePublicPage(req, env, url);
+      if (url.pathname === '/league/public' && (req.method === 'GET' || req.method === 'HEAD'))
+        return headAware(req, await handleLeaguePublicPage(req, env, url));
       // Session-gated admin-set RSVP (Part R — see the task report). The
       // only "set a different player's status" path this app has for a
       // second league — never reachable via a player token.
@@ -27021,9 +27030,13 @@ async function handleFetch(req, env, ctx) {
       // at creation time). Single path segment only (no further slashes),
       // GET only; anything else falls through to the generic 404 below,
       // same as today.
-      if (req.method === 'GET' && /^\/[a-z0-9-]+$/.test(url.pathname)) {
+      // Public page QA batch (C1): HEAD too -- link-preview crawlers
+      // (iMessage, Slack, WhatsApp, Facebook) commonly send HEAD before
+      // GET, and a 404 there can make a shared league page preview as
+      // broken. Same handler, same status/headers, no body.
+      if ((req.method === 'GET' || req.method === 'HEAD') && /^\/[a-z0-9-]+$/.test(url.pathname)) {
         const slugLeagueId = await resolveLeagueIdBySlug(env, url.pathname.slice(1));
-        if (slugLeagueId) return await handleLeaguePublicPage(req, env, url, slugLeagueId);
+        if (slugLeagueId) return headAware(req, await handleLeaguePublicPage(req, env, url, slugLeagueId));
       }
       return new Response('not found', { status: 404 });
     } catch (e) {
