@@ -7939,7 +7939,11 @@ ${tabbar}`;
   // teams batch); weekly_draw shows generic Home/Away labels when not
   // drawn yet -- the real team names are only known at submit time.
   let scoreSides = null;
-  if (leagueRow.tracks_results && teamStructure !== 'headcount') {
+  // Best-of-N task (Part 3): a cancelled event (a playoff game whose
+  // own series was decided without needing it) never gets a score
+  // form at all -- same guard as handleLeagueEventScore's own route,
+  // not just left to the UI.
+  if (leagueRow.tracks_results && teamStructure !== 'headcount' && ev.state !== 'cancelled') {
     if (ev.is_playoff) {
       if (ev.home_team && ev.away_team) scoreSides = { home: ev.home_team, away: ev.away_team, generic: false };
     } else if (isWeeklyDraw) {
@@ -8018,11 +8022,17 @@ ${tabbar}`;
       // Part 3 (playoff extension): a playoff placeholder's own
       // version of the "no matchup set" state -- explicitly a playoff
       // game awaiting seeding, never confused with a misconfigured
-      // regular-season game (no score-entry/standings feature exists
-      // in this product yet to resolve seeding automatically -- see
-      // this task's own final report for what that would take).
+      // regular-season game. Seeding/advancement is automatic (Part 5,
+      // stats tracking task -- resolvePlayoffSeeding) once the
+      // regular season (or an earlier round) actually finishes; this
+      // just means that hasn't happened yet.
       playoffAwaitingSeedingTitle: 'Match de séries -- en attente des résultats',
-      playoffAwaitingSeedingDesc: "Les équipes seront connues une fois les résultats de la saison régulière (et des rondes précédentes) entrés -- ce produit ne calcule pas encore les classements automatiquement.",
+      playoffAwaitingSeedingDesc: "Les équipes seront connues une fois les résultats de la saison régulière (et des rondes précédentes) entrés -- calculé automatiquement, rien à faire ici.",
+      // Best-of-N task (Part 3): a series decided before this game's
+      // own slot was needed -- marked cancelled rather than left
+      // looking like an unplayed game forever.
+      playoffSeriesDecidedTitle: 'Série déjà décidée',
+      playoffSeriesDecidedDesc: "Cette série a été remportée avant que ce match ne soit nécessaire -- il n'aura pas lieu.",
       // Part 2 (stats tracking task): score entry, ADMIN ONLY.
       scoreTitle: 'Résultat', scoreEnterBtn: 'Entrer le résultat', scoreEditBtn: 'Modifier le résultat',
       scoreSaveBtn: 'Enregistrer le résultat', scoreCancelBtn: 'Annuler', scoreSaved: 'Résultat enregistré.',
@@ -8066,7 +8076,9 @@ ${tabbar}`;
       noMatchupSetTitle: 'No matchup set',
       noMatchupSetDesc: "This league has more than two teams -- who's playing needs to be known before rosters can be shown.",
       playoffAwaitingSeedingTitle: 'Playoff game -- awaiting results',
-      playoffAwaitingSeedingDesc: "Teams will be known once regular-season (and earlier-round) results are entered -- this product doesn't calculate standings automatically yet.",
+      playoffAwaitingSeedingDesc: "Teams will be known once regular-season (and earlier-round) results are entered -- computed automatically, nothing to do here.",
+      playoffSeriesDecidedTitle: 'Series already decided',
+      playoffSeriesDecidedDesc: "This series was won before this game's own slot was needed -- it won't be played.",
       scoreTitle: 'Result', scoreEnterBtn: 'Enter the result', scoreEditBtn: 'Edit the result',
       scoreSaveBtn: 'Save result', scoreCancelBtn: 'Cancel', scoreSaved: 'Result saved.',
       scoreHomeGeneric: 'Home', scoreAwayGeneric: 'Away',
@@ -8440,7 +8452,13 @@ ${tabbar}`;
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="playerStatsSaveBtn" onclick="submitPlayerStats()">Enregistrer les statistiques</button></div>
     `}
   </section>` : ''}
-  <div class="ev-teams">${ev.is_playoff && !(ev.home_team && ev.away_team)
+  <div class="ev-teams">${ev.is_playoff && ev.state === 'cancelled'
+    ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
+      <h2 data-i18n="playoffSeriesDecidedTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffSeriesDecidedTitle)}</h2>
+      ${playoffMeta ? `<p class="nl-help" style="font-weight:600">${esc(playoffRoleLabel(playoffMeta, lang))}</p>` : ''}
+      <p class="nl-help" data-i18n="playoffSeriesDecidedDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffSeriesDecidedDesc)}</p>
+    </section>`
+    : ev.is_playoff && !(ev.home_team && ev.away_team)
     ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
       <h2 data-i18n="playoffAwaitingSeedingTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingTitle)}</h2>
       ${playoffMeta ? `<p class="nl-help" style="font-weight:600">${esc(playoffRoleLabel(playoffMeta, lang))}</p>` : ''}

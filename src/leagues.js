@@ -3793,6 +3793,15 @@ export async function handleLeagueEventScore(req, env) {
   }
   const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
   if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  // Best-of-N task (Part 3): a playoff game the series resolver marked
+  // cancelled (its series was already decided without needing it) is
+  // moot -- scoring it would let a stray result reopen a series that's
+  // already advanced elsewhere. Blocked here, not only by the UI
+  // hiding the form -- same posture as every other guard in this
+  // route.
+  if (ev.state === 'cancelled') {
+    return Response.json({ ok: false, error: 'This game was cancelled and cannot be scored.', errorKey: 'EVENT_CANCELLED' }, { status: 409 });
+  }
 
   const leagueRow = await env.DB.prepare('SELECT team_structure, tracks_results FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow.tracks_results) {
@@ -4119,7 +4128,7 @@ export async function resolvePlayoffSeeding(env, leagueId, season) {
   if (!rounds.length) return;
 
   const events = (await env.DB.prepare(
-    `SELECT id, date, home_team, away_team, home_score, away_score, result_entered_at, playoff_meta
+    `SELECT id, date, state, home_team, away_team, home_score, away_score, result_entered_at, playoff_meta
        FROM events WHERE league_id = ? AND season = ? AND is_playoff = 1 ORDER BY date ASC`
   ).bind(leagueId, season).all()).results || [];
   if (!events.length) return;
@@ -4142,15 +4151,29 @@ export async function resolvePlayoffSeeding(env, leagueId, season) {
     if (!roundIdxsByRole.has(role)) roundIdxsByRole.set(role, []);
     roundIdxsByRole.get(role).push(roundIdx);
   });
-  const datesByRole = new Map();
-  for (const ev of parsed) {
-    if (!roundIdxsByRole.has(ev.meta.role)) continue; // bye/reserved/third_place -- not part of the seeded bracket
-    if (!datesByRole.has(ev.meta.role)) datesByRole.set(ev.meta.role, new Set());
-    datesByRole.get(ev.meta.role).add(ev.date);
-  }
+  // Best-of-N task (Part 3): a series spans SEVERAL dates within the
+  // very same round (buildPlayoffPlaceholders' own comment -- "game 2
+  // of a series is played on a later date than game 1"), so "one date
+  // per round" no longer holds the way it did when this was written.
+  // Common case (every realistic bracket, best-of-N or not): a role
+  // maps to exactly ONE round, so the role alone identifies it --
+  // no date inference needed at all, regardless of how many dates a
+  // series spans.
   const roundIdxForEvent = new Map();
   for (const [role, roundIdxs] of roundIdxsByRole) {
-    const dates = [...(datesByRole.get(role) || [])].sort();
+    if (roundIdxs.length === 1) {
+      for (const ev of parsed) {
+        if (ev.meta.role === role) roundIdxForEvent.set(ev.id, roundIdxs[0]);
+      }
+      continue;
+    }
+    // Rare: a bracket large enough that more than one EARLY round
+    // shares the generic 'bracket' label (flagged limitation for
+    // brackets over ~8 playoff teams -- see this function's own header
+    // comment). Falls back to chronological order among this role's
+    // own distinct dates -- round 1's own games are always scheduled
+    // earliest.
+    const dates = [...new Set(parsed.filter(ev => ev.meta.role === role).map(ev => ev.date))].sort();
     for (const ev of parsed) {
       if (ev.meta.role !== role) continue;
       const pos = dates.indexOf(ev.date);
@@ -4207,26 +4230,55 @@ export async function resolvePlayoffSeeding(env, leagueId, season) {
     }
   }
 
-  // 2. Advance the winner of any played, DECISIVE playoff game into
-  // the next round's slot it feeds.
+  // 2. Advance the winner of a DECIDED series into the next round's
+  // slot it feeds. Best-of-N task (Part 3): a series is decided by a
+  // majority of its own games -- Math.ceil(seriesLength/2) -- never by
+  // just its latest played game (the earlier, wrong shortcut this
+  // replaces: a best-of-3 split 1-1 was previously "decided" by
+  // whichever team happened to win game 2, advancing the wrong side
+  // whenever the two games disagreed). single_elimination's own
+  // seriesLength is always 1, so neededWins is always 1 there too --
+  // one general rule, no format-specific branch. Every game in a
+  // series shares the same home_team/away_team (seeded/advanced onto
+  // all of a series' events at once, above and below), so wins can be
+  // tallied by team name directly, across whichever of the series'
+  // games have a real, non-tied result so far.
   for (const [key, evs] of eventsByRoundMatchup) {
     const [roundIdxStr, matchupIdxStr] = key.split(':');
     const roundIdx = Number(roundIdxStr), matchupIdx = Number(matchupIdxStr);
     const m = (rounds[roundIdx] || []).find(x => x.matchupIndexInRound === matchupIdx);
-    if (!m || m.advancesToRound == null) continue; // final round -- champion, nothing further to fill
-    // A best-of-N series is still just individual game events here (no
-    // real series-win tracking exists yet -- flagged as a known
-    // simplification) -- the LATEST played, decisive game of the
-    // matchup is used as the advancing result.
-    const decided = evs
-      .filter(ev => ev.result_entered_at && ev.home_team && ev.away_team && ev.home_score !== ev.away_score)
-      .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
-    if (!decided) continue; // no decisive result yet (unplayed or tied) -- left unresolved
-    const winner = decided.home_score > decided.away_score ? decided.home_team : decided.away_team;
+    if (!m) continue;
+
+    const seeded = evs.find(ev => ev.home_team && ev.away_team);
+    if (!seeded) continue; // not seeded yet -- nothing to tally
+    const seriesLength = (seeded.meta && seeded.meta.seriesLength) || 1;
+    const neededWins = Math.ceil(seriesLength / 2);
+    const wins = new Map();
+    for (const ev of evs) {
+      if (!ev.result_entered_at || ev.home_score == null || ev.away_score == null || ev.home_score === ev.away_score) continue;
+      const gameWinner = ev.home_score > ev.away_score ? ev.home_team : ev.away_team;
+      wins.set(gameWinner, (wins.get(gameWinner) || 0) + 1);
+    }
+    const decided = [...wins.entries()].find(([, w]) => w >= neededWins);
+    if (!decided) continue; // series not decided yet -- left unresolved, never guessed from a partial split
+
+    // Best-of-N task (Part 3): the series is decided -- any of its OWN
+    // games that haven't been played yet are now moot. Marked
+    // cancelled (the same state this app already uses everywhere for
+    // "not happening"), so they read as "this game isn't being played"
+    // on the schedule/event page/public page, instead of sitting there
+    // looking like an unplayed game forever.
+    for (const ev of evs) {
+      if (!ev.result_entered_at && ev.state !== 'cancelled') {
+        await env.DB.prepare("UPDATE events SET state = 'cancelled' WHERE id = ?").bind(ev.id).run();
+      }
+    }
+
+    if (m.advancesToRound == null) continue; // final round -- champion, nothing further to fill
     const col = m.advancesToSide === 'A' ? 'home_team' : 'away_team';
     for (const ev of (eventsByRoundMatchup.get(`${m.advancesToRound}:${m.advancesToMatchupIndexInRound}`) || [])) {
       if (ev[col]) continue;
-      await env.DB.prepare(`UPDATE events SET ${col} = ? WHERE id = ?`).bind(winner, ev.id).run();
+      await env.DB.prepare(`UPDATE events SET ${col} = ? WHERE id = ?`).bind(decided[0], ev.id).run();
     }
   }
 }
