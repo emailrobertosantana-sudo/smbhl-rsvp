@@ -90,7 +90,11 @@ describe('D1 (forms polish task): the roster panel opens/collapses by real state
     expect(html).toContain('onclick="openRosterPanel()"');
     expect(html).toContain('function openRosterPanel()');
     expect(html).toContain("panel.classList.add('open')");
-    expect(html).toContain("nameField.focus()");
+    // C2 (events polish task): a create button now also scrolls its
+    // panel into view, not just focuses it -- preventScroll on the
+    // focus call itself avoids fighting that smooth scroll.
+    expect(html).toContain("panel.scrollIntoView({ behavior: 'smooth', block: 'start' })");
+    expect(html).toContain("nameField.focus({ preventScroll: true })");
     // Cancel closes it -- a distinct function from the open button's,
     // so the "already open -> focus" behaviour above can't silently
     // reduce back to a toggle that closes the panel.

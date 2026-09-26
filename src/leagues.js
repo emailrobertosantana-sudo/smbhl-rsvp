@@ -919,6 +919,13 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
   // it knows venue_id exists. A caller that still sends only free-text
   // `venue` (no venue_id) behaves byte-for-byte as before this task.
   let venueId = null;
+  // Events polish task (C3): a free-text venue (no venue_id) can now
+  // carry its OWN one-off address/map link -- migrate-049.sql. Only
+  // meaningful for the free-text case; a saved venue's own record
+  // already has both (getVenueMapLinksById stays the source of truth
+  // there), so these two stay null whenever venue_id is set below.
+  let venueAddress = String(body.venue_address || '').trim() || null;
+  let venueMapLink = String(body.venue_map_link || '').trim() || null;
   if (body.venue_id) {
     const venueRow = await env.DB.prepare(
       'SELECT id, name FROM venues WHERE id = ? AND league_id = ?'
@@ -928,6 +935,8 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
     }
     venueId = venueRow.id;
     venue = venueRow.name;
+    venueAddress = null;
+    venueMapLink = null;
   }
 
   const season = String(body.season || '').trim() || (leagueData && leagueData.current_season);
@@ -1023,9 +1032,9 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
   const playoffMeta = body.playoff_meta ? JSON.stringify(body.playoff_meta) : null;
 
   await env.DB.prepare(
-    `INSERT INTO events (id, season, week, date, venue, venue_id, state, start_time, end_time, league_id, auto_reminders_enabled, home_team, away_team, is_playoff, playoff_meta)
-     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId, autoRemindersEnabled, homeTeam, awayTeam, isPlayoff ? 1 : 0, playoffMeta).run();
+    `INSERT INTO events (id, season, week, date, venue, venue_id, state, start_time, end_time, league_id, auto_reminders_enabled, home_team, away_team, is_playoff, playoff_meta, venue_address, venue_map_link)
+     VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId, autoRemindersEnabled, homeTeam, awayTeam, isPlayoff ? 1 : 0, playoffMeta, venueAddress, venueMapLink).run();
 
   if (autoRemindersEnabled) {
     await applyReminderWindowSkipRule(env, leagueId, { id: eventId, start_time: startTime || null });
@@ -1033,7 +1042,7 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
 
   return {
     ok: true,
-    event: { id: eventId, season, week, date, venue, venue_id: venueId, state: 'open', start_time: startTime || null, end_time: endTime || null, auto_reminders_enabled: !!autoRemindersEnabled, home_team: homeTeam, away_team: awayTeam, is_playoff: isPlayoff, playoff_meta: body.playoff_meta || null }
+    event: { id: eventId, season, week, date, venue, venue_id: venueId, state: 'open', start_time: startTime || null, end_time: endTime || null, auto_reminders_enabled: !!autoRemindersEnabled, home_team: homeTeam, away_team: awayTeam, is_playoff: isPlayoff, playoff_meta: body.playoff_meta || null, venue_address: venueAddress, venue_map_link: venueMapLink }
   };
 }
 
@@ -1138,7 +1147,7 @@ export async function handleLeagueEventsBulkCreate(req, env) {
   const results = [];
   let date = startDate;
   for (let i = 0; i < occurrences; i++) {
-    const created = await createLeagueEventRow(env, leagueId, { date, venue: body.venue, venue_id: body.venue_id, start_time: body.start_time, end_time: body.end_time, season: body.season, auto_reminders_enabled: body.auto_reminders_enabled }, leagueData);
+    const created = await createLeagueEventRow(env, leagueId, { date, venue: body.venue, venue_id: body.venue_id, venue_address: body.venue_address, venue_map_link: body.venue_map_link, start_time: body.start_time, end_time: body.end_time, season: body.season, auto_reminders_enabled: body.auto_reminders_enabled }, leagueData);
     if (created.ok) {
       results.push({ status: 'created', event: created.event });
     } else {
@@ -1311,6 +1320,10 @@ export async function handleLeagueEventUpdate(req, env) {
   // (no venue_id) clears any previously-saved venue link.
   let venue = String(body.venue || '').trim() || null;
   let venueId = null;
+  // Events polish task (C3): same free-text address/map-link support
+  // as createLeagueEventRow -- see that function's own comment.
+  let venueAddress = String(body.venue_address || '').trim() || null;
+  let venueMapLink = String(body.venue_map_link || '').trim() || null;
   if (body.venue_id) {
     const venueRow = await env.DB.prepare(
       'SELECT id, name FROM venues WHERE id = ? AND league_id = ?'
@@ -1320,6 +1333,8 @@ export async function handleLeagueEventUpdate(req, env) {
     }
     venueId = venueRow.id;
     venue = venueRow.name;
+    venueAddress = null;
+    venueMapLink = null;
   }
 
   // Fixed-teams scheduling task (Part 2): the matchup Part 1's "no
@@ -1352,8 +1367,8 @@ export async function handleLeagueEventUpdate(req, env) {
   }
 
   await env.DB.prepare(
-    `UPDATE events SET start_time = ?, end_time = ?, venue = ?, venue_id = ?, home_team = ?, away_team = ? WHERE id = ? AND league_id = ?`
-  ).bind(startTime || null, endTime || null, venue, venueId, homeTeam, awayTeam, eventId, leagueId).run();
+    `UPDATE events SET start_time = ?, end_time = ?, venue = ?, venue_id = ?, home_team = ?, away_team = ?, venue_address = ?, venue_map_link = ? WHERE id = ? AND league_id = ?`
+  ).bind(startTime || null, endTime || null, venue, venueId, homeTeam, awayTeam, venueAddress, venueMapLink, eventId, leagueId).run();
 
   // Reminder-safety (see this route's own top comment, and the CAUTION
   // in this task): start_time is one of the two inputs
@@ -1374,6 +1389,106 @@ export async function handleLeagueEventUpdate(req, env) {
     ok: true,
     event: { id: eventId, venue, venue_id: venueId, start_time: startTime || null, end_time: endTime || null, home_team: homeTeam, away_team: awayTeam }
   });
+}
+
+// Events polish task (C1): every table that has its own event_id
+// column (schema_manifest.js's own audit -- the same list hard_delete.js
+// used to build LEAGUE_SCOPED_TABLES, re-derived here for a single
+// event instead of a whole league). Event ids are globally unique
+// (makeEventId prefixes the league id, league_ids.js), so `WHERE
+// event_id = ?` alone is exactly as safe here as it already is in
+// performLeagueHardDelete's own league_team_assigned_email_log cleanup.
+const EVENT_SCOPED_TABLES = [
+  'rsvp', 'player_game_stats', 'league_reminder_log', 'league_auto_draw_log',
+  'league_team_assigned_email_log', 'league_mail_failure_log',
+  'sheet_reviews', 'team_messages', 'availability', 'jobs', 'outbox'
+];
+
+// Events polish task (C1): CANCEL -- a real game that isn't happening,
+// kept on the record and visible (the public page/schedule already
+// render a 'cancelled' state correctly -- the same state the best-of-N
+// series resolver already uses for a now-moot playoff slot). Never
+// touches rsvp/stats rows -- nothing is lost, it's just marked.
+export async function handleLeagueEventCancel(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot cancel events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+  const eventId = String(body.event_id || '').trim();
+  if (!eventId) {
+    return Response.json({ ok: false, error: 'event_id is required.', errorKey: 'EVENT_ID_REQUIRED' }, { status: 400 });
+  }
+  const existing = await env.DB.prepare('SELECT id FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  if (!existing) {
+    return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  }
+  await env.DB.prepare("UPDATE events SET state = 'cancelled' WHERE id = ? AND league_id = ?").bind(eventId, leagueId).run();
+  return Response.json({ ok: true, event: { id: eventId, state: 'cancelled' } });
+}
+
+// Events polish task (C1): DELETE -- for mistakes and holidays, the
+// event is genuinely removed (unlike cancel, which keeps it visible).
+// A holiday can't be "taken out" of a series any other way today (only
+// Open/Duplicate existed). Confirm required whenever real RSVPs exist
+// (those replies are permanently lost) -- the first call (no `confirm`)
+// reports the real, current count instead of guessing or blocking
+// outright; the caller re-sends with `confirm: true` to proceed. A
+// zero-RSVP event needs no confirmation at all -- nothing is lost.
+export async function handleLeagueEventDelete(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot delete events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+  const eventId = String(body.event_id || '').trim();
+  if (!eventId) {
+    return Response.json({ ok: false, error: 'event_id is required.', errorKey: 'EVENT_ID_REQUIRED' }, { status: 400 });
+  }
+  const existing = await env.DB.prepare('SELECT id FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  if (!existing) {
+    return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  }
+
+  const rsvpCountRow = await env.DB.prepare('SELECT COUNT(*) AS c FROM rsvp WHERE event_id = ?').bind(eventId).first();
+  const rsvpCount = rsvpCountRow ? Number(rsvpCountRow.c) || 0 : 0;
+  if (rsvpCount > 0 && body.confirm !== true) {
+    return Response.json({
+      ok: false,
+      error: `This event has ${rsvpCount} RSVP(s) -- deleting it will lose them. Confirm to proceed.`,
+      errorKey: 'EVENT_HAS_RSVPS',
+      rsvpCount
+    }, { status: 409 });
+  }
+
+  for (const table of EVENT_SCOPED_TABLES) {
+    await env.DB.prepare(`DELETE FROM ${table} WHERE event_id = ?`).bind(eventId).run();
+  }
+  await env.DB.prepare('DELETE FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).run();
+
+  return Response.json({ ok: true, deletedEventId: eventId, rsvpCount });
 }
 
 /* ---------- Reusable venues (Part 9, batch 6, live-testing task) ----------
@@ -1491,6 +1606,18 @@ export async function getVenueMapLinksById(env, leagueId, venueIds) {
   const map = new Map();
   for (const r of rows) if (r.map_link) map.set(r.id, r.map_link);
   return map;
+}
+
+// Events polish task (C3): the one place every rendering site now
+// resolves "does this event have a map link, and what is it" -- a
+// saved venue's own link (venueMapLinks, above) when venue_id is set,
+// else this event's OWN free-text venue_map_link (migrate-049.sql).
+// Never both at once (createLeagueEventRow/handleLeagueEventUpdate
+// null the free-text columns out the moment a real venue_id is
+// chosen), so there's no ambiguity about which one wins.
+export function resolveEventMapLink(ev, venueMapLinks) {
+  if (ev.venue_id) return venueMapLinks.get(ev.venue_id) || null;
+  return ev.venue_map_link || null;
 }
 
 /* ---------- POST /league/season/publish ----------

@@ -50,12 +50,18 @@ export const HARD_DELETE_UNLOCK_DAYS = 15;
 // directly, not via this blanket loop), league_hard_delete_log (the audit
 // trail itself -- deliberately NOT deleted, see this file's own top
 // comment), signup_attempts (IP-rate-limiting only, no league_id at all).
+// Events polish task (C1): found while auditing every event_id-keyed
+// table for the new per-event delete route -- player_game_stats
+// (migrate-047, added after this list was last audited) has its own
+// real league_id column but was never added here, the exact same
+// class of gap this list's own comment already documents fixing once
+// (venues/league_mail_failure_log). Fixed the same way: added.
 export const LEAGUE_SCOPED_TABLES = [
   'rsvp', 'sheet_reviews', 'team_messages', 'outbox', 'jobs', 'availability',
   'season_costs', 'season_pricing', 'player_dues', 'planned_absences',
   'poll_votes', 'polls', 'events', 'contacts', 'settings',
   'league_reminder_log', 'league_auto_draw_log', 'league_capability_flags',
-  'venues', 'league_mail_failure_log'
+  'venues', 'league_mail_failure_log', 'player_game_stats'
 ];
 
 export async function checkHardDeleteEligibility(env, leagueId) {

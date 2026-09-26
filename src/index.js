@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, computeStandings, rankStandings, computeTopScorers, computeGoalieStats } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -3525,7 +3525,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
 
   const today = new Date().toISOString().slice(0, 10);
   const events = (await env.DB.prepare(
-    `SELECT id, date, venue, venue_id, start_time, state FROM events
+    `SELECT id, date, venue, venue_id, venue_map_link, start_time, state FROM events
       WHERE league_id = ? AND state != 'cancelled' AND date >= ?
       ORDER BY date ASC LIMIT 20`
   ).bind(leagueId, today).all()).results || [];
@@ -3539,7 +3539,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // upcoming list above) since an honest history includes what didn't
   // happen, not just what did.
   const pastEvents = (await env.DB.prepare(
-    `SELECT date, venue, venue_id, start_time, state, home_team, away_team, home_score, away_score, result_entered_at
+    `SELECT date, venue, venue_id, venue_map_link, start_time, state, home_team, away_team, home_score, away_score, result_entered_at
        FROM events
       WHERE league_id = ? AND date < ?
       ORDER BY date DESC LIMIT 10`
@@ -3705,7 +3705,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     ${dateTimeSpanHtml('div', nextEvent.date, nextEvent.start_time, 'short', 'class="pb-hero-when"')}
     ${isHeadcount ? `<div class="pb-hero-pool"><span class="tnum">${poolConfirmed}</span>${poolMax ? `<span>/${poolMax}</span>` : ''} <span data-i18n="poolConfirmed">${esc(t.poolConfirmed)}</span></div>` : ''}
     ${isHeadcount && poolGoalieMin > 0 ? `<div class="pb-hero-pool"><span class="tnum">${poolGoaliesConfirmed}</span><span>/${poolGoalieMin}</span> <span data-i18n="poolGoalies">${esc(t.poolGoalies)}</span></div>` : ''}
-    ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}${venueMapLinks.has(nextEvent.venue_id) ? ` · <a href="${esc(venueMapLinks.get(nextEvent.venue_id))}" target="_blank" rel="noopener" style="color:inherit" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>` : ''}
+    ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}${resolveEventMapLink(nextEvent, venueMapLinks) ? ` · <a href="${esc(resolveEventMapLink(nextEvent, venueMapLinks))}" target="_blank" rel="noopener" style="color:inherit" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>` : ''}
   </div>` : '';
 
   // Public-page themes task, Part 1: a STANDING organizer's blurb --
@@ -3750,7 +3750,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   <h2 data-i18n="upcoming">${esc(t.upcoming)}</h2>
   <div class="pb-glist">${events.map(ev => `<div class="pb-g">
       <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
-      <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${venueMapLinks.has(ev.venue_id) ? ` · <a href="${esc(venueMapLinks.get(ev.venue_id))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
+      <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${resolveEventMapLink(ev, venueMapLinks) ? ` · <a href="${esc(resolveEventMapLink(ev, venueMapLinks))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
     </div>`).join('')}</div>` : `<p class="nl-help" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
 
   // Live-testing task (batch 6), Part 11: "past events alongside
@@ -3773,7 +3773,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
       return `<div class="pb-g">
       <div>
         <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
-        <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${venueMapLinks.has(ev.venue_id) ? ` · <a href="${esc(venueMapLinks.get(ev.venue_id))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
+        <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${resolveEventMapLink(ev, venueMapLinks) ? ` · <a href="${esc(resolveEventMapLink(ev, venueMapLinks))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
       </div>
       ${hasScore
         ? `<span class="pb-g-score">${esc(ev.home_team)} <b>${ev.home_score}</b> &ndash; <b>${ev.away_score}</b> ${esc(ev.away_team)}</span>`
@@ -6676,15 +6676,17 @@ document.querySelectorAll('#r_goalie_radio label').forEach(function(l) {
 // button opens it on first click. If it's already open, clicking again
 // used to do nothing (masked for years by the stray @media rule that
 // forced it open regardless) -- now it focuses the first field instead.
+// Events polish task (C2): explicit scroll added -- focus alone
+// already handled "the form was already open" (this function's own
+// prior fix), but on a long roster the panel could still be off
+// screen with nothing visibly changing. Same "scroll into view +
+// focus the first field" behaviour as every other create button now.
 function openRosterPanel() {
   var panel = document.getElementById('ro_panel');
   var nameField = document.getElementById('r_name');
-  if (panel.classList.contains('open')) {
-    if (nameField) nameField.focus();
-  } else {
-    panel.classList.add('open');
-    if (nameField) nameField.focus();
-  }
+  panel.classList.add('open');
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (nameField) nameField.focus({ preventScroll: true });
 }
 function closeRosterPanel() {
   document.getElementById('ro_panel').classList.remove('open');
@@ -7122,10 +7124,10 @@ async function handleLeagueSchedulePage(req, env, url) {
   // real chronological slot, not hide them.
   const scheduleToday = new Date().toISOString().slice(0, 10);
   const upcomingEvents = (await env.DB.prepare(
-    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time, home_team, away_team, is_playoff, playoff_meta FROM events WHERE league_id = ? AND date >= ? ORDER BY date ASC, week ASC'
+    'SELECT id, season, week, date, venue, venue_id, venue_map_link, state, start_time, end_time, home_team, away_team, is_playoff, playoff_meta FROM events WHERE league_id = ? AND date >= ? ORDER BY date ASC, week ASC'
   ).bind(leagueId, scheduleToday).all()).results || [];
   const pastEvents = (await env.DB.prepare(
-    'SELECT id, season, week, date, venue, venue_id, state, start_time, end_time, home_team, away_team, is_playoff, playoff_meta FROM events WHERE league_id = ? AND date < ? ORDER BY date DESC, week DESC'
+    'SELECT id, season, week, date, venue, venue_id, venue_map_link, state, start_time, end_time, home_team, away_team, is_playoff, playoff_meta FROM events WHERE league_id = ? AND date < ? ORDER BY date DESC, week DESC'
   ).bind(leagueId, scheduleToday).all()).results || [];
   const events = [...upcomingEvents, ...pastEvents];
   // C4 bug fix (schedule/events polish task): most leagues play at the
@@ -7171,11 +7173,31 @@ async function handleLeagueSchedulePage(req, env, url) {
   ).bind(leagueId).first();
   const scheduleActivePlayerCount = scheduleActivePlayerCountRow ? Number(scheduleActivePlayerCountRow.c) || 0 : 0;
   const showReminderWarning = armedKindsFr.length > 0 && reminderEmailCount > 0;
+  // C5 bug fix (events polish task): "joueur(s)"/"player(s)" always
+  // rendered the literal "(s)" regardless of count -- not real
+  // pluralization. Real singular/plural chosen from the actual count.
+  const playerWordFr = reminderEmailCount === 1 ? 'joueur' : 'joueurs';
+  const playerWordEn = reminderEmailCount === 1 ? 'player' : 'players';
   const reminderWarningFr = showReminderWarning
-    ? `Ce match enverra automatiquement : ${armedKindsFr.join(' · ')}. Jusqu'à ${reminderEmailCount} joueur(s) avec un courriel enregistré recevront ces envois.`
+    ? `Ce match enverra automatiquement : ${armedKindsFr.join(' · ')}. Jusqu'à ${reminderEmailCount} ${playerWordFr} avec un courriel enregistré recevront ces envois.`
     : '';
   const reminderWarningEn = showReminderWarning
-    ? `This game will automatically send: ${armedKindsEn.join(' · ')}. Up to ${reminderEmailCount} player(s) with an email on file will receive them.`
+    ? `This game will automatically send: ${armedKindsEn.join(' · ')}. Up to ${reminderEmailCount} ${playerWordEn} with an email on file will receive them.`
+    : '';
+  // C4 bug fix (events polish task): the bulk panel used to reuse this
+  // exact singular "this game"/"ce match" wording verbatim, reading as
+  // if only one event were being created. A real, plural-aware
+  // variant for the "Create multiple events" panel -- confirmed
+  // (handleLeagueEventsBulkCreate, leagues.js) that
+  // auto_reminders_enabled is read ONCE from the request body and
+  // applied to EVERY event the series creates, so this warning is
+  // honest either way: the checkbox really does cover the whole
+  // series, not just the first game.
+  const bulkReminderWarningFr = showReminderWarning
+    ? `Chacun de ces matchs enverra automatiquement : ${armedKindsFr.join(' · ')}. Jusqu'à ${reminderEmailCount} ${playerWordFr} avec un courriel enregistré recevront ces envois à chaque match de la série.`
+    : '';
+  const bulkReminderWarningEn = showReminderWarning
+    ? `Each of these games will automatically send: ${armedKindsEn.join(' · ')}. Up to ${reminderEmailCount} ${playerWordEn} with an email on file will receive them for every game in the series.`
     : '';
   // Live-testing task (batch 6), Part 9: reusable venues -- `venues`
   // populates the create-event form's select-or-freetext control;
@@ -7214,17 +7236,15 @@ async function handleLeagueSchedulePage(req, env, url) {
       date: 'Date', startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
       venueOpt: 'Lieu (optionnel)', createBtn: 'Créer le match', cancel: 'Annuler',
       venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun -- texte libre ci-dessous',
-      // C5 bug fix (schedule/events polish task): a map link only ever
-      // comes from a SAVED venue (venues.map_link) -- free text can
-      // never have one, even when it happens to name the same place as
-      // a saved venue with a map link. That inconsistency was silent
-      // and unexplained before this task; this makes it predictable
-      // instead, shown only when the league actually has a saved venue
-      // to point at (no point explaining a distinction that doesn't
-      // exist yet for a league with none).
-      freeTextNoMapLink: "Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.",
+      // Events polish task (C3): a free-text venue no longer has NO
+      // path to a map link (the old freeTextNoMapLink message this
+      // replaced) -- it can carry its own one-off address/map link
+      // now, same labels the Settings page's own saved-venue form uses.
+      lblVenueAddress: 'Adresse (optionnel)', lblVenueMapLink: 'Lien vers une carte (optionnel)',
+      venueAddressPh: '123 rue Principale, Ville', venueMapLinkPh: 'https://maps.google.com/...',
       viewOnMap: 'Voir sur la carte',
       remindersOptOutLabel: 'Ne pas envoyer les rappels automatiques pour ce match',
+      remindersOptOutLabelBulk: 'Ne pas envoyer les rappels automatiques pour ces matchs',
       noEvents: "Aucun match pour l'instant.",
       stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
       needsSeasonTitle: "Lance ta saison d'abord",
@@ -7242,6 +7262,8 @@ async function handleLeagueSchedulePage(req, env, url) {
       lblStartDate: 'Première date', lblOccurrences: 'Nombre de matchs',
       lblEndDate: 'ou date de fin (optionnel)', bulkCreateSubmit: 'Créer la série',
       duplicateBtn: 'Dupliquer', duplicateConfirmBtn: 'Confirmer',
+      cancelEventBtn: 'Annuler le match', deleteEventBtn: 'Supprimer',
+      deleteConfirmPlain: 'Supprimer ce match?', deleteConfirmBtn: 'Supprimer définitivement',
       bulkCreateResultSummary: '{created} match(s) créé(s), {skipped} ignoré(s) (déjà existant).',
       // D3 (forms polish task): a 10h00 start / 00h30 end used to be
       // accepted silently -- almost always a typo, but a late game can
@@ -7291,9 +7313,11 @@ async function handleLeagueSchedulePage(req, env, url) {
       date: 'Date', startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
       venueOpt: 'Venue (optional)', createBtn: 'Create the event', cancel: 'Cancel',
       venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None -- free text below',
-      freeTextNoMapLink: "Free text never shows a map link. Pick a saved venue above for that.",
+      lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
+      venueAddressPh: '123 Main St, City', venueMapLinkPh: 'https://maps.google.com/...',
       viewOnMap: 'View on map',
       remindersOptOutLabel: "Don't send automated reminders for this game",
+      remindersOptOutLabelBulk: "Don't send automated reminders for these games",
       noEvents: 'No events yet.',
       stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled',
       needsSeasonTitle: 'Start your season first',
@@ -7308,6 +7332,8 @@ async function handleLeagueSchedulePage(req, env, url) {
       lblStartDate: 'First date', lblOccurrences: 'Number of events',
       lblEndDate: 'or end date (optional)', bulkCreateSubmit: 'Create the series',
       duplicateBtn: 'Duplicate', duplicateConfirmBtn: 'Confirm',
+      cancelEventBtn: 'Cancel game', deleteEventBtn: 'Delete',
+      deleteConfirmPlain: 'Delete this game?', deleteConfirmBtn: 'Delete permanently',
       bulkCreateResultSummary: '{created} event(s) created, {skipped} skipped (already existed).',
       crossMidnightWarning: "The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?",
       matchupLabel: "Who's playing?", matchupOptional: '(optional -- can be set later)',
@@ -7345,12 +7371,25 @@ async function handleLeagueSchedulePage(req, env, url) {
         <span class="sc-chevron">&rsaquo;</span>
       </a>
       <div class="sc-dup-wrap">
-        ${venueMapLinks.has(ev.venue_id) ? `<a class="nl-help" href="${esc(venueMapLinks.get(ev.venue_id))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}
+        ${resolveEventMapLink(ev, venueMapLinks) ? `<a class="nl-help" href="${esc(resolveEventMapLink(ev, venueMapLinks))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}
         ${needsSeason ? '' : `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="duplicateBtn" onclick="toggleDuplicateRow('${esc(ev.id)}')">Dupliquer</button>
         <div class="sc-dup-inline" id="dup_${esc(ev.id)}" style="display:none;">
           <input type="date" class="nl-input" id="dup_date_${esc(ev.id)}">
           <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" onclick="confirmDuplicate('${esc(ev.id)}')" data-i18n="duplicateConfirmBtn">Confirmer</button>
         </div>`}
+        <!-- Events polish task (C1): DELETE (genuinely removes it --
+             mistakes/holidays) and CANCEL (keeps it visible, marked
+             cancelled -- a real game not happening) offered alongside
+             the existing Open/Duplicate. Delete's own inline confirm
+             starts blank and gets its real, current RSVP-loss warning
+             (if any) from the route's own first response -- never
+             guessed client-side. -->
+        ${ev.state !== 'cancelled' ? `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="cancelEventBtn" onclick="cancelEvent('${esc(ev.id)}', this)">Annuler le match</button>` : ''}
+        <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="deleteEventBtn" onclick="toggleDeleteRow('${esc(ev.id)}')">Supprimer</button>
+        <div class="sc-dup-inline" id="del_${esc(ev.id)}" style="display:none;">
+          <p class="nl-help" id="del_msg_${esc(ev.id)}" data-i18n="deleteConfirmPlain">Supprimer ce match?</p>
+          <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);" onclick="confirmDeleteEvent('${esc(ev.id)}')" data-i18n="deleteConfirmBtn">Supprimer définitivement</button>
+        </div>
       </div>
     </div>`).join('')
     : `<p class="nl-help" data-i18n="noEvents">Aucun match pour l'instant.</p>`;
@@ -7413,9 +7452,9 @@ async function handleLeagueSchedulePage(req, env, url) {
   <div class="sc-top">
     <h1 data-i18n="title">Horaire</h1>
     ${needsSeason ? '' : `<div style="display:flex;gap:var(--space-2);flex-wrap:wrap;">
-      <button type="button" class="nl-btn nl-btn--secondary" onclick="toggleBulkPanel()" data-i18n="bulkCreateBtn">Créer plusieurs matchs</button>
+      <button type="button" class="nl-btn nl-btn--secondary" onclick="openBulkPanel()" data-i18n="bulkCreateBtn">Créer plusieurs matchs</button>
       ${showFixtureGenerator ? `<button type="button" class="nl-btn nl-btn--secondary" onclick="toggleFixturePanel()" data-i18n="fixtureGenBtn">Générer un calendrier</button>` : ''}
-      <button type="button" class="nl-btn nl-btn--primary" onclick="toggleSchedulePanel()" data-i18n="createEvent">Créer un match</button>
+      <button type="button" class="nl-btn nl-btn--primary" onclick="openSchedulePanel()" data-i18n="createEvent">Créer un match</button>
     </div>`}
   </div>
   ${needsSeason ? `
@@ -7479,7 +7518,16 @@ async function handleLeagueSchedulePage(req, env, url) {
       <div class="nl-field" id="e_venue_wrap">
         <label class="nl-label" for="e_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
         <input class="nl-input" id="e_venue" type="text">
-        ${venues.length ? `<p class="nl-help" data-i18n="freeTextNoMapLink">Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.</p>` : ''}
+      </div>
+      <div class="sc-two" id="e_venue_extra_wrap">
+        <div class="nl-field">
+          <label class="nl-label" for="e_venue_address" data-i18n="lblVenueAddress">Adresse (optionnel)</label>
+          <input class="nl-input" id="e_venue_address" type="text" data-i18n-ph="venueAddressPh" placeholder="123 rue Principale, Ville">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="e_venue_map_link" data-i18n="lblVenueMapLink">Lien vers une carte (optionnel)</label>
+          <input class="nl-input" id="e_venue_map_link" type="text" data-i18n-ph="venueMapLinkPh" placeholder="https://maps.google.com/...">
+        </div>
       </div>
       ${showReminderWarning ? `<div class="sc-reminder-warn">
         <p class="nl-help" style="margin:0" data-date-fr="${esc(reminderWarningFr)}" data-date-en="${esc(reminderWarningEn)}">${esc(reminderWarningFr)}</p>
@@ -7530,13 +7578,22 @@ async function handleLeagueSchedulePage(req, env, url) {
       <div class="nl-field" id="be_venue_wrap">
         <label class="nl-label" for="be_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
         <input class="nl-input" id="be_venue" type="text">
-        ${venues.length ? `<p class="nl-help" data-i18n="freeTextNoMapLink">Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.</p>` : ''}
+      </div>
+      <div class="sc-two" id="be_venue_extra_wrap">
+        <div class="nl-field">
+          <label class="nl-label" for="be_venue_address" data-i18n="lblVenueAddress">Adresse (optionnel)</label>
+          <input class="nl-input" id="be_venue_address" type="text" data-i18n-ph="venueAddressPh" placeholder="123 rue Principale, Ville">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="be_venue_map_link" data-i18n="lblVenueMapLink">Lien vers une carte (optionnel)</label>
+          <input class="nl-input" id="be_venue_map_link" type="text" data-i18n-ph="venueMapLinkPh" placeholder="https://maps.google.com/...">
+        </div>
       </div>
       ${showReminderWarning ? `<div class="sc-reminder-warn">
-        <p class="nl-help" style="margin:0" data-date-fr="${esc(reminderWarningFr)}" data-date-en="${esc(reminderWarningEn)}">${esc(reminderWarningFr)}</p>
+        <p class="nl-help" style="margin:0" data-date-fr="${esc(bulkReminderWarningFr)}" data-date-en="${esc(bulkReminderWarningEn)}">${esc(bulkReminderWarningFr)}</p>
         <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px;">
           <input type="checkbox" id="be_reminders_optout">
-          <span data-i18n="remindersOptOutLabel">Ne pas envoyer les rappels automatiques pour ce match</span>
+          <span data-i18n="remindersOptOutLabelBulk">Ne pas envoyer les rappels automatiques pour ces matchs</span>
         </label>
       </div>` : ''}
       <div style="display:flex;flex-direction:column;gap:8px;">
@@ -7592,6 +7649,24 @@ ${tabbar}`;
   const script = `
 ${nlAuthScript(I18N_SCHEDULE)}
 function toggleSchedulePanel() { document.getElementById('sc_panel').classList.toggle('open'); }
+// Events polish task (C2): a create button used to just toggle its
+// panel open/closed with no scroll and no focus -- on a schedule with
+// many events, "open" could land below the fold with nothing visible
+// changing on screen (the inverse of "Add a player" doing nothing
+// because its own form was ALREADY open). Ensures OPEN (never closes
+// -- that's still the panel's own Cancel button's job), scrolls it
+// into view, and focuses its first real field. Applied to every
+// create-button of this shape.
+function openCreatePanel(panelId, firstFieldId) {
+  var panel = document.getElementById(panelId);
+  if (!panel) return;
+  panel.classList.add('open');
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  var field = firstFieldId ? document.getElementById(firstFieldId) : null;
+  if (field) field.focus({ preventScroll: true });
+}
+function openSchedulePanel() { openCreatePanel('sc_panel', 'e_date'); }
+function openBulkPanel() { openCreatePanel('sc_bulk_panel', 'be_start_date'); }
 // D4 (forms polish task): mutually exclusive with the free-text venue
 // field below -- picking a saved venue hides the free-text field and
 // its help line entirely, rather than leaving them visible/editable
@@ -7600,15 +7675,39 @@ function onVenueSelectChange() {
   var select = document.getElementById('e_venue_select');
   var wrap = document.getElementById('e_venue_wrap');
   var freeText = document.getElementById('e_venue');
-  if (select.value) { freeText.value = ''; wrap.style.display = 'none'; }
-  else { wrap.style.display = ''; }
+  // Events polish task (C3): the free-text venue's own optional
+  // address/map-link fields are exactly as mutually exclusive with a
+  // saved venue as the free-text name itself is -- a saved venue
+  // already has both (see resolveEventMapLink).
+  var extraWrap = document.getElementById('e_venue_extra_wrap');
+  if (select.value) {
+    freeText.value = ''; wrap.style.display = 'none';
+    if (extraWrap) {
+      extraWrap.style.display = 'none';
+      var addrEl = document.getElementById('e_venue_address'), linkEl = document.getElementById('e_venue_map_link');
+      if (addrEl) addrEl.value = ''; if (linkEl) linkEl.value = '';
+    }
+  } else {
+    wrap.style.display = '';
+    if (extraWrap) extraWrap.style.display = '';
+  }
 }
 function onBulkVenueSelectChange() {
   var select = document.getElementById('be_venue_select');
   var wrap = document.getElementById('be_venue_wrap');
   var freeText = document.getElementById('be_venue');
-  if (select.value) { freeText.value = ''; wrap.style.display = 'none'; }
-  else { wrap.style.display = ''; }
+  var extraWrap = document.getElementById('be_venue_extra_wrap');
+  if (select.value) {
+    freeText.value = ''; wrap.style.display = 'none';
+    if (extraWrap) {
+      extraWrap.style.display = 'none';
+      var addrEl = document.getElementById('be_venue_address'), linkEl = document.getElementById('be_venue_map_link');
+      if (addrEl) addrEl.value = ''; if (linkEl) linkEl.value = '';
+    }
+  } else {
+    wrap.style.display = '';
+    if (extraWrap) extraWrap.style.display = '';
+  }
 }
 function showErr(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 async function submitEvent() {
@@ -7624,6 +7723,13 @@ async function submitEvent() {
   // which case the select isn't even rendered).
   var venueSelect = document.getElementById('e_venue_select');
   var venueId = venueSelect ? venueSelect.value : '';
+  // Events polish task (C3): only meaningful for the free-text case --
+  // onVenueSelectChange already clears both the instant a saved venue
+  // is picked, so sending them unconditionally is safe either way.
+  var venueAddressEl = document.getElementById('e_venue_address');
+  var venueMapLinkEl = document.getElementById('e_venue_map_link');
+  var venueAddress = venueAddressEl ? venueAddressEl.value.trim() : '';
+  var venueMapLink = venueMapLinkEl ? venueMapLinkEl.value.trim() : '';
   // Live-testing task (batch 6), Part 10: opt out of the automated
   // reminder waves for just this event -- the checkbox only exists when
   // the warning itself is shown (reminders genuinely armed and would
@@ -7652,7 +7758,7 @@ async function submitEvent() {
     var res = await fetch('/league/events', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined, auto_reminders_enabled: autoRemindersEnabled, home_team: homeTeam || undefined, away_team: awayTeam || undefined })
+      body: JSON.stringify({ date: date, start_time: start_time || undefined, end_time: end_time || undefined, venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined, venue_address: venueAddress || undefined, venue_map_link: venueMapLink || undefined, auto_reminders_enabled: autoRemindersEnabled, home_team: homeTeam || undefined, away_team: awayTeam || undefined })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
@@ -7682,6 +7788,10 @@ async function submitBulkEvents() {
   var venue = document.getElementById('be_venue').value.trim();
   var venueSelect = document.getElementById('be_venue_select');
   var venueId = venueSelect ? venueSelect.value : '';
+  var venueAddressEl = document.getElementById('be_venue_address');
+  var venueMapLinkEl = document.getElementById('be_venue_map_link');
+  var venueAddress = venueAddressEl ? venueAddressEl.value.trim() : '';
+  var venueMapLink = venueMapLinkEl ? venueMapLinkEl.value.trim() : '';
   var optOutEl = document.getElementById('be_reminders_optout');
   var autoRemindersEnabled = optOutEl ? !optOutEl.checked : true;
   if (!startDate) { showBulkErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
@@ -7703,6 +7813,7 @@ async function submitBulkEvents() {
         endDate: endDate || undefined,
         start_time: start_time || undefined, end_time: end_time || undefined,
         venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined,
+        venue_address: venueAddress || undefined, venue_map_link: venueMapLink || undefined,
         auto_reminders_enabled: autoRemindersEnabled
       })
     });
@@ -7860,6 +7971,57 @@ async function confirmDuplicate(eventId) {
   } catch (e) {
     showErr(window.__errorText('NETWORK_ERROR'));
   }
+}
+async function cancelEvent(eventId, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    var res = await fetch('/league/events/cancel', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: eventId })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); if (btn) btn.disabled = false; return; }
+    window.location.reload();
+  } catch (e) {
+    showErr(window.__errorText('NETWORK_ERROR'));
+    if (btn) btn.disabled = false;
+  }
+}
+function toggleDeleteRow(eventId) {
+  var row = document.getElementById('del_' + eventId);
+  if (row) row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+}
+// C1: the inline confirm's own message starts as the plain "Delete
+// this game?" text -- if the route's first (unconfirmed) response
+// reports real RSVPs would be lost, this swaps in that exact count
+// (never guessed) and a second click resubmits with confirm: true.
+async function confirmDeleteEvent(eventId) {
+  var msgEl = document.getElementById('del_msg_' + eventId);
+  try {
+    var res = await fetch('/league/events/delete', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: eventId, confirm: window.__deleteConfirmed === eventId })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) {
+      if (data.errorKey === 'EVENT_HAS_RSVPS') {
+        var isFr = (window.__currentLang || 'fr') === 'fr';
+        var n = data.rsvpCount;
+        msgEl.textContent = isFr
+          ? ('Ce match a ' + n + (n === 1 ? ' réponse RSVP' : ' réponses RSVP') + ' -- elles seront perdues. Clique de nouveau pour confirmer.')
+          : ('This game has ' + n + (n === 1 ? ' RSVP' : ' RSVPs') + ' -- they will be lost. Click again to confirm.');
+        window.__deleteConfirmed = eventId;
+        return;
+      }
+      showErr(window.__errorText(data.errorKey, data.error));
+      return;
+    }
+    window.location.reload();
+  } catch (e) {
+    showErr(window.__errorText('NETWORK_ERROR'));
+  }
 }`;
 
   return new Response(nlDocument({ title: `${lang === 'en' ? 'Schedule' : 'Horaire'} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
@@ -7936,7 +8098,7 @@ ${tabbar}`;
   // THIS event's own venue_id (if any) to a map link, same shared
   // lookup the schedule/public pages use.
   const venueMapLinks = await getVenueMapLinksById(env, leagueId, [ev.venue_id]);
-  const venueMapLink = venueMapLinks.get(ev.venue_id) || null;
+  const venueMapLink = resolveEventMapLink(ev, venueMapLinks);
   // C2 (schedule/events polish task): the same saved-venue list the
   // schedule page's create form already uses, for the edit form below.
   const venues = await getLeagueVenues(env, leagueId);
@@ -8088,7 +8250,7 @@ ${tabbar}`;
       editDateLabel: 'Date', editDateNote: "La date ne peut pas encore être modifiée.",
       startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
       venueOpt: 'Lieu (optionnel)', venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun -- texte libre ci-dessous',
-      freeTextNoMapLink: "Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.",
+      lblVenueAddress: 'Adresse (optionnel)', lblVenueMapLink: 'Lien vers une carte (optionnel)',
       editSaved: 'Modifications enregistrées.',
       // Item 1 (admin-confirm-players polish task): distinguishing
       // goalies in the roster list -- same "G" badge concept/wording
@@ -8152,7 +8314,7 @@ ${tabbar}`;
       editDateLabel: 'Date', editDateNote: "The date can't be changed yet.",
       startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
       venueOpt: 'Venue (optional)', venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None -- free text below',
-      freeTextNoMapLink: "Free text never shows a map link. Pick a saved venue above for that.",
+      lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
       editSaved: 'Changes saved.',
       goalieBadge: 'G', goalieTitle: 'Goalie', canAlsoGoalieTitle: 'Can also play goalie',
       noMatchupSetTitle: 'No matchup set',
@@ -8471,7 +8633,16 @@ ${tabbar}`;
     <div class="nl-field" id="ev_edit_venue_wrap" style="${ev.venue_id ? 'display:none' : ''}">
       <label class="nl-label" for="ev_edit_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
       <input class="nl-input" id="ev_edit_venue" type="text" value="${esc(ev.venue_id ? '' : (ev.venue || ''))}">
-      ${venues.length ? `<p class="nl-help" data-i18n="freeTextNoMapLink">Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.</p>` : ''}
+    </div>
+    <div class="sc-two" id="ev_edit_venue_extra_wrap" style="${ev.venue_id ? 'display:none' : ''}">
+      <div class="nl-field">
+        <label class="nl-label" for="ev_edit_venue_address" data-i18n="lblVenueAddress">Adresse (optionnel)</label>
+        <input class="nl-input" id="ev_edit_venue_address" type="text" value="${esc(ev.venue_id ? '' : (ev.venue_address || ''))}">
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="ev_edit_venue_map_link" data-i18n="lblVenueMapLink">Lien vers une carte (optionnel)</label>
+        <input class="nl-input" id="ev_edit_venue_map_link" type="text" value="${esc(ev.venue_id ? '' : (ev.venue_map_link || ''))}">
+      </div>
     </div>
     <div style="display:flex;gap:8px;">
       <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="saveBtn" onclick="submitEventEdit()">Enregistrer</button>
@@ -8575,8 +8746,18 @@ function onEditVenueSelectChange() {
   var select = document.getElementById('ev_edit_venue_select');
   var wrap = document.getElementById('ev_edit_venue_wrap');
   var freeText = document.getElementById('ev_edit_venue');
-  if (select.value) { freeText.value = ''; wrap.style.display = 'none'; }
-  else { wrap.style.display = ''; }
+  var extraWrap = document.getElementById('ev_edit_venue_extra_wrap');
+  if (select.value) {
+    freeText.value = ''; wrap.style.display = 'none';
+    if (extraWrap) {
+      extraWrap.style.display = 'none';
+      var addrEl = document.getElementById('ev_edit_venue_address'), linkEl = document.getElementById('ev_edit_venue_map_link');
+      if (addrEl) addrEl.value = ''; if (linkEl) linkEl.value = '';
+    }
+  } else {
+    wrap.style.display = '';
+    if (extraWrap) extraWrap.style.display = '';
+  }
 }
 async function submitEventEdit() {
   var errEl = document.getElementById('editFormErr');
@@ -8584,12 +8765,16 @@ async function submitEventEdit() {
   var msg = document.getElementById('editMsg');
   msg.style.display = 'none';
   var venueSelect = document.getElementById('ev_edit_venue_select');
+  var venueAddressEl = document.getElementById('ev_edit_venue_address');
+  var venueMapLinkEl = document.getElementById('ev_edit_venue_map_link');
   var payload = {
     event_id: ${JSON.stringify(ev.id)},
     start_time: document.getElementById('ev_edit_start').value,
     end_time: document.getElementById('ev_edit_end').value,
     venue: document.getElementById('ev_edit_venue').value,
-    venue_id: venueSelect ? venueSelect.value : ''
+    venue_id: venueSelect ? venueSelect.value : '',
+    venue_address: venueAddressEl ? venueAddressEl.value.trim() : '',
+    venue_map_link: venueMapLinkEl ? venueMapLinkEl.value.trim() : ''
   };
   try {
     var res = await fetch('/league/events/update', {
@@ -25731,6 +25916,13 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueEventUpdateReminders(req, env);
       if (url.pathname === '/league/events/update' && req.method === 'POST')
         return await handleLeagueEventUpdate(req, env);
+      // Events polish task (C1): delete (genuinely removes the event --
+      // mistakes/holidays) and cancel (keeps it on the record, marked
+      // cancelled and visible -- a real game that isn't happening).
+      if (url.pathname === '/league/events/cancel' && req.method === 'POST')
+        return await handleLeagueEventCancel(req, env);
+      if (url.pathname === '/league/events/delete' && req.method === 'POST')
+        return await handleLeagueEventDelete(req, env);
       if (url.pathname === '/league/season/publish' && req.method === 'POST')
         return await handleLeagueSeasonPublish(req, env);
       // Signup/login/dashboard pages — pure UI on top of the routes above.

@@ -345,33 +345,31 @@ describe('Part 9 (live-testing task, batch 6): reusable venues', () => {
     }
   });
 
-  // C5 bug fix (schedule/events polish task): "View on map" appeared on
-  // some events and not others depending on whether the venue was a
-  // saved venue (with a map link) or free text -- even with the
-  // identical venue NAME -- and nothing on the page explained why. The
-  // underlying resolution (map link only ever comes from a saved
-  // venue) is correct by design and unchanged; what was missing was
-  // making that predictable -- a plain note wherever free text is
-  // entered, shown only once the league actually has a saved venue to
-  // contrast it with.
-  it("C5: the create/edit/bulk-create forms explain that free text never gets a map link, once the league has a saved venue to contrast it with", async () => {
+  // C5 bug fix (schedule/events polish task) ORIGINALLY added a
+  // "free text never gets a map link" note here, because at the time
+  // that was true by design (map link only ever came from a saved
+  // venue). Events polish task (C3, migrate-049.sql) reversed that:
+  // free text can now carry its own optional address/map link, so the
+  // note would be actively wrong if it still existed. Retired
+  // (freeTextNoMapLink removed from every i18n dict); this test now
+  // locks the new reality instead of the retired one -- see
+  // part98_events_polish.spec.js's own C3 describe block for full
+  // coverage of the new fields.
+  it("C3/C5 (superseded): free text can now carry its own map link, so the old 'never' note is gone from every form and the detail page", async () => {
     const { cookie, csrfToken } = await signup('venues.c5.explain@example.com', '203.0.199.019');
     await createLeague(cookie, csrfToken, { name: 'C5 Explain League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-
-    // No saved venue yet -- nothing to contrast, so no note.
-    const scheduleBeforeHtml = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
-    expect(scheduleBeforeHtml).not.toContain('data-i18n="freeTextNoMapLink"');
-
     await createVenue(cookie, csrfToken, { name: 'C5 Saved Arena', map_link: 'https://maps.example.com/c5' });
-    const scheduleAfterHtml = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
-    expect(scheduleAfterHtml).toContain('data-i18n="freeTextNoMapLink"');
-    expect(scheduleAfterHtml).toContain("Le texte libre n'affiche jamais de lien vers une carte. Choisis un lieu enregistré ci-dessus pour ça.");
 
-    const evRes = await createEvent(cookie, csrfToken, { date: '2099-06-01', venue: 'Some Free Text Venue' });
+    const scheduleHtml = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
+    expect(scheduleHtml).not.toContain('data-i18n="freeTextNoMapLink"');
+    expect(scheduleHtml).toContain('id="e_venue_map_link"');
+
+    const evRes = await createEvent(cookie, csrfToken, { date: '2099-06-01', venue: 'Some Free Text Venue', venue_map_link: 'https://maps.example.com/free-text' });
     const ev = (await evRes.json()).event;
     const detailHtml = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(ev.id)}`, { headers: { cookie } })).text();
-    expect(detailHtml).toContain('data-i18n="freeTextNoMapLink"');
+    expect(detailHtml).not.toContain('data-i18n="freeTextNoMapLink"');
+    expect(detailHtml).toContain('https://maps.example.com/free-text');
   });
 
   // D1: investigated directly (creating events with a saved venue's
