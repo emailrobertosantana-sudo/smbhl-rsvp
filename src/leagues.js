@@ -3230,8 +3230,11 @@ export async function handleLeagueUpdateIdentity(req, env, url) {
   // expects.
   if (body.publicTheme !== undefined) {
     const themeVal = String(body.publicTheme || '').trim();
-    if (!['arene', 'clean'].includes(themeVal)) {
-      return Response.json({ ok: false, error: "Theme must be 'arene' or 'clean'.", errorKey: 'INVALID_PUBLIC_THEME' }, { status: 400 });
+    // Public-page themes task (Part 2): Classique and Quartier join
+    // Arène/Épuré -- all 4 now actually render (see each theme's own
+    // CSS constant in index.js).
+    if (!['arene', 'clean', 'classique', 'quartier'].includes(themeVal)) {
+      return Response.json({ ok: false, error: "Theme must be 'arene', 'clean', 'classique' or 'quartier'.", errorKey: 'INVALID_PUBLIC_THEME' }, { status: 400 });
     }
     updates.push('public_theme = ?'); params.push(themeVal);
   }

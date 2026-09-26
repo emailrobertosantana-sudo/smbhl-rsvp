@@ -113,3 +113,162 @@ describe('Public-page themes, Part 1: organizer\'s note', () => {
     expect(html).toContain("Organizer's note");
   });
 });
+
+// Part 2: Classique and Quartier. Both reuse the exact same HTML/data
+// logic every other theme does (heroHtml/standingsHtml/topScorersHtml/
+// etc, built once) -- only the <style> block differs, so what needs
+// testing is theme SELECTION (the right stylesheet renders) and that
+// every section still renders correctly with standings/player-stats
+// on or off, exactly like the two existing themes already are.
+describe('Public-page themes, Part 2: Classique and Quartier', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  async function createEvent(cookie, csrfToken, body) {
+    const res = await SELF.fetch('http://example.com/league/events', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify(body)
+    });
+    return (await res.json()).event;
+  }
+  async function submitScore(cookie, csrfToken, body) {
+    const res = await SELF.fetch('http://example.com/league/events/score', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify(body)
+    });
+    return res.json();
+  }
+  async function addContact(cookie, csrfToken, body) {
+    const res = await SELF.fetch('http://example.com/league/contacts', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify(body)
+    });
+    return (await res.json()).contact;
+  }
+  async function setRsvp(cookie, csrfToken, eventId, playerId, status) {
+    return SELF.fetch('http://example.com/league/rsvp/admin', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ event_id: eventId, player_id: playerId, status })
+    });
+  }
+  async function postPlayerStats(cookie, csrfToken, body) {
+    const res = await SELF.fetch('http://example.com/league/events/player-stats', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify(body)
+    });
+    return res.json();
+  }
+
+  // Each theme's own CSS carries at least one string unique to it,
+  // used below to prove the RIGHT stylesheet actually rendered rather
+  // than just checking the page returned 200.
+  const THEME_FINGERPRINT = {
+    classique: '.nl-header { background: var(--pb-accent',
+    quartier: '.pb-hero:before { content: ""'
+  };
+
+  it.each(['classique', 'quartier'])('%s: selecting the theme in Settings renders that theme\'s own stylesheet on the public page', async (themeName) => {
+    const { cookie, csrfToken } = await signup(`p2.${themeName}.select@example.com`, `203.0.211.00${themeName === 'classique' ? 1 : 2}`);
+    const league = await createLeague(cookie, csrfToken, { name: `${themeName} Select League`, teamNames: ['A', 'B'] });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const upd = await updateIdentity(cookie, csrfToken, { publicTheme: themeName });
+    expect(upd.status).toBe(200);
+    expect(upd.json.settings.publicTheme).toBe(themeName);
+    const html = await publicPageHtml(league.id);
+    expect(html).toContain(THEME_FINGERPRINT[themeName]);
+    expect(html).not.toContain(THEME_FINGERPRINT[themeName === 'classique' ? 'quartier' : 'classique']);
+  });
+
+  it('rejects an unknown theme name', async () => {
+    const { cookie, csrfToken } = await signup('p2.badtheme@example.com', '203.0.211.003');
+    await createLeague(cookie, csrfToken, { name: 'Bad Theme League', teamNames: ['A', 'B'] });
+    const res = await updateIdentity(cookie, csrfToken, { publicTheme: 'not-a-real-theme' });
+    expect(res.status).toBe(400);
+    expect(res.json.errorKey).toBe('INVALID_PUBLIC_THEME');
+  });
+
+  for (const themeName of ['classique', 'quartier']) {
+    describe(`${themeName} theme: every section renders correctly across the results/player-stats switch combinations`, () => {
+      it('results ON, player stats ON: standings, top scorers, organizer\'s note, and teams all render', async () => {
+        const { cookie, csrfToken } = await signup(`p2.${themeName}.full@example.com`, `203.0.211.01${themeName === 'classique' ? 1 : 2}`);
+        const league = await createLeague(cookie, csrfToken, { name: `${themeName} Full League`, teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+        await updateIdentity(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true, publicTheme: themeName, organizerNote: 'A standing note.' });
+        await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+        const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+        await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 4, away_score: 1 });
+        const player = await addContact(cookie, csrfToken, { name: 'Full League Player', role: 'roster' });
+        await setRsvp(cookie, csrfToken, ev.id, player.player_id, 'in');
+        await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: player.player_id, role: 'skater', goals: 2, assists: 1 }] });
+
+        const html = await publicPageHtml(league.id);
+        expect(html).toContain(THEME_FINGERPRINT[themeName]);
+        expect(html).toContain('data-i18n="standings"');
+        expect(html).toContain('data-i18n="topScorers"');
+        expect(html).toContain('Full League Player');
+        expect(html).toContain('class="pb-note"');
+        expect(html).toContain('A standing note.');
+        expect(html).toContain('data-i18n="teams"');
+      });
+
+      it('results OFF, player stats OFF (minimal league): no standings, no top scorers, no note -- but the page still renders cleanly with upcoming/teams', async () => {
+        const { cookie, csrfToken } = await signup(`p2.${themeName}.min@example.com`, `203.0.211.02${themeName === 'classique' ? 1 : 2}`);
+        const league = await createLeague(cookie, csrfToken, { name: `${themeName} Minimal League`, teamNames: ['A', 'B'], tracksStats: false });
+        await updateIdentity(cookie, csrfToken, { publicTheme: themeName });
+        await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+        await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+
+        const html = await publicPageHtml(league.id);
+        expect(html).toContain(THEME_FINGERPRINT[themeName]);
+        expect(html).not.toContain('data-i18n="standings"');
+        expect(html).not.toContain('data-i18n="topScorers"');
+        expect(html).not.toContain('class="pb-note"');
+        expect(html).toContain('data-i18n="upcoming"');
+        expect(html).toContain('data-i18n="teams"');
+      });
+
+      it('results ON, player stats OFF: standings render, top scorers do not', async () => {
+        const { cookie, csrfToken } = await signup(`p2.${themeName}.resultsonly@example.com`, `203.0.211.03${themeName === 'classique' ? 1 : 2}`);
+        const league = await createLeague(cookie, csrfToken, { name: `${themeName} Results Only League`, teamNames: ['A', 'B'], tracksStats: false });
+        await updateIdentity(cookie, csrfToken, { tracksResults: true, publicTheme: themeName });
+        await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+        const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+        await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 2, away_score: 0 });
+
+        const html = await publicPageHtml(league.id);
+        expect(html).toContain('data-i18n="standings"');
+        expect(html).not.toContain('data-i18n="topScorers"');
+      });
+
+      it('results OFF, player stats ON: top scorers render, standings do not', async () => {
+        const { cookie, csrfToken } = await signup(`p2.${themeName}.statsonly@example.com`, `203.0.211.04${themeName === 'classique' ? 1 : 2}`);
+        const league = await createLeague(cookie, csrfToken, { name: `${themeName} Stats Only League`, teamNames: ['A', 'B'], tracksStats: false });
+        await updateIdentity(cookie, csrfToken, { tracksPlayerStats: true, publicTheme: themeName });
+        await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+        const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+        const player = await addContact(cookie, csrfToken, { name: 'Stats Only Player', role: 'roster' });
+        await setRsvp(cookie, csrfToken, ev.id, player.player_id, 'in');
+        await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: player.player_id, role: 'skater', goals: 1, assists: 0 }] });
+
+        const html = await publicPageHtml(league.id);
+        expect(html).not.toContain('data-i18n="standings"');
+        expect(html).toContain('data-i18n="topScorers"');
+      });
+    });
+  }
+
+  it('the Settings theme picker lists all 4 themes with both languages\' names', async () => {
+    const { cookie, csrfToken } = await signup('p2.settingslist@example.com', '203.0.211.005');
+    await createLeague(cookie, csrfToken, { name: 'Theme Picker League', teamNames: ['A', 'B'] });
+    const html = await settingsHtml(cookie);
+    expect(html).toContain('value="arene"');
+    expect(html).toContain('value="clean"');
+    expect(html).toContain('value="classique"');
+    expect(html).toContain('value="quartier"');
+    expect(html).toContain('Classique (couleurs de la ligue, gras)');
+    expect(html).toContain('Classique (bold, league colours)');
+    expect(html).toContain('Quartier (chaleureux, arrondi)');
+    expect(html).toContain('Quartier (warm, rounded)');
+  });
+});

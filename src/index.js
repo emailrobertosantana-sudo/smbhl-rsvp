@@ -3059,7 +3059,9 @@ window.addEventListener('admin_lang_changed', function(e) {
 // picker UI exists yet to choose among them, so Arène is the
 // reasonable default -- same "foundation now, editor later" pattern
 // already used for language_mode). The other 3 themes (Classique,
-// Épuré, Quartier) are explicitly NOT built and are follow-up work.
+// Épuré, Quartier) were NOT built at the time -- all 4 exist now (see
+// this file's own "SCOPE" comment further down for Classique/
+// Quartier's own history and design direction).
 //
 // The league's own color rule applies here too: the hero block uses
 // leagueFillColor(), same contrast-safe darkening as the RSVP page.
@@ -3084,26 +3086,69 @@ window.addEventListener('admin_lang_changed', function(e) {
 // data logic between themes and zero risk of one theme's CSS
 // accidentally affecting another's.
 //
-// SCOPE (documented per the task's own "stop at a clean boundary,
-// document what's done vs deferred" instruction): only 2 of the 4
-// themes are implemented and tested here -- Arène (PUBLIC_THEME_ARENE_CSS,
+// SCOPE: all 4 themes are implemented -- Arène (PUBLIC_THEME_ARENE_CSS,
 // literally this page's pre-existing dark styling, unchanged, just
-// given a name) and Épuré (PUBLIC_THEME_CLEAN_CSS, new). 'arene' is
-// every league's default (migrate-033.sql), so this is a no-op for
-// every existing league unless an admin explicitly opts into 'clean'.
-// Classique and Quartier are NOT implemented: Classique's reference
-// design (components/PublicThemes/preview.html) adds a tab nav +
-// scoreboard + "top scorers" table this page has no equivalent data
-// source for yet (top scorers specifically -- standings exist, a
-// per-player points leaderboard does not), and Quartier's reference
-// adds an "organizer's note" free-text card, a genuinely new data
-// concept (nothing in leagues/seasons stores admin-authored prose
-// today) on top of loading a second webfont (Fraunces). Both are
-// real, honest feature work, not a quick reskin -- shipping them as
-// unstyled or half-working options would be worse than not offering
-// them, so the settings page's picker only lists the 2 that actually
-// work; SETTINGS_PAGE_PUBLIC_THEMES (handleLeagueSettingsPage) is the
-// single source of truth for which themes are selectable.
+// given a name), Épuré (PUBLIC_THEME_CLEAN_CSS), Classique
+// (PUBLIC_THEME_CLASSIQUE_CSS) and Quartier (PUBLIC_THEME_QUARTIER_CSS).
+// 'arene' is every league's default (migrate-033.sql), so shipping the
+// other 3 is a no-op for every existing league unless an admin
+// explicitly opts into one.
+//
+// Classique and Quartier were originally deferred (a prior task's own
+// comment, preserved above in this file's history) because their
+// reference designs each needed a data source this page didn't have
+// yet: Classique's reference adds a "top scorers" table (built since,
+// commit cc11b49) and Quartier's adds an organizer's-note card (built
+// this task, Part 1). Both data sources now exist, so both themes are
+// built here too -- Classique/Quartier reuse them the same way every
+// other theme reuses standings/upcoming/teams: same HTML, only the
+// <style> block differs.
+//
+// DESIGN DIRECTION (public-page themes task, Part 2 -- propose-not-wait,
+// per the task's own instruction): the reference mockup
+// (components/PublicThemes/preview.html) gives each theme its own
+// font (Barlow Condensed for Classique, Fraunces for Quartier) and, for
+// Quartier, an invented cream/terracotta palette. NEITHER is
+// reproduced here, DECIDED and flagged for review: the task's own
+// explicit constraint is the product's EXISTING design system -- the
+// same palette and typography already in use (nlDocument only ever
+// loads Archivo; Inter, referenced by Épuré's own CSS, was never
+// actually loaded either, so even Épuré doesn't truly render off-
+// system today) -- "must look like the same product, not two new
+// brands." Classique and Quartier therefore stay Archivo-only, same as
+// every other theme, and get their PERSONALITY from structure and the
+// league's own colour instead of new fonts/hex values:
+//   Classique: a bold, colour-blocked header/hero in the league's own
+//   colour (var(--pb-accent), the exact same value the hero already
+//   uses safely -- see the dynamic :root rule's own comment), a
+//   block-letter table header, striped rows, a colour-underlined h2.
+//   Fixed light background, same as Épuré.
+//   Quartier: warmth from ROUNDED, BORDERED CARDS (the organizer's
+//   note as its signature element) and dot-not-fill team tiles (same
+//   "colours as dots everywhere" rule Épuré already established), on
+//   #f4f4f2 -- this app's own --surface-sunken/--ink-inverse token,
+//   already used elsewhere, not an invented cream hex.
+// Contrast (both themes, both OS colour-scheme preferences -- see
+// each theme's own CSS: every colour is a hardcoded hex, same
+// technique Arène/Épuré already use, so nothing here can flip with
+// the visitor's OS preference the way the a236130 bug did):
+//   Classique on #ffffff -- ink #111318 vs bg 18.58:1, muted #55585f
+//   vs bg 7.12:1, table-header white vs #111318 18.58:1, footer link
+//   #55585f vs bg 7.12:1 (hover #111318 18.58:1).
+//   Quartier -- ink #16181d vs #f4f4f2 16.13:1, vs card #ffffff
+//   17.76:1; muted #55585f vs #f4f4f2 6.47:1, vs #ffffff 7.12:1.
+//   var(--pb-accent) (leagueFillColor's own output, used as a text/
+//   border accent here, never a fill with dark text on it) against
+//   white/#f4f4f2, worst case across the 8 curated presets: Orange
+//   4.94:1 / 4.49:1. All comfortably clear WCAG AA (4.5:1 normal
+//   text) except Orange vs #f4f4f2 specifically, which falls 0.01
+//   short -- so --pb-accent is deliberately never used as small body
+//   text directly on Quartier's #f4f4f2 page background, only on
+//   white/near-white card surfaces (note card, hero's decorative
+//   accent bar) or as a >=3:1 graphical border, both safe at every
+//   preset. Computed with the same relative-luminance formula
+//   leagueFillColor() itself uses (WCAG 2.x); a real browser render
+//   was also checked -- see this task's own final report.
 const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d); color: var(--ink-inverse, #f4f4f2); min-height: 100dvh; display: flex; flex-direction: column; }
   .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .pb-hero { margin: var(--space-4) 0; padding: var(--space-5); background: var(--primary); border-radius: var(--radius-lg); }
@@ -3246,6 +3291,114 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
   .pb-note .overline { color: #666666; }
   .pb-note p { margin: 8px 0 0; font-size: 15px; line-height: 22px; color: #1a1a1a; }`;
 
+// "Classique" per the guideline: a bold, light team-site look -- a
+// colour-blocked header/hero in the LEAGUE'S OWN colour (var(
+// --pb-accent), the exact same value the hero already uses safely
+// elsewhere -- see :root{--pb-accent:...}'s own comment), a bold
+// block-letter table header, striped rows, a colour-underlined h2.
+// Fixed light background (like Épuré, not OS-reactive -- see this
+// file's own header comment on why neither existing theme flips with
+// the visitor's OS preference), same Archivo-only typography as every
+// other theme (no new webfont -- the product's OWN existing system,
+// per the task's explicit constraint, not the reference mockup's
+// Barlow Condensed). Reuses the exact same class names/HTML as the
+// other three themes -- only this block differs.
+const PUBLIC_THEME_CLASSIQUE_CSS = `  .nl { background: #ffffff; color: #111318; min-height: 100dvh; display: flex; flex-direction: column; }
+  .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+  .nl-header { background: var(--pb-accent, #16181d); border-bottom: none; }
+  .nl-header .nl-brand { color: #fff; }
+  .nl-lang { border: 1.5px solid rgba(255,255,255,.6); background: transparent; }
+  .nl-lang button { color: #fff; }
+  .nl-lang button[aria-pressed="true"] { background: #fff; color: var(--pb-accent, #16181d); }
+  .pb-hero { margin: var(--space-4) 0; padding: var(--space-5); background: var(--pb-accent, #16181d); border-radius: var(--radius-md); }
+  .pb-hero-when { font: 800 30px/34px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #fff; margin-top: 6px; text-transform: uppercase; }
+  .pb-hero-venue { font-size: 14px; color: #fff; margin-top: 6px; }
+  .pb-hero-pool { font: 700 15px/20px var(--font-sans); color: #fff; margin-top: 10px; }
+  .pb-hero-pool .tnum { font: 800 22px/26px var(--font-display); font-stretch: 118%; color: #fff; }
+  .pb-note { margin: var(--space-4) 0; padding: var(--space-4); border: 2px solid #111318; border-radius: var(--radius-md); }
+  .pb-note .overline { color: var(--pb-accent, #16181d); }
+  .pb-note p { margin: 8px 0 0; font-size: 15px; line-height: 22px; color: #111318; }
+  .pb-main h2 { font: 800 18px/22px var(--font-display); font-stretch: 118%; text-transform: uppercase; letter-spacing: .02em; color: #111318; border-bottom: 3px solid var(--pb-accent, #16181d); margin: var(--space-5) 0 var(--space-2); padding-bottom: 6px; }
+  .pb-table { width: 100%; border-collapse: collapse; font: 500 15px/20px var(--font-sans); }
+  .pb-table th { font: 700 12px/16px var(--font-sans); letter-spacing: .04em; text-transform: uppercase; color: #fff; background: #111318; padding: 8px 6px; text-align: center; }
+  .pb-table th:first-child, .pb-table td.pb-tm { text-align: left; }
+  .pb-table td { padding: 9px 6px; text-align: center; border-bottom: 1px solid #e3e3e0; }
+  .pb-table tbody tr:nth-child(odd) { background: #f4f4f2; }
+  .pb-tm i { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 2px; }
+  .pb-glist { display: flex; flex-direction: column; }
+  .pb-g { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #e3e3e0; gap: var(--space-3); }
+  .pb-g-d { display: flex; flex-direction: column; }
+  .pb-g-d b { font: 700 16px/20px var(--font-display); font-stretch: 118%; white-space: nowrap; }
+  .pb-g-d span { font-size: 13px; color: #55585f; }
+  .pb-g-venue { font-size: 14px; color: #55585f; }
+  .pb-g-score { font: 800 16px/20px var(--font-display); font-stretch: 118%; white-space: nowrap; text-align: right; }
+  .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
+  .pb-tg div { height: 64px; border-radius: var(--radius-sm); padding: var(--space-3); font: 800 15px/20px var(--font-display); font-stretch: 118%; color: #fff; display: flex; align-items: flex-end; }
+  .pb-tg div i { display: none; }
+  .pb-draw-list { display: flex; flex-direction: column; gap: var(--space-3); }
+  .pb-draw-team-name { display: flex; align-items: center; gap: 8px; font: 700 16px/20px var(--font-display); font-stretch: 118%; color: #111318; margin-bottom: 4px; }
+  .pb-draw-team-name i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .pb-draw-players { font: 500 14px/20px var(--font-sans); color: #55585f; }
+  .nl a.pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: #55585f; text-decoration: none; }
+  .nl a.pb-foot:hover { color: #111318; text-decoration: underline; }
+  .nl .pb-g-venue a { color: #55585f; }
+  .nl .pb-g-venue a:hover { color: #111318; }`;
+
+// "Quartier" per the guideline: warm, friendly, recreational-league
+// feel -- expressed through STRUCTURE (a prominent bordered card for
+// the organizer's note, its signature element; rounded team tiles
+// carrying a colour DOT + name rather than a solid fill, same
+// "colours as dots, not just fills" rule Épuré already established;
+// generous rounding throughout) rather than a new invented colour
+// palette. DECIDED, flagged for review: the reference mockup's own
+// cream/serif look (Fraunces, #fbf6ee) is NOT reproduced -- the
+// task's own explicit constraint is the EXISTING design system's
+// palette and typography, and neither that background nor that font
+// exists in it today. #f4f4f2 (this app's own --surface-sunken/
+// --ink-inverse token, already used elsewhere as a soft neutral) is
+// used as a fixed, warm-adjacent background instead of inventing a
+// new hex -- "same palette," not a new one, per the task's own words.
+const PUBLIC_THEME_QUARTIER_CSS = `  .nl { background: #f4f4f2; color: #16181d; min-height: 100dvh; display: flex; flex-direction: column; }
+  .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+  .nl-header { background: #f4f4f2; border-bottom: 1px solid #e3e3e0; }
+  .nl-lang { border: 1px solid #d0d0d0; background: #ffffff; }
+  .nl-lang button { color: #55585f; }
+  .nl-lang button[aria-pressed="true"] { background: #16181d; color: #fff; }
+  .pb-hero { margin: 32px 0 16px; padding: var(--space-5); background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); }
+  .pb-hero:before { content: ""; display: block; width: 28px; height: 4px; background: var(--pb-accent, #16181d); border-radius: 2px; margin-bottom: 16px; }
+  .pb-hero-when { font: 700 26px/30px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #16181d; margin-top: 0; }
+  .pb-hero-venue { font-size: 14px; color: #55585f; margin-top: 8px; }
+  .pb-hero-pool { font: 600 15px/20px var(--font-sans); color: #55585f; margin-top: 10px; }
+  .pb-hero-pool .tnum { font: 800 20px/24px var(--font-display); font-stretch: 118%; color: #16181d; }
+  .pb-note { margin: var(--space-4) 0; padding: var(--space-5); background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); }
+  .pb-note .overline { color: var(--pb-accent, #16181d); }
+  .pb-note p { margin: 10px 0 0; font-size: 16px; line-height: 24px; color: #16181d; }
+  .pb-main h2 { font: 700 15px/20px var(--font-sans); color: #55585f; margin: var(--space-5) 0 var(--space-2); }
+  .pb-table { width: 100%; border-collapse: collapse; font: 500 15px/20px var(--font-sans); background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); overflow: hidden; }
+  .pb-table th { font: 600 12px/16px var(--font-sans); color: #55585f; border-bottom: 1px solid #e3e3e0; padding: 10px 6px; text-align: center; }
+  .pb-table th:first-child, .pb-table td.pb-tm { text-align: left; }
+  .pb-table td { padding: 10px 6px; text-align: center; border-bottom: 1px solid #e3e3e0; }
+  .pb-tm i { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 50%; }
+  .pb-glist { display: flex; flex-direction: column; background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); padding: 0 var(--space-4); }
+  .pb-g { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-bottom: 1px solid #e3e3e0; gap: var(--space-3); }
+  .pb-g:last-child { border-bottom: none; }
+  .pb-g-d { display: flex; flex-direction: column; }
+  .pb-g-d b { font: 700 15px/20px var(--font-display); font-stretch: 118%; white-space: nowrap; }
+  .pb-g-d span { font-size: 13px; color: #55585f; }
+  .pb-g-venue { font-size: 14px; color: #55585f; }
+  .pb-g-score { font-size: 15px; font-weight: 700; white-space: nowrap; text-align: right; color: #16181d; }
+  .pb-tg { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); }
+  .pb-tg div { height: auto; border-radius: var(--radius-lg); padding: var(--space-3); font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #16181d; background: #ffffff !important; border: 1px solid #e3e3e0; display: flex; align-items: center; gap: 8px; }
+  .pb-tg div i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; flex: none; }
+  .pb-draw-list { display: flex; flex-direction: column; gap: var(--space-3); }
+  .pb-draw-team-name { display: flex; align-items: center; gap: 8px; font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #16181d; margin-bottom: 4px; }
+  .pb-draw-team-name i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .pb-draw-players { font: 500 14px/20px var(--font-sans); color: #55585f; }
+  .nl a.pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: #55585f; text-decoration: none; }
+  .nl a.pb-foot:hover { color: #16181d; text-decoration: underline; }
+  .nl .pb-g-venue a { color: #55585f; }
+  .nl .pb-g-venue a:hover { color: #16181d; }`;
+
 // Live-testing task (batch 2), Part 10: shared response for BOTH "this
 // league id/slug doesn't exist at all" and "this league exists but its
 // admin turned off the public page" -- deliberately the SAME response
@@ -3284,7 +3437,11 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // (see PUBLIC_THEME_ARENE_CSS's own comment) -- anything else
   // (unset, a future 'classic'/'warm' not implemented yet, or bad data)
   // falls back to 'arene', every league's real default.
-  const theme = leagueRow.public_theme === 'clean' ? 'clean' : 'arene';
+  // Public-page themes task, Part 2: Classique and Quartier join
+  // Arène/Épuré -- any other/legacy stored value still falls back to
+  // 'arene' (every existing league's own default, migrate-033.sql).
+  const VALID_PUBLIC_THEMES = ['arene', 'clean', 'classique', 'quartier'];
+  const theme = VALID_PUBLIC_THEMES.includes(leagueRow.public_theme) ? leagueRow.public_theme : 'arene';
   if (leagueRow.deactivated_at) {
     // Distinct from the forcedLang below (that's the LEAGUE's own
     // configured language_mode; this notice has no toggle and no
@@ -3589,8 +3746,18 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
       return `<div class="pb-draw-team"><div class="pb-draw-team-name"><i style="background:${esc(teamDot(i))}"></i>${esc(tm)}</div><div class="pb-draw-players">${players.map(p => esc(p.name)).join(', ')}</div></div>`;
     }).join('')}</div>` : `<p class="nl-help" data-i18n="drawnTeamsNone">${esc(t.drawnTeamsNone)}</p>`}` : '';
 
+  const THEME_CSS_BY_NAME = {
+    arene: PUBLIC_THEME_ARENE_CSS, clean: PUBLIC_THEME_CLEAN_CSS,
+    classique: PUBLIC_THEME_CLASSIQUE_CSS, quartier: PUBLIC_THEME_QUARTIER_CSS
+  };
   const bodyHtml = `<style>
-${theme === 'clean' ? PUBLIC_THEME_CLEAN_CSS : PUBLIC_THEME_ARENE_CSS}
+${THEME_CSS_BY_NAME[theme]}
+  /* Classique/Quartier only reference this; harmless no-op for
+     Arène/Épuré, which don't. Same fillColor already guaranteed
+     >=4.5:1 against white/near-white by leagueFillColor -- see that
+     function's own comment -- reused here as a foreground/border
+     accent rather than re-derived, so the two can never disagree. */
+  :root{--pb-accent:${esc(fillColor)}}
 </style>
 <header class="nl-header">
   <!-- D1 (nav polish task): same truncation/tooltip fix as the admin
@@ -4549,7 +4716,8 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblPublicPageEnabled: 'Page publique',
       publicPageEnabledHelp: "Quand c'est désactivé, personne ne peut voir ta page publique -- même pas avec le lien direct.",
       lblPublicTheme: 'Thème de la page publique', themeArene: 'Arène (sombre, actuel)', themeClean: 'Épuré (blanc, minimal)',
-      themeHelp: "Deux thèmes sont offerts pour l'instant; deux autres (Classique, Quartier) s'en viennent.",
+      themeClassique: 'Classique (couleurs de la ligue, gras)', themeQuartier: 'Quartier (chaleureux, arrondi)',
+      themeHelp: 'Quatre thèmes sont offerts.',
       themePreview: 'Voir la page publique',
       lblOrganizerNote: "Mot de l'organisateur",
       organizerNoteHelp: "Un mot permanent affiché sur ta page publique -- pas un avis hebdomadaire. Laisse vide pour ne rien afficher.",
@@ -4688,7 +4856,8 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblPublicPageEnabled: 'Public page',
       publicPageEnabledHelp: "When this is off, no one can see your public page -- not even with the direct link.",
       lblPublicTheme: 'Public page theme', themeArene: 'Arène (dark, current)', themeClean: 'Épuré (white, minimal)',
-      themeHelp: 'Two themes are available for now; two more (Classique, Quartier) are coming.',
+      themeClassique: 'Classique (bold, league colours)', themeQuartier: 'Quartier (warm, rounded)',
+      themeHelp: 'Four themes are available.',
       themePreview: 'View the public page',
       lblOrganizerNote: "Organizer's note",
       organizerNoteHelp: "A standing message shown on your public page -- not a weekly notice. Leave blank to show nothing.",
@@ -4879,8 +5048,10 @@ async function handleLeagueSettingsPage(req, env, url) {
       <select class="nl-select" id="se_theme" style="max-width:260px">
         <option value="arene" data-i18n="themeArene" ${(leagueRow.public_theme || 'arene') === 'arene' ? 'selected' : ''}>Arène (sombre, actuel)</option>
         <option value="clean" data-i18n="themeClean" ${leagueRow.public_theme === 'clean' ? 'selected' : ''}>Épuré (blanc, minimal)</option>
+        <option value="classique" data-i18n="themeClassique" ${leagueRow.public_theme === 'classique' ? 'selected' : ''}>Classique (couleurs de la ligue, gras)</option>
+        <option value="quartier" data-i18n="themeQuartier" ${leagueRow.public_theme === 'quartier' ? 'selected' : ''}>Quartier (chaleureux, arrondi)</option>
       </select>
-      <p class="nl-help" data-i18n="themeHelp">Deux thèmes sont offerts pour l'instant; deux autres (Classique, Quartier) s'en viennent.</p>
+      <p class="nl-help" data-i18n="themeHelp">Quatre thèmes sont offerts.</p>
       <p class="nl-help"><a href="/${esc(leagueSlug)}" target="_blank" rel="noopener" data-i18n="themePreview">Voir la page publique</a></p>
     </div>
     <div class="nl-field">
