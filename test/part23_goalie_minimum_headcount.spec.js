@@ -70,12 +70,32 @@ describe('Live-testing Part 5: headcount goalie minimum, independent Goalie/Play
     await applyRealSchema(env);
   });
 
-  describe('min_goalies = 0 (default): completely unaffected, today\'s behavior', () => {
-    it('a headcount league created with no minGoalies gets min_goalies=0 in the DB', async () => {
+  describe('min_goalies omitted at creation: defaults to 1, not a silent 0 (4c)', () => {
+    it('a headcount league created with no minGoalies at all gets min_goalies=1 in the DB', async () => {
+      const { cookie, csrfToken } = await signup('goalie.omitted@example.com', '203.0.126.010');
+      const res = await SELF.fetch('http://example.com/leagues/create', {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+        body: JSON.stringify({ name: 'Goalie Omitted League', tracksStats: true, teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 })
+      });
+      const json = await res.json();
+      expect(json.league.minGoalies).toBe(1);
+      const row = await env.DB.prepare('SELECT min_goalies FROM leagues WHERE id = ?').bind(json.league.id).first();
+      expect(row.min_goalies).toBe(1);
+    });
+  });
+
+  describe('min_goalies = 0 (explicit): a real, honored "no requirement" choice', () => {
+    // Small-outstanding-items task (4c): the creation-time default
+    // changed from a silent 0 to 1 (see handleLeagueCreate's own
+    // comment) -- omitting minGoalies is covered by its own describe
+    // block below now. These three tests keep testing what they always
+    // tested (0 really means "no requirement", not a placeholder) by
+    // sending minGoalies: 0 explicitly instead of relying on omission.
+    it('a headcount league created with an explicit minGoalies: 0 gets min_goalies=0 in the DB', async () => {
       const { cookie, csrfToken } = await signup('goalie.default@example.com', '203.0.126.001');
       const res = await SELF.fetch('http://example.com/leagues/create', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ name: 'Goalie Default League', tracksStats: true, teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 })
+        body: JSON.stringify({ name: 'Goalie Default League', tracksStats: true, teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10, minGoalies: 0 })
       });
       const json = await res.json();
       expect(json.league.minGoalies).toBe(0);
@@ -85,14 +105,14 @@ describe('Live-testing Part 5: headcount goalie minimum, independent Goalie/Play
 
     it('with min_goalies=0, the season config resolves goaliesPerTeam=0, not the generic default of 1', async () => {
       const { cookie, csrfToken } = await signup('goalie.default.cfg@example.com', '203.0.126.002');
-      const league = await createLeague(cookie, csrfToken, { name: 'Goalie Default Cfg League', tracksStats: true, teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 });
+      const league = await createLeague(cookie, csrfToken, { name: 'Goalie Default Cfg League', tracksStats: true, teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10, minGoalies: 0 });
       const cfg = await getLeagueSeasonConfig(env, league.id);
       expect(cfg.goaliesPerTeam).toBe(0);
     });
 
     it('the event-status page and public page show NO goalie stat line at all when min_goalies=0', async () => {
       const { cookie, csrfToken } = await signup('goalie.default.ui@example.com', '203.0.126.003');
-      const league = await createLeague(cookie, csrfToken, { name: 'Goalie Default UI League', tracksStats: true, teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 });
+      const league = await createLeague(cookie, csrfToken, { name: 'Goalie Default UI League', tracksStats: true, teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10, minGoalies: 0 });
       const eventId = await createEvent(cookie, csrfToken, '2099-11-01');
       const p1 = await addPlayer(cookie, csrfToken, 'Goalie Default UI Player');
       await setStatus(cookie, csrfToken, eventId, p1.player_id, 'in');

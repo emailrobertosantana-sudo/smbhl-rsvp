@@ -2594,6 +2594,18 @@ export async function handleLeagueCreate(req, env) {
       // care about goalie coverage specifically, not a placeholder for
       // "not decided yet". Only meaningful while sport_type is
       // 'hockey' (every league today -- see migrate-028.sql).
+      //
+      // Small-outstanding-items task (4c): commit 488f351 (item A4)
+      // fixed onboarding's own DISPLAY to show "1" for a genuinely-
+      // unset value instead of a silent 0, but the actual creation-
+      // time default here was untouched -- a league created through
+      // any path that never reaches onboarding's own goalie-minimum
+      // step (or a future caller of this same route) still got a
+      // silent 0. Fixed at the source: 1 unless the caller EXPLICITLY
+      // sends a value (including an explicit 0, still honored as a
+      // real "no requirement" choice, same as always) -- so it no
+      // longer depends on which screen created the league.
+      minGoalies = 1;
       if (body.minGoalies !== undefined && body.minGoalies !== null && String(body.minGoalies).trim() !== '') {
         minGoalies = Number(body.minGoalies);
         if (!Number.isFinite(minGoalies) || minGoalies < 0) {

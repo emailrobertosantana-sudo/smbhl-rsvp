@@ -112,14 +112,15 @@ describe('Live-testing Bug 3: headcount min/max carried into first-season-publis
     // The pool card's meter renders one <i> per target spot
     // (Math.max(totalTarget, confirmed), totalTarget = skatersPerTeam +
     // goaliesPerTeam). Real max_players=10 -> skatersPerTeam=10, plus
-    // goaliesPerTeam=0 (this league never set a goalie minimum -- Part
-    // 5's own fix now correctly resolves that to a real 0, not the
-    // generic default of 1 a since-fixed falsy-zero bug used to
-    // silently substitute) = 10 cells, not the 9 the generic SMBHL
-    // default (8 skaters + 1 goalie) would produce.
+    // goaliesPerTeam=1 (small-outstanding-items task, 4c: a headcount
+    // league that never sets its own goalie minimum now gets the same
+    // real, honored default (1) regardless of creation path, rather
+    // than the silent 0 handleLeagueCreate used to leave in place) =
+    // 11 cells, not the 9 the generic SMBHL default (8 skaters + 1
+    // goalie) would produce.
     const meterMatch = html.match(/<div class="nl-meter">((?:<i[^>]*><\/i>)+)<\/div>/);
     const cellCount = (meterMatch[1].match(/<i/g) || []).length;
-    expect(cellCount).toBe(10);
+    expect(cellCount).toBe(11);
   });
 
   it('an explicit override to headcount on a NON-headcount-default league still requires min/max in the body (no league-level fallback exists for it)', async () => {
