@@ -18,6 +18,7 @@
 // tracking, deliberately not the model for this.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
+import { deriveGoalieRecord } from '../src/leagues.js';
 import { applyRealSchema } from './support/real_schema.js';
 
 const AUTH_SECRET = 'test-part94-stats-tracking-secret';
@@ -94,6 +95,20 @@ async function assignEventTeam(cookie, csrfToken, eventId, playerId, team) {
   const res = await SELF.fetch('http://example.com/league/events/assign-team', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
     body: JSON.stringify({ event_id: eventId, player_id: playerId, team })
+  });
+  return { status: res.status, json: await res.json() };
+}
+async function addContact(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/contacts', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body)
+  });
+  return (await res.json()).contact;
+}
+async function postPlayerStats(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/events/player-stats', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body)
   });
   return { status: res.status, json: await res.json() };
 }
@@ -355,5 +370,147 @@ describe('Stats tracking, Part 2: score entry', () => {
     const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
     const html = await eventDetailHtml(cookie, ev.id);
     expect(html).not.toContain('id="score_section"');
+  });
+});
+
+// Part 3: player stats entry. Goals/assists per CONFIRMED player --
+// never the whole roster. Goalie win/loss/tie is DERIVED from the
+// event's own score + which side the goalie was on, never asked for
+// twice; goals_against is the one real number asked for. Goalie
+// entries need game results enabled (Part 1's own decision).
+describe('Stats tracking, Part 3: player stats entry', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it('only players CONFIRMED IN for this event can have stats entered -- a non-confirmed player is rejected', async () => {
+    const { cookie, csrfToken } = await signup('p3.confirmed@example.com', '203.0.204.001');
+    await createLeague(cookie, csrfToken, { name: 'Confirmed League', teamNames: ['A', 'B'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const confirmed = await addContact(cookie, csrfToken, { name: 'Confirmed Player', role: 'roster' });
+    const notConfirmed = await addContact(cookie, csrfToken, { name: 'Not Confirmed Player', role: 'roster' });
+    await setRsvp(cookie, csrfToken, ev.id, confirmed.player_id, 'in');
+    await setRsvp(cookie, csrfToken, ev.id, notConfirmed.player_id, 'out');
+
+    const good = await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: confirmed.player_id, role: 'skater', goals: 2, assists: 1 }] });
+    expect(good.status).toBe(200);
+
+    const bad = await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: notConfirmed.player_id, role: 'skater', goals: 1, assists: 0 }] });
+    expect(bad.status).toBe(409);
+    expect(bad.json.errorKey).toBe('PLAYER_NOT_CONFIRMED');
+
+    const row = await env.DB.prepare('SELECT goals, assists FROM player_game_stats WHERE event_id = ? AND player_id = ?').bind(ev.id, confirmed.player_id).first();
+    expect(row.goals).toBe(2); expect(row.assists).toBe(1);
+  });
+
+  it('the event page only lists CONFIRMED players in the stats form -- not the whole roster', async () => {
+    const { cookie, csrfToken } = await signup('p3.uilist@example.com', '203.0.204.002');
+    await createLeague(cookie, csrfToken, { name: 'UI List League', teamNames: ['A', 'B'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const confirmed = await addContact(cookie, csrfToken, { name: 'Shows Up Player', role: 'roster' });
+    const notConfirmed = await addContact(cookie, csrfToken, { name: 'Hidden Player', role: 'roster' });
+    await setRsvp(cookie, csrfToken, ev.id, confirmed.player_id, 'in');
+    await setRsvp(cookie, csrfToken, ev.id, notConfirmed.player_id, 'pending');
+
+    const html = await eventDetailHtml(cookie, ev.id);
+    expect(html).toContain('Shows Up Player');
+    expect(html).not.toContain('Hidden Player');
+  });
+
+  it('goalie stats are rejected when game results are off for this league, and accepted once turned on', async () => {
+    const { cookie, csrfToken } = await signup('p3.goalieoff@example.com', '203.0.204.003');
+    await createLeague(cookie, csrfToken, { name: 'Goalie Off League', teamNames: ['A', 'B'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksPlayerStats: true }); // results left off
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const goalie = await addContact(cookie, csrfToken, { name: 'Goalie Player', role: 'roster' });
+    await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
+
+    const rejected = await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 3 }] });
+    expect(rejected.status).toBe(409);
+    expect(rejected.json.errorKey).toBe('GOALIE_STATS_REQUIRE_RESULTS');
+
+    await updateTracking(cookie, csrfToken, { tracksResults: true });
+    const accepted = await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 3 }] });
+    expect(accepted.status).toBe(200);
+    const row = await env.DB.prepare('SELECT role, goals_against FROM player_game_stats WHERE event_id = ? AND player_id = ?').bind(ev.id, goalie.player_id).first();
+    expect(row.role).toBe('goalie');
+    expect(row.goals_against).toBe(3);
+  });
+
+  it('a goalie\'s win/loss/tie is DERIVED from the event\'s own score and which side they were on -- never asked for, never stored', async () => {
+    const { cookie, csrfToken } = await signup('p3.derive@example.com', '203.0.204.004');
+    await createLeague(cookie, csrfToken, { name: 'Derive League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 5, away_score: 2 }); // Rouge (home) wins
+
+    // Not stored anywhere as an enum -- deriveGoalieRecord computes it
+    // fresh from the event row + team, every time.
+    const scoredEv = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(ev.id).first();
+    expect(deriveGoalieRecord(scoredEv, 'Rouge')).toBe('win');
+    expect(deriveGoalieRecord(scoredEv, 'Bleu')).toBe('loss');
+
+    const tieEv = { ...scoredEv, home_score: 3, away_score: 3 };
+    expect(deriveGoalieRecord(tieEv, 'Rouge')).toBe('tie');
+    expect(deriveGoalieRecord(tieEv, 'Bleu')).toBe('tie');
+
+    // No result yet -- nothing to derive.
+    const noResultEv = { ...scoredEv, result_entered_at: null, home_score: null, away_score: null };
+    expect(deriveGoalieRecord(noResultEv, 'Rouge')).toBeNull();
+  });
+
+  it('a player can be a skater in one game and a goalie in another, within the same season -- the model never prevents it', async () => {
+    const { cookie, csrfToken } = await signup('p3.bothroles@example.com', '203.0.204.005');
+    await createLeague(cookie, csrfToken, { name: 'Both Roles League', teamNames: ['A', 'B'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev1 = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev2 = await createEvent(cookie, csrfToken, { date: '2099-01-12', season: 'S1' });
+    const player = await addContact(cookie, csrfToken, { name: 'Two Way Player', role: 'roster' });
+    await setRsvp(cookie, csrfToken, ev1.id, player.player_id, 'in');
+    await setRsvp(cookie, csrfToken, ev2.id, player.player_id, 'in');
+
+    const skaterGame = await postPlayerStats(cookie, csrfToken, { event_id: ev1.id, entries: [{ player_id: player.player_id, role: 'skater', goals: 1, assists: 2 }] });
+    expect(skaterGame.status).toBe(200);
+    const goalieGame = await postPlayerStats(cookie, csrfToken, { event_id: ev2.id, entries: [{ player_id: player.player_id, role: 'goalie', goals_against: 2 }] });
+    expect(goalieGame.status).toBe(200);
+
+    const rows = (await env.DB.prepare('SELECT event_id, role FROM player_game_stats WHERE player_id = ? ORDER BY event_id').bind(player.player_id).all()).results;
+    expect(rows.length).toBe(2);
+    expect(rows.map(r => r.role).sort()).toEqual(['goalie', 'skater']);
+  });
+
+  it('rejected when the league does not track player stats at all', async () => {
+    const { cookie, csrfToken } = await signup('p3.notracking@example.com', '203.0.204.006');
+    await createLeague(cookie, csrfToken, { name: 'No Player Stats League', teamNames: ['A', 'B'], tracksStats: false });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const player = await addContact(cookie, csrfToken, { name: 'Test Player', role: 'roster' });
+    await setRsvp(cookie, csrfToken, ev.id, player.player_id, 'in');
+    const res = await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: player.player_id, role: 'skater', goals: 1, assists: 0 }] });
+    expect(res.status).toBe(409);
+    expect(res.json.errorKey).toBe('PLAYER_STATS_NOT_TRACKED');
+  });
+
+  it('editable afterward -- re-submitting the same player overwrites their stats for that game', async () => {
+    const { cookie, csrfToken } = await signup('p3.edit@example.com', '203.0.204.007');
+    await createLeague(cookie, csrfToken, { name: 'Edit Stats League', teamNames: ['A', 'B'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const player = await addContact(cookie, csrfToken, { name: 'Test Player', role: 'roster' });
+    await setRsvp(cookie, csrfToken, ev.id, player.player_id, 'in');
+
+    await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: player.player_id, role: 'skater', goals: 1, assists: 0 }] });
+    await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: player.player_id, role: 'skater', goals: 3, assists: 2 }] });
+    const row = await env.DB.prepare('SELECT goals, assists FROM player_game_stats WHERE event_id = ? AND player_id = ?').bind(ev.id, player.player_id).first();
+    expect(row.goals).toBe(3); expect(row.assists).toBe(2);
   });
 });

@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -7545,7 +7545,7 @@ async function handleLeagueEventDetailPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name, team_colors, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, team_structure, tracks_results FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, team_colors, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, team_structure, tracks_results, tracks_player_stats FROM leagues WHERE id = ?').bind(leagueId).first();
   const eventId = url.searchParams.get('e');
   const ev = eventId ? await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
     .bind(eventId, leagueId).first() : null;
@@ -7686,6 +7686,23 @@ ${tabbar}`;
     }
   }
 
+  // Part 3 (stats tracking task): goals/assists (or goals-against for
+  // a goalie) per CONFIRMED player -- never the whole roster. Any
+  // stats already saved for this event are pre-filled, so re-opening
+  // this page after a first pass shows what's there, editable.
+  let confirmedPlayers = [];
+  let existingPlayerStats = new Map();
+  if (leagueRow.tracks_player_stats) {
+    confirmedPlayers = (await env.DB.prepare(
+      `SELECT c.player_id, c.name FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+        WHERE r.event_id = ? AND r.status = 'in' AND c.league_id = ? ORDER BY c.name`
+    ).bind(ev.id, leagueId).all()).results || [];
+    const statRows = (await env.DB.prepare(
+      'SELECT player_id, role, goals, assists, goals_against FROM player_game_stats WHERE event_id = ?'
+    ).bind(ev.id).all()).results || [];
+    existingPlayerStats = new Map(statRows.map(r => [r.player_id, r]));
+  }
+
   const I18N_DETAIL = {
     fr: {
       navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter',
@@ -7744,6 +7761,13 @@ ${tabbar}`;
       scoreSaveBtn: 'Enregistrer le résultat', scoreCancelBtn: 'Annuler', scoreSaved: 'Résultat enregistré.',
       scoreHomeGeneric: 'Domicile', scoreAwayGeneric: 'Visiteur',
       scorePlayedLabel: 'Match joué', scoreNoTeamsYet: "Le tirage n'a pas encore eu lieu pour ce match -- entre le résultat une fois les équipes formées.",
+      // Part 3 (stats tracking task): goals/assists per CONFIRMED
+      // player, or goals-against for a goalie -- win/loss/tie is
+      // DERIVED from the event's own score, never asked for twice.
+      playerStatsTitle: 'Statistiques des joueurs', playerStatsSaveBtn: 'Enregistrer les statistiques', playerStatsSaved: 'Statistiques enregistrées.',
+      playerStatsNoConfirmed: "Aucun joueur confirmé pour ce match pour l'instant.",
+      colGoals: 'Buts', colAssists: 'Passes', colGoalie: 'Gardien', colGoalsAgainst: 'Buts alloués',
+      goalieNeedsResults: "Active les résultats des matchs pour ce match pour pouvoir entrer des statistiques de gardien.",
       ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
     },
     en: {
@@ -7780,6 +7804,10 @@ ${tabbar}`;
       scoreSaveBtn: 'Save result', scoreCancelBtn: 'Cancel', scoreSaved: 'Result saved.',
       scoreHomeGeneric: 'Home', scoreAwayGeneric: 'Away',
       scorePlayedLabel: 'Game played', scoreNoTeamsYet: "The draw hasn't happened for this game yet -- enter the result once teams are formed.",
+      playerStatsTitle: 'Player stats', playerStatsSaveBtn: 'Save stats', playerStatsSaved: 'Stats saved.',
+      playerStatsNoConfirmed: 'No players confirmed for this game yet.',
+      colGoals: 'Goals', colAssists: 'Assists', colGoalie: 'Goalie', colGoalsAgainst: 'Goals against',
+      goalieNeedsResults: 'Turn on game results for this league to enter goalie stats.',
       ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     }
   };
@@ -8123,6 +8151,28 @@ ${tabbar}`;
     </div>
     <div style="margin-top:8px" id="score_toggle_wrap"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="${ev.result_entered_at ? 'scoreEditBtn' : 'scoreEnterBtn'}" onclick="toggleScoreForm(true)">${ev.result_entered_at ? esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreEditBtn) : esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreEnterBtn)}</button></div>
   </section>` : ''}
+  ${leagueRow.tracks_player_stats ? `<section class="nl-card nl-card--pad-lg" id="player_stats_section">
+    <div class="h3" data-i18n="playerStatsTitle">Statistiques des joueurs</div>
+    <div id="playerStatsErr" class="nl-error" style="display:none"></div>
+    <div id="playerStatsOk" class="nl-ok" style="display:none"></div>
+    ${!confirmedPlayers.length ? `<p class="nl-help" data-i18n="playerStatsNoConfirmed">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playerStatsNoConfirmed)}</p>` : `
+    ${!leagueRow.tracks_results ? `<p class="nl-help" data-i18n="goalieNeedsResults" style="margin-bottom:8px">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).goalieNeedsResults)}</p>` : ''}
+    <div id="player_stats_rows" style="display:flex;flex-direction:column;gap:8px;">
+      ${confirmedPlayers.map(p => {
+        const existing = existingPlayerStats.get(p.player_id);
+        const isGoalie = existing && existing.role === 'goalie';
+        return `<div class="ev-p" data-player-stat-row="${esc(p.player_id)}" style="align-items:center;flex-wrap:wrap;">
+        <span style="min-width:140px">${esc(p.name)}</span>
+        <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" class="ps-goalie-toggle" ${isGoalie ? 'checked' : ''} ${leagueRow.tracks_results ? '' : 'disabled'} onchange="psToggleGoalie(this)"> <span data-i18n="colGoalie">Gardien</span></label>
+        <label class="ps-skater-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? 'display:none' : ''}"><span data-i18n="colGoals">Buts</span> <input class="nl-input ps-goals" type="number" min="0" style="width:60px" value="${existing && existing.role !== 'goalie' ? esc(String(existing.goals)) : ''}"></label>
+        <label class="ps-skater-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? 'display:none' : ''}"><span data-i18n="colAssists">Passes</span> <input class="nl-input ps-assists" type="number" min="0" style="width:60px" value="${existing && existing.role !== 'goalie' ? esc(String(existing.assists)) : ''}"></label>
+        <label class="ps-goalie-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? '' : 'display:none'}"><span data-i18n="colGoalsAgainst">Buts alloués</span> <input class="nl-input ps-goals-against" type="number" min="0" style="width:60px" value="${isGoalie && existing.goals_against != null ? esc(String(existing.goals_against)) : ''}"></label>
+      </div>`;
+      }).join('')}
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="playerStatsSaveBtn" onclick="submitPlayerStats()">Enregistrer les statistiques</button></div>
+    `}
+  </section>` : ''}
   <div class="ev-teams">${ev.is_playoff
     ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
       <h2 data-i18n="playoffAwaitingSeedingTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingTitle)}</h2>
@@ -8269,6 +8319,48 @@ async function submitScore() {
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; return; }
     window.location.reload();
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; }
+}
+// Part 3 (stats tracking task): goals/assists per confirmed player, or
+// goals-against for a goalie -- one row per player, a checkbox swaps
+// which fields that row shows (never both at once for the same game).
+function psToggleGoalie(checkbox) {
+  var row = checkbox.closest('[data-player-stat-row]');
+  if (!row) return;
+  var isGoalie = checkbox.checked;
+  Array.prototype.forEach.call(row.querySelectorAll('.ps-skater-fields'), function(el) { el.style.display = isGoalie ? 'none' : ''; });
+  Array.prototype.forEach.call(row.querySelectorAll('.ps-goalie-fields'), function(el) { el.style.display = isGoalie ? '' : 'none'; });
+}
+async function submitPlayerStats() {
+  var err = document.getElementById('playerStatsErr'); var ok = document.getElementById('playerStatsOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var rows = document.querySelectorAll('[data-player-stat-row]');
+  var entries = [];
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    var playerId = row.getAttribute('data-player-stat-row');
+    var isGoalie = row.querySelector('.ps-goalie-toggle').checked;
+    if (isGoalie) {
+      var ga = row.querySelector('.ps-goals-against').value;
+      if (ga === '') continue; // not entered for this player -- skip, don't send a bogus 0
+      entries.push({ player_id: playerId, role: 'goalie', goals_against: Number(ga) });
+    } else {
+      var goals = row.querySelector('.ps-goals').value;
+      var assists = row.querySelector('.ps-assists').value;
+      if (goals === '' && assists === '') continue; // untouched -- skip
+      entries.push({ player_id: playerId, role: 'skater', goals: Number(goals || 0), assists: Number(assists || 0) });
+    }
+  }
+  if (!entries.length) { err.textContent = window.__errorText('ENTRIES_REQUIRED'); err.style.display = 'block'; return; }
+  try {
+    var res = await fetch('/league/events/player-stats', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, entries: entries })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; return; }
+    ok.textContent = window.__pageDict().playerStatsSaved; ok.style.display = 'block';
   } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; }
 }
 async function sendReminderNow(btn) {
@@ -25195,6 +25287,11 @@ async function handleFetch(req, env, ctx) {
       // editable afterward -- calling this again just overwrites.
       if (url.pathname === '/league/events/score' && req.method === 'POST')
         return await handleLeagueEventScore(req, env);
+      // Part 3 (stats tracking task): admin-only player stats entry --
+      // goals/assists (skater) or goals-against (goalie, win/loss/tie
+      // derived from the event's own score, never entered).
+      if (url.pathname === '/league/events/player-stats' && req.method === 'POST')
+        return await handleLeaguePlayerStatsUpsert(req, env);
       // Part 2: admin-initiated manual "send now" trigger (same UI
       // pattern as the existing manual sub-invite button) -- sends the
       // same non-responder reminder outside the automatic 72h/24h

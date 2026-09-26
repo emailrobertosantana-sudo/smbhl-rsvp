@@ -3664,7 +3664,12 @@ async function resolveScoreEventSides(env, leagueId, teamStructure, ev, body) {
     let teamNames = [];
     try { teamNames = JSON.parse(leagueRow.team_names || '[]').filter(Boolean); } catch (_) {}
     if (teamNames.length === 2) {
-      return { value: { homeTeam: teamNames[0], awayTeam: teamNames[1], persist: false } };
+      // Not yet on the event row (a 2-team league's matchup is
+      // implied, so nothing ever needed to write it before) -- persist
+      // it now. deriveGoalieRecord and Part 4/5's own standings/
+      // seeding all read events.home_team/away_team directly, not this
+      // resolver, so it has to actually be there once a score exists.
+      return { value: { homeTeam: teamNames[0], awayTeam: teamNames[1], persist: true } };
     }
     return { error: { ok: false, error: 'No matchup is set for this event yet -- set one before entering a score.', errorKey: 'NO_MATCHUP_SET' } };
   }
@@ -3737,4 +3742,130 @@ export async function handleLeagueEventScore(req, env) {
     ok: true,
     event: { id: eventId, home_team: homeTeam, away_team: awayTeam, home_score: homeScore, away_score: awayScore, result_entered_at: enteredAt, is_playoff: !!ev.is_playoff }
   });
+}
+
+/* ---------- player stats entry (Part 3, stats tracking task) ----------
+ * ADMIN ONLY, same authority reasoning as score entry. Goals and
+ * assists per player, per game -- only for players CONFIRMED IN for
+ * that event (never the whole roster; enforced here, not only left to
+ * the UI to not offer).
+ *
+ * GOALIE STATS: a win/loss/tie follows mechanically from the event's
+ * own score and which side the goalie was on -- asking the admin to
+ * enter that a second time would just be a second, potentially
+ * disagreeing, source of truth for the exact same fact. DERIVED, via
+ * deriveGoalieRecord below, never stored. What IS asked for and
+ * stored: goals_against, the one real per-game number this product
+ * has no other way to know. GAA is then computed at read time from
+ * goals_against summed across a goalie's own games (see
+ * computeGoalieGaaStats, Part 4) -- a simple goals-against-per-game
+ * average, not per-60-minutes (this product doesn't track precise ice
+ * time). Goalie entries require the event to already track results
+ * (Part 1's own decision -- "unavailable... unless game results are
+ * enabled") -- enforced here too, not only by the UI greying the
+ * option out.
+ *
+ * One row per (event_id, player_id) -- a player is one role per game,
+ * but nothing stops them being a skater in one game and a goalie in
+ * another within the same season (different event_id rows) -- the
+ * task's own explicit requirement (a "can also play goalie" flag,
+ * is_backup_goalie, already exists on contacts).
+ */
+export function deriveGoalieRecord(ev, team) {
+  if (!ev.result_entered_at || ev.home_score == null || ev.away_score == null) return null;
+  const isHome = team === ev.home_team;
+  const isAway = team === ev.away_team;
+  if (!isHome && !isAway) return null;
+  const goalsFor = isHome ? ev.home_score : ev.away_score;
+  const goalsAgainst = isHome ? ev.away_score : ev.home_score;
+  if (goalsFor > goalsAgainst) return 'win';
+  if (goalsFor < goalsAgainst) return 'loss';
+  return 'tie';
+}
+
+export async function handleLeaguePlayerStatsUpsert(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot record stats for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+
+  const eventId = String(body.event_id || '').trim();
+  if (!eventId) {
+    return Response.json({ ok: false, error: 'event_id is required.', errorKey: 'EVENT_ID_REQUIRED' }, { status: 400 });
+  }
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+
+  const leagueRow = await env.DB.prepare('SELECT tracks_player_stats, tracks_results FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow.tracks_player_stats) {
+    return Response.json({ ok: false, error: 'This league does not track player stats.', errorKey: 'PLAYER_STATS_NOT_TRACKED' }, { status: 409 });
+  }
+
+  const entries = Array.isArray(body.entries) ? body.entries : [];
+  if (!entries.length) {
+    return Response.json({ ok: false, error: 'entries must be a non-empty array.', errorKey: 'ENTRIES_REQUIRED' }, { status: 400 });
+  }
+
+  // Only players CONFIRMED IN for this event -- never the whole
+  // roster, and never trusting the client's own filtering.
+  const confirmedRows = (await env.DB.prepare(
+    `SELECT c.player_id, c.preferred_team, r.team AS event_team FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND r.status = 'in' AND c.league_id = ?`
+  ).bind(eventId, leagueId).all()).results || [];
+  const confirmedById = new Map(confirmedRows.map(r => [r.player_id, r]));
+
+  const now = new Date().toISOString();
+  const saved = [];
+  for (const entry of entries) {
+    const playerId = String(entry.player_id || '').trim();
+    const confirmed = confirmedById.get(playerId);
+    if (!confirmed) {
+      return Response.json({ ok: false, error: `Player ${playerId} was not confirmed in for this event.`, errorKey: 'PLAYER_NOT_CONFIRMED' }, { status: 409 });
+    }
+    const role = entry.role === 'goalie' ? 'goalie' : 'skater';
+    if (role === 'goalie' && !leagueRow.tracks_results) {
+      return Response.json({ ok: false, error: 'Goalie stats need game results turned on for this league.', errorKey: 'GOALIE_STATS_REQUIRE_RESULTS' }, { status: 409 });
+    }
+    const goals = role === 'skater' ? Math.max(0, Math.floor(Number(entry.goals) || 0)) : 0;
+    const assists = role === 'skater' ? Math.max(0, Math.floor(Number(entry.assists) || 0)) : 0;
+    let goalsAgainst = null;
+    if (role === 'goalie') {
+      goalsAgainst = Number(entry.goals_against);
+      if (!Number.isFinite(goalsAgainst) || goalsAgainst < 0) {
+        return Response.json({ ok: false, error: `goals_against is required (zero or more) for a goalie entry (player ${playerId}).`, errorKey: 'INVALID_GOALS_AGAINST' }, { status: 400 });
+      }
+      goalsAgainst = Math.floor(goalsAgainst);
+    }
+    // Which side they were on -- the event's own per-event assignment
+    // (weekly_draw's rsvp.team) if set, else the league's permanent
+    // one (fixed's contacts.preferred_team). Needed to derive a
+    // goalie's win/loss/tie later; harmless to record for a skater
+    // too (never displayed as anything other than context).
+    const team = confirmed.event_team || confirmed.preferred_team || null;
+
+    await env.DB.prepare(
+      `INSERT INTO player_game_stats (event_id, player_id, league_id, team, role, goals, assists, goals_against, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(event_id, player_id) DO UPDATE SET team = excluded.team, role = excluded.role, goals = excluded.goals, assists = excluded.assists, goals_against = excluded.goals_against, updated_at = excluded.updated_at`
+    ).bind(eventId, playerId, leagueId, team, role, goals, assists, goalsAgainst, now).run();
+
+    saved.push({
+      player_id: playerId, role, goals, assists, goals_against: goalsAgainst, team,
+      derivedResult: role === 'goalie' ? deriveGoalieRecord(ev, team) : null
+    });
+  }
+
+  return Response.json({ ok: true, event_id: eventId, saved });
 }
