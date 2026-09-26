@@ -59,13 +59,6 @@ async function updatePlayoffs(cookie, csrfToken, body) {
   });
   return { status: res.status, json: await res.json() };
 }
-async function fixtureApprove(cookie, csrfToken, body) {
-  const res = await SELF.fetch('http://example.com/league/season/fixture-approve', {
-    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify(body)
-  });
-  return { status: res.status, json: await res.json() };
-}
 async function bulkCreateEvents(cookie, csrfToken, body) {
   const res = await SELF.fetch('http://example.com/league/events/bulk', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -336,16 +329,18 @@ describe('Best-of-N series tracking, Part 3', () => {
     await updateIdentity(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'best_of_n', playoff_teams: 2, playoff_best_of: bestOf, playoff_third_place: false });
-    // Schedule-generation redesign task (Group D): 1 regular-season
-    // game booked as an ordinary event, then assigned its matchup --
-    // the playoff generator only ever creates the bestOf playoff games
-    // now, never the regular season.
-    const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 1 });
+    // Scheduling correction task (Part 1): ONE POOL OF SLOTS -- 1
+    // regular-season game plus bestOf playoff games, all booked as
+    // ordinary events first, then assigned together in ONE confirm
+    // (playoffs take the last bestOf events chronologically). Neither
+    // half is ever created by this action.
+    const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 1 + bestOf });
     const regularEvent = bulk.json.results[0].event;
-    await matchupsConfirm(cookie, csrfToken, {});
-    const approve = await fixtureApprove(cookie, csrfToken, { start_date: '2099-02-01', interval_days: 7, time: '18:00', venue: 'Series Gym' });
-    expect(approve.status).toBe(200);
-    const seriesGames = approve.json.created.filter(e => e.is_playoff).sort((a, b) => a.date.localeCompare(b.date));
+    const confirm = await matchupsConfirm(cookie, csrfToken, {});
+    expect(confirm.status).toBe(200);
+    const seriesGames = (await env.DB.prepare(
+      'SELECT id, date FROM events WHERE league_id = ? AND is_playoff = 1 ORDER BY date'
+    ).bind(league.id).all()).results;
     expect(seriesGames.length).toBe(bestOf);
 
     // Seed the series from a 1-game "regular season" (Rouge wins ->
@@ -411,18 +406,21 @@ describe('Best-of-N series tracking, Part 3', () => {
     await updateIdentity(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'best_of_n', playoff_teams: 4, playoff_best_of: 3, playoff_third_place: false });
-    // Schedule-generation redesign task (Group D): 6 regular-season
-    // games booked as ordinary events first, then assigned real
-    // matchups -- the playoff generator only ever creates the 9
-    // playoff slots now (2 best-of-3 semifinals + 1 best-of-3 final).
-    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 6 });
-    await matchupsConfirm(cookie, csrfToken, {});
+    // Scheduling correction task (Part 1): ONE POOL OF SLOTS -- 6
+    // regular-season games + 9 playoff slots (2 best-of-3 semifinals +
+    // 1 best-of-3 final) all booked as ordinary events first, then
+    // assigned together in ONE confirm (playoffs take the last 9
+    // chronologically). Neither half is ever created by this action.
+    const leagueId = (await env.DB.prepare('SELECT id FROM leagues WHERE name = ?').bind('Bracket Series League').first()).id;
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 15 });
+    const confirm = await matchupsConfirm(cookie, csrfToken, {});
+    expect(confirm.status).toBe(200);
     const regularEvents = (await env.DB.prepare(
       'SELECT id, home_team, away_team FROM events WHERE league_id = ? AND is_playoff = 0'
-    ).bind((await env.DB.prepare('SELECT id FROM leagues WHERE name = ?').bind('Bracket Series League').first()).id).all()).results;
-    const approve = await fixtureApprove(cookie, csrfToken, { start_date: '2099-02-01', interval_days: 7, time: '18:00', venue: 'Bracket Gym' });
-    expect(approve.status).toBe(200);
-    const playoffEvents = approve.json.created;
+    ).bind(leagueId).all()).results;
+    const playoffEvents = (await env.DB.prepare(
+      'SELECT id, is_playoff FROM events WHERE league_id = ? AND is_playoff = 1'
+    ).bind(leagueId).all()).results;
     expect(regularEvents.length).toBe(6);
     expect(playoffEvents.every(e => e.is_playoff)).toBe(true);
     expect(playoffEvents.length).toBe(9);

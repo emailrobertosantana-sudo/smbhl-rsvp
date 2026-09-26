@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -7112,7 +7112,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, playoffs_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
   // C1 bug fix (schedule/events polish task): this list used to sort
   // newest-first unconditionally (ORDER BY date DESC) -- for an
   // UPCOMING schedule that buries the next game at the bottom under
@@ -7227,11 +7227,10 @@ async function handleLeagueSchedulePage(req, env, url) {
   // offered for any 'fixed' league with at least 2 teams -- unlike the
   // single-event matchup picker above, even a 2-team league benefits
   // from not hand-picking every week's matchup one event at a time.
-  // The playoff generator is a SEPARATE, narrower action -- only once
-  // playoffs are actually turned on in Settings (nothing to generate
-  // otherwise).
+  // Scheduling correction task (Part 1): ONE POOL OF SLOTS -- covers
+  // the playoffs too, whenever the league has them configured, in the
+  // same preview/confirm. No separate playoff-only action anymore.
   const showMatchupsPanel = scheduleIsFixed && scheduleTeamNames.length >= 2;
-  const showPlayoffPanel = scheduleIsFixed && !!leagueRow.playoffs_enabled;
 
   const I18N_SCHEDULE = {
     fr: {
@@ -7288,7 +7287,12 @@ async function handleLeagueSchedulePage(req, env, url) {
       // own schedule tool). Never creates an event. Only offered for a
       // 'fixed' league.
       matchupsGenBtn: 'Assigner les affrontements', matchupsGenTitle: 'Assigner les affrontements',
-      matchupsGenHelp: "Assigne un affrontement à chacun de tes matchs déjà créés, en alternance équilibrée -- rien n'est écrasé avant que tu confirmes.",
+      // Scheduling correction task (Part 1): ONE POOL OF SLOTS -- a
+      // single preview/confirm now covers the regular season AND the
+      // playoffs together (playoff games take the LAST N slots
+      // chronologically, N from the league's own playoff config).
+      // Never creates an event, for either half.
+      matchupsGenHelp: "Assigne un affrontement à chacun de tes matchs déjà créés -- séries éliminatoires comprises, une seule prévisualisation pour tout l'horaire. Rien n'est écrasé avant que tu confirmes, et aucun match n'est jamais créé.",
       matchupsRegenerateLabel: 'Tout régénérer (écrase les affrontements déjà assignés)',
       matchupsPreviewBtn: 'Prévisualiser', matchupsConfirmBtn: 'Assigner ces affrontements', matchupsBackBtn: 'Retour',
       matchupsRoundLabel: 'Ronde {n} -- {date}',
@@ -7297,17 +7301,11 @@ async function handleLeagueSchedulePage(req, env, url) {
       matchupsOverwriteConfirm: 'Ceci écrasera {count} match(s) qui ont déjà un affrontement assigné. Clique de nouveau pour confirmer.',
       matchupsResultSummary: '{updated} affrontement(s) assigné(s), {skipped} conservé(s).',
       matchupsNoEvents: "Cette ligue n'a pas encore de matchs. Crée d'abord tes créneaux de gym (Créer un match / Créer plusieurs matchs).",
-      // Playoff generator -- still CREATES real events (see
-      // handleLeagueFixturePreview/Approve's own comment, leagues.js,
-      // for why this one keeps that shape while the assignment above
-      // does not). Only offered once playoffs are turned on in Settings.
-      playoffGenBtn: 'Générer les séries', playoffGenTitle: 'Générer le calendrier des séries',
-      playoffGenHelp: "Crée les matchs de séries selon tes préférences (Paramètres) -- rien n'est créé avant que tu confirmes.",
-      playoffGenStartDate: 'Première date', playoffGenInterval: 'Intervalle (jours)',
-      playoffGenPreviewBtn: 'Prévisualiser', playoffGenApproveBtn: 'Créer ces matchs', playoffGenBackBtn: 'Retour',
-      playoffGenRoundLabel: 'Ronde {n} -- {date}',
+      matchupsTooFewSlots: `Les séries de cette ligue ont besoin de {playoff} match(s), mais il n'y a que {total} match(s) au total. Crée d'autres matchs, ou réduis le format des séries dans les paramètres.`,
+      matchupsArithmeticSummary: '{total} matchs au total -- {playoff} pour les séries, {regular} pour la saison régulière.',
+      matchupsArithmeticRounds: '{full} ronde(s) complète(s) de saison régulière, plus une ronde partielle de {partial} match(s).',
+      matchupsPlayoffsSectionTitle: 'Séries éliminatoires',
       playoffGenByeNote: 'Tête de série {seed} : repos au premier tour',
-      playoffGenResultSummary: '{created} match(s) créé(s).',
       // Client-side mirror of leagues.js's own playoffRoleLabel -- same
       // role vocabulary, used only to render the transient preview (not
       // stored, cleared on approve/cancel -- same "current page
@@ -7352,7 +7350,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       matchupLabel: "Who's playing?", matchupOptional: '(optional -- can be set later)',
       matchupTeam1: 'Team 1', matchupTeam2: 'Team 2', matchupVsWord: 'vs',
       matchupsGenBtn: 'Assign matchups', matchupsGenTitle: 'Assign matchups',
-      matchupsGenHelp: "Assigns a matchup to each of your already-created games, in a balanced rotation -- nothing is overwritten until you confirm.",
+      matchupsGenHelp: "Assigns a matchup to each of your already-created games -- playoffs included, one preview for the whole schedule. Nothing is overwritten until you confirm, and no game is ever created.",
       matchupsRegenerateLabel: 'Regenerate everything (overwrites matchups already assigned)',
       matchupsPreviewBtn: 'Preview', matchupsConfirmBtn: 'Assign these matchups', matchupsBackBtn: 'Back',
       matchupsRoundLabel: 'Round {n} -- {date}',
@@ -7361,13 +7359,11 @@ async function handleLeagueSchedulePage(req, env, url) {
       matchupsOverwriteConfirm: 'This will overwrite {count} game(s) that already have a matchup assigned. Click again to confirm.',
       matchupsResultSummary: '{updated} matchup(s) assigned, {skipped} kept.',
       matchupsNoEvents: 'This league has no games yet. Create your schedule\'s gym slots first (Create an event / Create multiple events).',
-      playoffGenBtn: 'Generate playoffs', playoffGenTitle: 'Generate the playoff schedule',
-      playoffGenHelp: "Creates the playoff games from your preferences (Settings) -- nothing is created until you confirm.",
-      playoffGenStartDate: 'First date', playoffGenInterval: 'Interval (days)',
-      playoffGenPreviewBtn: 'Preview', playoffGenApproveBtn: 'Create these games', playoffGenBackBtn: 'Back',
-      playoffGenRoundLabel: 'Round {n} -- {date}',
+      matchupsTooFewSlots: "This league's playoffs need {playoff} game(s), but there are only {total} game(s) in total. Create more events, or reduce the playoff format in Settings.",
+      matchupsArithmeticSummary: '{total} games total -- {playoff} for the playoffs, {regular} for the regular season.',
+      matchupsArithmeticRounds: '{full} complete round(s) of the regular season, plus a partial round of {partial} game(s).',
+      matchupsPlayoffsSectionTitle: 'Playoffs',
       playoffGenByeNote: 'Seed {seed}: bye in round 1',
-      playoffGenResultSummary: '{created} game(s) created.',
       playoffRoleFinal: 'Final', playoffRoleThirdPlace: 'Third-place game',
       playoffRoleSemifinal: 'Semi-final', playoffRoleQuarterfinal: 'Quarterfinal',
       playoffRoleBracket: 'Playoff round 1, game',
@@ -7474,8 +7470,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     <h1 data-i18n="title">Horaire</h1>
     ${needsSeason ? '' : `<div style="display:flex;gap:var(--space-2);flex-wrap:wrap;">
       <button type="button" class="nl-btn nl-btn--secondary" onclick="openBulkPanel()" data-i18n="bulkCreateBtn">Créer plusieurs matchs</button>
-      ${showMatchupsPanel ? `<button type="button" class="nl-btn nl-btn--secondary" onclick="openMatchupsPanel()" data-i18n="matchupsGenBtn">Assigner les affrontements</button>` : ''}
-      ${showPlayoffPanel ? `<button type="button" class="nl-btn nl-btn--secondary" onclick="togglePlayoffPanel()" data-i18n="playoffGenBtn">Générer les séries</button>` : ''}
+      ${showMatchupsPanel ? `<button type="button" class="nl-btn nl-btn--secondary" onclick="toggleMatchupsPanel()" data-i18n="matchupsGenBtn">Assigner les affrontements</button>` : ''}
       <button type="button" class="nl-btn nl-btn--primary" onclick="openSchedulePanel()" data-i18n="createEvent">Créer un match</button>
     </div>`}
   </div>
@@ -7625,7 +7620,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     </aside>
     ${showMatchupsPanel ? `<aside class="sc-bulk-panel" id="sc_matchups_panel" data-i18n-aria="matchupsGenTitle" aria-label="Assigner les affrontements">
       <h2 data-i18n="matchupsGenTitle">Assigner les affrontements</h2>
-      <p class="nl-help" data-i18n="matchupsGenHelp">Assigne un affrontement à chacun de tes matchs déjà créés, en alternance équilibrée -- rien n'est écrasé avant que tu confirmes.</p>
+      <p class="nl-help" data-i18n="matchupsGenHelp">Assigne un affrontement à chacun de tes matchs déjà créés -- séries éliminatoires comprises, une seule prévisualisation pour tout l'horaire. Rien n'est écrasé avant que tu confirmes, et aucun match n'est jamais créé.</p>
       <div id="matchupsGenErr" class="nl-error" style="display:none"></div>
       <div id="matchups_form_fields">
         <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
@@ -7635,47 +7630,13 @@ async function handleLeagueSchedulePage(req, env, url) {
         <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="mx_preview_btn" data-i18n="matchupsPreviewBtn" onclick="previewMatchups()">Prévisualiser</button>
       </div>
       <div id="matchups_preview_wrap" style="display:none;">
-        <div id="matchups_preview_results" style="display:flex;flex-direction:column;gap:12px;max-height:360px;overflow-y:auto;"></div>
+        <div id="matchups_preview_results" style="display:flex;flex-direction:column;gap:12px;max-height:420px;overflow-y:auto;"></div>
         <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
           <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="mx_confirm_btn" data-i18n="matchupsConfirmBtn" onclick="confirmMatchups()">Assigner ces affrontements</button>
           <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="matchupsBackBtn" onclick="backToMatchupsForm()">Retour</button>
         </div>
       </div>
       <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleMatchupsPanel()">Annuler</button>
-    </aside>` : ''}
-    ${showPlayoffPanel ? `<aside class="sc-bulk-panel" id="sc_playoff_panel" data-i18n-aria="playoffGenTitle" aria-label="Générer le calendrier des séries">
-      <h2 data-i18n="playoffGenTitle">Générer le calendrier des séries</h2>
-      <p class="nl-help" data-i18n="playoffGenHelp">Crée les matchs de séries selon tes préférences (Paramètres) -- rien n'est créé avant que tu confirmes.</p>
-      <div id="playoffGenErr" class="nl-error" style="display:none"></div>
-      <div id="playoff_form_fields">
-        <div class="nl-field">
-          <label class="nl-label" for="pf_start_date" data-i18n="playoffGenStartDate">Première date</label>
-          <input class="nl-input" id="pf_start_date" type="date" required>
-        </div>
-        <div class="nl-field">
-          <label class="nl-label" for="pf_interval" data-i18n="playoffGenInterval">Intervalle (jours)</label>
-          <input class="nl-input" id="pf_interval" type="number" min="1" value="7">
-        </div>
-        <div class="sc-two">
-          <div class="nl-field">
-            <label class="nl-label" for="pf_time" data-i18n="startOpt">Heure de début (optionnel)</label>
-            <input class="nl-input" id="pf_time" type="time">
-          </div>
-          <div class="nl-field">
-            <label class="nl-label" for="pf_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
-            <input class="nl-input" id="pf_venue" type="text">
-          </div>
-        </div>
-        <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="pf_preview_btn" data-i18n="playoffGenPreviewBtn" onclick="previewPlayoffs()">Prévisualiser</button>
-      </div>
-      <div id="playoff_preview_wrap" style="display:none;">
-        <div id="playoff_preview_results" style="display:flex;flex-direction:column;gap:12px;max-height:360px;overflow-y:auto;"></div>
-        <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
-          <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="pf_approve_btn" data-i18n="playoffGenApproveBtn" onclick="approvePlayoffs()">Créer ces matchs</button>
-          <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="playoffGenBackBtn" onclick="backToPlayoffForm()">Retour</button>
-        </div>
-      </div>
-      <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="togglePlayoffPanel()">Annuler</button>
     </aside>` : ''}
   </div>
   `}
@@ -7860,10 +7821,11 @@ async function submitBulkEvents() {
     showBulkErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
   }
 }
-// Schedule-generation redesign task (Group D): "assign matchups" --
-// preview (read-only, computes the plan) then confirm (writes it) are
-// two separate calls, never a single "write blind" action. Never
-// creates an event -- only ever UPDATEs one already on the schedule.
+// Scheduling correction task (Part 1): ONE POOL OF SLOTS -- a single
+// preview (read-only, computes the whole-season plan) then a single
+// confirm (writes it) cover the regular season AND the playoffs
+// together. Never creates an event, for either half -- only ever
+// UPDATEs one already on the schedule.
 function toggleMatchupsPanel() { document.getElementById('sc_matchups_panel').classList.toggle('open'); }
 function showMatchupsErr(msg) {
   var el = document.getElementById('matchupsGenErr'); el.textContent = msg; el.style.display = 'block';
@@ -7872,12 +7834,63 @@ function backToMatchupsForm() {
   document.getElementById('matchups_form_fields').style.display = '';
   document.getElementById('matchups_preview_wrap').style.display = 'none';
 }
-function renderMatchupsPreview(container, plan, byeNotes, dict) {
+// Client-side mirror of leagues.js's own playoffRoleLabel -- same role
+// vocabulary (playoffRole* dict keys above), only ever used to render
+// this transient preview. A later round's own two sides are each
+// EITHER a real, already-known bye seed OR an unresolved earlier
+// matchup ("Winner <short label>") -- see leagues.js's own
+// buildPlayoffFeederMap/describeFeeder comment for why a single
+// matchup can mix one of each.
+function playoffLabelClient(meta, dict) {
+  var roleKey = { final: 'playoffRoleFinal', third_place: 'playoffRoleThirdPlace', semifinal: 'playoffRoleSemifinal',
+    quarterfinal: 'playoffRoleQuarterfinal', bracket: 'playoffRoleBracket', reserved: 'playoffRoleReserved' }[meta.role];
+  var base = dict[roleKey] || 'Playoff game';
+  if (meta.role === 'semifinal' || meta.role === 'quarterfinal' || meta.role === 'bracket' || meta.role === 'reserved') {
+    base += ' ' + meta.matchupIndexInRound;
+  }
+  var seed = function(n) { return (dict.playoffSeedLabel || 'seed {n}').split('{n}').join(n); };
+  var shortRole = function(role, idx) {
+    if (role === 'semifinal') return (dict.playoffShortSF || 'SF') + idx;
+    if (role === 'quarterfinal') return (dict.playoffShortQF || 'QF') + idx;
+    if (role === 'final') return dict.playoffShortFinal || 'Final';
+    if (role === 'bracket') return (dict.playoffShortR1 || 'R1-') + idx;
+    return String(idx);
+  };
+  var describeSide = function(feeder) {
+    if (!feeder) return dict.playoffTbd || 'TBD';
+    if (feeder.kind === 'bye') return seed(feeder.seed);
+    return (dict.playoffWinnerOf || 'Winner {label}').split('{label}').join(shortRole(feeder.role, feeder.matchupIndexInRound));
+  };
+  if (meta.seedA && meta.seedB) {
+    base += ' -- ' + seed(meta.seedA) + ' ' + (dict.matchupVsWord || 'vs') + ' ' + seed(meta.seedB);
+  } else if (meta.feederA || meta.feederB) {
+    base += ' -- ' + describeSide(meta.feederA) + ' ' + (dict.matchupVsWord || 'vs') + ' ' + describeSide(meta.feederB);
+  }
+  if (meta.gameNumber && meta.seriesLength > 1) {
+    base += ' (' + (dict.playoffGameOfSeries || 'Game {g} of {n}').split('{g}').join(meta.gameNumber).split('{n}').join(meta.seriesLength) + ')';
+  }
+  return base;
+}
+function renderMatchupsPreview(container, data, dict) {
   container.innerHTML = '';
+  var a = data.arithmetic;
+  var summaryEl = document.createElement('p');
+  summaryEl.className = 'nl-help'; summaryEl.style.fontWeight = '600';
+  summaryEl.textContent = (dict.matchupsArithmeticSummary || '{total} games total -- {playoff} for the playoffs, {regular} for the regular season.')
+    .split('{total}').join(a.totalSlots).split('{playoff}').join(a.playoffSlots).split('{regular}').join(a.regularSlots);
+  container.appendChild(summaryEl);
+  if (a.regularSeasonFullRounds || a.regularSeasonPartialRoundGames) {
+    var roundsEl = document.createElement('p');
+    roundsEl.className = 'nl-help';
+    roundsEl.textContent = (dict.matchupsArithmeticRounds || '{full} complete round(s) of the regular season, plus a partial round of {partial} game(s).')
+      .split('{full}').join(a.regularSeasonFullRounds).split('{partial}').join(a.regularSeasonPartialRoundGames);
+    container.appendChild(roundsEl);
+  }
+
   var byeByRound = {};
-  (byeNotes || []).forEach(function(b) { byeByRound[b.round] = b.team; });
+  (data.byeNotes || []).forEach(function(b) { byeByRound[b.round] = b.team; });
   var seenRounds = {};
-  plan.forEach(function(p) {
+  (data.regularPlan || []).forEach(function(p) {
     if (!seenRounds[p.round]) {
       seenRounds[p.round] = true;
       var label = (dict.matchupsRoundLabel || 'Round {n} -- {date}').split('{n}').join(String(p.round)).split('{date}').join(p.date);
@@ -7899,6 +7912,28 @@ function renderMatchupsPreview(container, plan, byeNotes, dict) {
     row.textContent = text;
     container.appendChild(row);
   });
+
+  if (data.playoffPlan && data.playoffPlan.length) {
+    var playoffHeader = document.createElement('div');
+    playoffHeader.className = 'h3'; playoffHeader.style.marginTop = '12px';
+    playoffHeader.textContent = dict.matchupsPlayoffsSectionTitle || 'Playoffs';
+    container.appendChild(playoffHeader);
+    (data.byeSeeds || []).forEach(function(seed) {
+      var byeEl = document.createElement('div');
+      byeEl.className = 'nl-help'; byeEl.style.fontStyle = 'italic';
+      byeEl.textContent = (dict.playoffGenByeNote || 'Seed {seed}: bye in round 1').split('{seed}').join(seed);
+      container.appendChild(byeEl);
+    });
+    data.playoffPlan.forEach(function(p) {
+      var row = document.createElement('div');
+      row.className = 'nl-help'; row.style.marginTop = '4px';
+      var text = p.meta ? playoffLabelClient(p.meta, dict) : (dict.playoffTbd || 'TBD');
+      text += ' -- ' + p.date;
+      if (p.alreadyAssigned && !p.willWrite) text += ' (' + (dict.matchupsAlreadyAssignedNote || 'Already assigned -- kept') + ')';
+      row.textContent = text;
+      container.appendChild(row);
+    });
+  }
 }
 async function previewMatchups() {
   document.getElementById('matchupsGenErr').style.display = 'none';
@@ -7916,7 +7951,7 @@ async function previewMatchups() {
     window.__mxLastMode = mode;
     window.__mxConfirmed = false;
     var dict = window.__pageDict ? window.__pageDict() : {};
-    renderMatchupsPreview(document.getElementById('matchups_preview_results'), data.plan, data.byeNotes, dict);
+    renderMatchupsPreview(document.getElementById('matchups_preview_results'), data, dict);
     document.getElementById('matchups_form_fields').style.display = 'none';
     document.getElementById('matchups_preview_wrap').style.display = '';
     btn.disabled = false;
@@ -7948,125 +7983,6 @@ async function confirmMatchups() {
     window.location.reload();
   } catch (e) {
     showMatchupsErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
-  }
-}
-
-// Playoff generator -- still creates real events (see
-// handleLeagueFixturePreview/Approve's own comment, leagues.js).
-// PF_LAST_PARAMS holds exactly the params the last successful preview
-// used, so approve sends THOSE SAME params back -- the server
-// regenerates the identical proposal itself rather than trusting
-// anything echoed from the client.
-var PF_LAST_PARAMS = null;
-function togglePlayoffPanel() { document.getElementById('sc_playoff_panel').classList.toggle('open'); }
-function showPlayoffErr(msg) {
-  var el = document.getElementById('playoffGenErr'); el.textContent = msg; el.style.display = 'block';
-}
-function backToPlayoffForm() {
-  document.getElementById('playoff_form_fields').style.display = '';
-  document.getElementById('playoff_preview_wrap').style.display = 'none';
-}
-// Client-side mirror of leagues.js's own playoffRoleLabel -- same role
-// vocabulary (playoffRole* dict keys above), only ever used to render
-// this transient preview. Schedule-generation redesign task (Group D):
-// a later round's own two sides are each EITHER a real, already-known
-// bye seed OR an unresolved earlier matchup ("Winner <short label>") --
-// see leagues.js's own buildPlayoffFeederMap/describeFeeder comment
-// for why a single matchup can mix one of each.
-function playoffLabelClient(meta, dict) {
-  var roleKey = { final: 'playoffRoleFinal', third_place: 'playoffRoleThirdPlace', semifinal: 'playoffRoleSemifinal',
-    quarterfinal: 'playoffRoleQuarterfinal', bracket: 'playoffRoleBracket', reserved: 'playoffRoleReserved' }[meta.role];
-  var base = dict[roleKey] || 'Playoff game';
-  if (meta.role === 'semifinal' || meta.role === 'quarterfinal' || meta.role === 'bracket' || meta.role === 'reserved') {
-    base += ' ' + meta.matchupIndexInRound;
-  }
-  var seed = function(n) { return (dict.playoffSeedLabel || 'seed {n}').split('{n}').join(n); };
-  var shortRole = function(role, idx) {
-    if (role === 'semifinal') return (dict.playoffShortSF || 'SF') + idx;
-    if (role === 'quarterfinal') return (dict.playoffShortQF || 'QF') + idx;
-    if (role === 'final') return dict.playoffShortFinal || 'Final';
-    if (role === 'bracket') return (dict.playoffShortR1 || 'R1-') + idx;
-    return String(idx);
-  };
-  var describeSide = function(feeder) {
-    if (!feeder) return dict.playoffTbd || 'TBD';
-    if (feeder.kind === 'bye') return seed(feeder.seed);
-    return (dict.playoffWinnerOf || 'Winner {label}').split('{label}').join(shortRole(feeder.role, feeder.matchupIndexInRound));
-  };
-  if (meta.seedA && meta.seedB) {
-    base += ' -- ' + seed(meta.seedA) + ' ' + (dict.matchupVsWord || 'vs') + ' ' + seed(meta.seedB);
-  } else if (meta.feederA || meta.feederB) {
-    base += ' -- ' + describeSide(meta.feederA) + ' ' + (dict.matchupVsWord || 'vs') + ' ' + describeSide(meta.feederB);
-  }
-  if (meta.gameNumber && meta.seriesLength > 1) {
-    base += ' (' + (dict.playoffGameOfSeries || 'Game {g} of {n}').split('{g}').join(meta.gameNumber).split('{n}').join(meta.seriesLength) + ')';
-  }
-  return base;
-}
-function renderPlayoffRounds(container, rounds, byeSeeds, dict) {
-  container.innerHTML = '';
-  (byeSeeds || []).forEach(function(seed) {
-    var byeEl = document.createElement('div');
-    byeEl.className = 'nl-help'; byeEl.style.fontStyle = 'italic';
-    byeEl.textContent = (dict.playoffGenByeNote || 'Seed {seed}: bye in round 1').split('{seed}').join(seed);
-    container.appendChild(byeEl);
-  });
-  rounds.forEach(function(round) {
-    var block = document.createElement('div');
-    var label = (dict.playoffGenRoundLabel || 'Round {n} -- {date}').split('{n}').join(String(round.round)).split('{date}').join(round.date);
-    var html = '<div class="h3" style="font-size:15px">' + label + '</div>';
-    round.games.forEach(function(g) {
-      var text = playoffLabelClient(g.meta, dict);
-      html += '<div class="nl-help" style="margin-top:4px">' + text + (g.start_time ? ' -- ' + g.start_time : '') + (g.venue ? ' (' + g.venue + ')' : '') + '</div>';
-    });
-    block.innerHTML = html;
-    container.appendChild(block);
-  });
-}
-async function previewPlayoffs() {
-  document.getElementById('playoffGenErr').style.display = 'none';
-  var startDate = document.getElementById('pf_start_date').value;
-  var interval = document.getElementById('pf_interval').value;
-  var time = document.getElementById('pf_time').value;
-  var venue = document.getElementById('pf_venue').value.trim();
-  if (!startDate) { showPlayoffErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
-  var params = { start_date: startDate, interval_days: Number(interval) || 7, time: time || undefined, venue: venue || undefined };
-  var btn = document.getElementById('pf_preview_btn');
-  btn.disabled = true;
-  try {
-    var res = await fetch('/league/season/fixture-preview', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify(params)
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { showPlayoffErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
-    PF_LAST_PARAMS = params;
-    var dict = window.__pageDict ? window.__pageDict() : {};
-    renderPlayoffRounds(document.getElementById('playoff_preview_results'), data.playoffs, data.byeSeeds, dict);
-    document.getElementById('playoff_form_fields').style.display = 'none';
-    document.getElementById('playoff_preview_wrap').style.display = '';
-    btn.disabled = false;
-  } catch (e) {
-    showPlayoffErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
-  }
-}
-async function approvePlayoffs() {
-  if (!PF_LAST_PARAMS) return;
-  document.getElementById('playoffGenErr').style.display = 'none';
-  var btn = document.getElementById('pf_approve_btn');
-  btn.disabled = true;
-  try {
-    var res = await fetch('/league/season/fixture-approve', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify(PF_LAST_PARAMS)
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { showPlayoffErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
-    window.location.reload();
-  } catch (e) {
-    showPlayoffErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
   }
 }
 function toggleDuplicateRow(eventId) {
@@ -26012,28 +25928,20 @@ async function handleFetch(req, env, ctx) {
       // events onto the new current one, part of the rollover flow.
       if (url.pathname === '/league/season/move-events' && req.method === 'POST')
         return await handleLeagueSeasonMoveEvents(req, env);
-      // Schedule-generation redesign task (Group D): assigns a real
-      // round-robin matchup onto each of the league's own EXISTING
-      // events -- never creates one. Preview computes the plan without
-      // writing anything; confirm writes it (fill-blanks by default,
-      // or 'regenerate' to overwrite every one, gated on an explicit
-      // confirmOverwrite once anything would actually be overwritten).
-      // Fixed-teams leagues only.
+      // Scheduling correction task (Part 1): ONE POOL OF SLOTS -- reads
+      // the league's own EXISTING events (never creates one, for
+      // either half) and assigns a real matchup onto each: round-robin
+      // for the regular season, bracket placeholders for the playoffs
+      // (the LAST N chronologically, N from the league's own playoff
+      // config), covered by a single preview/confirm. Preview computes
+      // the plan without writing anything; confirm writes it (fill-
+      // blanks by default, or 'regenerate' to overwrite every one,
+      // gated on an explicit confirmOverwrite once anything would
+      // actually be overwritten). Fixed-teams leagues only.
       if (url.pathname === '/league/season/matchups-preview' && req.method === 'POST')
         return await handleLeagueMatchupsPreview(req, env);
       if (url.pathname === '/league/season/matchups-confirm' && req.method === 'POST')
         return await handleLeagueMatchupsConfirm(req, env);
-      // Playoff generator -- still CREATES real events (there is no
-      // pre-existing "gym time already booked" concept for a bracket
-      // the way there is for the weekly regular season above). Preview
-      // computes a proposal without writing anything; approve
-      // regenerates the same proposal server-side and creates the real
-      // events. Fixed-teams leagues only, and only once playoffs are
-      // turned on in Settings.
-      if (url.pathname === '/league/season/fixture-preview' && req.method === 'POST')
-        return await handleLeagueFixturePreview(req, env);
-      if (url.pathname === '/league/season/fixture-approve' && req.method === 'POST')
-        return await handleLeagueFixtureApprove(req, env);
       if (url.pathname === '/league/events' && req.method === 'POST')
         return await handleLeagueEventCreate(req, env);
       if (url.pathname === '/league/events/bulk' && req.method === 'POST')

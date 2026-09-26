@@ -136,14 +136,6 @@ async function matchupsConfirm(cookie, csrfToken, body) {
   });
   return { status: res.status, json: await res.json() };
 }
-async function fixtureApprove(cookie, csrfToken, body) {
-  const res = await SELF.fetch('http://example.com/league/season/fixture-approve', {
-    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify(body)
-  });
-  return { status: res.status, json: await res.json() };
-}
-
 describe('Stats tracking, Part 1: two independent switches', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
@@ -769,22 +761,21 @@ describe('Stats tracking, Part 5: playoff seeding resolver', () => {
     await updateTracking(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'single_elimination', playoff_teams: 4, playoff_third_place: false });
-    // Schedule-generation redesign task (Group D): the regular season
-    // is now booked as ordinary events first (gym time, exactly the
-    // way an admin actually does it), THEN assigned real round-robin
-    // matchups -- never created by the playoff-only generator anymore.
-    const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 6 });
-    expect(bulk.json.createdCount).toBe(6);
+    // Scheduling correction task (Part 1): ONE POOL OF SLOTS -- gym
+    // time is booked first for the WHOLE season (6 regular-season
+    // games + 3 playoff games = 9 events), then ONE confirm assigns
+    // both halves together (playoffs take the last 3 chronologically).
+    // Neither half is ever created by this action.
+    const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 9 });
+    expect(bulk.json.createdCount).toBe(9);
     const assign = await matchupsConfirm(cookie, csrfToken, {});
-    expect(assign.json.updatedCount).toBe(6);
+    expect(assign.json.updatedCount).toBe(9);
     const regularEvents = (await env.DB.prepare(
       'SELECT id, home_team, away_team FROM events WHERE league_id = ? AND is_playoff = 0'
     ).bind(league.id).all()).results;
-    // 2 semifinals + 1 final -- the playoff generator now ONLY ever
-    // creates playoff placeholders, never a regular-season game.
-    const approve = await fixtureApprove(cookie, csrfToken, { start_date: '2099-03-01', interval_days: 7, time: '18:00', venue: 'Main Gym' });
-    expect(approve.status).toBe(200);
-    const playoffEvents = approve.json.created;
+    const playoffEvents = (await env.DB.prepare(
+      'SELECT id, is_playoff FROM events WHERE league_id = ? AND is_playoff = 1'
+    ).bind(league.id).all()).results;
     expect(regularEvents.length).toBe(6);
     expect(playoffEvents.every(e => e.is_playoff)).toBe(true);
     expect(playoffEvents.length).toBe(3);

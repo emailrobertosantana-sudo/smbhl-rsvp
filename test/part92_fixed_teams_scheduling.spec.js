@@ -389,6 +389,13 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     await applyRealSchema(env);
   });
 
+  async function updatePlayoffs(cookie, csrfToken, body) {
+    const res = await SELF.fetch('http://example.com/league/settings/playoffs', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify(body)
+    });
+    return { status: res.status, json: await res.json() };
+  }
   async function bulkCreateEvents(cookie, csrfToken, body) {
     const res = await SELF.fetch('http://example.com/league/events/bulk', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -444,9 +451,9 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
 
       const { status, json } = await matchupsPreview(cookie, csrfToken, {});
       expect(status).toBe(200);
-      expect(json.plan.length).toBe(gameCount);
+      expect(json.regularPlan.length).toBe(gameCount);
       expect(json.eventCount).toBe(gameCount);
-      const gamesPerTeam = allTeamsAppearBalanced(json.plan, teams);
+      const gamesPerTeam = allTeamsAppearBalanced(json.regularPlan, teams);
       // A full single round-robin cycle: every team plays every other
       // team exactly once, so each plays (n-1) games total.
       for (const t of teams) expect(gamesPerTeam[t]).toBe(teams.length - 1);
@@ -461,7 +468,7 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
 
     const { status, json } = await matchupsPreview(cookie, csrfToken, {});
     expect(status).toBe(200);
-    expect(json.plan.length).toBe(3);
+    expect(json.regularPlan.length).toBe(3);
 
     const row = await env.DB.prepare("SELECT COUNT(*) c FROM events WHERE league_id = ? AND home_team IS NOT NULL").bind(league.id).first();
     expect(row.c).toBe(0);
@@ -477,14 +484,14 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     const preview = await matchupsPreview(cookie, csrfToken, {});
     const confirm = await matchupsConfirm(cookie, csrfToken, {});
     expect(confirm.status).toBe(200);
-    expect(confirm.json.updatedCount).toBe(preview.json.plan.length);
+    expect(confirm.json.updatedCount).toBe(preview.json.regularPlan.length);
     expect(confirm.json.skippedCount).toBe(0);
 
     const eventCountAfter = (await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ?').bind(league.id).first()).c;
     expect(eventCountAfter).toBe(eventCountBefore); // never creates -- same event count as before
 
     const matchedRow = await env.DB.prepare("SELECT COUNT(*) c FROM events WHERE league_id = ? AND home_team IS NOT NULL AND away_team IS NOT NULL").bind(league.id).first();
-    expect(matchedRow.c).toBe(preview.json.plan.length);
+    expect(matchedRow.c).toBe(preview.json.regularPlan.length);
 
     const html = await scheduleHtml(cookie);
     for (const t of ['Rouge', 'Bleu', 'Vert', 'Jaune']) expect(html).toContain(t);
@@ -502,7 +509,7 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 6, start_time: '18:00' });
 
     const { json } = await matchupsPreview(cookie, csrfToken, {});
-    const round2Games = json.plan.filter(p => p.round === 2);
+    const round2Games = json.regularPlan.filter(p => p.round === 2);
     expect(round2Games.length).toBe(2);
     expect(round2Games[0].date).not.toBe(round2Games[1].date); // distinct dates, never the same day
   });
@@ -516,9 +523,9 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 7 });
 
     const { json } = await matchupsPreview(cookie, csrfToken, {});
-    expect(json.plan.length).toBe(7);
-    const lastRound = json.plan[json.plan.length - 1].round;
-    const gamesInLastRound = json.plan.filter(p => p.round === lastRound).length;
+    expect(json.regularPlan.length).toBe(7);
+    const lastRound = json.regularPlan[json.regularPlan.length - 1].round;
+    const gamesInLastRound = json.regularPlan.filter(p => p.round === lastRound).length;
     expect(gamesInLastRound).toBe(1); // partial -- the round's other game has no event yet
   });
 
@@ -529,8 +536,8 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 1 });
 
     const { json } = await matchupsPreview(cookie, csrfToken, {});
-    expect(json.plan.length).toBe(1);
-    expect(json.plan[0].round).toBe(1);
+    expect(json.regularPlan.length).toBe(1);
+    expect(json.regularPlan[0].round).toBe(1);
   });
 
   it('an odd team count\'s bye is a NOTE, never an event -- no extra event is required or consumed for it', async () => {
@@ -542,7 +549,7 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 2 });
 
     const { json } = await matchupsPreview(cookie, csrfToken, {});
-    expect(json.plan.length).toBe(2); // exactly the 2 events booked -- no extra event for the bye
+    expect(json.regularPlan.length).toBe(2); // exactly the 2 events booked -- no extra event for the bye
     expect(json.byeNotes.length).toBe(2); // one bye note per round, informational only
     expect(json.byeNotes[0].team).toBeTruthy();
   });
@@ -563,7 +570,7 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-10-25', occurrences: 1 });
 
     const { json: preview2 } = await matchupsPreview(cookie, csrfToken, { mode: 'fill_blanks' });
-    const firstPlanEntry = preview2.plan.find(p => p.eventId === firstEventId);
+    const firstPlanEntry = preview2.regularPlan.find(p => p.eventId === firstEventId);
     expect(firstPlanEntry.alreadyAssigned).toBe(true);
     expect(firstPlanEntry.willWrite).toBe(false);
 
@@ -596,26 +603,45 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     expect(row.c).toBe(6);
   });
 
-  it('playoff placeholder events are never touched or overwritten by this action, fill-blanks or regenerate alike', async () => {
+  // Scheduling correction task (Part 1): ONE POOL OF SLOTS -- under
+  // this model, "is this event a playoff game" is no longer an
+  // intrinsic, permanently-set property; it's DERIVED fresh every call
+  // from chronological position + the league's own playoff
+  // configuration (see buildSeasonAssignmentPlan). What IS still
+  // protected, fill-blanks or regenerate alike, is a genuinely
+  // ALREADY-RESOLVED matchup -- a playoff slot that already has a real
+  // home_team/away_team (e.g. seeded by resolvePlayoffSeeding after
+  // the regular season completed) is never silently clobbered by a
+  // later fill-blanks call.
+  it('a playoff slot that already has a REAL resolved matchup is protected under fill_blanks, exactly like a resolved regular-season one', async () => {
     const { cookie, csrfToken } = await signup('p3.playoffsafe@example.com', '203.0.199.109');
-    const league = await createLeague(cookie, csrfToken, { name: 'Playoff Safe League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
+    const league = await createLeague(cookie, csrfToken, { name: 'Playoff Safe League', teamNames: ['A', 'B'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 2 });
-    const playoffEv = await SELF.fetch('http://example.com/league/events', {
-      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-12-01', season: 'S1', is_playoff: true, playoff_meta: { role: 'final', matchupIndexInRound: 1, seedA: null, seedB: null, feederA: null, feederB: null, gameNumber: null, seriesLength: 1 } })
-    }).then(r => r.json()).then(r => r.event);
+    await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'single_elimination', playoff_teams: 2, playoff_third_place: false }); // 1 playoff slot
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 2 }); // 1 regular + 1 playoff (the final)
 
+    await matchupsConfirm(cookie, csrfToken, {});
+    const events = (await env.DB.prepare('SELECT id, date, is_playoff FROM events WHERE league_id = ? ORDER BY date').bind(league.id).all()).results;
+    const playoffEventId = events[1].id; // chronologically last -- the playoff slot
+    let row = await env.DB.prepare('SELECT is_playoff, home_team, away_team FROM events WHERE id = ?').bind(playoffEventId).first();
+    expect(row.is_playoff).toBe(1);
+    expect(row.home_team).toBeNull(); // not seeded yet -- resolvePlayoffSeeding's own job
+
+    // Simulate resolvePlayoffSeeding having since filled it in for real.
+    await env.DB.prepare('UPDATE events SET home_team = ?, away_team = ? WHERE id = ?').bind('A', 'B', playoffEventId).run();
+
+    // A later fill_blanks preview/confirm (same event count, nothing
+    // added or removed) must never touch this already-resolved game.
     const { json: preview } = await matchupsPreview(cookie, csrfToken, {});
-    expect(preview.plan.some(p => p.eventId === playoffEv.id)).toBe(false); // never in the candidate list at all
+    const playoffPlanEntry = preview.playoffPlan.find(p => p.eventId === playoffEventId);
+    expect(playoffPlanEntry.alreadyAssigned).toBe(true);
+    expect(playoffPlanEntry.willWrite).toBe(false);
 
-    await matchupsConfirm(cookie, csrfToken, { mode: 'regenerate', confirmOverwrite: true });
-    const playoffRow = await env.DB.prepare('SELECT home_team, away_team, is_playoff FROM events WHERE id = ?').bind(playoffEv.id).first();
-    expect(playoffRow.is_playoff).toBe(1);
-    expect(playoffRow.home_team).toBeNull();
-    expect(playoffRow.away_team).toBeNull();
-    const nonPlayoffRow = await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ? AND is_playoff = 0 AND home_team IS NOT NULL').bind(league.id).first();
-    expect(nonPlayoffRow.c).toBe(2);
+    await matchupsConfirm(cookie, csrfToken, {});
+    row = await env.DB.prepare('SELECT is_playoff, home_team, away_team FROM events WHERE id = ?').bind(playoffEventId).first();
+    expect(row.is_playoff).toBe(1); // still correctly classified
+    expect(row.home_team).toBe('A'); // untouched
+    expect(row.away_team).toBe('B');
   });
 
   it('rejects when there are no events yet to assign matchups to', async () => {
