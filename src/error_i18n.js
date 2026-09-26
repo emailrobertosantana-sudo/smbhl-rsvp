@@ -49,6 +49,12 @@ export const ERROR_I18N = {
   RATE_LIMITED_RESET: { fr: 'Trop de tentatives de réinitialisation depuis ce réseau. Réessaie plus tard.', en: 'Too many reset attempts from this network. Please try again later.' },
   EMAIL_EXISTS: { fr: 'Un compte avec ce courriel existe déjà.', en: 'An account with this email already exists.' },
   INVALID_CREDENTIALS: { fr: 'Courriel ou mot de passe invalide.', en: 'Invalid email or password.' },
+  // Signup/recovery task (A4): the catch-all path for an unexpected
+  // server error during signup/login -- used to have no errorKey at
+  // all, falling through to a fully generic client-side fallback.
+  SIGNUP_FAILED: { fr: "La création de compte a échoué. Réessaie dans un instant.", en: 'Signup failed. Please try again in a moment.' },
+  LOGIN_FAILED: { fr: 'La connexion a échoué. Réessaie dans un instant.', en: 'Login failed. Please try again in a moment.' },
+  LEAGUE_CREATE_FAILED: { fr: 'La création de la ligue a échoué. Réessaie dans un instant.', en: 'League creation failed. Please try again in a moment.' },
   MISSING_TOKEN: { fr: 'Jeton manquant.', en: 'Missing token' },
   AUTH_REQUIRED: { fr: 'Authentification requise.', en: 'Authentication required.' },
   CSRF_INVALID: { fr: 'Jeton CSRF invalide ou manquant.', en: 'Invalid or missing CSRF token.' },

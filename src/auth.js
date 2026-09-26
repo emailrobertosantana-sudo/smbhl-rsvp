@@ -377,12 +377,17 @@ async function sendVerificationEmail(env, sendMailFunc, email, userId, lang = 'f
     try {
       const { subject, text, html } = buildVerificationEmail(verificationLink, lang);
       await sendMailFunc(env, email, subject, text, html);
-      console.log(`[auth] Verification email sent to ${email}`);
+      console.log(`[auth] Verification email sent to ${redactEmailForLog(email)}`);
     } catch (err) {
-      console.error(`[auth] Failed to send verification email to ${email}: ${err.message}`);
+      console.error(`[auth] Failed to send verification email to ${redactEmailForLog(email)}: ${err.message}`);
     }
   } else {
-    console.log(`[auth] No sendMailFunc provided — verification link for ${email} not sent: ${verificationLink}`);
+    // A4 bug fix (signup/recovery task): this used to log the full
+    // verification LINK too -- which embeds a real, signed, usable
+    // token -- on top of the full email. Neither belongs in a log line
+    // (this path fires whenever no mail sender is configured, e.g. the
+    // demo environment today, so it's not just a rare/dev-only case).
+    console.log(`[auth] No sendMailFunc provided — verification email not sent for ${redactEmailForLog(email)}`);
   }
 
   return { token, exp, verificationLink };
@@ -560,7 +565,7 @@ export async function handleRequestPasswordReset(req, env, sendMailFunc = null) 
         const { subject, text, html } = buildPasswordResetEmail(resetLink, languageMode);
         await sendMailFunc(env, email, subject, text, html);
       } catch (err) {
-        console.error(`[auth] Failed to send password reset email to ${email}: ${err.message}`);
+        console.error(`[auth] Failed to send password reset email to ${redactEmailForLog(email)}: ${err.message}`);
       }
     }
   }
@@ -723,6 +728,20 @@ function isValidPassword(password) {
   return typeof password === 'string' && password.length >= 8;
 }
 
+// Signup/recovery task (A4): server-side logging for a failed signup,
+// so a real incident actually shows up in `wrangler tail` instead of
+// being invisible -- the exact gap that made the A3 investigation
+// this task started from impossible to diagnose live. Never the
+// password, never the full email (per the task's own instruction) --
+// just enough to correlate repeated attempts (first character +
+// domain) without logging anything that identifies a real inbox.
+function redactEmailForLog(email) {
+  const s = String(email || '');
+  const at = s.indexOf('@');
+  if (at <= 0) return '(invalid)';
+  return `${s[0]}***@${s.slice(at + 1)}`;
+}
+
 /* ---------- HTTP handlers ---------- */
 
 export async function handleSignup(req, env, sendMailFunc = null) {
@@ -733,20 +752,24 @@ export async function handleSignup(req, env, sendMailFunc = null) {
     const lang = body.lang === 'en' ? 'en' : 'fr';
 
     if (!isValidEmail(email)) {
+      console.warn(`[auth] signup rejected (invalid email format): ${redactEmailForLog(email)}`);
       return Response.json({ ok: false, error: 'Please enter a valid email address.', errorKey: 'INVALID_EMAIL' }, { status: 400 });
     }
     if (!isValidPassword(password)) {
+      console.warn(`[auth] signup rejected (weak password): ${redactEmailForLog(email)}`);
       return Response.json({ ok: false, error: 'Password must be at least 8 characters.', errorKey: 'WEAK_PASSWORD' }, { status: 400 });
     }
 
     const ip = req.headers.get('cf-connecting-ip') || '127.0.0.1';
     const rateLimitStatus = await checkSignupRateLimit(env, ip);
     if (rateLimitStatus === 'rate_limited') {
+      console.warn(`[auth] signup rate-limited: ${redactEmailForLog(email)}`);
       return Response.json({ ok: false, error: 'Too many signup attempts from this network. Please try again later.', errorKey: 'RATE_LIMITED_SIGNUP' }, { status: 429 });
     }
 
     const existing = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
     if (existing) {
+      console.warn(`[auth] signup rejected (email already exists): ${redactEmailForLog(email)}`);
       return Response.json({ ok: false, error: 'An account with this email already exists.', errorKey: 'EMAIL_EXISTS' }, { status: 409 });
     }
 
@@ -771,7 +794,17 @@ export async function handleSignup(req, env, sendMailFunc = null) {
       headers: await sessionResponseHeaders(env, userId, 0)
     });
   } catch (err) {
-    return Response.json({ ok: false, error: 'Signup failed: ' + err.message }, { status: 500 });
+    // A4 bug fix (signup/recovery task): this used to return no
+    // errorKey at all -- a specific message exists for every OTHER
+    // rejection this route can produce, but an unexpected exception
+    // (a transient D1 error, anything not explicitly validated above)
+    // fell through to the client's own generic fallback with zero
+    // diagnostic value, and nothing was ever logged server-side either
+    // -- exactly the "wrangler tail showed nothing" dead end this task
+    // started from. Logged (message only, never the email/password)
+    // and given a real errorKey now.
+    console.error(`[auth] signup failed unexpectedly: ${err.message}`);
+    return Response.json({ ok: false, error: 'Signup failed: ' + err.message, errorKey: 'SIGNUP_FAILED' }, { status: 500 });
   }
 }
 
@@ -803,7 +836,10 @@ export async function handleLogin(req, env) {
       headers: await sessionResponseHeaders(env, user.id, user.session_epoch)
     });
   } catch (err) {
-    return Response.json({ ok: false, error: 'Login failed: ' + err.message }, { status: 500 });
+    // A4 bug fix (signup/recovery task): same gap as handleSignup's own
+    // catch-all -- no errorKey, nothing logged.
+    console.error(`[auth] login failed unexpectedly: ${err.message}`);
+    return Response.json({ ok: false, error: 'Login failed: ' + err.message, errorKey: 'LOGIN_FAILED' }, { status: 500 });
   }
 }
 

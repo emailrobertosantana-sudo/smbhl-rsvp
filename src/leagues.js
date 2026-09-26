@@ -2727,7 +2727,12 @@ export async function handleLeagueCreate(req, env) {
       }
     });
   } catch (err) {
-    return Response.json({ ok: false, error: 'League creation failed: ' + err.message }, { status: 500 });
+    // Signup/recovery task (A4): same gap as auth.js's own signup/login
+    // catch-alls -- no errorKey, nothing logged for an unexpected
+    // failure during league creation (step 2/3 of the same signup
+    // journey, from an ordinary user's point of view).
+    console.error(`[leagues] league creation failed unexpectedly: ${err.message}`);
+    return Response.json({ ok: false, error: 'League creation failed: ' + err.message, errorKey: 'LEAGUE_CREATE_FAILED' }, { status: 500 });
   }
 }
 

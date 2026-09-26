@@ -115,7 +115,14 @@ describe('Bug 3: blank team-name fields fall back to their own placeholder, matc
   });
 
   it("step 3's client script falls back to the placeholder text instead of dropping blank fields", async () => {
-    const { cookie } = await signupAndCreateLeague('bug3.blank@example.com', '203.0.113.904', 'Bug 3 League', ['A', 'B']);
+    // Signup/recovery task (A2): step 2/3 now redirect to real
+    // onboarding for a session that already has a league (back
+    // navigation after a completed signup must not re-offer the
+    // pre-league wizard) -- this test is checking step 3's own
+    // rendered FORM, so it needs a session mid-wizard, before any
+    // league exists yet, not signupAndCreateLeague's already-created one.
+    const signupRes = await signup('bug3.blank@example.com', '203.0.113.904');
+    const cookie = extractCookie(signupRes);
     const res = await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie } });
     const html = await res.text();
     // The fixed fallback -- a blank field's own placeholder becomes the

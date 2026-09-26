@@ -1029,9 +1029,18 @@ async function submitStep1() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email: email, password: password, lang: window.__currentLang })
     });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) {
-      showError(res.status === 429 ? window.__errorText('RATE_LIMITED_SIGNUP') : window.__errorText(data.errorKey, data.error));
+    // A4 bug fix (signup/recovery task): a response body that isn't
+    // valid JSON at all (e.g. something other than this Worker
+    // answered the request) used to silently become {} here, showing
+    // the fully generic "An error occurred" with no way to tell what
+    // actually happened. Distinguished now: a real (parseable) error
+    // still shows its own specific message; anything unparseable shows
+    // the HTTP status instead of nothing.
+    var data = await res.json().catch(function() { return null; });
+    if (!res.ok || !data || !data.ok) {
+      if (res.status === 429) { showError(window.__errorText('RATE_LIMITED_SIGNUP')); }
+      else if (data) { showError(window.__errorText(data.errorKey, data.error)); }
+      else { showError(window.__errorText(null, (window.__currentLang === 'en' ? 'Unexpected server response (status ' : 'Réponse inattendue du serveur (statut ') + res.status + ').')); }
       btn.disabled = false;
       return;
     }
@@ -1130,10 +1139,15 @@ async function submitStep2() {
         headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
         body: JSON.stringify({ name: name, tracksStats: tracksStats, slug: slug || undefined, teamStructure: teamStructure, teamNames: [(window.__pageDict().teamPlaceholder) + '1', (window.__pageDict().teamPlaceholder) + '2'] })
       });
-      var data = await res.json().catch(function() { return {}; });
-      if (!res.ok || !data.ok) {
-        if (data.errorKey === 'SLUG_TAKEN' || data.errorKey === 'SLUG_INVALID_FORMAT' || data.errorKey === 'SLUG_RESERVED') {
-          var isFr = (window.__currentLang || 'fr') === 'fr';
+      // A4 bug fix (signup/recovery task): same distinction as
+      // submitStep1 -- an unparseable body no longer silently becomes
+      // {} and shows nothing but the fully generic fallback.
+      var data = await res.json().catch(function() { return null; });
+      if (!res.ok || !data || !data.ok) {
+        var isFr = (window.__currentLang || 'fr') === 'fr';
+        if (!data) {
+          showError(window.__errorText(null, (isFr ? 'Réponse inattendue du serveur (statut ' : 'Unexpected server response (status ') + res.status + ').'));
+        } else if (data.errorKey === 'SLUG_TAKEN' || data.errorKey === 'SLUG_INVALID_FORMAT' || data.errorKey === 'SLUG_RESERVED') {
           showError(window.__errorText(data.errorKey, data.error) + (isFr ? ' Modifie l\\'adresse à l\\'étape précédente.' : ' Change the address on the previous step.'));
         } else {
           showError(window.__errorText(data.errorKey, data.error));
@@ -1303,10 +1317,15 @@ async function submitStep3() {
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify(payload)
     });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) {
-      if (data.errorKey === 'SLUG_TAKEN' || data.errorKey === 'SLUG_INVALID_FORMAT' || data.errorKey === 'SLUG_RESERVED') {
-        var isFr = (window.__currentLang || 'fr') === 'fr';
+    // A4 bug fix (signup/recovery task): same distinction as
+    // submitStep1/submitStep2 -- an unparseable body no longer silently
+    // becomes {} and shows nothing but the fully generic fallback.
+    var data = await res.json().catch(function() { return null; });
+    if (!res.ok || !data || !data.ok) {
+      var isFr = (window.__currentLang || 'fr') === 'fr';
+      if (!data) {
+        showError(window.__errorText(null, (isFr ? 'Réponse inattendue du serveur (statut ' : 'Unexpected server response (status ') + res.status + ').'));
+      } else if (data.errorKey === 'SLUG_TAKEN' || data.errorKey === 'SLUG_INVALID_FORMAT' || data.errorKey === 'SLUG_RESERVED') {
         showError(window.__errorText(data.errorKey, data.error) + (isFr ? ' Modifie l\\'adresse à l\\'étape précédente.' : ' Change the address on the previous step.'));
       } else {
         showError(window.__errorText(data.errorKey, data.error));
@@ -1395,6 +1414,24 @@ async function renderSignupPage(req, env, url) {
       if (!league) return Response.redirect(`${url.origin}/signup?step=2${langQS}`, 302);
       return new Response(renderSignupDone(league, langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     }
+    // Signup/recovery task, A2: steps 2/3 build a league draft entirely
+    // in sessionStorage, submitted only at the very end -- robust to
+    // being reached fresh, but NOT to being reached again by a session
+    // that already has a real league (browser back after a completed
+    // signup, a stale tab, a bookmark). Without this check, resubmitting
+    // either step re-attempts /leagues/create, which has no "already
+    // has a league" guard of its own and would either error confusingly
+    // (a slug/name collision with the league they already made) or
+    // silently create a SECOND league. Checked here, once, server-side
+    // -- redirects to the real onboarding flow (which itself already
+    // knows how to pick up wherever THAT league's own setup left off)
+    // instead of ever re-rendering the pre-league wizard for a session
+    // that has moved past it.
+    const existingLeague = await env.DB.prepare(
+      `SELECT l.id FROM leagues l JOIN league_admins a ON a.league_id = l.id
+        WHERE a.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
+    ).bind(session.userId).first();
+    if (existingLeague) return Response.redirect(`${url.origin}/onboarding/season${langQS.replace('&', '?')}`, 302);
     if (step === '3') return new Response(renderSignupStep3(langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     return new Response(renderSignupStep2(langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
@@ -1622,8 +1659,16 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
   const fr = { logout: 'Se déconnecter', navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres' };
   const en = { logout: 'Log out', navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings' };
   if (state === 'none') {
-    Object.assign(fr, { dashTitle: 'Tableau de bord', noLeagueYet: "Tu n'as pas encore de ligue." });
-    Object.assign(en, { dashTitle: 'Dashboard', noLeagueYet: "You don't have a league yet." });
+    // Signup/recovery task, A1: this used to be a dead end -- an
+    // interrupted signup (closed tab, dropped connection, browser
+    // back) reaches an authenticated session with no league, and this
+    // card had no action at all, only Log out. createLeagueCta links
+    // straight to the real, working league-creation form
+    // (/signup?step=2 -- confirmed rendering correctly for an
+    // authenticated session; the dead end was purely this page never
+    // offering the link, not that form being broken).
+    Object.assign(fr, { dashTitle: 'Tableau de bord', noLeagueYet: "Tu n'as pas encore de ligue.", createLeagueCta: 'Créer ma ligue' });
+    Object.assign(en, { dashTitle: 'Dashboard', noLeagueYet: "You don't have a league yet.", createLeagueCta: 'Create my league' });
   } else if (state === 'active') {
     Object.assign(fr, {
       noSeason: 'Pas de saison active',
@@ -1932,7 +1977,10 @@ async function handleDashboardPage(req, env, url) {
     bodyHtml = `${dashStyles()}${header}
 <main class="dash-main">
   <h1 data-i18n="dashTitle">Tableau de bord</h1>
-  <section class="nl-card nl-card--pad-lg"><p class="nl-help" data-i18n="noLeagueYet">Tu n'as pas encore de ligue.</p></section>
+  <section class="nl-card nl-card--pad-lg">
+    <p class="nl-help" data-i18n="noLeagueYet">Tu n'as pas encore de ligue.</p>
+    <div style="margin-top:12px"><a class="nl-btn nl-btn--primary" id="createLeagueBtn" href="/signup?step=2" data-i18n="createLeagueCta">Créer ma ligue</a></div>
+  </section>
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>`;
   } else if (dashState === 'deactivated') {
