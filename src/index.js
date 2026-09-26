@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, computeStandings, rankStandings, computeTopScorers, computeGoalieStats } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -3135,6 +3135,7 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
   .pb-g-d b { font: 700 15px/20px var(--font-display); font-stretch: 118%; white-space: nowrap; }
   .pb-g-d span { font-size: 13px; color: #a3a6ad; }
   .pb-g-venue { font-size: 14px; color: #a3a6ad; }
+  .pb-g-score { font-size: 14px; white-space: nowrap; text-align: right; }
   /* Contrast bug fix (public page polish task): same root cause as the
      .pb-foot fix above -- the shared base stylesheet's .nl a rule
      (design_system.js, color: var(--ink)) has higher specificity
@@ -3208,6 +3209,7 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
   .pb-g-d b { font-weight: 600; font-size: 15px; white-space: nowrap; }
   .pb-g-d span { font-size: 13px; color: #666666; }
   .pb-g-venue { font-size: 14px; color: #666666; }
+  .pb-g-score { font-size: 14px; white-space: nowrap; text-align: right; }
   /* Contrast bug fix (public page polish task): this theme's own
      mirror image of the arène fix above -- --ink flips to near-white
      under prefers-color-scheme: dark (design_system.js), which is
@@ -3312,7 +3314,8 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // upcoming list above) since an honest history includes what didn't
   // happen, not just what did.
   const pastEvents = (await env.DB.prepare(
-    `SELECT date, venue, venue_id, start_time, state FROM events
+    `SELECT date, venue, venue_id, start_time, state, home_team, away_team, home_score, away_score, result_entered_at
+       FROM events
       WHERE league_id = ? AND date < ?
       ORDER BY date DESC LIMIT 10`
   ).bind(leagueId, today).all()).results || [];
@@ -3334,11 +3337,32 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // that gets reassigned weekly doesn't track anything real. Standings
   // are only ever meaningful for 'fixed', where a team really is the
   // same group of players all season.
+  // Part 4 (stats tracking task): the old season.standings KV array
+  // (permanently 0-0-0 -- nothing ever wrote to it, no score-entry
+  // feature existed) replaced by computeStandings, built fresh from
+  // real game results every time this page renders (Part 2's own
+  // score entry, editable afterward, makes an on-demand read the
+  // simplest correct choice -- see that function's own comment).
+  // Gate changed from tracks_stats to tracks_results -- the switch
+  // this now actually depends on.
   let standings = [];
-  if (leagueRow.tracks_stats && teamStructure === 'fixed') {
+  let currentSeasonName = null;
+  // Part 4 fix: this used to be gated on teamStructure === 'fixed', which
+  // silently starved topScorers of a season name for pickup/headcount
+  // leagues even with tracks_player_stats on -- top scorers has no
+  // structure restriction (see topScorersHtml's own comment), so the
+  // season lookup itself must run for any structure once either switch
+  // is on; only the standings computation below stays fixed-only.
+  if (leagueRow.tracks_results || leagueRow.tracks_player_stats) {
     const leagueData = await getLeagueDataJson(env, leagueId);
-    const season = (leagueData.seasons || []).find(s => s.name === leagueData.current_season);
-    standings = season && Array.isArray(season.standings) ? season.standings : [];
+    currentSeasonName = leagueData.current_season || null;
+  }
+  if (leagueRow.tracks_results && teamStructure === 'fixed' && currentSeasonName) {
+    standings = rankStandings(await computeStandings(env, leagueId, currentSeasonName));
+  }
+  let topScorers = [];
+  if (leagueRow.tracks_player_stats && currentSeasonName) {
+    topScorers = (await computeTopScorers(env, leagueId, currentSeasonName)).slice(0, 10);
   }
 
   let poolConfirmed = 0, poolMin = 0, poolMax = 0, poolGoaliesConfirmed = 0, poolGoalieMin = 0;
@@ -3402,8 +3426,13 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     };
     if (standings.length) {
       Object.assign(base, lang === 'fr'
-        ? { standings: 'Classement', played: 'PJ', wins: 'V', losses: 'D', pts: 'PTS' }
-        : { standings: 'Standings', played: 'GP', wins: 'W', losses: 'L', pts: 'PTS' });
+        ? { standings: 'Classement', played: 'PJ', wins: 'V', losses: 'D', ties: 'N', goalsFor: 'BP', goalsAgainst: 'BC', pts: 'PTS' }
+        : { standings: 'Standings', played: 'GP', wins: 'W', losses: 'L', ties: 'T', goalsFor: 'GF', goalsAgainst: 'GA', pts: 'PTS' });
+    }
+    if (topScorers.length) {
+      Object.assign(base, lang === 'fr'
+        ? { topScorers: 'Meilleurs pointeurs', player: 'Joueur', goals: 'Buts', assists: 'Passes', points: 'Points' }
+        : { topScorers: 'Top scorers', player: 'Player', goals: 'Goals', assists: 'Assists', points: 'Points' });
     }
     if (isHeadcount) {
       Object.assign(base, lang === 'fr' ? { poolConfirmed: 'confirmés' } : { poolConfirmed: 'confirmed' });
@@ -3449,15 +3478,30 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}${venueMapLinks.has(nextEvent.venue_id) ? ` · <a href="${esc(venueMapLinks.get(nextEvent.venue_id))}" target="_blank" rel="noopener" style="color:inherit" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>` : ''}
   </div>` : '';
 
+  // Part 4 (stats tracking task): full W-L-T-GF-GA-PTS columns, per
+  // the task's own explicit list -- the old table only ever showed
+  // GP/W/L (computed as w+l, itself dead now that a real gp exists).
   const standingsHtml = standings.length ? `
   <h2 data-i18n="standings">${esc(t.standings)}</h2>
   <table class="pb-table">
-    <thead><tr><th data-i18n="teams">${esc(t.teams)}</th><th data-i18n="played">${esc(t.played)}</th><th data-i18n="wins">${esc(t.wins)}</th><th data-i18n="losses">${esc(t.losses)}</th></tr></thead>
+    <thead><tr><th data-i18n="teams">${esc(t.teams)}</th><th data-i18n="played">${esc(t.played)}</th><th data-i18n="wins">${esc(t.wins)}</th><th data-i18n="losses">${esc(t.losses)}</th><th data-i18n="ties">${esc(t.ties)}</th><th data-i18n="goalsFor">${esc(t.goalsFor)}</th><th data-i18n="goalsAgainst">${esc(t.goalsAgainst)}</th><th data-i18n="pts">${esc(t.pts)}</th></tr></thead>
     <tbody>${standings.map((s, i) => {
-      const w = Number(s.w) || 0, l = Number(s.l) || 0;
       const dotIdx = teamNames.indexOf(s.team);
-      return `<tr><td class="pb-tm"><i style="background:${esc(teamDot(dotIdx >= 0 ? dotIdx : i))}"></i>${esc(s.team)}</td><td>${w + l}</td><td>${w}</td><td>${l}</td></tr>`;
+      return `<tr><td class="pb-tm"><i style="background:${esc(teamDot(dotIdx >= 0 ? dotIdx : i))}"></i>${esc(s.team)}</td><td>${s.gp}</td><td>${s.w}</td><td>${s.l}</td><td>${s.t}</td><td>${s.gf}</td><td>${s.ga}</td><td>${s.pts}</td></tr>`;
     }).join('')}</tbody>
+  </table>` : '';
+
+  // Part 4: top scorers -- ANY league with player stats enabled,
+  // regardless of team structure (goals/assists don't depend on
+  // standings meaning anything). This is the data source the
+  // Classique/Quartier themes were waiting on -- building the data
+  // here, not those themes (deliberately deferred, unrelated to this
+  // task -- see PUBLIC_THEME_ARENE_CSS's own comment).
+  const topScorersHtml = topScorers.length ? `
+  <h2 data-i18n="topScorers">${esc(t.topScorers)}</h2>
+  <table class="pb-table">
+    <thead><tr><th data-i18n="player">${esc(t.player)}</th><th data-i18n="goals">${esc(t.goals)}</th><th data-i18n="assists">${esc(t.assists)}</th><th data-i18n="points">${esc(t.points)}</th></tr></thead>
+    <tbody>${topScorers.map(p => `<tr><td>${esc(p.name)}</td><td>${p.goals}</td><td>${p.assists}</td><td>${p.points}</td></tr>`).join('')}</tbody>
   </table>` : '';
 
   const upcomingHtml = events.length ? `
@@ -3469,23 +3513,31 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
 
   // Live-testing task (batch 6), Part 11: "past events alongside
   // upcoming" -- mirrors smbhl.com's own single continuous Schedule
-  // (not just a next-game view). No score/result data exists anywhere
-  // in the league product yet (no entry route was ever built for one --
-  // confirmed by grep before starting this part, out of scope to add
-  // here), so "result" here is honestly just each game's own state
-  // (played vs cancelled), not a score -- the standings table above
-  // already carries the real W/L record for stats-tracking leagues.
+  // (not just a next-game view).
+  // Part 4 (stats tracking task) update: score entry now exists (Part 2),
+  // so a played game with a result carries its real score here instead
+  // of just the generic "Played" badge -- this is the one place a
+  // pickup (weekly_draw) league's game result is ever visible publicly,
+  // since standings above are fixed-teams only (weekly_draw results
+  // don't accumulate toward anything, see computeStandings' own
+  // comment). A league with tracks_results off, or a game with no
+  // result yet, still falls back to the plain played/cancelled badge.
   const PAST_STATE_KEY = { closed: 'statePlayed', open: 'statePlayed', cancelled: 'stateCancelled' };
   const PAST_STATE_TONE = { closed: 'in', open: 'in', cancelled: 'out' };
   const pastEventsHtml = pastEvents.length ? `
   <h2 data-i18n="recentResults">${esc(t.recentResults)}</h2>
-  <div class="pb-glist">${pastEvents.map(ev => `<div class="pb-g">
+  <div class="pb-glist">${pastEvents.map(ev => {
+      const hasScore = leagueRow.tracks_results && ev.result_entered_at && ev.home_team && ev.away_team;
+      return `<div class="pb-g">
       <div>
         <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
         <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${venueMapLinks.has(ev.venue_id) ? ` · <a href="${esc(venueMapLinks.get(ev.venue_id))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
       </div>
-      <span class="nl-badge nl-badge--${PAST_STATE_TONE[ev.state] || 'pending'}" data-i18n="${PAST_STATE_KEY[ev.state] || ''}">${esc(t[PAST_STATE_KEY[ev.state]] || ev.state)}</span>
-    </div>`).join('')}</div>` : '';
+      ${hasScore
+        ? `<span class="pb-g-score">${esc(ev.home_team)} <b>${ev.home_score}</b> &ndash; <b>${ev.away_score}</b> ${esc(ev.away_team)}</span>`
+        : `<span class="nl-badge nl-badge--${PAST_STATE_TONE[ev.state] || 'pending'}" data-i18n="${PAST_STATE_KEY[ev.state] || ''}">${esc(t[PAST_STATE_KEY[ev.state]] || ev.state)}</span>`}
+    </div>`;
+    }).join('')}</div>` : '';
 
   // 'headcount' has no team names to show at all (just the internal,
   // never-shown HEADCOUNT_TEAM_NAME sentinel) -- this whole section is
@@ -3523,6 +3575,7 @@ ${theme === 'clean' ? PUBLIC_THEME_CLEAN_CSS : PUBLIC_THEME_ARENE_CSS}
 <main class="pb-main">
   ${heroHtml}
   ${standingsHtml}
+  ${topScorersHtml}
   ${upcomingHtml}
   ${pastEventsHtml}
   ${teamsHtml}

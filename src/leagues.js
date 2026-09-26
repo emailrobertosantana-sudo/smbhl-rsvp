@@ -3869,3 +3869,109 @@ export async function handleLeaguePlayerStatsUpsert(req, env) {
 
   return Response.json({ ok: true, event_id: eventId, saved });
 }
+
+/* ---------- standings and leaderboards (Part 4, stats tracking task) ----------
+ * Computed ON DEMAND, directly from events/player_game_stats, every
+ * time -- not written to an incrementally-updated cache (the old
+ * season.standings KV array this replaces). A score is editable
+ * afterward (Part 2's own decision), and a derived-fresh read is
+ * simply correct by construction after an edit, with no cache-
+ * invalidation logic to get wrong -- the scale this product runs at
+ * (a recreational league's own season, dozens of games) makes this
+ * the right tradeoff over an incremental update.
+ *
+ * STANDINGS: fixed-teams leagues only -- meaningless for weekly_draw
+ * (teams are redrawn every event) and headcount (no teams at all),
+ * same reasoning the public page's own pre-existing standings gate
+ * already used. Only ever built from REGULAR-SEASON games
+ * (is_playoff = 0) -- playoff results feed the resolver (Part 5), not
+ * the ranking playoffs are seeded FROM; folding them in would be
+ * circular.
+ *
+ * POINTS: DECIDED here, flagged in the final report as a choice to
+ * review -- win = 2, tie = 1, loss = 0 (standard recreational-hockey
+ * scoring; the task's own spec names the columns but not the exact
+ * formula).
+ */
+export async function computeStandings(env, leagueId, season) {
+  const rows = (await env.DB.prepare(
+    `SELECT home_team, away_team, home_score, away_score FROM events
+      WHERE league_id = ? AND season = ? AND is_playoff = 0 AND result_entered_at IS NOT NULL
+        AND home_team IS NOT NULL AND away_team IS NOT NULL`
+  ).bind(leagueId, season).all()).results || [];
+
+  const table = new Map();
+  const ensure = team => {
+    if (!table.has(team)) table.set(team, { team, gp: 0, w: 0, l: 0, t: 0, gf: 0, ga: 0, pts: 0 });
+    return table.get(team);
+  };
+  for (const r of rows) {
+    const home = ensure(r.home_team), away = ensure(r.away_team);
+    home.gp++; away.gp++;
+    home.gf += r.home_score; home.ga += r.away_score;
+    away.gf += r.away_score; away.ga += r.home_score;
+    if (r.home_score > r.away_score) { home.w++; home.pts += 2; away.l++; }
+    else if (r.home_score < r.away_score) { away.w++; away.pts += 2; home.l++; }
+    else { home.t++; away.t++; home.pts += 1; away.pts += 1; }
+  }
+  return [...table.values()];
+}
+
+// Standard tiebreak chain (DECIDED here, flagged as a decision to
+// review): points, then wins, then goal differential, then goals for.
+// Used both for public-page ranking display and Part 5's own playoff
+// seeding -- one sort, everywhere a "final ranking" is needed.
+export function rankStandings(standings) {
+  return [...standings].sort((a, b) =>
+    (b.pts - a.pts) || (b.w - a.w) || ((b.gf - b.ga) - (a.gf - a.ga)) || (b.gf - a.gf)
+  );
+}
+
+// TOP SCORERS: any league with player stats enabled, regardless of
+// team structure (goals/assists are tracked per player, independent
+// of whether standings mean anything for this league). Every game in
+// the season counts, playoffs included -- a player's season total is
+// everything they played, not just the regular-season portion
+// standings are scoped to.
+export async function computeTopScorers(env, leagueId, season) {
+  const rows = (await env.DB.prepare(
+    `SELECT p.player_id, c.name, SUM(p.goals) AS goals, SUM(p.assists) AS assists
+       FROM player_game_stats p
+       JOIN events e ON e.id = p.event_id
+       JOIN contacts c ON c.player_id = p.player_id
+      WHERE p.league_id = ? AND e.season = ? AND p.role = 'skater'
+      GROUP BY p.player_id, c.name`
+  ).bind(leagueId, season).all()).results || [];
+  return rows
+    .map(r => ({ player_id: r.player_id, name: r.name, goals: r.goals || 0, assists: r.assists || 0, points: (r.goals || 0) + (r.assists || 0) }))
+    .sort((a, b) => b.points - a.points || b.goals - a.goals);
+}
+
+// GAA: goals_against summed across a goalie's own games, divided by
+// games played -- a plain per-game average (this product doesn't
+// track precise ice time, so not a true per-60-minutes rate). Also
+// returns win/loss/tie totals, DERIVED per game (deriveGoalieRecord)
+// from each game's own event row, never a stored, second copy of the
+// same fact.
+export async function computeGoalieStats(env, leagueId, season) {
+  const rows = (await env.DB.prepare(
+    `SELECT p.player_id, c.name, p.team, p.goals_against, e.home_team, e.away_team, e.home_score, e.away_score, e.result_entered_at
+       FROM player_game_stats p
+       JOIN events e ON e.id = p.event_id
+       JOIN contacts c ON c.player_id = p.player_id
+      WHERE p.league_id = ? AND e.season = ? AND p.role = 'goalie'`
+  ).bind(leagueId, season).all()).results || [];
+
+  const byPlayer = new Map();
+  for (const r of rows) {
+    if (!byPlayer.has(r.player_id)) byPlayer.set(r.player_id, { player_id: r.player_id, name: r.name, games: 0, goalsAgainst: 0, w: 0, l: 0, t: 0 });
+    const g = byPlayer.get(r.player_id);
+    g.games++;
+    g.goalsAgainst += r.goals_against || 0;
+    const record = deriveGoalieRecord(r, r.team);
+    if (record === 'win') g.w++;
+    else if (record === 'loss') g.l++;
+    else if (record === 'tie') g.t++;
+  }
+  return [...byPlayer.values()].map(g => ({ ...g, gaa: g.games ? Math.round((g.goalsAgainst / g.games) * 100) / 100 : null }));
+}

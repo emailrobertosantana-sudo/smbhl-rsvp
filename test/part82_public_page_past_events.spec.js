@@ -66,6 +66,13 @@ async function createEvent(cookie, csrfToken, body) {
 async function fetchPublic(leagueId) {
   return (await SELF.fetch(`http://example.com/league/public?league=${leagueId}`)).text();
 }
+async function submitScore(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/events/score', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body)
+  });
+  return res.json();
+}
 
 describe('Part 11 (live-testing task, batch 6): public page shows past events alongside upcoming, for every league', () => {
   beforeAll(async () => {
@@ -140,7 +147,12 @@ describe('Part 11 (live-testing task, batch 6): public page shows past events al
     const { cookie, csrfToken } = await signup('pastevents.statsgate@example.com', '203.0.200.006');
     const league = await createLeague(cookie, csrfToken, { name: 'Past Events Stats Gate League', teamNames: ['A', 'B'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    await createEvent(cookie, csrfToken, { date: '2020-05-25' });
+    // Stats tracking task (Part 4): standings are now computed fresh
+    // from real game results (computeStandings) rather than the old
+    // permanently-0-0-0 season.standings array team-name placeholder --
+    // a real result has to exist for a real row to appear.
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-05-25', season: 'S1' });
+    await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 2, away_score: 0 });
 
     const html = await fetchPublic(league.id);
     expect(html).toContain('data-i18n="standings"');

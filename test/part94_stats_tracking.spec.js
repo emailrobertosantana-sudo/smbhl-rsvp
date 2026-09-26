@@ -18,7 +18,7 @@
 // tracking, deliberately not the model for this.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { deriveGoalieRecord } from '../src/leagues.js';
+import { deriveGoalieRecord, computeStandings, rankStandings, computeTopScorers, computeGoalieStats } from '../src/leagues.js';
 import { applyRealSchema } from './support/real_schema.js';
 
 const AUTH_SECRET = 'test-part94-stats-tracking-secret';
@@ -111,6 +111,9 @@ async function postPlayerStats(cookie, csrfToken, body) {
     body: JSON.stringify(body)
   });
   return { status: res.status, json: await res.json() };
+}
+async function publicPageHtml(leagueId) {
+  return (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(leagueId)}`)).text();
 }
 
 describe('Stats tracking, Part 1: two independent switches', () => {
@@ -512,5 +515,192 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: player.player_id, role: 'skater', goals: 3, assists: 2 }] });
     const row = await env.DB.prepare('SELECT goals, assists FROM player_game_stats WHERE event_id = ? AND player_id = ?').bind(ev.id, player.player_id).first();
     expect(row.goals).toBe(3); expect(row.assists).toBe(2);
+  });
+});
+
+// Part 4: standings (fixed-teams only, computed fresh from game
+// results every read -- see computeStandings' own comment for why
+// this is deliberately NOT an incrementally-updated cache) and top
+// scorers (any structure, any league with player stats enabled). Both
+// must respect Part 1's own switches, at READ time -- not just at
+// write time (a switch flipped off afterward must hide data that's
+// still sitting in the DB, not just block new writes).
+describe('Stats tracking, Part 4: standings and leaderboards', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it('computeStandings aggregates real, asymmetric per-team totals from game results -- wins, losses, a tie, goals for/against, and points (win=2, tie=1, loss=0)', async () => {
+    const { cookie, csrfToken } = await signup('p4.standings@example.com', '203.0.205.001');
+    const league = await createLeague(cookie, csrfToken, { name: 'Standings League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+
+    const games = [[5, 2], [4, 1], [1, 4], [2, 2]]; // Rouge: W, W, L, T
+    for (let i = 0; i < games.length; i++) {
+      const ev = await createEvent(cookie, csrfToken, { date: `2099-02-0${i + 1}`, season: 'S1' });
+      await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: games[i][0], away_score: games[i][1] });
+    }
+
+    const standings = await computeStandings(env, league.id, 'S1');
+    const rouge = standings.find(s => s.team === 'Rouge');
+    const bleu = standings.find(s => s.team === 'Bleu');
+    expect(rouge).toEqual({ team: 'Rouge', gp: 4, w: 2, l: 1, t: 1, gf: 12, ga: 9, pts: 5 });
+    expect(bleu).toEqual({ team: 'Bleu', gp: 4, w: 1, l: 2, t: 1, gf: 9, ga: 12, pts: 3 });
+
+    const ranked = rankStandings(standings);
+    expect(ranked.map(s => s.team)).toEqual(['Rouge', 'Bleu']);
+  });
+
+  it('rankStandings applies the tiebreak chain in order: points, then wins, then goal differential, then goals for', () => {
+    // Level 1: points alone decides.
+    expect(rankStandings([
+      { team: 'A', pts: 3, w: 1, gf: 5, ga: 5 },
+      { team: 'B', pts: 5, w: 1, gf: 1, ga: 1 }
+    ]).map(s => s.team)).toEqual(['B', 'A']);
+
+    // Level 2: equal points, wins break the tie.
+    expect(rankStandings([
+      { team: 'A', pts: 4, w: 1, gf: 5, ga: 5 },
+      { team: 'B', pts: 4, w: 2, gf: 1, ga: 1 }
+    ]).map(s => s.team)).toEqual(['B', 'A']);
+
+    // Level 3: equal points and wins, goal differential breaks the tie.
+    expect(rankStandings([
+      { team: 'A', pts: 4, w: 2, gf: 6, ga: 5 },
+      { team: 'B', pts: 4, w: 2, gf: 9, ga: 5 }
+    ]).map(s => s.team)).toEqual(['B', 'A']);
+
+    // Level 4: equal points, wins, and differential -- goals for breaks it.
+    expect(rankStandings([
+      { team: 'A', pts: 4, w: 2, gf: 4, ga: 2 },
+      { team: 'B', pts: 4, w: 2, gf: 6, ga: 4 }
+    ]).map(s => s.team)).toEqual(['B', 'A']);
+  });
+
+  it('computeTopScorers sums goals/assists across the season for ANY team structure -- not just fixed -- and sorts by points then goals', async () => {
+    const { cookie, csrfToken } = await signup('p4.topscorers@example.com', '203.0.205.002');
+    const league = await createLeague(cookie, csrfToken, { name: 'Top Scorers Pickup League', teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev1 = await createEvent(cookie, csrfToken, { date: '2099-03-01', season: 'S1' });
+    const ev2 = await createEvent(cookie, csrfToken, { date: '2099-03-08', season: 'S1' });
+    const top = await addContact(cookie, csrfToken, { name: 'Top Scorer Player', role: 'roster' });
+    const low = await addContact(cookie, csrfToken, { name: 'Low Scorer Player', role: 'roster' });
+    await setRsvp(cookie, csrfToken, ev1.id, top.player_id, 'in');
+    await setRsvp(cookie, csrfToken, ev2.id, top.player_id, 'in');
+    await setRsvp(cookie, csrfToken, ev1.id, low.player_id, 'in');
+
+    await postPlayerStats(cookie, csrfToken, { event_id: ev1.id, entries: [{ player_id: top.player_id, role: 'skater', goals: 2, assists: 1 }, { player_id: low.player_id, role: 'skater', goals: 0, assists: 1 }] });
+    await postPlayerStats(cookie, csrfToken, { event_id: ev2.id, entries: [{ player_id: top.player_id, role: 'skater', goals: 1, assists: 0 }] });
+
+    const scorers = await computeTopScorers(env, league.id, 'S1');
+    expect(scorers[0]).toEqual({ player_id: top.player_id, name: 'Top Scorer Player', goals: 3, assists: 1, points: 4 });
+    expect(scorers[1]).toEqual({ player_id: low.player_id, name: 'Low Scorer Player', goals: 0, assists: 1, points: 1 });
+  });
+
+  it('computeGoalieStats derives win/loss per game from the event\'s own result (never a stored enum) and computes GAA as goals-against per game played', async () => {
+    const { cookie, csrfToken } = await signup('p4.goaliestats@example.com', '203.0.205.003');
+    const league = await createLeague(cookie, csrfToken, { name: 'Goalie Stats League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const goalie = await addContact(cookie, csrfToken, { name: 'Team Goalie Player', role: 'roster', team: 'Rouge' });
+    const ev1 = await createEvent(cookie, csrfToken, { date: '2099-04-01', season: 'S1' });
+    const ev2 = await createEvent(cookie, csrfToken, { date: '2099-04-08', season: 'S1' });
+    await setRsvp(cookie, csrfToken, ev1.id, goalie.player_id, 'in');
+    await setRsvp(cookie, csrfToken, ev2.id, goalie.player_id, 'in');
+
+    await submitScore(cookie, csrfToken, { event_id: ev1.id, home_score: 5, away_score: 2 }); // Rouge win
+    await submitScore(cookie, csrfToken, { event_id: ev2.id, home_score: 1, away_score: 4 }); // Rouge loss
+    await postPlayerStats(cookie, csrfToken, { event_id: ev1.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 2 }] });
+    await postPlayerStats(cookie, csrfToken, { event_id: ev2.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 4 }] });
+
+    const [stats] = await computeGoalieStats(env, league.id, 'S1');
+    expect(stats.games).toBe(2);
+    expect(stats.w).toBe(1);
+    expect(stats.l).toBe(1);
+    expect(stats.t).toBe(0);
+    expect(stats.goalsAgainst).toBe(6);
+    expect(stats.gaa).toBe(3);
+  });
+
+  it('the public page shows a full standings table for a fixed-teams league with results on, and hides it again the moment the switch is turned off -- even though the scores stay in the DB', async () => {
+    const { cookie, csrfToken } = await signup('p4.pubstandings@example.com', '203.0.205.004');
+    const league = await createLeague(cookie, csrfToken, { name: 'Public Standings League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2024-01-05', season: 'S1' });
+    await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 5, away_score: 2 });
+
+    const before = await publicPageHtml(league.id);
+    expect(before).toContain('data-i18n="standings"');
+    expect(before).toContain('>Rouge<');
+    expect(before).toContain('>5<');
+    expect(before).toContain('Standings'); // both languages' copy embedded for the client toggle
+    expect(before).toContain('Classement');
+
+    await updateTracking(cookie, csrfToken, { tracksResults: false });
+    const after = await publicPageHtml(league.id);
+    expect(after).not.toContain('data-i18n="standings"');
+    const row = await env.DB.prepare('SELECT home_score FROM events WHERE id = ?').bind(ev.id).first();
+    expect(row.home_score).toBe(5); // the score itself was never deleted, only hidden
+  });
+
+  it('a pickup (weekly_draw) league with a result entered shows NO standings table, but the game result is visible in its recent-results history', async () => {
+    const { cookie, csrfToken } = await signup('p4.pubpickup@example.com', '203.0.205.005');
+    const league = await createLeague(cookie, csrfToken, { name: 'Public Pickup League', teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2024-01-05', season: 'S1' });
+    const p1 = await addContact(cookie, csrfToken, { name: 'Pickup Player One', role: 'roster' });
+    const p2 = await addContact(cookie, csrfToken, { name: 'Pickup Player Two', role: 'roster' });
+    await setRsvp(cookie, csrfToken, ev.id, p1.player_id, 'in');
+    await setRsvp(cookie, csrfToken, ev.id, p2.player_id, 'in');
+    await assignEventTeam(cookie, csrfToken, ev.id, p1.player_id, 'Rouge');
+    await assignEventTeam(cookie, csrfToken, ev.id, p2.player_id, 'Bleu');
+    const scored = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 6, away_score: 3 });
+
+    const html = await publicPageHtml(league.id);
+    expect(html).not.toContain('data-i18n="standings"');
+    // Home/away for a weekly_draw event is resolved from whichever team
+    // was actually drawn into each rsvp.team slot (no fixed home/away
+    // convention -- see resolveScoreEventSides' own comment), so assert
+    // against the score route's own response rather than assuming which
+    // team landed on which side.
+    expect(html).toContain(`${scored.json.event.home_team} <b>6</b>`);
+    expect(html).toContain(`<b>3</b> ${scored.json.event.away_team}`);
+  });
+
+  it('a headcount (no-teams) league never shows a standings table, regardless of player stats tracking', async () => {
+    const { cookie, csrfToken } = await signup('p4.pubheadcount@example.com', '203.0.205.006');
+    const league = await createLeague(cookie, csrfToken, { name: 'Public Headcount League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12, tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1', min_players: 8, max_players: 12 });
+    const html = await publicPageHtml(league.id);
+    expect(html).not.toContain('data-i18n="standings"');
+  });
+
+  it('the public page top-scorers leaderboard respects tracks_player_stats at READ time (not just at write time), and works for a pickup league, not just fixed', async () => {
+    const { cookie, csrfToken } = await signup('p4.pubtopscorers@example.com', '203.0.205.007');
+    const league = await createLeague(cookie, csrfToken, { name: 'Public Top Scorers League', teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2024-01-05', season: 'S1' });
+    const player = await addContact(cookie, csrfToken, { name: 'Public Scorer Player', role: 'roster' });
+    await setRsvp(cookie, csrfToken, ev.id, player.player_id, 'in');
+    await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: player.player_id, role: 'skater', goals: 4, assists: 2 }] });
+
+    const on = await publicPageHtml(league.id);
+    expect(on).toContain('data-i18n="topScorers"');
+    expect(on).toContain('Public Scorer Player');
+    expect(on).toContain('Top scorers'); // both languages' copy embedded for the client toggle
+    expect(on).toContain('Meilleurs pointeurs');
+
+    await updateTracking(cookie, csrfToken, { tracksPlayerStats: false });
+    const off = await publicPageHtml(league.id);
+    expect(off).not.toContain('data-i18n="topScorers"');
+    const row = await env.DB.prepare('SELECT goals FROM player_game_stats WHERE event_id = ? AND player_id = ?').bind(ev.id, player.player_id).first();
+    expect(row.goals).toBe(4); // the stat itself was never deleted, only hidden
   });
 });
