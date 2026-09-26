@@ -4270,12 +4270,36 @@ export async function handleLeaguePlayerStatsUpsert(req, env) {
  * scoring; the task's own spec names the columns but not the exact
  * formula).
  */
+// Public site rebuild task (Part 3): every season this league has EVER
+// had an event in, most-recent-first by its own last event date
+// (season names are admin-chosen free text -- "Winter 2026" vs
+// "Fall 2025" -- so alphabetical order would be wrong; sorting by each
+// season's own most recent date is always chronologically correct
+// regardless of naming). `isCurrent` flags the league's own
+// current_season (data.json) so the public page can label it "current
+// season" instead of just another item in the History list.
+export async function getLeagueSeasonsList(env, leagueId, currentSeasonName) {
+  const rows = (await env.DB.prepare(
+    `SELECT season, MAX(date) AS last_date, COUNT(*) AS event_count
+       FROM events WHERE league_id = ? AND is_playoff = 0
+       GROUP BY season ORDER BY last_date DESC`
+  ).bind(leagueId).all()).results || [];
+  return rows.map(r => ({ season: r.season, lastDate: r.last_date, eventCount: r.event_count, isCurrent: r.season === currentSeasonName }));
+}
+
+// Public site rebuild task (Part 3): `season` is now optional -- a
+// falsy value (null/undefined) means ALL of this league's seasons at
+// once, for the All-time view. Every existing caller always passes a
+// real season string, so this is purely additive; nothing about the
+// single-season behaviour changes.
 export async function computeStandings(env, leagueId, season) {
+  const seasonClause = season ? 'AND season = ?' : '';
+  const binds = season ? [leagueId, season] : [leagueId];
   const rows = (await env.DB.prepare(
     `SELECT home_team, away_team, home_score, away_score FROM events
-      WHERE league_id = ? AND season = ? AND is_playoff = 0 AND result_entered_at IS NOT NULL
+      WHERE league_id = ? ${seasonClause} AND is_playoff = 0 AND result_entered_at IS NOT NULL
         AND home_team IS NOT NULL AND away_team IS NOT NULL`
-  ).bind(leagueId, season).all()).results || [];
+  ).bind(...binds).all()).results || [];
 
   const table = new Map();
   const ensure = team => {
@@ -4311,14 +4335,16 @@ export function rankStandings(standings) {
 // everything they played, not just the regular-season portion
 // standings are scoped to.
 export async function computeTopScorers(env, leagueId, season) {
+  const seasonClause = season ? 'AND e.season = ?' : '';
+  const binds = season ? [leagueId, season] : [leagueId];
   const rows = (await env.DB.prepare(
     `SELECT p.player_id, c.name, SUM(p.goals) AS goals, SUM(p.assists) AS assists
        FROM player_game_stats p
        JOIN events e ON e.id = p.event_id
        JOIN contacts c ON c.player_id = p.player_id
-      WHERE p.league_id = ? AND e.season = ? AND p.role = 'skater'
+      WHERE p.league_id = ? ${seasonClause} AND p.role = 'skater'
       GROUP BY p.player_id, c.name`
-  ).bind(leagueId, season).all()).results || [];
+  ).bind(...binds).all()).results || [];
   return rows
     .map(r => ({ player_id: r.player_id, name: r.name, goals: r.goals || 0, assists: r.assists || 0, points: (r.goals || 0) + (r.assists || 0) }))
     .sort((a, b) => b.points - a.points || b.goals - a.goals);
@@ -4331,13 +4357,15 @@ export async function computeTopScorers(env, leagueId, season) {
 // from each game's own event row, never a stored, second copy of the
 // same fact.
 export async function computeGoalieStats(env, leagueId, season) {
+  const seasonClause = season ? 'AND e.season = ?' : '';
+  const binds = season ? [leagueId, season] : [leagueId];
   const rows = (await env.DB.prepare(
     `SELECT p.player_id, c.name, p.team, p.goals_against, e.home_team, e.away_team, e.home_score, e.away_score, e.result_entered_at
        FROM player_game_stats p
        JOIN events e ON e.id = p.event_id
        JOIN contacts c ON c.player_id = p.player_id
-      WHERE p.league_id = ? AND e.season = ? AND p.role = 'goalie'`
-  ).bind(leagueId, season).all()).results || [];
+      WHERE p.league_id = ? ${seasonClause} AND p.role = 'goalie'`
+  ).bind(...binds).all()).results || [];
 
   const byPlayer = new Map();
   for (const r of rows) {

@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -3205,7 +3205,7 @@ window.addEventListener('admin_lang_changed', function(e) {
 //   leagueFillColor() itself uses (WCAG 2.x); a real browser render
 //   was also checked -- see this task's own final report.
 const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d); color: var(--ink-inverse, #f4f4f2); min-height: 100dvh; display: flex; flex-direction: column; }
-  .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+  .pb-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .pb-hero { margin: var(--space-4) 0; padding: var(--space-5); background: var(--primary); border-radius: var(--radius-lg); }
   .pb-hero-when { font: 800 28px/32px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #fff; margin-top: 6px; }
   /* Live-testing task (batch 2), Part 7: leagueFillColor() only
@@ -3287,7 +3287,33 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
      the page, not a dismissible banner. */
   .pb-note { margin: var(--space-4) 0; padding: var(--space-4); background: #1c1f25; border-radius: var(--radius-lg); border: 1px solid #2a2e36; }
   .pb-note .overline { color: #a3a6ad; }
-  .pb-note p { margin: 8px 0 0; font-size: 15px; line-height: 22px; color: #f4f4f2; }`;
+  .pb-note p { margin: 8px 0 0; font-size: 15px; line-height: 22px; color: #f4f4f2; }
+  /* Public site rebuild task (Part 3): the wider .pb-main (item 1)
+     needs a real nav bar to be worth the extra width -- a horizontal
+     row of section links, wrapping on narrow viewports rather than
+     scrolling, since a league rarely has more than 7 items. Every
+     colour below is the SAME hardcoded hex this theme already uses
+     elsewhere (muted #a3a6ad, border #2a2e36) -- no new OS-reactive
+     token, matching this file's own header comment on avoiding the
+     a236130 contrast-bug class. */
+  .pb-nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); padding: var(--space-3) 0; border-bottom: 1px solid #2a2e36; margin-bottom: var(--space-2); }
+  .pb-nav-link { font: 600 13px/20px var(--font-sans); color: #a3a6ad; text-decoration: none; padding: 4px 2px; border-bottom: 2px solid transparent; }
+  .pb-nav-link:hover { color: #f4f4f2; }
+  .pb-nav-link[aria-current="page"] { color: #f4f4f2; border-bottom-color: #f4f4f2; }
+  .pb-season-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); background: #1c1f25; border: 1px solid #2a2e36; border-radius: var(--radius-md); padding: 10px var(--space-4); margin-bottom: var(--space-2); font-size: 14px; color: #f4f4f2; }
+  .pb-season-banner a { color: #a3a6ad; font-weight: 600; }
+  .pb-season-banner a:hover { color: #f4f4f2; }
+  .pb-empty { font-size: 15px; font-style: italic; color: #a3a6ad; padding: var(--space-3) 0; }
+  .pb-hero-matchup { font: 700 17px/22px var(--font-display); font-stretch: 118%; color: #fff; margin-top: 4px; }
+  .pb-g-matchup { font: 700 15px/20px var(--font-display); font-stretch: 118%; }
+  a.pb-g.pb-g-link { text-decoration: none; color: inherit; }
+  .pb-leaders { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
+  .pb-lead-card { background: #1c1f25; border: 1px solid #2a2e36; border-radius: var(--radius-lg); padding: var(--space-4); }
+  .pb-lead-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .pb-lead-rank { font: 700 13px/18px var(--font-sans); color: #a3a6ad; width: 16px; }
+  .pb-lead-name { flex: 1; font: 600 15px/20px var(--font-sans); }
+  .pb-lead-val { font: 800 16px/20px var(--font-display); font-stretch: 118%; }
+  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-3); } .pb-nav-link { font-size: 12px; } }`;
 
 // "Épuré" per the guideline: white bg #ffffff, text #1a1a1a, muted
 // #666666, Inter only, a single 24x4px bar as the only signature
@@ -3296,7 +3322,7 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
 // Reuses the exact same class names/HTML as Arène -- only this block
 // differs.
 const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min-height: 100dvh; display: flex; flex-direction: column; font-family: Inter, var(--font-sans); }
-  .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+  .pb-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .pb-hero { margin: 40px 0 16px; padding: 0; background: none; border-radius: 0; position: relative; }
   .pb-hero:before { content: ""; display: block; width: 24px; height: 4px; background: var(--primary, #b3122e); margin-bottom: 20px; }
   .pb-hero-when { font: 600 30px/36px Inter, var(--font-sans); letter-spacing: -.02em; color: #1a1a1a; margin-top: 0; }
@@ -3344,7 +3370,25 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
      theme's restraint. */
   .pb-note { margin: var(--space-4) 0; padding: var(--space-4); border: 1px solid #eeeeee; border-radius: var(--radius-lg); }
   .pb-note .overline { color: #666666; }
-  .pb-note p { margin: 8px 0 0; font-size: 15px; line-height: 22px; color: #1a1a1a; }`;
+  .pb-note p { margin: 8px 0 0; font-size: 15px; line-height: 22px; color: #1a1a1a; }
+  .pb-nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); padding: var(--space-3) 0; border-bottom: 1px solid #eeeeee; margin-bottom: var(--space-2); }
+  .pb-nav-link { font: 600 13px/20px Inter, var(--font-sans); color: #666666; text-decoration: none; padding: 4px 2px; border-bottom: 2px solid transparent; }
+  .pb-nav-link:hover { color: #1a1a1a; }
+  .pb-nav-link[aria-current="page"] { color: #1a1a1a; border-bottom-color: #1a1a1a; }
+  .pb-season-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); border: 1px solid #eeeeee; border-radius: 8px; padding: 10px var(--space-4); margin-bottom: var(--space-2); font-size: 14px; color: #1a1a1a; }
+  .pb-season-banner a { color: #666666; font-weight: 600; }
+  .pb-season-banner a:hover { color: #1a1a1a; }
+  .pb-empty { font-size: 15px; font-style: italic; color: #666666; padding: var(--space-3) 0; }
+  .pb-hero-matchup { font: 600 18px/24px Inter, var(--font-sans); color: #1a1a1a; margin-top: 6px; }
+  .pb-g-matchup { font-weight: 600; font-size: 15px; }
+  a.pb-g.pb-g-link { text-decoration: none; color: inherit; }
+  .pb-leaders { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
+  .pb-lead-card { border: 1px solid #eeeeee; border-radius: 8px; padding: var(--space-4); }
+  .pb-lead-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .pb-lead-rank { font: 600 13px/18px Inter, var(--font-sans); color: #666666; width: 16px; }
+  .pb-lead-name { flex: 1; font: 500 15px/20px Inter, var(--font-sans); }
+  .pb-lead-val { font-weight: 700; font-size: 16px; }
+  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-3); } .pb-nav-link { font-size: 12px; } }`;
 
 // "Classique" per the guideline: a bold, light team-site look -- a
 // colour-blocked header/hero in the LEAGUE'S OWN colour (var(
@@ -3359,7 +3403,7 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
 // Barlow Condensed). Reuses the exact same class names/HTML as the
 // other three themes -- only this block differs.
 const PUBLIC_THEME_CLASSIQUE_CSS = `  .nl { background: #ffffff; color: #111318; min-height: 100dvh; display: flex; flex-direction: column; }
-  .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+  .pb-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .nl-header { background: var(--pb-accent, #16181d); border-bottom: none; }
   .nl-header .nl-brand { color: #fff; }
   .nl-lang { border: 1.5px solid rgba(255,255,255,.6); background: transparent; }
@@ -3397,7 +3441,33 @@ const PUBLIC_THEME_CLASSIQUE_CSS = `  .nl { background: #ffffff; color: #111318;
   .nl a.pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: #55585f; text-decoration: none; }
   .nl a.pb-foot:hover { color: #111318; text-decoration: underline; }
   .nl .pb-g-venue a { color: #55585f; }
-  .nl .pb-g-venue a:hover { color: #111318; }`;
+  .nl .pb-g-venue a:hover { color: #111318; }
+  .pb-nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); padding: var(--space-3) 0; border-bottom: 2px solid #111318; margin-bottom: var(--space-2); }
+  .pb-nav-link { font: 700 13px/20px var(--font-sans); text-transform: uppercase; letter-spacing: .02em; color: #55585f; text-decoration: none; padding: 4px 2px; border-bottom: 3px solid transparent; }
+  .pb-nav-link:hover { color: #111318; }
+  .pb-nav-link[aria-current="page"] { color: #111318; border-bottom-color: var(--pb-accent, #16181d); }
+  .pb-season-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); background: #f4f4f2; border: 2px solid #111318; border-radius: var(--radius-md); padding: 10px var(--space-4); margin-bottom: var(--space-2); font-size: 14px; color: #111318; }
+  /* Contrast: NOT var(--pb-accent) here on purpose -- this banner's
+     own background is #f4f4f2, not solid white, and leagueFillColor()
+     only guarantees >=4.5:1 for the league's own colour against solid
+     white (see :root{--pb-accent:...}'s own comment) -- the worst-case
+     preset (Orange) falls just under 4.5:1 against #f4f4f2 specifically
+     (documented where Quartier first ran into this same risk). A fixed
+     hex already used elsewhere in this theme is always safe instead. */
+  .pb-season-banner a { color: #111318; font-weight: 700; text-decoration: underline; }
+  .pb-season-banner a:hover { color: var(--pb-accent, #16181d); }
+  .pb-empty { font-size: 15px; font-style: italic; color: #55585f; padding: var(--space-3) 0; }
+  .pb-hero-matchup { font: 800 20px/24px var(--font-display); font-stretch: 118%; color: #fff; margin-top: 6px; text-transform: uppercase; }
+  .pb-g-matchup { font: 700 16px/20px var(--font-display); font-stretch: 118%; }
+  a.pb-g.pb-g-link { text-decoration: none; color: inherit; }
+  .pb-leaders { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
+  .pb-lead-card { border: 2px solid #111318; border-radius: var(--radius-md); padding: var(--space-4); }
+  .pb-lead-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #e3e3e0; }
+  .pb-lead-row:last-child { border-bottom: none; }
+  .pb-lead-rank { font: 800 13px/18px var(--font-display); font-stretch: 118%; color: var(--pb-accent, #16181d); width: 18px; }
+  .pb-lead-name { flex: 1; font: 600 15px/20px var(--font-sans); }
+  .pb-lead-val { font: 800 16px/20px var(--font-display); font-stretch: 118%; }
+  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-3); } .pb-nav-link { font-size: 11px; } }`;
 
 // "Quartier" per the guideline: warm, friendly, recreational-league
 // feel -- expressed through STRUCTURE (a prominent bordered card for
@@ -3414,7 +3484,7 @@ const PUBLIC_THEME_CLASSIQUE_CSS = `  .nl { background: #ffffff; color: #111318;
 // used as a fixed, warm-adjacent background instead of inventing a
 // new hex -- "same palette," not a new one, per the task's own words.
 const PUBLIC_THEME_QUARTIER_CSS = `  .nl { background: #f4f4f2; color: #16181d; min-height: 100dvh; display: flex; flex-direction: column; }
-  .pb-main { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+  .pb-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .nl-header { background: #f4f4f2; border-bottom: 1px solid #e3e3e0; }
   .nl-lang { border: 1px solid #d0d0d0; background: #ffffff; }
   .nl-lang button { color: #55585f; }
@@ -3452,7 +3522,25 @@ const PUBLIC_THEME_QUARTIER_CSS = `  .nl { background: #f4f4f2; color: #16181d; 
   .nl a.pb-foot { display: block; padding: var(--space-5) var(--space-4); text-align: center; font-size: 12px; color: #55585f; text-decoration: none; }
   .nl a.pb-foot:hover { color: #16181d; text-decoration: underline; }
   .nl .pb-g-venue a { color: #55585f; }
-  .nl .pb-g-venue a:hover { color: #16181d; }`;
+  .nl .pb-g-venue a:hover { color: #16181d; }
+  .pb-nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); padding: var(--space-3) 0; border-bottom: 1px solid #e3e3e0; margin-bottom: var(--space-2); }
+  .pb-nav-link { font: 600 13px/20px var(--font-sans); color: #55585f; text-decoration: none; padding: 4px 10px; border-radius: 999px; }
+  .pb-nav-link:hover { color: #16181d; background: #ffffff; }
+  .pb-nav-link[aria-current="page"] { color: #16181d; background: #ffffff; border: 1px solid #e3e3e0; }
+  .pb-season-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); padding: 10px var(--space-4); margin-bottom: var(--space-2); font-size: 14px; color: #16181d; }
+  .pb-season-banner a { color: var(--pb-accent, #16181d); font-weight: 700; }
+  .pb-season-banner a:hover { text-decoration: underline; }
+  .pb-empty { font-size: 15px; font-style: italic; color: #55585f; padding: var(--space-3) 0; background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); padding: var(--space-4); }
+  .pb-hero-matchup { font: 700 17px/22px var(--font-display); font-stretch: 118%; color: #16181d; margin-top: 6px; }
+  .pb-g-matchup { font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #16181d; }
+  a.pb-g.pb-g-link { text-decoration: none; color: inherit; }
+  .pb-leaders { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
+  .pb-lead-card { background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); padding: var(--space-4); }
+  .pb-lead-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .pb-lead-rank { font: 700 13px/18px var(--font-sans); color: #55585f; width: 16px; }
+  .pb-lead-name { flex: 1; font: 600 15px/20px var(--font-sans); }
+  .pb-lead-val { font: 800 16px/20px var(--font-display); font-stretch: 118%; color: #16181d; }
+  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-2); } .pb-nav-link { font-size: 12px; padding: 4px 8px; } }`;
 
 // Live-testing task (batch 2), Part 10: shared response for BOTH "this
 // league id/slug doesn't exist at all" and "this league exists but its
@@ -3524,8 +3612,12 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const isHeadcount = teamStructure === 'headcount';
 
   const today = new Date().toISOString().slice(0, 10);
+  // Public site rebuild task (Part 3, item 7): home_team/away_team now
+  // selected so a real matchup ("Red vs Black") can show instead of
+  // just date/time/venue, once one is resolved (Part 1's own
+  // assign-matchups action, or the single-event matchup picker).
   const events = (await env.DB.prepare(
-    `SELECT id, date, venue, venue_id, venue_map_link, start_time, state FROM events
+    `SELECT id, date, venue, venue_id, venue_map_link, start_time, state, home_team, away_team, is_playoff FROM events
       WHERE league_id = ? AND state != 'cancelled' AND date >= ?
       ORDER BY date ASC LIMIT 20`
   ).bind(leagueId, today).all()).results || [];
@@ -3572,22 +3664,56 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // this now actually depends on.
   let standings = [];
   let currentSeasonName = null;
+  let seasonsList = [];
+  // Public site rebuild task (Part 3, items 2/5): a season SELECTOR
+  // (?season=<name>, or ?season=all for the All-time/career view)
+  // drives every stat section below -- Standings/Players/Goalies/
+  // Leaders all read from whichever season is selected, defaulting to
+  // the league's own current one. computeStandings/computeTopScorers/
+  // computeGoalieStats already accept season=null to mean "every
+  // season" (this task's own extension to each), so All-time is just
+  // that same call with no season filter -- no separate aggregation
+  // logic to keep in sync.
+  const statsTracked = leagueRow.tracks_results || leagueRow.tracks_player_stats;
   // Part 4 fix: this used to be gated on teamStructure === 'fixed', which
   // silently starved topScorers of a season name for pickup/headcount
   // leagues even with tracks_player_stats on -- top scorers has no
   // structure restriction (see topScorersHtml's own comment), so the
   // season lookup itself must run for any structure once either switch
   // is on; only the standings computation below stays fixed-only.
-  if (leagueRow.tracks_results || leagueRow.tracks_player_stats) {
+  if (statsTracked) {
     const leagueData = await getLeagueDataJson(env, leagueId);
     currentSeasonName = leagueData.current_season || null;
+    seasonsList = await getLeagueSeasonsList(env, leagueId, currentSeasonName);
   }
-  if (leagueRow.tracks_results && teamStructure === 'fixed' && currentSeasonName) {
-    standings = rankStandings(await computeStandings(env, leagueId, currentSeasonName));
+  const requestedSeason = url.searchParams.get('season');
+  const isAllTime = requestedSeason === 'all';
+  const knownSeasonNames = new Set(seasonsList.map(s => s.season));
+  // An unrecognized/stale ?season= value (a season since renamed or
+  // removed) silently falls back to the current season -- never a raw
+  // SQL param an admin could use to fish for another league's data
+  // (leagueId itself already scopes every query, but this is one less
+  // thing to reason about).
+  const selectedSeasonName = isAllTime ? null : (requestedSeason && knownSeasonNames.has(requestedSeason) ? requestedSeason : currentSeasonName);
+  const viewingCurrentSeason = !isAllTime && selectedSeasonName === currentSeasonName;
+
+  if (leagueRow.tracks_results && teamStructure === 'fixed' && (isAllTime || selectedSeasonName)) {
+    standings = rankStandings(await computeStandings(env, leagueId, selectedSeasonName));
   }
   let topScorers = [];
-  if (leagueRow.tracks_player_stats && currentSeasonName) {
-    topScorers = (await computeTopScorers(env, leagueId, currentSeasonName)).slice(0, 10);
+  if (leagueRow.tracks_player_stats && (isAllTime || selectedSeasonName)) {
+    topScorers = await computeTopScorers(env, leagueId, selectedSeasonName);
+  }
+  // Public site rebuild task (Part 3, item 3): goalie stats get a
+  // public surface for the first time -- GAA (ascending, lower is
+  // better), wins, losses, ties. Same tracks_results dependency
+  // deriveGoalieRecord/goals_against derivation already has (Part 2a) --
+  // a goalie stat line without game results has no win/loss/GAA to
+  // show.
+  let goalieStats = [];
+  if (leagueRow.tracks_player_stats && leagueRow.tracks_results && (isAllTime || selectedSeasonName)) {
+    goalieStats = (await computeGoalieStats(env, leagueId, selectedSeasonName))
+      .sort((a, b) => (a.gaa ?? Infinity) - (b.gaa ?? Infinity) || b.w - a.w);
   }
 
   let poolConfirmed = 0, poolMin = 0, poolMax = 0, poolGoaliesConfirmed = 0, poolGoalieMin = 0;
@@ -3644,20 +3770,75 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   function buildDict(lang) {
     const base = lang === 'fr' ? {
       nextGame: 'Prochain match', teams: 'Équipes', upcoming: 'Prochains matchs',
-      noEvents: "Aucun match à venir pour l'instant.", poweredBy: 'Propulsé par Notre Ligue'
+      noEvents: "Aucun match à venir pour l'instant.", poweredBy: 'Propulsé par Notre Ligue',
+      navHome: 'Accueil', navSchedule: 'Horaire', vsWord: 'contre'
     } : {
       nextGame: 'Next game', teams: 'Teams', upcoming: 'Upcoming events',
-      noEvents: 'No upcoming events yet.', poweredBy: 'Powered by Notre Ligue'
+      noEvents: 'No upcoming events yet.', poweredBy: 'Powered by Notre Ligue',
+      navHome: 'Home', navSchedule: 'Schedule', vsWord: 'vs'
     };
-    if (standings.length) {
+    if (statsTracked) {
+      // Public site rebuild task (Part 3, item 5): History/All-time are
+      // reachable the moment a league tracks EITHER switch, even with
+      // nothing but the current season on record yet -- an empty
+      // section says so explicitly (below), rather than the nav item
+      // itself disappearing until seasons accumulate.
       Object.assign(base, lang === 'fr'
-        ? { standings: 'Classement', played: 'PJ', wins: 'V', losses: 'D', ties: 'N', goalsFor: 'BP', goalsAgainst: 'BC', pts: 'PTS' }
-        : { standings: 'Standings', played: 'GP', wins: 'W', losses: 'L', ties: 'T', goalsFor: 'GF', goalsAgainst: 'GA', pts: 'PTS' });
+        ? {
+            navHistory: 'Historique', allTime: 'Toutes saisons', currentSeasonLabel: 'Saison actuelle',
+            viewingSeasonBanner: 'Tu consultes : {season}', backToCurrentSeason: 'Retour à la saison actuelle',
+            pastSeasonsTitle: 'Saisons précédentes', noPastSeasonsYet: "Cette ligue n'a qu'une seule saison pour l'instant -- les saisons précédentes apparaîtront ici une fois la prochaine commencée.",
+            seasonEventCount: '{n} match(s)'
+          }
+        : {
+            navHistory: 'History', allTime: 'All time', currentSeasonLabel: 'Current season',
+            viewingSeasonBanner: 'Viewing: {season}', backToCurrentSeason: 'Back to current season',
+            pastSeasonsTitle: 'Past seasons', noPastSeasonsYet: 'This league only has one season so far -- past seasons will appear here once the next one starts.',
+            seasonEventCount: '{n} game(s)'
+          });
     }
-    if (topScorers.length) {
+    // wins/losses/ties/goalsAgainst are shared between the Standings
+    // table (fixed-teams only) and the Goalies table (any structure,
+    // once results + player stats are both tracked) -- assigned once,
+    // whichever gate fires first, so a weekly_draw league with goalie
+    // stats but no standings still gets real translated column headers
+    // instead of falling back to an untranslated hardcoded default.
+    if ((leagueRow.tracks_results && teamStructure === 'fixed') || (leagueRow.tracks_player_stats && leagueRow.tracks_results)) {
       Object.assign(base, lang === 'fr'
-        ? { topScorers: 'Meilleurs pointeurs', player: 'Joueur', goals: 'Buts', assists: 'Passes', points: 'Points' }
-        : { topScorers: 'Top scorers', player: 'Player', goals: 'Goals', assists: 'Assists', points: 'Points' });
+        ? { wins: 'V', losses: 'D', ties: 'N', goalsAgainst: 'BC' }
+        : { wins: 'W', losses: 'L', ties: 'T', goalsAgainst: 'GA' });
+    }
+    if (leagueRow.tracks_results && teamStructure === 'fixed') {
+      Object.assign(base, lang === 'fr'
+        ? { navStandings: 'Classement', standings: 'Classement', played: 'PJ', goalsFor: 'BP', pts: 'PTS',
+            noStandingsYet: "Aucun résultat enregistré pour cette saison pour l'instant." }
+        : { navStandings: 'Standings', standings: 'Standings', played: 'GP', goalsFor: 'GF', pts: 'PTS',
+            noStandingsYet: 'No results recorded for this season yet.' });
+    }
+    if (leagueRow.tracks_player_stats) {
+      Object.assign(base, lang === 'fr'
+        ? { navPlayers: 'Joueurs', topScorers: 'Meilleurs pointeurs', player: 'Joueur', goals: 'Buts', assists: 'Passes', points: 'Points',
+            noPlayersYet: "Aucune statistique de joueur enregistrée pour cette saison pour l'instant." }
+        : { navPlayers: 'Players', topScorers: 'Top scorers', player: 'Player', goals: 'Goals', assists: 'Assists', points: 'Points',
+            noPlayersYet: 'No player stats recorded for this season yet.' });
+      if (leagueRow.tracks_results) {
+        Object.assign(base, lang === 'fr'
+          ? { navGoalies: 'Gardiens', goalieStats: 'Statistiques des gardiens', goalieName: 'Gardien', gp: 'PJ', gaa: 'MBA',
+              noGoaliesYet: "Aucune statistique de gardien enregistrée pour cette saison pour l'instant." }
+          : { navGoalies: 'Goalies', goalieStats: 'Goalie stats', goalieName: 'Goalie', gp: 'GP', gaa: 'GAA',
+              noGoaliesYet: 'No goalie stats recorded for this season yet.' });
+      }
+      Object.assign(base, lang === 'fr'
+        ? { navLeaders: 'Meneurs', leadersTitle: 'Meneurs', leadersPoints: 'Points', leadersGoals: 'Buts', leadersGaa: 'Meilleure MBA',
+            noLeadersYet: "Rien à afficher pour l'instant -- les meneurs apparaîtront une fois des statistiques enregistrées." }
+        : { navLeaders: 'Leaders', leadersTitle: 'Leaders', leadersPoints: 'Points', leadersGoals: 'Goals', leadersGaa: 'Best GAA',
+            noLeadersYet: 'Nothing to show yet -- leaders will appear once stats are recorded.' });
+    } else if (leagueRow.tracks_results && teamStructure === 'fixed') {
+      // Leaders is also reachable from standings alone (no player-stats
+      // tracking) -- same union gate leadersHtml's own comment explains.
+      Object.assign(base, lang === 'fr'
+        ? { navLeaders: 'Meneurs', leadersTitle: 'Meneurs', noLeadersYet: "Rien à afficher pour l'instant -- les meneurs apparaîtront une fois des statistiques enregistrées." }
+        : { navLeaders: 'Leaders', leadersTitle: 'Leaders', noLeadersYet: 'Nothing to show yet -- leaders will appear once stats are recorded.' });
     }
     if (isHeadcount) {
       Object.assign(base, lang === 'fr' ? { poolConfirmed: 'confirmés' } : { poolConfirmed: 'confirmed' });
@@ -3700,9 +3881,28 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
 
   const teamDot = i => resolveTeamColor(leagueRow.team_colors, i);
 
+  // Public site rebuild task (Part 3, item 7): once a matchup is
+  // known, show it ("Red vs Black") instead of only date/time/venue.
+  // Fixed-teams only (weekly_draw's own per-event draw is already
+  // surfaced separately, below, via weeklyDrawTeamsHtml/the hero's own
+  // pool figure -- headcount has no matchup concept at all). A 2-team
+  // league's matchup is always unambiguous even before any explicit
+  // assignment (there's only ever one possible pairing), so it's shown
+  // from the team list directly; a >2-team league needs a REAL
+  // resolved matchup (Part 1's assign-matchups action, or the manual
+  // picker) before showing one, same as everywhere else this app
+  // already makes that distinction.
+  function matchupTextFor(ev) {
+    if (teamStructure !== 'fixed') return null;
+    if (teamNames.length === 2) return `${teamNames[0]} ${t.vsWord} ${teamNames[1]}`;
+    if (ev.home_team && ev.away_team) return `${ev.home_team} ${t.vsWord} ${ev.away_team}`;
+    return null;
+  }
+  const heroMatchup = nextEvent ? matchupTextFor(nextEvent) : null;
   const heroHtml = nextEvent ? `<div class="pb-hero" style="background:${esc(fillColor)}">
     <div class="overline" style="color:#fff" data-i18n="nextGame">${esc(t.nextGame)}</div>
     ${dateTimeSpanHtml('div', nextEvent.date, nextEvent.start_time, 'short', 'class="pb-hero-when"')}
+    ${heroMatchup ? `<div class="pb-hero-matchup">${esc(heroMatchup)}</div>` : ''}
     ${isHeadcount ? `<div class="pb-hero-pool"><span class="tnum">${poolConfirmed}</span>${poolMax ? `<span>/${poolMax}</span>` : ''} <span data-i18n="poolConfirmed">${esc(t.poolConfirmed)}</span></div>` : ''}
     ${isHeadcount && poolGoalieMin > 0 ? `<div class="pb-hero-pool"><span class="tnum">${poolGoaliesConfirmed}</span><span>/${poolGoalieMin}</span> <span data-i18n="poolGoalies">${esc(t.poolGoalies)}</span></div>` : ''}
     ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}${resolveEventMapLink(nextEvent, venueMapLinks) ? ` · <a href="${esc(resolveEventMapLink(nextEvent, venueMapLinks))}" target="_blank" rel="noopener" style="color:inherit" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>` : ''}
@@ -3720,10 +3920,13 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     <p>${esc(leagueRow.organizer_note)}</p>
   </div>` : '';
 
-  // Part 4 (stats tracking task): full W-L-T-GF-GA-PTS columns, per
-  // the task's own explicit list -- the old table only ever showed
-  // GP/W/L (computed as w+l, itself dead now that a real gp exists).
-  const standingsHtml = standings.length ? `
+  // Public site rebuild task (Part 3, item 6/5): a league that tracks
+  // results but simply hasn't played any games in the SELECTED season
+  // yet still gets the Standings section -- a deliberate empty state
+  // (noStandingsYet), never a silently-missing one -- same "an empty
+  // view must look deliberate, not broken" requirement the History/
+  // All-time sections below follow too.
+  const standingsHtml = (leagueRow.tracks_results && teamStructure === 'fixed') ? (standings.length ? `
   <h2 data-i18n="standings">${esc(t.standings)}</h2>
   <table class="pb-table">
     <thead><tr><th data-i18n="teams">${esc(t.teams)}</th><th data-i18n="played">${esc(t.played)}</th><th data-i18n="wins">${esc(t.wins)}</th><th data-i18n="losses">${esc(t.losses)}</th><th data-i18n="ties">${esc(t.ties)}</th><th data-i18n="goalsFor">${esc(t.goalsFor)}</th><th data-i18n="goalsAgainst">${esc(t.goalsAgainst)}</th><th data-i18n="pts">${esc(t.pts)}</th></tr></thead>
@@ -3731,27 +3934,100 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
       const dotIdx = teamNames.indexOf(s.team);
       return `<tr><td class="pb-tm"><i style="background:${esc(teamDot(dotIdx >= 0 ? dotIdx : i))}"></i>${esc(s.team)}</td><td>${s.gp}</td><td>${s.w}</td><td>${s.l}</td><td>${s.t}</td><td>${s.gf}</td><td>${s.ga}</td><td>${s.pts}</td></tr>`;
     }).join('')}</tbody>
-  </table>` : '';
+  </table>` : `<h2 data-i18n="standings">${esc(t.standings)}</h2><p class="pb-empty" data-i18n="noStandingsYet">${esc(t.noStandingsYet)}</p>`) : '';
 
   // Part 4: top scorers -- ANY league with player stats enabled,
   // regardless of team structure (goals/assists don't depend on
-  // standings meaning anything). This is the data source the
-  // Classique/Quartier themes were waiting on -- building the data
-  // here, not those themes (deliberately deferred, unrelated to this
-  // task -- see PUBLIC_THEME_ARENE_CSS's own comment).
-  const topScorersHtml = topScorers.length ? `
+  // standings meaning anything). Public site rebuild task (Part 3,
+  // item 4): this is now the PLAYERS section's own full list (every
+  // player with a recorded game, not just a top-10 teaser) -- Leaders
+  // (below) is the condensed highlight, Players is the complete table.
+  const topScorersHtml = leagueRow.tracks_player_stats ? (topScorers.length ? `
   <h2 data-i18n="topScorers">${esc(t.topScorers)}</h2>
   <table class="pb-table">
     <thead><tr><th data-i18n="player">${esc(t.player)}</th><th data-i18n="goals">${esc(t.goals)}</th><th data-i18n="assists">${esc(t.assists)}</th><th data-i18n="points">${esc(t.points)}</th></tr></thead>
     <tbody>${topScorers.map(p => `<tr><td>${esc(p.name)}</td><td>${p.goals}</td><td>${p.assists}</td><td>${p.points}</td></tr>`).join('')}</tbody>
-  </table>` : '';
+  </table>` : `<h2 data-i18n="topScorers">${esc(t.topScorers)}</h2><p class="pb-empty" data-i18n="noPlayersYet">${esc(t.noPlayersYet)}</p>`) : '';
+
+  // Public site rebuild task (Part 3, item 3): goalie stats get a
+  // public surface for the first time.
+  const goalieStatsHtml = (leagueRow.tracks_player_stats && leagueRow.tracks_results) ? (goalieStats.length ? `
+  <h2 data-i18n="goalieStats">${esc(t.goalieStats)}</h2>
+  <table class="pb-table">
+    <thead><tr><th data-i18n="goalieName">${esc(t.goalieName)}</th><th data-i18n="gp">${esc(t.gp)}</th><th data-i18n="wins">${esc(t.wins)}</th><th data-i18n="losses">${esc(t.losses)}</th><th data-i18n="ties">${esc(t.ties)}</th><th data-i18n="goalsAgainst">${esc(t.goalsAgainst)}</th><th data-i18n="gaa">${esc(t.gaa)}</th></tr></thead>
+    <tbody>${goalieStats.map(g => `<tr><td>${esc(g.name)}</td><td>${g.games}</td><td>${g.w}</td><td>${g.l}</td><td>${g.t}</td><td>${g.goalsAgainst}</td><td>${g.gaa != null ? g.gaa : '--'}</td></tr>`).join('')}</tbody>
+  </table>` : `<h2 data-i18n="goalieStats">${esc(t.goalieStats)}</h2><p class="pb-empty" data-i18n="noGoaliesYet">${esc(t.noGoaliesYet)}</p>`) : '';
+
+  // Public site rebuild task (Part 3, item 2): Leaders is the
+  // condensed highlight -- top 3 scorers by points, top 3 goalies by
+  // GAA (min 1 game, already guaranteed by computeGoalieStats only
+  // ever returning goalies who played) -- distinct from Players/
+  // Goalies' own full tables above. Reachable whenever EITHER
+  // standings or player stats exist (a fixed-teams, results-only
+  // league with no player-stats tracking still gets a teaser -- the
+  // top standings team -- rather than nothing); shows a deliberate
+  // empty state otherwise.
+  const leadersEligible = (leagueRow.tracks_player_stats) || (leagueRow.tracks_results && teamStructure === 'fixed');
+  const topScorerLeaders = topScorers.slice(0, 3);
+  const topGoalieLeaders = goalieStats.slice(0, 3);
+  const leadersHtml = leadersEligible ? `
+  <h2 data-i18n="leadersTitle">${esc(t.leadersTitle)}</h2>
+  ${(topScorerLeaders.length || topGoalieLeaders.length) ? `<div class="pb-leaders">
+    ${topScorerLeaders.length ? `<div class="pb-lead-card">
+      <div class="overline" data-i18n="leadersPoints">${esc(t.leadersPoints)}</div>
+      ${topScorerLeaders.map((p, i) => `<div class="pb-lead-row"><span class="pb-lead-rank">${i + 1}</span><span class="pb-lead-name">${esc(p.name)}</span><span class="pb-lead-val tnum">${p.points}</span></div>`).join('')}
+    </div>` : ''}
+    ${topGoalieLeaders.length ? `<div class="pb-lead-card">
+      <div class="overline" data-i18n="leadersGaa">${esc(t.leadersGaa)}</div>
+      ${topGoalieLeaders.map((g, i) => `<div class="pb-lead-row"><span class="pb-lead-rank">${i + 1}</span><span class="pb-lead-name">${esc(g.name)}</span><span class="pb-lead-val tnum">${g.gaa}</span></div>`).join('')}
+    </div>` : ''}
+  </div>` : `<p class="pb-empty" data-i18n="noLeadersYet">${esc(t.noLeadersYet)}</p>`}` : '';
+
+  // Public site rebuild task (Part 3, item 5): History lists every
+  // OTHER season this league has ever played (the current one is
+  // already the default view everywhere else), plus an All-time link.
+  // A brand-new league with only its current season on record still
+  // gets this section -- a deliberate "nothing yet" message, not a
+  // missing nav item -- so the layout/logic is already there the
+  // moment a second season exists, per the task's own explicit
+  // instruction.
+  const otherSeasons = seasonsList.filter(s => !s.isCurrent);
+  const historyHtml = statsTracked ? `
+  <h2 data-i18n="pastSeasonsTitle">${esc(t.pastSeasonsTitle)}</h2>
+  <div class="pb-glist">
+    <a class="pb-g pb-g-link" href="?season=all#history"><span class="pb-g-d"><b data-i18n="allTime">${esc(t.allTime)}</b></span></a>
+  </div>
+  ${otherSeasons.length ? `<div class="pb-glist">${otherSeasons.map(s => `<a class="pb-g pb-g-link" href="?season=${encodeURIComponent(s.season)}#history"><span class="pb-g-d"><b>${esc(s.season)}</b><span>${esc((t.seasonEventCount || '{n}').split('{n}').join(String(s.eventCount)))}</span></span></a>`).join('')}</div>`
+    : `<p class="pb-empty" data-i18n="noPastSeasonsYet">${esc(t.noPastSeasonsYet)}</p>`}` : '';
+
+  // The "you're looking at a season that isn't the current one" banner
+  // -- shown once, above every stat section, so switching back is
+  // always one click away regardless of which section brought the
+  // visitor here.
+  // The season name itself is an admin-chosen string, never translated
+  // -- only the surrounding sentence is. Rendered in BOTH languages up
+  // front (data-date-fr/en, the same convention this page's own script
+  // already sweeps for dynamic values a plain data-i18n key can't
+  // hold), so the client-side FR/EN toggle still works correctly here
+  // too, not just on static copy.
+  const showSeasonBanner = statsTracked && (isAllTime || !viewingCurrentSeason);
+  const bannerTextFr = showSeasonBanner ? I18N_PUBLIC.fr.viewingSeasonBanner.split('{season}').join(isAllTime ? I18N_PUBLIC.fr.allTime : selectedSeasonName) : '';
+  const bannerTextEn = showSeasonBanner ? I18N_PUBLIC.en.viewingSeasonBanner.split('{season}').join(isAllTime ? I18N_PUBLIC.en.allTime : selectedSeasonName) : '';
+  const seasonBannerHtml = showSeasonBanner ? `
+  <div class="pb-season-banner">
+    <span data-date-fr="${esc(bannerTextFr)}" data-date-en="${esc(bannerTextEn)}">${esc(lang === 'en' ? bannerTextEn : bannerTextFr)}</span>
+    <a href="?#standings" data-i18n="backToCurrentSeason">${esc(t.backToCurrentSeason)}</a>
+  </div>` : '';
 
   const upcomingHtml = events.length ? `
   <h2 data-i18n="upcoming">${esc(t.upcoming)}</h2>
-  <div class="pb-glist">${events.map(ev => `<div class="pb-g">
+  <div class="pb-glist">${events.map(ev => { const mu = matchupTextFor(ev); return `<div class="pb-g">
       <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
-      <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${resolveEventMapLink(ev, venueMapLinks) ? ` · <a href="${esc(resolveEventMapLink(ev, venueMapLinks))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
-    </div>`).join('')}</div>` : `<p class="nl-help" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
+      <div>
+        ${mu ? `<div class="pb-g-matchup">${esc(mu)}</div>` : ''}
+        <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${resolveEventMapLink(ev, venueMapLinks) ? ` · <a href="${esc(resolveEventMapLink(ev, venueMapLinks))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
+      </div>
+    </div>`; }).join('')}</div>` : `<p class="nl-help" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
 
   // Live-testing task (batch 6), Part 11: "past events alongside
   // upcoming" -- mirrors smbhl.com's own single continuous Schedule
@@ -3805,6 +4081,26 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     arene: PUBLIC_THEME_ARENE_CSS, clean: PUBLIC_THEME_CLEAN_CSS,
     classique: PUBLIC_THEME_CLASSIQUE_CSS, quartier: PUBLIC_THEME_QUARTIER_CSS
   };
+  // Public site rebuild task (Part 3, item 2): a multi-section
+  // structure, following SMBHL's own hash-routed navigation model --
+  // adapted, not ported: SMBHL fetches one static data.json and
+  // renders every route client-side; this page already has the data
+  // server-side, so EVERY section is rendered in full up front (never
+  // a client fetch), and the hash just controls which one is visible
+  // at a time (pbRouteFromHash, below). Works with JS disabled too --
+  // every section simply stays stacked and readable, nothing is
+  // hidden server-side.
+  const NAV_ITEMS = [
+    { id: 'home', key: 'navHome', show: true },
+    { id: 'standings', key: 'navStandings', show: !!(leagueRow.tracks_results && teamStructure === 'fixed') },
+    { id: 'players', key: 'navPlayers', show: !!leagueRow.tracks_player_stats },
+    { id: 'goalies', key: 'navGoalies', show: !!(leagueRow.tracks_player_stats && leagueRow.tracks_results) },
+    { id: 'leaders', key: 'navLeaders', show: leadersEligible },
+    { id: 'schedule', key: 'navSchedule', show: true },
+    { id: 'history', key: 'navHistory', show: statsTracked }
+  ].filter(n => n.show);
+  const navHtml = `<nav class="pb-nav" aria-label="Sections">${NAV_ITEMS.map(n => `<a href="#${n.id}" class="pb-nav-link" data-section="${n.id}" data-i18n="${n.key}">${esc(t[n.key])}</a>`).join('')}</nav>`;
+
   const bodyHtml = `<style>
 ${THEME_CSS_BY_NAME[theme]}
   /* Classique/Quartier only reference this; harmless no-op for
@@ -3825,14 +4121,23 @@ ${THEME_CSS_BY_NAME[theme]}
   </div>`}
 </header>
 <main class="pb-main">
-  ${heroHtml}
-  ${organizerNoteHtml}
-  ${standingsHtml}
-  ${topScorersHtml}
-  ${upcomingHtml}
-  ${pastEventsHtml}
-  ${teamsHtml}
-  ${weeklyDrawTeamsHtml}
+  ${navHtml}
+  ${seasonBannerHtml}
+  <section id="home" class="pb-view">
+    ${heroHtml}
+    ${organizerNoteHtml}
+    ${teamsHtml}
+    ${weeklyDrawTeamsHtml}
+  </section>
+  <section id="standings" class="pb-view">${standingsHtml}</section>
+  <section id="players" class="pb-view">${topScorersHtml}</section>
+  <section id="goalies" class="pb-view">${goalieStatsHtml}</section>
+  <section id="leaders" class="pb-view">${leadersHtml}</section>
+  <section id="schedule" class="pb-view">
+    ${upcomingHtml}
+    ${pastEventsHtml}
+  </section>
+  <section id="history" class="pb-view">${historyHtml}</section>
 </main>
 <a class="pb-foot" href="https://notreligue.ca" data-i18n="poweredBy">${esc(t.poweredBy)}</a>
 <script>
@@ -3876,6 +4181,23 @@ var PB_FORCED_LANG = ${JSON.stringify(forcedLang)};
   var frBtn0 = document.getElementById('btn-lang-fr'), enBtn0 = document.getElementById('btn-lang-en');
   if (frBtn0) frBtn0.setAttribute('aria-pressed', String(lang === 'fr'));
   if (enBtn0) enBtn0.setAttribute('aria-pressed', String(lang === 'en'));
+})();
+// Hash-routed section switching. Every section is real, already-
+// rendered HTML; this only toggles which one is visible, so the page
+// stays fully readable/testable with JS disabled (everything just
+// stays stacked instead).
+(function() {
+  function pbRouteFromHash() {
+    var id = (location.hash || '#home').slice(1);
+    var target = document.getElementById(id);
+    if (!target || !target.classList.contains('pb-view')) { id = 'home'; target = document.getElementById('home'); }
+    document.querySelectorAll('.pb-view').forEach(function(s) { s.style.display = (s === target) ? '' : 'none'; });
+    document.querySelectorAll('.pb-nav-link').forEach(function(l) {
+      l.setAttribute('aria-current', l.getAttribute('data-section') === id ? 'page' : 'false');
+    });
+  }
+  window.addEventListener('hashchange', pbRouteFromHash);
+  pbRouteFromHash();
 })();
 </script>`;
 
