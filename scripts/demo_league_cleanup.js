@@ -75,14 +75,15 @@ function fail(message) {
   process.exit(1);
 }
 
-// The single most important check in this file. Runs before anything
-// else, on every invocation, no exceptions. Confirms `wrangler d1
-// execute notreligue-demo --env demo` really resolves to the demo
-// database's own uuid -- not just trusting the name string -- and
-// explicitly confirms it is NOT production's uuid, so a misconfigured
-// wrangler.jsonc (env.demo repointed at the wrong database) is caught
-// here instead of silently deleting the wrong thing.
-function assertDemoTarget() {
+// The single most important check in this file -- confirms `wrangler
+// d1 execute notreligue-demo --env demo` really resolves to the demo
+// database's own uuid (not just trusting the name string), explicitly
+// confirms it is NOT production's uuid, and (as a side effect, since
+// this call fails the same way either case) proves the Cloudflare
+// OAuth token still works right now. Pure: returns a result, never
+// exits the process itself -- see assertDemoTarget/reassertAuthOrReport
+// below for the two ways callers act on that result.
+function resolveDemoTarget() {
   let info;
   try {
     const raw = execSync(
@@ -93,24 +94,60 @@ function assertDemoTarget() {
     const jsonEnd = raw.lastIndexOf('}');
     info = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
   } catch (err) {
-    fail(`could not resolve database "${DEMO_DB_NAME}" via wrangler (--env ${DEMO_WRANGLER_ENV}). ` +
-      `Is wrangler authenticated? Does wrangler.jsonc still declare this database under env.${DEMO_WRANGLER_ENV}?\n${(err && err.message) || err}`);
+    return { ok: false, error: `could not resolve database "${DEMO_DB_NAME}" via wrangler (--env ${DEMO_WRANGLER_ENV}). ` +
+      `Is wrangler authenticated? Does wrangler.jsonc still declare this database under env.${DEMO_WRANGLER_ENV}?\n${(err && err.message) || err}` };
   }
   if (info.name !== DEMO_DB_NAME) {
-    fail(`wrangler resolved a database named "${info.name}", not "${DEMO_DB_NAME}". Aborting.`);
+    return { ok: false, error: `wrangler resolved a database named "${info.name}", not "${DEMO_DB_NAME}". Aborting.` };
   }
   if (info.uuid !== DEMO_DB_UUID) {
-    fail(`wrangler resolved "${DEMO_DB_NAME}" to uuid ${info.uuid}, not the expected ${DEMO_DB_UUID}. ` +
-      `wrangler.jsonc may have changed. Aborting rather than operating on an unverified database.`);
+    return { ok: false, error: `wrangler resolved "${DEMO_DB_NAME}" to uuid ${info.uuid}, not the expected ${DEMO_DB_UUID}. ` +
+      `wrangler.jsonc may have changed. Aborting rather than operating on an unverified database.` };
   }
   if (info.uuid === PRODUCTION_DB_UUID) {
     // Structurally unreachable given the two checks above (the demo and
     // production uuids are different constants), but kept as an
     // explicit, self-documenting assertion rather than relying on that
     // being true by construction alone.
-    fail('the resolved database uuid matches PRODUCTION. Aborting unconditionally.');
+    return { ok: false, error: 'the resolved database uuid matches PRODUCTION. Aborting unconditionally.' };
   }
-  return info;
+  return { ok: true, info };
+}
+
+// Runs before anything else, on every invocation, no exceptions --
+// the original single check this script always had. Exits immediately
+// on failure (no destructive work has started yet, nothing to report).
+function assertDemoTarget() {
+  const result = resolveDemoTarget();
+  if (!result.ok) fail(result.error);
+  return result.info;
+}
+
+// Cleanup-script robustness task (4a): a real incident -- eleven
+// leagues deleted, one partially, eight completely untouched -- came
+// from the Cloudflare OAuth token expiring PARTWAY through a long
+// --execute run, well after assertDemoTarget()'s own single check (at
+// the top of main(), before target resolution and footprint counting)
+// had already passed. Re-checked here, before EACH target's own
+// destructive delete -- not just once at the very top -- so a token
+// dying mid-batch stops the run cleanly BEFORE the next league is
+// touched, rather than crashing on it with an opaque exec error.
+// Prints exactly which targets are already done vs still untouched --
+// that remaining list doubles as the resume instructions (rerun with
+// --ids=<remaining> --execute once the token is refreshed) -- per the
+// task's own instruction that the script should report where it
+// stopped. NOT auto-retried: this stops and reports once, it never
+// re-authenticates or waits and tries again on its own.
+function reassertAuthOrReport(completed, remaining) {
+  const result = resolveDemoTarget();
+  if (result.ok) return;
+  console.error(`\ndemo_league_cleanup: STOPPING -- re-auth check failed before the next league's delete: ${result.error}\n`);
+  console.error(`Already deleted successfully (${completed.length}): ${completed.length ? completed.map(t => `${t.id} (${t.name})`).join(', ') : '(none)'}`);
+  console.error(`Still untouched (${remaining.length}): ${remaining.length ? remaining.map(t => `${t.id} (${t.name})`).join(', ') : '(none)'}`);
+  if (remaining.length) {
+    console.error(`\nResume once your token is refreshed:\n  node scripts/demo_league_cleanup.js delete --ids=${remaining.map(t => t.id).join(',')} --execute\n`);
+  }
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------
@@ -372,7 +409,11 @@ async function main() {
 
   console.log(`\n--execute given. PERMANENTLY DELETING ${targets.length} league(s) now (this cannot be undone)...\n`);
   const summary = [];
-  for (const t of targets) {
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i];
+    // 4a: re-verified before EACH league's own delete, not just once
+    // at the top of main() -- see reassertAuthOrReport's own comment.
+    reassertAuthOrReport(targets.slice(0, i), targets.slice(i));
     const result = await performLeagueHardDelete(d1Env, t.id, t.name, null, 'demo_cleanup_script');
     const after = await countLeagueFootprint(d1Env, LEAGUE_SCOPED_TABLES, t.id);
     summary.push({ target: t, result, before: beforeByLeague.get(t.id), after });
@@ -392,8 +433,18 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error('\ndemo_league_cleanup: unexpected error:');
-  console.error(err);
-  process.exit(1);
-});
+// Cleanup-script robustness task (4a): exported so a test can exercise
+// the pure auth-check logic (resolveDemoTarget/reassertAuthOrReport)
+// directly, with execSync mocked -- without this guard, `require()`ing
+// this file for that purpose would also kick off the real, destructive
+// main() against the real demo database. main() itself is unchanged;
+// it only ever ran via this exact same invocation before.
+if (require.main === module) {
+  main().catch(err => {
+    console.error('\ndemo_league_cleanup: unexpected error:');
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = { resolveDemoTarget, assertDemoTarget, reassertAuthOrReport, fail };
