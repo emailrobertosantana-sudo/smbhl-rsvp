@@ -3624,3 +3624,117 @@ export async function handleLeagueUpdatePlayoffs(req, env, url) {
     settings: { playoffsEnabled: true, format, playoffTeams, bestOf, thirdPlace, reservedSlots }
   });
 }
+
+/* ---------- score entry (Part 2, stats tracking task) ----------
+ * ADMIN ONLY -- standings and playoff seeding depend on this, so it
+ * must be authoritative (the task's own explicit decision; no
+ * player/captain entry route exists or is planned). An event can be
+ * marked played with a result, and that result is editable afterward
+ * (scoresheets get misread) -- this route is a plain upsert, calling
+ * it again just overwrites the previous score.
+ *
+ * Resolving "the two sides" differs by structure:
+ * - FIXED: events.home_team/away_team (migrate-045.sql) if the
+ *   fixture generator (or a manual edit) already set them; otherwise,
+ *   for a 2-team league, the matchup is already implied (both teams
+ *   always play -- same reasoning Part 1 of the original fixed-teams
+ *   batch used for the event detail page) -- resolved from the
+ *   league's own real team list. A >2-team league with no matchup set
+ *   yet has no sides to score against; rejected (NO_MATCHUP_SET),
+ *   same state the event detail page already shows for it.
+ * - PICKUP (weekly_draw): teams are drawn per event (rsvp.team), not
+ *   fixed on the event row at creation -- resolved here from the
+ *   DISTINCT team values actually drawn for this event's confirmed
+ *   players. Needs exactly two for a score to mean anything; once
+ *   resolved, persisted onto the event's own home_team/away_team so
+ *   later reads (the event page, game history) don't need to re-
+ *   derive it. Results are recorded as game history ONLY -- never
+ *   folded into a standings table (Part 4's own computation only ever
+ *   reads 'fixed' events), since the two sides are different real
+ *   people every week.
+ * - NO TEAMS (headcount): rejected outright -- Part 1's own decision,
+ *   enforced here too, not only hidden by the UI.
+ */
+async function resolveScoreEventSides(env, leagueId, teamStructure, ev, body) {
+  if (teamStructure === 'fixed') {
+    if (ev.home_team && ev.away_team) {
+      return { value: { homeTeam: ev.home_team, awayTeam: ev.away_team, persist: false } };
+    }
+    const leagueRow = await env.DB.prepare('SELECT team_names FROM leagues WHERE id = ?').bind(leagueId).first();
+    let teamNames = [];
+    try { teamNames = JSON.parse(leagueRow.team_names || '[]').filter(Boolean); } catch (_) {}
+    if (teamNames.length === 2) {
+      return { value: { homeTeam: teamNames[0], awayTeam: teamNames[1], persist: false } };
+    }
+    return { error: { ok: false, error: 'No matchup is set for this event yet -- set one before entering a score.', errorKey: 'NO_MATCHUP_SET' } };
+  }
+  if (teamStructure === 'weekly_draw') {
+    if (ev.home_team && ev.away_team) {
+      return { value: { homeTeam: ev.home_team, awayTeam: ev.away_team, persist: false } };
+    }
+    const drawn = (await env.DB.prepare(
+      `SELECT DISTINCT team FROM rsvp WHERE event_id = ? AND status = 'in' AND team IS NOT NULL ORDER BY team`
+    ).bind(ev.id).all()).results || [];
+    if (drawn.length !== 2) {
+      return { error: { ok: false, error: `This event has ${drawn.length} team(s) drawn -- a score needs exactly two.`, errorKey: 'DRAW_NOT_TWO_TEAMS' } };
+    }
+    return { value: { homeTeam: drawn[0].team, awayTeam: drawn[1].team, persist: true } };
+  }
+  return { error: { ok: false, error: 'Game results need two sides to attach a score to -- not offered for a no-teams league.', errorKey: 'RESULTS_REQUIRE_TEAMS' } };
+}
+
+export async function handleLeagueEventScore(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot score events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+
+  const eventId = String(body.event_id || '').trim();
+  if (!eventId) {
+    return Response.json({ ok: false, error: 'event_id is required.', errorKey: 'EVENT_ID_REQUIRED' }, { status: 400 });
+  }
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+
+  const leagueRow = await env.DB.prepare('SELECT team_structure, tracks_results FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow.tracks_results) {
+    return Response.json({ ok: false, error: 'This league does not track game results.', errorKey: 'RESULTS_NOT_TRACKED' }, { status: 409 });
+  }
+  const teamStructure = leagueRow.team_structure || 'fixed';
+
+  const homeScore = Number(body.home_score);
+  const awayScore = Number(body.away_score);
+  if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore) || homeScore < 0 || awayScore < 0 || !Number.isInteger(homeScore) || !Number.isInteger(awayScore)) {
+    return Response.json({ ok: false, error: 'home_score and away_score must be whole numbers, zero or more.', errorKey: 'INVALID_SCORE' }, { status: 400 });
+  }
+
+  const sidesResult = await resolveScoreEventSides(env, leagueId, teamStructure, ev, body);
+  if (sidesResult.error) return Response.json(sidesResult.error, { status: 409 });
+  const { homeTeam, awayTeam, persist } = sidesResult.value;
+
+  const enteredAt = new Date().toISOString();
+  if (persist) {
+    await env.DB.prepare('UPDATE events SET home_score = ?, away_score = ?, result_entered_at = ?, home_team = ?, away_team = ? WHERE id = ? AND league_id = ?')
+      .bind(homeScore, awayScore, enteredAt, homeTeam, awayTeam, eventId, leagueId).run();
+  } else {
+    await env.DB.prepare('UPDATE events SET home_score = ?, away_score = ?, result_entered_at = ? WHERE id = ? AND league_id = ?')
+      .bind(homeScore, awayScore, enteredAt, eventId, leagueId).run();
+  }
+
+  return Response.json({
+    ok: true,
+    event: { id: eventId, home_team: homeTeam, away_team: awayTeam, home_score: homeScore, away_score: awayScore, result_entered_at: enteredAt, is_playoff: !!ev.is_playoff }
+  });
+}

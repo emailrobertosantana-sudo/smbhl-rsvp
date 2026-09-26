@@ -8,7 +8,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove, handleLeagueUpdatePlayoffs, playoffRoleLabel } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueFixturePreview, handleLeagueFixtureApprove, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -7545,7 +7545,7 @@ async function handleLeagueEventDetailPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name, team_colors, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, team_colors, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, team_structure, tracks_results FROM leagues WHERE id = ?').bind(leagueId).first();
   const eventId = url.searchParams.get('e');
   const ev = eventId ? await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
     .bind(eventId, leagueId).first() : null;
@@ -7663,6 +7663,29 @@ ${tabbar}`;
     try { playoffMeta = JSON.parse(ev.playoff_meta || 'null'); } catch (_) {}
   }
 
+  // Part 2 (stats tracking task): score entry, ADMIN ONLY -- mirrors
+  // resolveScoreEventSides' own resolution (leagues.js), for DISPLAY
+  // purposes only (the actual write always re-resolves server-side,
+  // never trusts what this page rendered). A playoff placeholder
+  // needs its own matchup resolved first (Part 5); a >2-team fixed
+  // event needs its own matchup set (Part 2 of the original fixed-
+  // teams batch); weekly_draw shows generic Home/Away labels when not
+  // drawn yet -- the real team names are only known at submit time.
+  let scoreSides = null;
+  if (leagueRow.tracks_results && teamStructure !== 'headcount') {
+    if (ev.is_playoff) {
+      if (ev.home_team && ev.away_team) scoreSides = { home: ev.home_team, away: ev.away_team, generic: false };
+    } else if (isWeeklyDraw) {
+      scoreSides = ev.home_team && ev.away_team
+        ? { home: ev.home_team, away: ev.away_team, generic: false }
+        : { home: null, away: null, generic: true };
+    } else if (matchupTeams) {
+      scoreSides = { home: matchupTeams[0], away: matchupTeams[1], generic: false };
+    } else if (isFixed && teamNames.length === 2) {
+      scoreSides = { home: teamNames[0], away: teamNames[1], generic: false };
+    }
+  }
+
   const I18N_DETAIL = {
     fr: {
       navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter',
@@ -7716,6 +7739,11 @@ ${tabbar}`;
       // this task's own final report for what that would take).
       playoffAwaitingSeedingTitle: 'Match de séries -- en attente des résultats',
       playoffAwaitingSeedingDesc: "Les équipes seront connues une fois les résultats de la saison régulière (et des rondes précédentes) entrés -- ce produit ne calcule pas encore les classements automatiquement.",
+      // Part 2 (stats tracking task): score entry, ADMIN ONLY.
+      scoreTitle: 'Résultat', scoreEnterBtn: 'Entrer le résultat', scoreEditBtn: 'Modifier le résultat',
+      scoreSaveBtn: 'Enregistrer le résultat', scoreCancelBtn: 'Annuler', scoreSaved: 'Résultat enregistré.',
+      scoreHomeGeneric: 'Domicile', scoreAwayGeneric: 'Visiteur',
+      scorePlayedLabel: 'Match joué', scoreNoTeamsYet: "Le tirage n'a pas encore eu lieu pour ce match -- entre le résultat une fois les équipes formées.",
       ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
     },
     en: {
@@ -7748,6 +7776,10 @@ ${tabbar}`;
       noMatchupSetDesc: "This league has more than two teams -- who's playing needs to be known before rosters can be shown.",
       playoffAwaitingSeedingTitle: 'Playoff game -- awaiting results',
       playoffAwaitingSeedingDesc: "Teams will be known once regular-season (and earlier-round) results are entered -- this product doesn't calculate standings automatically yet.",
+      scoreTitle: 'Result', scoreEnterBtn: 'Enter the result', scoreEditBtn: 'Edit the result',
+      scoreSaveBtn: 'Save result', scoreCancelBtn: 'Cancel', scoreSaved: 'Result saved.',
+      scoreHomeGeneric: 'Home', scoreAwayGeneric: 'Away',
+      scorePlayedLabel: 'Game played', scoreNoTeamsYet: "The draw hasn't happened for this game yet -- enter the result once teams are formed.",
       ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     }
   };
@@ -8068,6 +8100,29 @@ ${tabbar}`;
     ${leagueRemindersArmed ? '' : `<p class="nl-help" data-i18n="remindersNoneArmedHelp" style="margin-top:4px;">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).remindersNoneArmedHelp)}</p>`}
     <p id="evRemindersMsg" class="nl-help" style="display:none;margin-top:4px;"></p>
   </div>
+  ${scoreSides ? `<section class="nl-card nl-card--pad-lg" id="score_section">
+    <div class="h3" data-i18n="scoreTitle">Résultat</div>
+    <div id="scoreErr" class="nl-error" style="display:none"></div>
+    <div id="scoreOk" class="nl-ok" style="display:none"></div>
+    ${ev.result_entered_at ? `<p class="nl-help" style="font-weight:600;font-size:16px" id="score_display">${esc(scoreSides.home)} ${ev.home_score} -- ${ev.away_score} ${esc(scoreSides.away)}</p>` : `<p class="nl-help" id="score_display" data-i18n="scoreNoTeamsYet" style="${scoreSides.generic ? '' : 'display:none'}">${scoreSides.generic ? esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreNoTeamsYet) : ''}</p>`}
+    <div id="score_form" style="display:none;margin-top:8px;">
+      <div class="sc-two">
+        <div class="nl-field">
+          <label class="nl-label" for="score_home" id="score_home_label">${esc(scoreSides.generic ? (I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreHomeGeneric : scoreSides.home)}</label>
+          <input class="nl-input" id="score_home" type="number" min="0" value="${ev.home_score != null ? esc(String(ev.home_score)) : ''}">
+        </div>
+        <div class="nl-field">
+          <label class="nl-label" for="score_away" id="score_away_label">${esc(scoreSides.generic ? (I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreAwayGeneric : scoreSides.away)}</label>
+          <input class="nl-input" id="score_away" type="number" min="0" value="${ev.away_score != null ? esc(String(ev.away_score)) : ''}">
+        </div>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:8px;">
+        <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="scoreSaveBtn" onclick="submitScore()">Enregistrer le résultat</button>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="scoreCancelBtn" onclick="toggleScoreForm(false)">Annuler</button>
+      </div>
+    </div>
+    <div style="margin-top:8px" id="score_toggle_wrap"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="${ev.result_entered_at ? 'scoreEditBtn' : 'scoreEnterBtn'}" onclick="toggleScoreForm(true)">${ev.result_entered_at ? esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreEditBtn) : esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreEnterBtn)}</button></div>
+  </section>` : ''}
   <div class="ev-teams">${ev.is_playoff
     ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
       <h2 data-i18n="playoffAwaitingSeedingTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingTitle)}</h2>
@@ -8191,6 +8246,30 @@ async function randomAssignTeams(btn) {
     if (msg) { msg.textContent = window.__errorText('NETWORK_ERROR'); msg.style.display = 'block'; }
     btn.disabled = false;
   }
+}
+// Part 2 (stats tracking task): score entry, ADMIN ONLY. Editable
+// afterward -- calling this again just overwrites the previous score
+// (scoresheets get misread).
+function toggleScoreForm(show) {
+  var form = document.getElementById('score_form');
+  if (form) form.style.display = show ? '' : 'none';
+}
+async function submitScore() {
+  var err = document.getElementById('scoreErr'); var ok = document.getElementById('scoreOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var home = document.getElementById('score_home').value;
+  var away = document.getElementById('score_away').value;
+  if (home === '' || away === '') { err.textContent = window.__errorText('INVALID_SCORE'); err.style.display = 'block'; return; }
+  try {
+    var res = await fetch('/league/events/score', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, home_score: Number(home), away_score: Number(away) })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; return; }
+    window.location.reload();
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; }
 }
 async function sendReminderNow(btn) {
   // A3 (reminder-state polish task): one click used to email the whole
@@ -25112,6 +25191,10 @@ async function handleFetch(req, env, ctx) {
       // only), editable here afterward.
       if (url.pathname === '/league/settings/playoffs' && req.method === 'POST')
         return await handleLeagueUpdatePlayoffs(req, env, url);
+      // Part 2 (stats tracking task): admin-only score entry, also
+      // editable afterward -- calling this again just overwrites.
+      if (url.pathname === '/league/events/score' && req.method === 'POST')
+        return await handleLeagueEventScore(req, env);
       // Part 2: admin-initiated manual "send now" trigger (same UI
       // pattern as the existing manual sub-invite button) -- sends the
       // same non-responder reminder outside the automatic 72h/24h

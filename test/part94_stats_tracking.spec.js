@@ -66,6 +66,37 @@ async function onboardingHtml(cookie, step) {
 async function settingsHtml(cookie) {
   return (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
 }
+async function createEvent(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/events', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body)
+  });
+  return (await res.json()).event;
+}
+async function submitScore(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/events/score', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body)
+  });
+  return { status: res.status, json: await res.json() };
+}
+async function eventDetailHtml(cookie, eventId) {
+  return (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+}
+async function setRsvp(cookie, csrfToken, eventId, playerId, status) {
+  const res = await SELF.fetch('http://example.com/league/rsvp/admin', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify({ event_id: eventId, player_id: playerId, status })
+  });
+  return res.json();
+}
+async function assignEventTeam(cookie, csrfToken, eventId, playerId, team) {
+  const res = await SELF.fetch('http://example.com/league/events/assign-team', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify({ event_id: eventId, player_id: playerId, team })
+  });
+  return { status: res.status, json: await res.json() };
+}
 
 describe('Stats tracking, Part 1: two independent switches', () => {
   beforeAll(async () => {
@@ -181,5 +212,148 @@ describe('Stats tracking, Part 1: two independent switches', () => {
     expect(dict.en.lblTracksResultsDesc).toBe("Each game's score, computed into a standings table (W-L-T).");
     expect(dict.en.lblTracksPlayerStats).toBe('Player stats');
     expect(dict.en.lblTracksPlayerStatsDesc).toBe('Goals and assists per player, per game.');
+  });
+});
+
+// Part 2: score entry. ADMIN ONLY (no player/captain entry route
+// exists or is planned -- standings and playoff seeding must be
+// authoritative). An event can be marked played with a result, and
+// that result is editable afterward.
+describe('Stats tracking, Part 2: score entry', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it('a score can be entered for a 2-team fixed league (matchup implied) and edited afterward', async () => {
+    const { cookie, csrfToken } = await signup('p2.fixed2@example.com', '203.0.203.001');
+    await createLeague(cookie, csrfToken, { name: 'Fixed 2 Score League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+
+    const entered = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 4, away_score: 2 });
+    expect(entered.status).toBe(200);
+    expect(entered.json.event.home_team).toBe('Rouge');
+    expect(entered.json.event.away_team).toBe('Bleu');
+    expect(entered.json.event.home_score).toBe(4);
+
+    let row = await env.DB.prepare('SELECT home_score, away_score, result_entered_at FROM events WHERE id = ?').bind(ev.id).first();
+    expect(row.home_score).toBe(4); expect(row.away_score).toBe(2);
+    expect(row.result_entered_at).toBeTruthy();
+
+    // Editable afterward -- scoresheets get misread.
+    const edited = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 5, away_score: 2 });
+    expect(edited.status).toBe(200);
+    row = await env.DB.prepare('SELECT home_score, away_score FROM events WHERE id = ?').bind(ev.id).first();
+    expect(row.home_score).toBe(5); expect(row.away_score).toBe(2);
+  });
+
+  it('a score for a >2-team fixed league needs a matchup set first -- rejected without one', async () => {
+    const { cookie, csrfToken } = await signup('p2.nomatchup@example.com', '203.0.203.002');
+    await createLeague(cookie, csrfToken, { name: 'No Matchup Score League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+
+    const res = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 1, away_score: 0 });
+    expect(res.status).toBe(409);
+    expect(res.json.errorKey).toBe('NO_MATCHUP_SET');
+  });
+
+  it('a score for a weekly_draw event is recorded as game history, using the two teams actually drawn', async () => {
+    const { cookie, csrfToken } = await signup('p2.pickup@example.com', '203.0.203.003');
+    await createLeague(cookie, csrfToken, { name: 'Pickup Score League', teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const p1 = await (await SELF.fetch('http://example.com/league/contacts', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ name: 'Player One', role: 'roster' })
+    })).json().then(r => r.contact);
+    const p2 = await (await SELF.fetch('http://example.com/league/contacts', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ name: 'Player Two', role: 'roster' })
+    })).json().then(r => r.contact);
+    await setRsvp(cookie, csrfToken, ev.id, p1.player_id, 'in');
+    await setRsvp(cookie, csrfToken, ev.id, p2.player_id, 'in');
+    await assignEventTeam(cookie, csrfToken, ev.id, p1.player_id, 'Rouge');
+    await assignEventTeam(cookie, csrfToken, ev.id, p2.player_id, 'Bleu');
+
+    const res = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 3, away_score: 3 });
+    expect(res.status).toBe(200);
+    expect([res.json.event.home_team, res.json.event.away_team].sort()).toEqual(['Bleu', 'Rouge']);
+    const row = await env.DB.prepare('SELECT home_team, away_team FROM events WHERE id = ?').bind(ev.id).first();
+    expect(row.home_team).toBeTruthy();
+    expect(row.away_team).toBeTruthy();
+  });
+
+  it('a headcount league is rejected outright -- no sides to attach a score to -- normally via RESULTS_NOT_TRACKED (Part 1 never lets tracks_results turn on for headcount in the first place), and the route\'s own structure guard is genuine defense in depth even if that were somehow bypassed', async () => {
+    const { cookie, csrfToken } = await signup('p2.headcount@example.com', '203.0.203.004');
+    const league = await createLeague(cookie, csrfToken, { name: 'Headcount Score League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12, tracksStats: false });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1', min_players: 8, max_players: 12 });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+
+    const normal = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 1, away_score: 0 });
+    expect(normal.status).toBe(409);
+    expect(normal.json.errorKey).toBe('RESULTS_NOT_TRACKED');
+
+    // Force tracks_results on directly (bypassing Part 1's own route
+    // guard) to prove the score route's OWN structure check is real,
+    // independent defense in depth -- not just relying on Part 1 never
+    // having let this state exist.
+    await env.DB.prepare('UPDATE leagues SET tracks_results = 1 WHERE id = ?').bind(league.id).run();
+    const forced = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 1, away_score: 0 });
+    expect(forced.status).toBe(409);
+    expect(forced.json.errorKey).toBe('RESULTS_REQUIRE_TEAMS');
+  });
+
+  it('rejected when the league does not track results at all', async () => {
+    const { cookie, csrfToken } = await signup('p2.notracking@example.com', '203.0.203.005');
+    await createLeague(cookie, csrfToken, { name: 'No Tracking Score League', teamNames: ['A', 'B'], tracksStats: false });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const res = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 1, away_score: 0 });
+    expect(res.status).toBe(409);
+    expect(res.json.errorKey).toBe('RESULTS_NOT_TRACKED');
+  });
+
+  it('rejects a non-integer or negative score', async () => {
+    const { cookie, csrfToken } = await signup('p2.invalid@example.com', '203.0.203.006');
+    await createLeague(cookie, csrfToken, { name: 'Invalid Score League', teamNames: ['A', 'B'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const res1 = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: -1, away_score: 0 });
+    expect(res1.status).toBe(400);
+    expect(res1.json.errorKey).toBe('INVALID_SCORE');
+    const res2 = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 1.5, away_score: 0 });
+    expect(res2.status).toBe(400);
+  });
+
+  it('the event detail page shows the score-entry form for an admin, and the saved score once entered', async () => {
+    const { cookie, csrfToken } = await signup('p2.uidetail@example.com', '203.0.203.007');
+    await createLeague(cookie, csrfToken, { name: 'UI Score League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+
+    const before = await eventDetailHtml(cookie, ev.id);
+    expect(before).toContain('id="score_section"');
+    expect(before).toContain('data-i18n="scoreEnterBtn"');
+
+    await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 2, away_score: 1 });
+    const after = await eventDetailHtml(cookie, ev.id);
+    expect(after).toContain('Rouge 2 -- 1 Bleu');
+    expect(after).toContain('data-i18n="scoreEditBtn"');
+  });
+
+  it('the score section is absent when the league does not track results', async () => {
+    const { cookie, csrfToken } = await signup('p2.uiabsent@example.com', '203.0.203.008');
+    await createLeague(cookie, csrfToken, { name: 'UI Absent League', teamNames: ['A', 'B'], tracksStats: false });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const html = await eventDetailHtml(cookie, ev.id);
+    expect(html).not.toContain('id="score_section"');
   });
 });
