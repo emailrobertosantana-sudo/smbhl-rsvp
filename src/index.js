@@ -3181,7 +3181,13 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
   .nl a.pb-foot:hover { color: rgba(244,244,242,.85); text-decoration: underline; }
   .nl-header { border-bottom: 1px solid #2a2e36; }
   .nl-lang button { color: #a3a6ad; }
-  .nl-lang button[aria-pressed="true"] { background: #f4f4f2; color: #16181d; }`;
+  .nl-lang button[aria-pressed="true"] { background: #f4f4f2; color: #16181d; }
+  /* Public-page themes task, Part 1: organizer's note -- a standing
+     blurb, styled as a quiet inset card so it reads as a fixture of
+     the page, not a dismissible banner. */
+  .pb-note { margin: var(--space-4) 0; padding: var(--space-4); background: #1c1f25; border-radius: var(--radius-lg); border: 1px solid #2a2e36; }
+  .pb-note .overline { color: #a3a6ad; }
+  .pb-note p { margin: 8px 0 0; font-size: 15px; line-height: 22px; color: #f4f4f2; }`;
 
 // "Épuré" per the guideline: white bg #ffffff, text #1a1a1a, muted
 // #666666, Inter only, a single 24x4px bar as the only signature
@@ -3231,7 +3237,14 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
   .nl-header { border-bottom: 1px solid #eeeeee; }
   .nl-lang { border: 1px solid #d0d0d0; }
   .nl-lang button { color: #666666; }
-  .nl-lang button[aria-pressed="true"] { background: #1a1a1a; color: #ffffff; }`;
+  .nl-lang button[aria-pressed="true"] { background: #1a1a1a; color: #ffffff; }
+  /* Public-page themes task, Part 1: organizer's note -- Épuré has no
+     colour fills at all (see this block's own header comment), so the
+     note is a plain hairline-bordered card, matching the rest of this
+     theme's restraint. */
+  .pb-note { margin: var(--space-4) 0; padding: var(--space-4); border: 1px solid #eeeeee; border-radius: var(--radius-lg); }
+  .pb-note .overline { color: #666666; }
+  .pb-note p { margin: 8px 0 0; font-size: 15px; line-height: 22px; color: #1a1a1a; }`;
 
 // Live-testing task (batch 2), Part 10: shared response for BOTH "this
 // league id/slug doesn't exist at all" and "this league exists but its
@@ -3462,6 +3475,11 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
         ? { recentResults: 'Résultats récents', statePlayed: 'Joué', stateCancelled: 'Annulé' }
         : { recentResults: 'Recent results', statePlayed: 'Played', stateCancelled: 'Cancelled' });
     }
+    if (leagueRow.organizer_note) {
+      Object.assign(base, lang === 'fr'
+        ? { organizerNoteLabel: "Le mot de l'organisateur" }
+        : { organizerNoteLabel: "Organizer's note" });
+    }
     return base;
   }
   const I18N_PUBLIC = { fr: buildDict('fr'), en: buildDict('en') };
@@ -3476,6 +3494,18 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     ${isHeadcount ? `<div class="pb-hero-pool"><span class="tnum">${poolConfirmed}</span>${poolMax ? `<span>/${poolMax}</span>` : ''} <span data-i18n="poolConfirmed">${esc(t.poolConfirmed)}</span></div>` : ''}
     ${isHeadcount && poolGoalieMin > 0 ? `<div class="pb-hero-pool"><span class="tnum">${poolGoaliesConfirmed}</span><span>/${poolGoalieMin}</span> <span data-i18n="poolGoalies">${esc(t.poolGoalies)}</span></div>` : ''}
     ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}${venueMapLinks.has(nextEvent.venue_id) ? ` · <a href="${esc(venueMapLinks.get(nextEvent.venue_id))}" target="_blank" rel="noopener" style="color:inherit" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>` : ''}
+  </div>` : '';
+
+  // Public-page themes task, Part 1: a STANDING organizer's blurb --
+  // set once in Settings, always shown, no expiry/scheduling (a
+  // decision, not a weekly notice -- unlike auto_reminders or the
+  // event-level state machine elsewhere in this file). Absent when
+  // empty, no placeholder box -- same "never ship an unused word"
+  // discipline as every other conditional section on this page.
+  const organizerNoteHtml = leagueRow.organizer_note ? `
+  <div class="pb-note">
+    <div class="overline" data-i18n="organizerNoteLabel">${esc(t.organizerNoteLabel)}</div>
+    <p>${esc(leagueRow.organizer_note)}</p>
   </div>` : '';
 
   // Part 4 (stats tracking task): full W-L-T-GF-GA-PTS columns, per
@@ -3574,6 +3604,7 @@ ${theme === 'clean' ? PUBLIC_THEME_CLEAN_CSS : PUBLIC_THEME_ARENE_CSS}
 </header>
 <main class="pb-main">
   ${heroHtml}
+  ${organizerNoteHtml}
   ${standingsHtml}
   ${topScorersHtml}
   ${upcomingHtml}
@@ -4520,6 +4551,9 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblPublicTheme: 'Thème de la page publique', themeArene: 'Arène (sombre, actuel)', themeClean: 'Épuré (blanc, minimal)',
       themeHelp: "Deux thèmes sont offerts pour l'instant; deux autres (Classique, Quartier) s'en viennent.",
       themePreview: 'Voir la page publique',
+      lblOrganizerNote: "Mot de l'organisateur",
+      organizerNoteHelp: "Un mot permanent affiché sur ta page publique -- pas un avis hebdomadaire. Laisse vide pour ne rien afficher.",
+      organizerNotePlaceholder: 'Ex. : Les dimanches matin à Letendre depuis 2005, nouveaux joueurs bienvenus.',
       venuesTitle: 'Lieux', venuesDesc: "Enregistre tes patinoires ou gymnases une fois, puis choisis-les à la création d'un match au lieu de retaper l'adresse à chaque fois.",
       lblVenueName: 'Nom', lblVenueAddress: 'Adresse (optionnel)', lblVenueMapLink: 'Lien vers une carte (optionnel)',
       venueNamePh: 'Ex. Aréna Notre-Dame', venueAddressPh: '123 rue Principale, Ville', venueMapLinkPh: 'https://maps.google.com/...',
@@ -4656,6 +4690,9 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblPublicTheme: 'Public page theme', themeArene: 'Arène (dark, current)', themeClean: 'Épuré (white, minimal)',
       themeHelp: 'Two themes are available for now; two more (Classique, Quartier) are coming.',
       themePreview: 'View the public page',
+      lblOrganizerNote: "Organizer's note",
+      organizerNoteHelp: "A standing message shown on your public page -- not a weekly notice. Leave blank to show nothing.",
+      organizerNotePlaceholder: 'E.g.: Sunday mornings at Letendre since 2005, new players welcome.',
       venuesTitle: 'Venues', venuesDesc: 'Save your rinks or gyms once, then pick one when creating a game instead of retyping the address every time.',
       lblVenueName: 'Name', lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
       venueNamePh: 'E.g. Notre-Dame Arena', venueAddressPh: '123 Main St, City', venueMapLinkPh: 'https://maps.google.com/...',
@@ -4845,6 +4882,11 @@ async function handleLeagueSettingsPage(req, env, url) {
       </select>
       <p class="nl-help" data-i18n="themeHelp">Deux thèmes sont offerts pour l'instant; deux autres (Classique, Quartier) s'en viennent.</p>
       <p class="nl-help"><a href="/${esc(leagueSlug)}" target="_blank" rel="noopener" data-i18n="themePreview">Voir la page publique</a></p>
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" for="se_organizer_note" data-i18n="lblOrganizerNote">Mot de l'organisateur</label>
+      <textarea class="nl-input" id="se_organizer_note" rows="3" maxlength="500" data-i18n-ph="organizerNotePlaceholder" placeholder="${esc((I18N_SETTINGS[lang] || I18N_SETTINGS.fr).organizerNotePlaceholder)}" style="height:auto;padding:10px 12px;resize:vertical">${esc(leagueRow.organizer_note || '')}</textarea>
+      <p class="nl-help" data-i18n="organizerNoteHelp">Un mot permanent affiché sur ta page publique -- pas un avis hebdomadaire. Laisse vide pour ne rien afficher.</p>
     </div>
     <!-- Stats tracking task (Part 1): the old single "Track stats?"
          switch replaced by two independent ones -- see the onboarding
@@ -5351,7 +5393,8 @@ async function submitIdentity() {
       color: document.getElementById('se_color').value,
       tracksPlayerStats: document.getElementById('se_tracks_player_stats').getAttribute('aria-checked') === 'true',
       publicTheme: document.getElementById('se_theme').value,
-      publicPageEnabled: document.getElementById('se_public_page_switch').getAttribute('aria-checked') === 'true'
+      publicPageEnabled: document.getElementById('se_public_page_switch').getAttribute('aria-checked') === 'true',
+      organizerNote: document.getElementById('se_organizer_note').value.trim()
     };
     // Not rendered at all for a headcount league (no sides to attach
     // a score to) -- omitted from the payload, never sent as a stray

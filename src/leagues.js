@@ -3241,19 +3241,32 @@ export async function handleLeagueUpdateIdentity(req, env, url) {
   if (typeof body.publicPageEnabled === 'boolean') {
     updates.push('public_page_enabled = ?'); params.push(body.publicPageEnabled ? 1 : 0);
   }
+  // Public-page themes task (Part 1): a STANDING blurb, not a weekly
+  // notice -- set once, always shown, no expiry/scheduling. Empty
+  // string clears it (stored as NULL, matching every other unset
+  // free-text field in this table) rather than being rejected --
+  // that's how an admin turns it back off.
+  if (body.organizerNote !== undefined) {
+    const note = String(body.organizerNote || '').trim();
+    if (note.length > 500) {
+      return Response.json({ ok: false, error: 'The organizer note must be 500 characters or fewer.', errorKey: 'ORGANIZER_NOTE_TOO_LONG' }, { status: 400 });
+    }
+    updates.push('organizer_note = ?'); params.push(note || null);
+  }
   if (!updates.length) {
     return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
   }
   params.push(leagueId);
   await env.DB.prepare(`UPDATE leagues SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
 
-  const row = await env.DB.prepare('SELECT name, color, tracks_stats, tracks_results, tracks_player_stats, public_theme, public_page_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
+  const row = await env.DB.prepare('SELECT name, color, tracks_stats, tracks_results, tracks_player_stats, public_theme, public_page_enabled, organizer_note FROM leagues WHERE id = ?').bind(leagueId).first();
   return Response.json({
     ok: true,
     settings: {
       name: row.name, color: row.color, tracksStats: !!row.tracks_stats, publicTheme: row.public_theme,
       publicPageEnabled: !!row.public_page_enabled,
-      tracksResults: !!row.tracks_results, tracksPlayerStats: !!row.tracks_player_stats
+      tracksResults: !!row.tracks_results, tracksPlayerStats: !!row.tracks_player_stats,
+      organizerNote: row.organizer_note || null
     }
   });
 }
