@@ -66,6 +66,20 @@ async function fixtureApprove(cookie, csrfToken, body) {
   });
   return { status: res.status, json: await res.json() };
 }
+async function bulkCreateEvents(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/events/bulk', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body)
+  });
+  return { status: res.status, json: await res.json() };
+}
+async function matchupsConfirm(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/season/matchups-confirm', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body || {})
+  });
+  return { status: res.status, json: await res.json() };
+}
 async function submitScore(cookie, csrfToken, body) {
   const res = await SELF.fetch('http://example.com/league/events/score', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -322,10 +336,15 @@ describe('Best-of-N series tracking, Part 3', () => {
     await updateIdentity(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'best_of_n', playoff_teams: 2, playoff_best_of: bestOf, playoff_third_place: false });
-    // 1 regular-season game (2-team round robin) + bestOf playoff games.
-    const approve = await fixtureApprove(cookie, csrfToken, { total_slots: 1 + bestOf, start_date: '2099-01-05', interval_days: 7, time: '18:00', venue: 'Series Gym' });
+    // Schedule-generation redesign task (Group D): 1 regular-season
+    // game booked as an ordinary event, then assigned its matchup --
+    // the playoff generator only ever creates the bestOf playoff games
+    // now, never the regular season.
+    const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 1 });
+    const regularEvent = bulk.json.results[0].event;
+    await matchupsConfirm(cookie, csrfToken, {});
+    const approve = await fixtureApprove(cookie, csrfToken, { start_date: '2099-02-01', interval_days: 7, time: '18:00', venue: 'Series Gym' });
     expect(approve.status).toBe(200);
-    const regularEvent = approve.json.created.find(e => !e.is_playoff);
     const seriesGames = approve.json.created.filter(e => e.is_playoff).sort((a, b) => a.date.localeCompare(b.date));
     expect(seriesGames.length).toBe(bestOf);
 
@@ -392,12 +411,20 @@ describe('Best-of-N series tracking, Part 3', () => {
     await updateIdentity(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'best_of_n', playoff_teams: 4, playoff_best_of: 3, playoff_third_place: false });
-    // 6 regular-season games (round robin of 4) + 9 playoff slots (2 best-of-3 semifinals + 1 best-of-3 final).
-    const approve = await fixtureApprove(cookie, csrfToken, { total_slots: 15, start_date: '2099-02-01', interval_days: 7, time: '18:00', venue: 'Bracket Gym' });
+    // Schedule-generation redesign task (Group D): 6 regular-season
+    // games booked as ordinary events first, then assigned real
+    // matchups -- the playoff generator only ever creates the 9
+    // playoff slots now (2 best-of-3 semifinals + 1 best-of-3 final).
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 6 });
+    await matchupsConfirm(cookie, csrfToken, {});
+    const regularEvents = (await env.DB.prepare(
+      'SELECT id, home_team, away_team FROM events WHERE league_id = ? AND is_playoff = 0'
+    ).bind((await env.DB.prepare('SELECT id FROM leagues WHERE name = ?').bind('Bracket Series League').first()).id).all()).results;
+    const approve = await fixtureApprove(cookie, csrfToken, { start_date: '2099-02-01', interval_days: 7, time: '18:00', venue: 'Bracket Gym' });
     expect(approve.status).toBe(200);
-    const regularEvents = approve.json.created.filter(e => !e.is_playoff);
-    const playoffEvents = approve.json.created.filter(e => e.is_playoff);
+    const playoffEvents = approve.json.created;
     expect(regularEvents.length).toBe(6);
+    expect(playoffEvents.every(e => e.is_playoff)).toBe(true);
     expect(playoffEvents.length).toBe(9);
 
     // Rouge 1st, Bleu 2nd, Vert 3rd, Jaune 4th -- unambiguous, no tiebreak needed.

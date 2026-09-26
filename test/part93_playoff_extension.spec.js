@@ -7,7 +7,7 @@
 // offered any of this.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { computePlayoffSlots, buildEliminationBracket, buildPlayoffPlaceholders, playoffRoleLabel } from '../src/leagues.js';
+import { computePlayoffSlots, buildEliminationBracket, buildPlayoffPlaceholders, playoffRoleLabel, resolvePlayoffByeSeeds } from '../src/leagues.js';
 import { applyRealSchema } from './support/real_schema.js';
 
 const AUTH_SECRET = 'test-part93-playoff-extension-secret';
@@ -84,34 +84,39 @@ describe('Playoff extension, Part 2: the slot arithmetic (computePlayoffSlots)',
     expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 8, thirdPlace: false }).playoffSlots).toBe(7);
   });
 
-  it('bye-round cost: odd team counts (3, 5) get exactly +1 slot; even counts (2, 4, 8) get none', () => {
+  // Schedule-generation redesign task (Group D): REVOKES this
+  // function's own earlier "+1 flat bye slot" decision -- a bye is
+  // never a real game and never reserves gym time or an event. hasBye
+  // is still reported (a genuine fact -- which team sits out round 1),
+  // just no longer added to playoffSlots.
+  it('a bye never costs a slot: odd team counts (3, 5) still report hasBye=true, but no +1; even counts (2, 4, 8) get none either way', () => {
     const r2 = computePlayoffSlots({ format: 'single_elimination', numTeams: 2, thirdPlace: false });
     const r3 = computePlayoffSlots({ format: 'single_elimination', numTeams: 3, thirdPlace: false });
     const r4 = computePlayoffSlots({ format: 'single_elimination', numTeams: 4, thirdPlace: false });
     const r5 = computePlayoffSlots({ format: 'single_elimination', numTeams: 5, thirdPlace: false });
     const r8 = computePlayoffSlots({ format: 'single_elimination', numTeams: 8, thirdPlace: false });
-    expect(r2.hasBye).toBe(false); expect(r2.playoffSlots).toBe(2 - 1 + 0);
-    expect(r3.hasBye).toBe(true); expect(r3.playoffSlots).toBe(3 - 1 + 1);
-    expect(r4.hasBye).toBe(false); expect(r4.playoffSlots).toBe(4 - 1 + 0);
-    expect(r5.hasBye).toBe(true); expect(r5.playoffSlots).toBe(5 - 1 + 1);
-    expect(r8.hasBye).toBe(false); expect(r8.playoffSlots).toBe(8 - 1 + 0);
+    expect(r2.hasBye).toBe(false); expect(r2.playoffSlots).toBe(2 - 1);
+    expect(r3.hasBye).toBe(true); expect(r3.playoffSlots).toBe(3 - 1); // no +1 anymore
+    expect(r4.hasBye).toBe(false); expect(r4.playoffSlots).toBe(4 - 1);
+    expect(r5.hasBye).toBe(true); expect(r5.playoffSlots).toBe(5 - 1); // no +1 anymore
+    expect(r8.hasBye).toBe(false); expect(r8.playoffSlots).toBe(8 - 1);
   });
 
   it('third-place game: +1 slot, but only for >=4 teams -- structurally meaningless below that (no two real semifinal losers exist)', () => {
     expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 2, thirdPlace: true }).playoffSlots).toBe(1); // unchanged -- guarded off
-    expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 3, thirdPlace: true }).playoffSlots).toBe(3); // unchanged -- guarded off
+    expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 3, thirdPlace: true }).playoffSlots).toBe(2); // unchanged -- guarded off, no bye slot either
     expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 4, thirdPlace: true }).playoffSlots).toBe(4); // 3 + 1
-    expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 5, thirdPlace: true }).playoffSlots).toBe(6); // 4 + 1 (bye) + 1 (third place)
+    expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 5, thirdPlace: true }).playoffSlots).toBe(5); // 4 + 1 (third place), no bye slot
     expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 8, thirdPlace: true }).playoffSlots).toBe(8); // 7 + 1
   });
 
-  it('best_of_n: multiplies real games (base + third place) by the series length -- the bye slot stays flat, never multiplied', () => {
+  it('best_of_n: multiplies real games (base + third place) by the series length -- a bye never costs a slot, so there is nothing flat left to keep un-multiplied', () => {
     // 4 teams, best of 3, no third place: (4-1)*3 = 9, no bye.
     expect(computePlayoffSlots({ format: 'best_of_n', numTeams: 4, thirdPlace: false, bestOf: 3 }).playoffSlots).toBe(9);
     // Same, with third place: (3+1)*3 = 12.
     expect(computePlayoffSlots({ format: 'best_of_n', numTeams: 4, thirdPlace: true, bestOf: 3 }).playoffSlots).toBe(12);
-    // 5 teams (odd -- bye), best of 3, no third place: (5-1)*3 + 1(bye, flat) = 13.
-    expect(computePlayoffSlots({ format: 'best_of_n', numTeams: 5, thirdPlace: false, bestOf: 3 }).playoffSlots).toBe(13);
+    // 5 teams (odd -- bye), best of 3, no third place: (5-1)*3 = 12, no bye slot.
+    expect(computePlayoffSlots({ format: 'best_of_n', numTeams: 5, thirdPlace: false, bestOf: 3 }).playoffSlots).toBe(12);
     // Best-of-1 is identical to single_elimination.
     expect(computePlayoffSlots({ format: 'best_of_n', numTeams: 8, thirdPlace: false, bestOf: 1 }).playoffSlots)
       .toBe(computePlayoffSlots({ format: 'single_elimination', numTeams: 8, thirdPlace: false }).playoffSlots);
@@ -157,7 +162,7 @@ describe('Playoff extension, Part 2/3: buildPlayoffPlaceholders matches computeP
     ]);
   });
 
-  it('playoffRoleLabel matches the task\'s own examples exactly, both languages', () => {
+  it('playoffRoleLabel matches the task\'s own examples exactly, both languages, for a round-1 (real seed) matchup', () => {
     expect(playoffRoleLabel({ role: 'semifinal', matchupIndexInRound: 1, seedA: 1, seedB: 4, seriesLength: 1 }, 'en'))
       .toBe('Semi-final 1 -- seed 1 vs seed 4');
     expect(playoffRoleLabel({ role: 'semifinal', matchupIndexInRound: 1, seedA: 1, seedB: 4, seriesLength: 1 }, 'fr'))
@@ -167,6 +172,45 @@ describe('Playoff extension, Part 2/3: buildPlayoffPlaceholders matches computeP
     expect(playoffRoleLabel({ role: 'third_place', seriesLength: 1 }, 'en')).toBe('Third-place game');
     expect(playoffRoleLabel({ role: 'third_place', seriesLength: 1 }, 'fr')).toBe('Match pour la 3e place');
     expect(playoffRoleLabel({ role: 'reserved', matchupIndexInRound: 1, seriesLength: 1 }, 'en')).toBe('Playoff game 1');
+  });
+
+  // Schedule-generation redesign task (Group D): "seeds are only
+  // meaningful in round one" -- a LATER round now reads "Winner <short
+  // label>" for a side fed by an unresolved earlier matchup, instead
+  // of the earlier (misleading) fake seed number. A side fed by a BYE
+  // is still a real, already-known seed, rendered exactly like a
+  // round-1 seed -- the two can even mix on the same matchup.
+  it('playoffRoleLabel: a later round with two real feeder matchups reads "Winner SF1 vs Winner SF2", never a seed number', () => {
+    expect(playoffRoleLabel({ role: 'final', feederA: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 1 }, feederB: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 2 }, seriesLength: 1 }, 'en'))
+      .toBe('Final -- Winner SF1 vs Winner SF2');
+    expect(playoffRoleLabel({ role: 'final', feederA: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 1 }, feederB: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 2 }, seriesLength: 1 }, 'fr'))
+      .toBe('Finale -- Gagnant DF1 contre Gagnant DF2');
+  });
+
+  it('playoffRoleLabel: a later round can mix a real bye seed on one side with an unresolved matchup on the other', () => {
+    expect(playoffRoleLabel({ role: 'semifinal', matchupIndexInRound: 1, feederA: { kind: 'bye', seed: 1 }, feederB: { kind: 'matchup', role: 'quarterfinal', matchupIndexInRound: 1 }, seriesLength: 1 }, 'en'))
+      .toBe('Semi-final 1 -- seed 1 vs Winner QF1');
+  });
+
+  it('buildPlayoffPlaceholders: round 1 keeps real seedA/seedB; every later round gets feederA/feederB instead, never both', () => {
+    const groups = buildPlayoffPlaceholders({ format: 'single_elimination', numTeams: 8, thirdPlace: false });
+    const flat = groups.flat();
+    const round1 = flat.filter(m => m.role === 'quarterfinal');
+    const later = flat.filter(m => m.role === 'semifinal' || m.role === 'final');
+    expect(round1.every(m => m.seedA && m.seedB && !m.feederA && !m.feederB)).toBe(true);
+    expect(later.every(m => !m.seedA && !m.seedB && m.feederA && m.feederB)).toBe(true);
+  });
+
+  it('buildPlayoffPlaceholders no longer produces a bye placeholder at all -- resolvePlayoffByeSeeds reports it purely informationally instead', () => {
+    const groups = buildPlayoffPlaceholders({ format: 'single_elimination', numTeams: 5, thirdPlace: false });
+    expect(groups.flat().some(m => m.role === 'bye')).toBe(false);
+    expect(resolvePlayoffByeSeeds(5).length).toBeGreaterThan(0);
+    expect(resolvePlayoffByeSeeds(4)).toEqual([]); // even count -- no bye at all
+  });
+
+  it('buildPlayoffPlaceholders never puts more than one game on the same group -- no more staggering several simultaneous games onto one invented date', () => {
+    const groups = buildPlayoffPlaceholders({ format: 'single_elimination', numTeams: 8, thirdPlace: false });
+    expect(groups.every(g => g.length === 1)).toBe(true);
   });
 });
 
@@ -253,65 +297,58 @@ describe('Playoff extension, Part 1: onboarding + Settings (fixed-teams only)', 
   });
 });
 
-describe('Playoff extension, Part 2/3: the fixture generator, end to end', () => {
+// Schedule-generation redesign task (Group D): this generator is now
+// PLAYOFF-ONLY (the regular season is assigned onto existing events
+// instead -- see part92's own Part 3 describe block). No more
+// total_slots/regular-season-budget arithmetic: the playoff game count
+// comes entirely from the league's own stored preferences, and every
+// game it creates is a playoff placeholder, never a regular-season one.
+describe('Playoff extension, Part 2/3: the playoff generator, end to end', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     await applyRealSchema(env);
   });
 
-  it('the preview shows the computed split BEFORE anything is generated, and the partial final regular-season round is generated (played), not dropped', async () => {
+  it('the preview shows the real games and the bye seed (if any) BEFORE anything is generated, writing nothing to the database', async () => {
     const { cookie, csrfToken } = await signup('p2.split@example.com', '203.0.201.101');
-    await createLeague(cookie, csrfToken, { name: 'Split League', teamNames: ['Rouge', 'Bleu', 'Vert', 'Jaune'], tracksStats: true });
+    const league = await createLeague(cookie, csrfToken, { name: 'Split League', teamNames: ['Rouge', 'Bleu', 'Vert', 'Jaune', 'Noir'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'single_elimination', playoff_teams: 4, playoff_third_place: false });
+    await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'single_elimination', playoff_teams: 5, playoff_third_place: false });
 
-    // 4 teams -- playoffs cost 3 slots (N-1, no bye, no third place).
-    // 30 total slots -> 27 regular-season slots. A full cycle is 6
-    // games (4*3/2) -- 27 = 4 complete cycles (24) + 3 spare, i.e. the
-    // 5th cycle's own first date (2 games) plus 1 more game from its
-    // second date -- the task's own worked example.
-    const { status, json } = await fixturePreview(cookie, csrfToken, { total_slots: 30, start_date: '2099-01-05', interval_days: 7, time: '18:00', venue: 'Main Gym' });
+    const { status, json } = await fixturePreview(cookie, csrfToken, { start_date: '2099-01-05', interval_days: 7, time: '18:00', venue: 'Main Gym' });
     expect(status).toBe(200);
-    expect(json.arithmetic.totalSlots).toBe(30);
-    expect(json.arithmetic.playoffSlots).toBe(3);
-    expect(json.arithmetic.regularSeasonSlots).toBe(27);
-    expect(json.arithmetic.regularSeasonSlotsUsed).toBe(27); // all 27 played, none left empty
-    expect(json.arithmetic.regularSeasonSlotsUnused).toBe(0);
+    const totalGames = json.playoffs.reduce((n, r) => n + r.games.length, 0);
+    expect(totalGames).toBe(4); // 5 teams: N-1 = 4 real games, no slot for any bye
+    // 5 teams pads to an 8-slot bracket -- seeds 1/2/3 all skip round 1
+    // (only the 4-vs-5 pairing is a real first-round game), so THREE
+    // seeds carry a bye note here, none of them consuming a slot.
+    expect(json.byeSeeds.length).toBe(3);
+    // Every group is exactly one game -- never staggered onto a shared date.
+    expect(json.playoffs.every(r => r.games.length === 1)).toBe(true);
 
-    const totalRegularGames = json.regularSeason.reduce((n, r) => n + r.games.length, 0);
-    expect(totalRegularGames).toBe(27);
-    // The actual LAST round is partial (fewer games than a normal
-    // 2-game round for this 4-team league) -- played, not dropped.
-    const lastRound = json.regularSeason[json.regularSeason.length - 1];
-    expect(lastRound.isPartial).toBe(true);
-    expect(lastRound.games.length).toBeGreaterThan(0);
-
-    // Playoffs are real, scheduled right after the regular season's
-    // own last date.
-    expect(json.playoffs.length).toBeGreaterThan(0);
-    const lastRegularDate = json.regularSeason[json.regularSeason.length - 1].date;
-    const firstPlayoffDate = json.playoffs[0].date;
-    expect(firstPlayoffDate > lastRegularDate).toBe(true);
+    const row = await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ?').bind(league.id).first();
+    expect(row.c).toBe(0);
   });
 
-  it('total_slots below what the configured playoffs alone need is rejected, explaining the shortfall', async () => {
-    const { cookie, csrfToken } = await signup('p2.tooshort@example.com', '203.0.201.102');
-    await createLeague(cookie, csrfToken, { name: 'Too Short League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
+  it('rejects when playoffs are not turned on for this league', async () => {
+    const { cookie, csrfToken } = await signup('p2.notconfigured@example.com', '203.0.201.102');
+    await createLeague(cookie, csrfToken, { name: 'Not Configured League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'single_elimination', playoff_teams: 4, playoff_third_place: true }); // needs 4 slots
 
-    const { status, json } = await fixturePreview(cookie, csrfToken, { total_slots: 2, start_date: '2099-01-05' });
+    const { status, json } = await fixturePreview(cookie, csrfToken, { start_date: '2099-01-05' });
     expect(status).toBe(409);
-    expect(json.errorKey).toBe('FIXTURE_TOTAL_SLOTS_TOO_LOW');
+    expect(json.errorKey).toBe('PLAYOFFS_NOT_CONFIGURED');
   });
 
-  it('reserved-slot mode creates exactly X TBD events on approval, with null matchups', async () => {
+  it('reserved-slot mode creates exactly X TBD events on approval, with null matchups, and no bye note at all (no bracket)', async () => {
     const { cookie, csrfToken } = await signup('p3.reserved@example.com', '203.0.201.103');
     const league = await createLeague(cookie, csrfToken, { name: 'Reserved League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'reserved_slots', playoff_reserved_slots: 5 });
 
-    const params = { total_slots: 11, start_date: '2099-01-05', interval_days: 7 }; // 6 regular + 5 reserved
+    const params = { start_date: '2099-01-05', interval_days: 7 };
+    const preview = await fixturePreview(cookie, csrfToken, params);
+    expect(preview.json.byeSeeds).toEqual([]);
     const approve = await fixtureApprove(cookie, csrfToken, params);
     expect(approve.status).toBe(200);
 
@@ -321,6 +358,10 @@ describe('Playoff extension, Part 2/3: the fixture generator, end to end', () =>
 
     const row = await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ? AND is_playoff = 1').bind(league.id).first();
     expect(row.c).toBe(5);
+    // Never a single regular-season event -- this route only ever
+    // creates playoff placeholders now.
+    const regularRow = await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ? AND is_playoff = 0').bind(league.id).first();
+    expect(regularRow.c).toBe(0);
   });
 
   it('a playoff placeholder\'s event detail page reads as "awaiting seeding", not a misconfigured regular-season game -- in both languages', async () => {
@@ -329,8 +370,9 @@ describe('Playoff extension, Part 2/3: the fixture generator, end to end', () =>
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'single_elimination', playoff_teams: 4, playoff_third_place: false });
 
-    const approve = await fixtureApprove(cookie, csrfToken, { total_slots: 9, start_date: '2099-01-05', interval_days: 7, time: '18:00', venue: 'Main Gym' }); // 6 regular + 3 playoff
+    const approve = await fixtureApprove(cookie, csrfToken, { start_date: '2099-01-05', interval_days: 7, time: '18:00', venue: 'Main Gym' }); // 3 playoff games (SF1, SF2, Final)
     expect(approve.status).toBe(200);
+    expect(approve.json.createdCount).toBe(3);
     const playoffEvent = approve.json.created.find(e => e.is_playoff);
     expect(playoffEvent).toBeTruthy();
 
@@ -345,35 +387,43 @@ describe('Playoff extension, Part 2/3: the fixture generator, end to end', () =>
     expect(dict.fr.playoffAwaitingSeedingTitle).toBe('Match de séries -- en attente des résultats');
   });
 
-  it('a regular-season event created in the same approval is completely unaffected -- real matchup, no playoff messaging', async () => {
-    const { cookie, csrfToken } = await signup('p3.regular@example.com', '203.0.201.105');
-    await createLeague(cookie, csrfToken, { name: 'Regular Unaffected League', teamNames: ['Rouge', 'Bleu', 'Vert', 'Jaune'], tracksStats: true });
+  it('the final\'s own placeholder reads "Winner SF1 vs Winner SF2" before either semifinal is decided', async () => {
+    const { cookie, csrfToken } = await signup('p3.winnerlabel@example.com', '203.0.201.105');
+    await createLeague(cookie, csrfToken, { name: 'Winner Label League', teamNames: ['Rouge', 'Bleu', 'Vert', 'Jaune'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'single_elimination', playoff_teams: 4, playoff_third_place: false });
 
-    const approve = await fixtureApprove(cookie, csrfToken, { total_slots: 9, start_date: '2099-01-05', interval_days: 7, time: '18:00', venue: 'Main Gym' });
-    const regularEvent = approve.json.created.find(e => !e.is_playoff);
-    expect(regularEvent.home_team).toBeTruthy();
-    expect(regularEvent.away_team).toBeTruthy();
+    const approve = await fixtureApprove(cookie, csrfToken, { start_date: '2099-01-05', interval_days: 7 });
+    const rows = (await env.DB.prepare(
+      `SELECT id, playoff_meta FROM events WHERE id IN (${approve.json.created.map(() => '?').join(',')})`
+    ).bind(...approve.json.created.map(e => e.id)).all()).results;
+    const finalRow = rows.find(r => (JSON.parse(r.playoff_meta || 'null') || {}).role === 'final');
+    expect(finalRow).toBeTruthy();
 
-    const html = await eventDetailHtml(cookie, regularEvent.id);
-    expect(html).not.toContain('data-i18n="playoffAwaitingSeedingTitle"');
+    // The event-detail page's own playoff-role line is server-rendered
+    // in whatever language resolveServerLang resolves (no client-side
+    // FR/EN toggle for this specific line) -- French by default here,
+    // matching this whole codebase's own FR-primary convention.
+    const html = await eventDetailHtml(cookie, finalRow.id);
+    expect(html).toContain('Gagnant DF1');
+    expect(html).toContain('Gagnant DF2');
+    expect(html).not.toMatch(/tête de série \d/); // never a stale seed number beyond round one
   });
 
-  it('weekly_draw and headcount are offered no fixture generator at all, playoffs configured or not', async () => {
+  it('weekly_draw and headcount are offered no playoff generator at all, playoffs configured or not', async () => {
     const { cookie: wdCookie, csrfToken: wdCsrf } = await signup('p3.wdnone@example.com', '203.0.201.106');
     await createLeague(wdCookie, wdCsrf, { name: 'WD None League', teamStructure: 'weekly_draw', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(wdCookie, wdCsrf, { season_name: 'S1' });
-    expect(await scheduleHtml(wdCookie)).not.toContain('id="sc_fixture_panel"');
-    const wdFixture = await fixturePreview(wdCookie, wdCsrf, { total_slots: 5, start_date: '2099-01-05' });
+    expect(await scheduleHtml(wdCookie)).not.toContain('id="sc_playoff_panel"');
+    const wdFixture = await fixturePreview(wdCookie, wdCsrf, { start_date: '2099-01-05' });
     expect(wdFixture.status).toBe(409);
     expect(wdFixture.json.errorKey).toBe('FIXTURE_REQUIRES_FIXED_TEAMS');
 
     const { cookie: hcCookie, csrfToken: hcCsrf } = await signup('p3.hcnone@example.com', '203.0.201.107');
     await createLeague(hcCookie, hcCsrf, { name: 'HC None League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12, tracksStats: true });
     await publishSeason(hcCookie, hcCsrf, { season_name: 'S1', min_players: 8, max_players: 12 });
-    expect(await scheduleHtml(hcCookie)).not.toContain('id="sc_fixture_panel"');
-    const hcFixture = await fixturePreview(hcCookie, hcCsrf, { total_slots: 5, start_date: '2099-01-05' });
+    expect(await scheduleHtml(hcCookie)).not.toContain('id="sc_playoff_panel"');
+    const hcFixture = await fixturePreview(hcCookie, hcCsrf, { start_date: '2099-01-05' });
     expect(hcFixture.status).toBe(409);
     expect(hcFixture.json.errorKey).toBe('FIXTURE_REQUIRES_FIXED_TEAMS');
   });

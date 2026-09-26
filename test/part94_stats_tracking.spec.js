@@ -122,6 +122,20 @@ async function updatePlayoffs(cookie, csrfToken, body) {
   });
   return { status: res.status, json: await res.json() };
 }
+async function bulkCreateEvents(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/events/bulk', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body)
+  });
+  return { status: res.status, json: await res.json() };
+}
+async function matchupsConfirm(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/season/matchups-confirm', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body || {})
+  });
+  return { status: res.status, json: await res.json() };
+}
 async function fixtureApprove(cookie, csrfToken, body) {
   const res = await SELF.fetch('http://example.com/league/season/fixture-approve', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -755,12 +769,24 @@ describe('Stats tracking, Part 5: playoff seeding resolver', () => {
     await updateTracking(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'single_elimination', playoff_teams: 4, playoff_third_place: false });
-    // 6 regular-season games (round robin of 4) + 3 playoff slots (2 semifinals + 1 final).
-    const approve = await fixtureApprove(cookie, csrfToken, { total_slots: 9, start_date: '2099-01-05', interval_days: 7, time: '18:00', venue: 'Main Gym' });
+    // Schedule-generation redesign task (Group D): the regular season
+    // is now booked as ordinary events first (gym time, exactly the
+    // way an admin actually does it), THEN assigned real round-robin
+    // matchups -- never created by the playoff-only generator anymore.
+    const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 6 });
+    expect(bulk.json.createdCount).toBe(6);
+    const assign = await matchupsConfirm(cookie, csrfToken, {});
+    expect(assign.json.updatedCount).toBe(6);
+    const regularEvents = (await env.DB.prepare(
+      'SELECT id, home_team, away_team FROM events WHERE league_id = ? AND is_playoff = 0'
+    ).bind(league.id).all()).results;
+    // 2 semifinals + 1 final -- the playoff generator now ONLY ever
+    // creates playoff placeholders, never a regular-season game.
+    const approve = await fixtureApprove(cookie, csrfToken, { start_date: '2099-03-01', interval_days: 7, time: '18:00', venue: 'Main Gym' });
     expect(approve.status).toBe(200);
-    const regularEvents = approve.json.created.filter(e => !e.is_playoff);
-    const playoffEvents = approve.json.created.filter(e => e.is_playoff);
+    const playoffEvents = approve.json.created;
     expect(regularEvents.length).toBe(6);
+    expect(playoffEvents.every(e => e.is_playoff)).toBe(true);
     expect(playoffEvents.length).toBe(3);
 
     const rankOrder = ['Rouge', 'Bleu', 'Vert', 'Jaune']; // best to worst

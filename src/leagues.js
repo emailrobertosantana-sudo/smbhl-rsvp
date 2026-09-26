@@ -2069,72 +2069,192 @@ export async function handleLeagueSeasonMoveEvents(req, env) {
   return Response.json({ ok: true, league_id: leagueId, from_season: fromSeason, to_season: toSeason, moved });
 }
 
-/* ---------- fixture generator (Part 3, fixed-teams scheduling task) ----------
- * A real schedule generator for a 'fixed' league -- distinct from
- * /league/events/bulk (a pure date-repeater, no matchups) -- built on
- * generateRoundRobinRounds (season_config.js, shared with SMBHL's own
- * season_hub.js, never a second copy of the pairing math).
+/* ---------- regular-season matchup assignment (schedule-generation
+ * redesign, Group D) ----------
+ * REPLACES the earlier fixture generator entirely for the regular
+ * season (commit f52ca55's own buildFixtureAndPlayoffProposal, which
+ * used to CREATE events from a "total slots" budget). THE MODEL,
+ * revoked and rebuilt: gym time is booked FIRST, as real events
+ * (/league/events, /league/events/bulk -- already existing routes,
+ * unchanged) -- this action never creates a single one. It only
+ * ASSIGNS a round-robin matchup onto each existing event, in
+ * chronological order, via buildMatchupAssignmentPlan below.
  *
- * DECIDED (task spec): a PROPOSAL the admin reviews and approves,
- * never writing events directly -- same posture as SMBHL's own
- * season_hub.js preview-then-launch flow (handleSeasonGenerateSchedule
- * / handleSeasonLaunch). buildFixtureProposal is the single source of
- * truth both routes below call -- preview and approve are always
- * byte-identical for the same input, and approve NEVER trusts a
- * client-echoed fixture list back (a tampering vector -- this
- * regenerates server-side from the same real season team list instead).
+ * One event is one game is one matchup, always. A round with more
+ * games than there happen to be events on one date simply continues
+ * into whichever LATER event comes next, however many weeks that
+ * takes -- nothing is ever staggered onto an invented same-day time
+ * slot, and nothing is ever created to make a round "fit" (both real
+ * bugs in the earlier generator, now impossible by construction: there
+ * is no time-of-day concept here at all, since events already have
+ * their own).
  *
- * The admin form only collects ONE time and ONE venue (a real
- * simplification: this does not ask for a second venue for the case
- * where a round has more than one simultaneous game -- N=4 or 5 teams,
- * 2 games per round). DECIDED here: those extra simultaneous games in
- * the same round stay on the same date and venue, staggered by ONE
- * HOUR increments from the configured time -- avoids a real
- * date+venue+time collision (Part 2's own slot-conflict rule) without
- * requiring the admin to configure multiple venues up front. A league
- * that genuinely plays parallel games in different gyms already has
- * that covered manually (the schedule page's own create form, Part 2)
- * -- this generator's job is to get a season on the board fast, not to
- * replace manual editing.
+ * A round's own bye (odd team count only) is informational only --
+ * see computeRoundBye. It costs no event/slot at all: the bye team's
+ * "game" was never in generateRoundRobinRounds' own pairings list to
+ * begin with, so nothing here has to actively avoid scheduling it.
  *
- * `rounds` can exceed one full round-robin cycle (e.g. a 4-team league
- * wants a 6-round season, longer than that cycle's own 3 rounds) --
- * the cycle simply repeats (wraps via modulo), not a "true" double
- * round-robin with a deliberate home/away swap on the second pass.
- * Simpler, and still a genuinely balanced schedule when `rounds` is a
- * multiple of the cycle length.
+ * Playoff placeholder events (is_playoff = 1) are a completely
+ * different, bracket-shaped concept (see buildPlayoffPlaceholders
+ * below) -- loadAssignableRegularSeasonEvents categorically excludes
+ * them, so this action can never touch or overwrite one, fill-blanks
+ * or regenerate alike.
  */
+async function loadAssignableRegularSeasonEvents(env, leagueId, season) {
+  return (await env.DB.prepare(
+    `SELECT id, date, start_time, home_team, away_team FROM events
+      WHERE league_id = ? AND season = ? AND is_playoff = 0
+      ORDER BY date ASC, start_time ASC, id ASC`
+  ).bind(leagueId, season).all()).results || [];
+}
+
+// Which team (if any) sits out a given round's own pairings -- only
+// possible for an odd team count (generateRoundRobinRounds pads with
+// a 'BYE' sentinel internally, but never surfaces it -- this derives
+// it independently, without touching that shared module at all, by
+// simply noting which of the league's own real teams never appears in
+// this round's pairings).
+export function computeRoundBye(teams, roundPairings) {
+  if (teams.length % 2 === 0) return null;
+  const playing = new Set();
+  for (const p of roundPairings) { playing.add(p.home); playing.add(p.away); }
+  return teams.find(t => !playing.has(t)) || null;
+}
+
+// Shared by preview and confirm: walks `events` (already chronological)
+// in order, assigning the Nth event the Nth position of the endlessly-
+// repeating round-robin cycle (generateRoundRobinRounds' own rounds,
+// wrapped via modulo when a season runs longer than one full cycle) --
+// regardless of whether that specific event already has a matchup.
+// This keeps the event-ordinal-position -> cycle-position mapping
+// fully deterministic and reproducible: 'fill_blanks' mode skips
+// WRITING over an event that already has one (but still consumes its
+// cycle position), so a later blank event -- e.g. new gym time booked
+// after the season already started -- picks up exactly where the
+// pattern would have continued, never re-pairing teams that already
+// played. 'regenerate' mode overwrites every one of them from position
+// zero. Handles every shape named in the task spec this way, with no
+// special-casing: fewer events than one full cycle (only its first few
+// pairings are ever used), more events than a whole number of cycles
+// (wraps and keeps going), and a final round that doesn't fill up
+// (simply stops mid-round when events run out -- isPartial, computed
+// by the caller from the same plan, never a second copy of this logic).
+export function buildMatchupAssignmentPlan(events, teams, mode) {
+  const cycle = generateRoundRobinRounds(teams);
+  const plan = [];
+  const byeNotes = [];
+  const seenByeRounds = new Set();
+  if (!cycle.length) return { plan, byeNotes };
+  let cycleRoundIdx = 0, posInRound = 0, roundNumber = 1;
+  let eventIdx = 0;
+  while (eventIdx < events.length) {
+    const pairings = cycle[cycleRoundIdx % cycle.length];
+    if (!pairings.length) { cycleRoundIdx++; roundNumber++; continue; } // degenerate (<2 real teams) -- never reached, resolveFixtureLeagueTeams already rejects it
+    if (!seenByeRounds.has(roundNumber)) {
+      seenByeRounds.add(roundNumber);
+      const bye = computeRoundBye(teams, pairings);
+      if (bye) byeNotes.push({ round: roundNumber, team: bye });
+    }
+    const pairing = pairings[posInRound];
+    const ev = events[eventIdx];
+    const alreadyAssigned = !!(ev.home_team && ev.away_team);
+    plan.push({
+      eventId: ev.id, date: ev.date, round: roundNumber,
+      home: pairing.home, away: pairing.away,
+      alreadyAssigned, willWrite: mode === 'regenerate' || !alreadyAssigned
+    });
+    eventIdx++;
+    posInRound++;
+    if (posInRound >= pairings.length) { posInRound = 0; cycleRoundIdx++; roundNumber++; }
+  }
+  return { plan, byeNotes };
+}
+
+async function handleMatchupAssignmentRequest(req, env, { write }) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot assign matchups for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+
+  const teamsResult = await resolveFixtureLeagueTeams(env, leagueId);
+  if (teamsResult.error) return Response.json(teamsResult.error, { status: 409 });
+  const { season, teams } = teamsResult.value;
+  const mode = body.mode === 'regenerate' ? 'regenerate' : 'fill_blanks';
+
+  const events = await loadAssignableRegularSeasonEvents(env, leagueId, season);
+  if (!events.length) {
+    return Response.json({ ok: false, error: "This league has no events yet to assign matchups to -- create your schedule's gym slots first (Create a game / Create multiple games).", errorKey: 'MATCHUPS_NO_EVENTS' }, { status: 409 });
+  }
+  const { plan, byeNotes } = buildMatchupAssignmentPlan(events, teams, mode);
+  const alreadyAssignedCount = plan.filter(p => p.alreadyAssigned).length;
+
+  if (!write) {
+    return Response.json({ ok: true, league_id: leagueId, mode, teams, plan, byeNotes, alreadyAssignedCount, eventCount: events.length });
+  }
+
+  // Two-step confirm gate for the destructive path -- same posture as
+  // handleLeagueEventDelete's own RSVP-count confirmation: a
+  // 'regenerate' that would actually overwrite something existing
+  // needs an explicit second confirmation, never silently clobbered on
+  // the first call.
+  if (mode === 'regenerate' && alreadyAssignedCount > 0 && !body.confirmOverwrite) {
+    return Response.json({ ok: false, error: `This will overwrite ${alreadyAssignedCount} event(s) that already have a matchup.`, errorKey: 'MATCHUPS_OVERWRITE_NEEDS_CONFIRM', alreadyAssignedCount }, { status: 409 });
+  }
+
+  let updatedCount = 0;
+  for (const p of plan) {
+    if (!p.willWrite) continue;
+    await env.DB.prepare('UPDATE events SET home_team = ?, away_team = ? WHERE id = ?').bind(p.home, p.away, p.eventId).run();
+    updatedCount++;
+  }
+  return Response.json({ ok: true, league_id: leagueId, mode, updatedCount, skippedCount: plan.length - updatedCount, byeNotes });
+}
+
+export async function handleLeagueMatchupsPreview(req, env) {
+  return handleMatchupAssignmentRequest(req, env, { write: false });
+}
+export async function handleLeagueMatchupsConfirm(req, env) {
+  return handleMatchupAssignmentRequest(req, env, { write: true });
+}
+
 /* ---------- playoffs (Part of the fixed-teams playoff extension) ----------
- * Extends the fixture generator above with playoffs, reusing its own
- * buildFixtureProposal/generateRoundRobinRounds for the regular season
- * -- no second copy of the pairing math. THE MODEL (task spec): a
- * league has a FIXED NUMBER OF SLOTS (gym time already paid for).
- * Playoffs consume some of those slots; the regular season is whatever
- * remains. Fixed-teams only -- weekly_draw/headcount never see any of
- * this (checked the same way the fixture generator itself already is,
- * resolveFixtureLeagueTeams).
+ * A league has a FIXED NUMBER OF PLAYOFF GAMES, computed from its own
+ * stored preferences (playoffs_enabled/format/teams/etc, Settings) --
+ * this generator (unlike the regular-season assignment above) still
+ * CREATES real events, since there is no pre-existing "gym time
+ * already booked" concept for a bracket the way there is for a weekly
+ * regular season. Fixed-teams only -- weekly_draw/headcount never see
+ * any of this (resolveFixtureLeagueTeams already rejects both).
  *
- * computePlayoffSlots is the single source of truth for the arithmetic
- * -- exactly what the preview response's own "arithmetic" block shows
- * the admin, and exactly what buildPlayoffPlaceholders below generates
+ * computePlayoffSlots is the single source of truth for the game
+ * count -- exactly what buildPlayoffPlaceholders below generates
  * placeholders for. They can never disagree.
  *
  * Formula:
- *   single_elimination: (numTeams - 1) + thirdPlace(1) + bye(1 if odd)
- *   best_of_n:          ((numTeams - 1) + thirdPlace(1)) * seriesLength + bye(1 if odd)
+ *   single_elimination: (numTeams - 1) + thirdPlace(1)
+ *   best_of_n:          ((numTeams - 1) + thirdPlace(1)) * seriesLength
  *   reserved_slots:     reservedSlots (the admin's own direct number)
- * The bye slot is a flat +1, never multiplied by seriesLength -- it
- * isn't a real game/series, just a reserved scheduling buffer for the
- * round an odd team count leaves one team sitting out (DECIDED here,
- * flagged in the final report: a fully "correct" bracket needs no
- * extra slot for a bye at all -- each real game still eliminates
- * exactly one team, N-1 total, bye or not -- but the task's own
- * example counts it as consuming one anyway, so this reserves an
- * honestly-labelled buffer slot for it rather than silently absorbing
- * it into the real bracket math). A third-place game needs two real
- * semifinal LOSERS to exist, so it's only ever added for numTeams >= 4
- * -- structurally meaningless below that (see buildPlayoffPlaceholders'
- * own matching guard, which must never disagree with this count).
+ * Schedule-generation redesign task (Group D): REVOKES this function's
+ * own earlier "+1 flat bye slot" decision -- a bye is never a real
+ * game and never reserves gym time or an event, full stop. hasBye is
+ * still returned (a genuine informational fact -- which seed sits out
+ * round 1), just no longer added to the total. A third-place game
+ * needs two real semifinal LOSERS to exist, so it's only ever added
+ * for numTeams >= 4 -- structurally meaningless below that (see
+ * buildPlayoffPlaceholders' own matching guard, which must never
+ * disagree with this count).
  */
 export function computePlayoffSlots({ format, numTeams, thirdPlace, bestOf, reservedSlots }) {
   if (format === 'reserved_slots') {
@@ -2146,11 +2266,10 @@ export function computePlayoffSlots({ format, numTeams, thirdPlace, bestOf, rese
   const thirdPlaceMatches = (thirdPlace && numTeams >= 4) ? 1 : 0;
   const seriesLength = format === 'best_of_n' ? Math.max(1, Math.floor(bestOf || 1)) : 1;
   const gameSlots = (baseMatches + thirdPlaceMatches) * seriesLength;
-  const byeSlots = hasBye ? 1 : 0;
   return {
-    playoffSlots: gameSlots + byeSlots,
+    playoffSlots: gameSlots,
     hasBye,
-    breakdown: { format, numTeams, baseMatches, thirdPlaceMatches, seriesLength, gameSlots, byeSlots }
+    breakdown: { format, numTeams, baseMatches, thirdPlaceMatches, seriesLength, gameSlots }
   };
 }
 
@@ -2273,152 +2392,170 @@ export function buildBracketAdvancement(numTeams) {
   return { rounds, byes };
 }
 
-// Ordered list of DATE GROUPS of playoff slot descriptors (each group
-// shares one calendar date, same "one date, possibly several games"
-// shape buildRegularSeasonForSlots' own rounds use) -- flattening every
-// group gives exactly computePlayoffSlots({...}).playoffSlots
-// descriptors, always (the arithmetic and the generated placeholders
-// can never disagree, since nothing else computes this count
-// independently). Each descriptor is language-agnostic (see
-// playoffRoleLabel for the bilingual text) --
-// role/matchupIndexInRound/seedA/seedB/gameNumber/seriesLength, stored
-// verbatim into events.playoff_meta as JSON.
+// Which earlier matchup (if any) feeds a given side of a round>0
+// matchup -- resolved from buildBracketAdvancement's own forward
+// advancesToRound/advancesToMatchupIndexInRound/advancesToSide fields,
+// walked once in reverse. A bye's own seed is deliberately left OUT of
+// this map: it feeds in as an already-known real team the moment round
+// 1 is seeded (resolvePlayoffSeeding's own bye-advance step), never a
+// "winner of X" placeholder waiting on a game that doesn't exist.
+// A round>0 matchup's own two sides can each be fed by EITHER a real
+// earlier matchup (unresolved until it's played -- "Winner SF1") OR a
+// bye (a real, already-known seed that skipped round 1 entirely --
+// "seed 1", same as a round-1 side, never a placeholder waiting on a
+// game that doesn't exist). Both kinds are recorded in the same map so
+// describeFeeder can tell them apart per side independently -- a
+// single matchup can even mix one of each (see the 5-team, 4v5-only
+// QF worked example this was built against).
+function buildPlayoffFeederMap(rounds, byes) {
+  const feederFor = new Map();
+  const record = (round, matchupIdx, side, info) => {
+    const key = `${round}:${matchupIdx}`;
+    if (!feederFor.has(key)) feederFor.set(key, {});
+    feederFor.get(key)[side] = info;
+  };
+  rounds.forEach((roundMatchups, roundIdx) => {
+    roundMatchups.forEach(m => {
+      if (m.advancesToRound == null) return;
+      record(m.advancesToRound, m.advancesToMatchupIndexInRound, m.advancesToSide, { kind: 'matchup', roundIdx, matchupIndexInRound: m.matchupIndexInRound });
+    });
+  });
+  byes.forEach(b => {
+    if (b.advancesToRound == null) return;
+    record(b.advancesToRound, b.advancesToMatchupIndexInRound, b.advancesToSide, { kind: 'bye', seed: b.seed });
+  });
+  return feederFor;
+}
+function roleForRoundIdx(roundIdx, totalRounds) {
+  const roundsFromFinal = totalRounds - 1 - roundIdx;
+  return roundsFromFinal === 0 ? 'final' : roundsFromFinal === 1 ? 'semifinal' : roundsFromFinal === 2 ? 'quarterfinal' : 'bracket';
+}
+function describeFeeder(feeder, totalRounds) {
+  if (!feeder) return null;
+  if (feeder.kind === 'bye') return { kind: 'bye', seed: feeder.seed };
+  return { kind: 'matchup', role: roleForRoundIdx(feeder.roundIdx, totalRounds), matchupIndexInRound: feeder.matchupIndexInRound };
+}
+
+// Ordered list of DATE GROUPS of playoff slot descriptors -- each
+// group is always exactly ONE placeholder now (schedule-generation
+// redesign, Group D: no more staggering several simultaneous games
+// onto one invented same-day time slot, the same "never invent a
+// slot" rule the regular-season assignment above follows; every game
+// simply gets its own successive date, one per group, matching the
+// convention a best-of-N series already used). Flattening every group
+// gives exactly computePlayoffSlots({...}).playoffSlots descriptors,
+// always (the arithmetic and the generated placeholders can never
+// disagree, since nothing else computes this count independently). A
+// bye produces NO descriptor at all -- see computePlayoffSlots' own
+// revoked "+1 flat bye slot" note; call resolvePlayoffByeSeeds
+// separately for the informational note (which seed sits out).
 //
-// Grouping: a single-elimination bracket round's real matchups (and a
-// reserved-slots batch) genuinely happen the same day in practice, so
-// they're grouped onto one date, exactly like the regular season's own
-// simultaneous-game handling. A best-of-N SERIES cannot: game 2 of a
-// series is played on a LATER date than game 1 by definition, so
-// best-of-N flattens to one placeholder per date instead -- grouping
-// same-round DIFFERENT series onto one date while also spanning each
-// series across dates is real bracket-scheduling complexity this
-// generator's job (get a season on the board fast) doesn't need to
-// solve; flagged in the final report as a known simplification.
+// Each descriptor is language-agnostic (see playoffRoleLabel for the
+// bilingual text) -- role/matchupIndexInRound/gameNumber/seriesLength,
+// plus EITHER seedA/seedB (round 1 only -- real, meaningful seed
+// numbers) OR feederA/feederB (every later round -- "seeds are only
+// meaningful in round one," per this task's own decision: a later
+// round's own two seed numbers were never anything but the top
+// surviving seed of each bracket half, not a real prediction of who
+// actually advances, so they're replaced with a reference to the two
+// matchups that actually feed it instead). Stored verbatim into
+// events.playoff_meta as JSON.
 export function buildPlayoffPlaceholders({ format, numTeams, thirdPlace, bestOf, reservedSlots }) {
   if (format === 'reserved_slots') {
     const slots = Math.max(0, Math.floor(reservedSlots || 0));
     return Array.from({ length: slots }, (_, i) => [{
-      role: 'reserved', matchupIndexInRound: i + 1, seedA: null, seedB: null, gameNumber: null, seriesLength: 1
+      role: 'reserved', matchupIndexInRound: i + 1, seedA: null, seedB: null, feederA: null, feederB: null, gameNumber: null, seriesLength: 1
     }]);
   }
   const seriesLength = format === 'best_of_n' ? Math.max(1, Math.floor(bestOf || 1)) : 1;
-  const bracketRounds = buildEliminationBracket(numTeams);
-  const hasBye = numTeams % 2 === 1 && numTeams > 1;
+  const { rounds: bracketRounds, byes: bracketByes } = buildBracketAdvancement(numTeams);
+  const feederFor = buildPlayoffFeederMap(bracketRounds, bracketByes);
   const groups = [];
-  if (hasBye) {
-    groups.push([{ role: 'bye', matchupIndexInRound: 1, seedA: null, seedB: null, gameNumber: null, seriesLength: 1 }]);
-  }
   bracketRounds.forEach((round, roundIndex) => {
-    const roundsFromFinal = bracketRounds.length - 1 - roundIndex;
-    const role = roundsFromFinal === 0 ? 'final' : roundsFromFinal === 1 ? 'semifinal' : roundsFromFinal === 2 ? 'quarterfinal' : 'bracket';
-    const roundPlaceholders = [];
-    round.forEach((m, mIdx) => {
+    const totalRounds = bracketRounds.length;
+    const role = roleForRoundIdx(roundIndex, totalRounds);
+    const isFirstRound = roundIndex === 0;
+    round.forEach(m => {
+      const feeders = feederFor.get(`${roundIndex}:${m.matchupIndexInRound}`) || {};
+      const seedA = isFirstRound ? m.seedA : null;
+      const seedB = isFirstRound ? m.seedB : null;
+      const feederA = isFirstRound ? null : describeFeeder(feeders.A, totalRounds);
+      const feederB = isFirstRound ? null : describeFeeder(feeders.B, totalRounds);
       for (let g = 1; g <= seriesLength; g++) {
-        roundPlaceholders.push({ role, matchupIndexInRound: mIdx + 1, seedA: m.seedA, seedB: m.seedB, gameNumber: seriesLength > 1 ? g : null, seriesLength });
+        groups.push([{ role, matchupIndexInRound: m.matchupIndexInRound, seedA, seedB, feederA, feederB, gameNumber: seriesLength > 1 ? g : null, seriesLength }]);
       }
     });
-    if (seriesLength > 1) {
-      // Flatten -- each game of each series gets its own date.
-      roundPlaceholders.forEach(p => groups.push([p]));
-    } else {
-      groups.push(roundPlaceholders);
-    }
     // Third-place: needs two real semifinal LOSERS to exist, i.e. a
     // semifinal round with >=2 real matchups -- same numTeams >= 4
     // guard as computePlayoffSlots' own thirdPlaceMatches, so the two
-    // never disagree on whether this slot exists at all.
+    // never disagree on whether this slot exists at all. Its own two
+    // sides are never a seed OR a feeder reference (a LOSER, not a
+    // winner, of each semifinal) -- left null; playoffRoleLabel's own
+    // generic "Third-place game" text needs neither.
+    const roundsFromFinal = totalRounds - 1 - roundIndex;
     if (roundsFromFinal === 1 && round.length >= 2 && thirdPlace) {
-      const tp = [];
-      for (let g = 1; g <= seriesLength; g++) tp.push({ role: 'third_place', matchupIndexInRound: 1, seedA: null, seedB: null, gameNumber: seriesLength > 1 ? g : null, seriesLength });
-      if (seriesLength > 1) tp.forEach(p => groups.push([p]));
-      else groups.push(tp);
+      for (let g = 1; g <= seriesLength; g++) {
+        groups.push([{ role: 'third_place', matchupIndexInRound: 1, seedA: null, seedB: null, feederA: null, feederB: null, gameNumber: seriesLength > 1 ? g : null, seriesLength }]);
+      }
     }
   });
   return groups;
 }
 
+// Informational only (schedule-generation redesign, Group D): the
+// seed(s) sitting out round 1, for the admin's own benefit -- never
+// consumes a placeholder/event/date, unlike the earlier revoked
+// design. Empty for an even team count or reserved_slots (no bracket
+// at all).
+export function resolvePlayoffByeSeeds(numTeams) {
+  return buildBracketAdvancement(numTeams).byes.map(b => b.seed);
+}
+
 // Bilingual, derived at render time from the language-agnostic
 // descriptor above -- never baked into storage (this codebase's own
-// established i18n convention). Matches the task's own examples
-// exactly: "Semi-final 1 -- seed 1 vs seed 4", "Final", "Third-place
-// game", "Playoff game 1" (reserved).
+// established i18n convention). Matches the task's own examples for
+// round 1 exactly: "Semi-final 1 -- seed 1 vs seed 4", "Final",
+// "Third-place game", "Playoff game 1" (reserved). Schedule-generation
+// redesign task (Group D): a LATER round (feederA/feederB present
+// instead of seedA/seedB) now reads "Winner SF1 vs Winner SF2" instead
+// of a stale, misleading seed number -- see buildPlayoffPlaceholders'
+// own comment for why.
 export function playoffRoleLabel(meta, lang) {
   const en = lang === 'en';
   const vsWord = en ? 'vs' : 'contre';
   const seed = n => en ? `seed ${n}` : `tête de série ${n}`;
+  const shortRoleLabel = (role, idx) => {
+    if (role === 'semifinal') return (en ? 'SF' : 'DF') + idx;
+    if (role === 'quarterfinal') return 'QF' + idx;
+    if (role === 'final') return en ? 'Final' : 'Finale';
+    if (role === 'bracket') return (en ? 'R1-' : 'T1-') + idx;
+    return String(idx);
+  };
+  // A feeder side is either a real bracket seed that skipped round 1
+  // (a bye -- already known, rendered exactly like a round-1 seed) or
+  // an unresolved earlier matchup (rendered as "Winner <short label>",
+  // per this task's own decision -- see buildPlayoffFeederMap's own
+  // comment for why a single matchup can mix one of each).
+  const describeSide = feeder => {
+    if (!feeder) return en ? 'TBD' : 'à déterminer';
+    if (feeder.kind === 'bye') return seed(feeder.seed);
+    return (en ? 'Winner ' : 'Gagnant ') + shortRoleLabel(feeder.role, feeder.matchupIndexInRound);
+  };
   let base;
   if (meta.role === 'final') base = en ? 'Final' : 'Finale';
   else if (meta.role === 'third_place') base = en ? 'Third-place game' : 'Match pour la 3e place';
   else if (meta.role === 'semifinal') base = (en ? 'Semi-final ' : 'Demi-finale ') + meta.matchupIndexInRound;
   else if (meta.role === 'quarterfinal') base = (en ? 'Quarterfinal ' : 'Quart de finale ') + meta.matchupIndexInRound;
   else if (meta.role === 'bracket') base = (en ? 'Playoff round 1, game ' : 'Ronde 1 des séries, match ') + meta.matchupIndexInRound;
-  else if (meta.role === 'bye') base = en ? 'Playoff bye round (reserved slot)' : 'Ronde de repos des séries (créneau réservé)';
   else if (meta.role === 'reserved') base = (en ? 'Playoff game ' : 'Match de séries ') + meta.matchupIndexInRound;
   else base = en ? 'Playoff game' : 'Match de séries';
   if (meta.seedA && meta.seedB) base += ` -- ${seed(meta.seedA)} ${vsWord} ${seed(meta.seedB)}`;
+  else if (meta.feederA || meta.feederB) base += ` -- ${describeSide(meta.feederA)} ${vsWord} ${describeSide(meta.feederB)}`;
   if (meta.gameNumber && meta.seriesLength > 1) base += ` (${en ? `Game ${meta.gameNumber} of ${meta.seriesLength}` : `Match ${meta.gameNumber} de ${meta.seriesLength}`})`;
   return base;
 }
 
-// Hour-stagger for N simultaneous games on the same date/venue --
-// shared by the regular season and playoff builders below (same
-// Part-2 slot-conflict-avoidance decision either way).
-function staggeredTime(time, gameIndex) {
-  if (!time) return null;
-  const [hh, mm] = time.split(':').map(Number);
-  const staggeredHour = (hh + gameIndex) % 24;
-  return `${String(staggeredHour).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-}
-
-// THE MODEL (task spec): a league has a FIXED NUMBER OF SLOTS (gym
-// time already paid for) -- this fills exactly `slotBudget` regular-
-// season GAMES (not dates/rounds) from generateRoundRobinRounds'
-// endlessly-repeating pairing cycle, rather than asking for a round
-// count. DECIDED: when the budget runs out partway through a date's
-// own pairing list, PLAY that partial date rather than leaving paid-
-// for slots empty -- an unused gym slot is money already spent. Each
-// returned round is flagged isPartial so the proposal can show the
-// admin exactly which fixtures made the cut, not just a game count.
-function buildRegularSeasonForSlots({ teams, slotBudget, startDate, intervalDays, time, venue }) {
-  const cycle = generateRoundRobinRounds(teams);
-  const rounds = [];
-  let remaining = Math.max(0, slotBudget);
-  let dateIndex = 0;
-  while (remaining > 0 && cycle.length && cycle[dateIndex % cycle.length].length > 0) {
-    const pairings = cycle[dateIndex % cycle.length];
-    const takeCount = Math.min(pairings.length, remaining);
-    const isPartial = takeCount < pairings.length;
-    const date = addDaysToDateStr(startDate, dateIndex * intervalDays);
-    const games = pairings.slice(0, takeCount).map((p, gameIndex) => ({
-      home: p.home, away: p.away, date, start_time: staggeredTime(time, gameIndex), venue: venue || null
-    }));
-    rounds.push({ round: dateIndex + 1, date, games, isPartial });
-    remaining -= takeCount;
-    dateIndex++;
-  }
-  return { rounds, nextDateIndex: dateIndex, slotsUsed: slotBudget - remaining };
-}
-
-// Playoff groups (buildPlayoffPlaceholders) onto real dates, continuing
-// the SAME date sequence the regular season left off at (startDateIndex
-// -- so playoffs are scheduled right after the last regular-season
-// slot, never overlapping it).
-function scheduleFixtureGroups(groups, { startDate, startDateIndex, intervalDays, time, venue }) {
-  return groups.map((placeholders, i) => {
-    const dateIndex = startDateIndex + i;
-    const date = addDaysToDateStr(startDate, dateIndex * intervalDays);
-    return {
-      round: dateIndex + 1, date,
-      games: placeholders.map((meta, gameIndex) => ({ meta, date, start_time: staggeredTime(time, gameIndex), venue: venue || null }))
-    };
-  });
-}
-
-function validateFixtureInput(env, body) {
-  const totalSlots = Number(body.total_slots);
-  if (!Number.isFinite(totalSlots) || totalSlots < 1) {
-    return { error: { ok: false, error: 'total_slots (how much gym time you have) must be at least 1.', errorKey: 'FIXTURE_TOTAL_SLOTS_REQUIRED' } };
-  }
+function validatePlayoffScheduleInput(body) {
   const startDate = String(body.start_date || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
     return { error: { ok: false, error: 'start_date is required, in YYYY-MM-DD format.', errorKey: 'DATE_REQUIRED' } };
@@ -2430,14 +2567,12 @@ function validateFixtureInput(env, body) {
     return { error: { ok: false, error: 'time must be in HH:MM format.', errorKey: 'START_TIME_FORMAT' } };
   }
   const venue = String(body.venue || '').trim() || null;
-  return { value: { totalSlots: Math.min(Math.floor(totalSlots), 500), startDate, intervalDays: Math.floor(intervalDays), time: time || null, venue } };
+  return { value: { startDate, intervalDays: Math.floor(intervalDays), time: time || null, venue } };
 }
 
 // The league's own stored playoff preferences (asked once at
 // onboarding, editable later in Settings -- migrate-046.sql). Returns
-// a computePlayoffSlots-shaped input, or null when playoffs are off
-// (every slot goes to the regular season, exactly the pre-playoffs
-// behaviour).
+// a computePlayoffSlots-shaped input, or null when playoffs are off.
 function resolveLeaguePlayoffConfig(leagueRow) {
   if (!leagueRow.playoffs_enabled) return null;
   return {
@@ -2447,11 +2582,13 @@ function resolveLeaguePlayoffConfig(leagueRow) {
   };
 }
 
-// Shared by both routes below: confirms this is a real, currently-
-// published 'fixed' season with at least 2 real teams -- the fixture
-// generator is meaningless for weekly_draw (teams are drawn per event,
-// not fixed) and headcount (no team concept at all), so both are
-// rejected here rather than silently producing nonsense pairings.
+// Shared by every route in this file that generates/assigns a fixed-
+// teams schedule (both the regular-season matchup assignment above
+// and the playoff generator below): confirms this is a real, currently
+// -published 'fixed' season with at least 2 real teams -- meaningless
+// for weekly_draw (teams are drawn per event, not fixed) and headcount
+// (no team concept at all), so both are rejected here rather than
+// silently producing nonsense pairings.
 async function resolveFixtureLeagueTeams(env, leagueId) {
   const leagueData = await getLeagueDataJson(env, leagueId);
   if (!leagueData.current_season) {
@@ -2459,7 +2596,7 @@ async function resolveFixtureLeagueTeams(env, leagueId) {
   }
   const cfg = await getLeagueSeasonConfig(env, leagueId, leagueData.current_season);
   if ((cfg.teamStructure || 'fixed') !== 'fixed') {
-    return { error: { ok: false, error: 'The fixture generator is only offered for fixed-teams leagues.', errorKey: 'FIXTURE_REQUIRES_FIXED_TEAMS' } };
+    return { error: { ok: false, error: 'This is only offered for fixed-teams leagues.', errorKey: 'FIXTURE_REQUIRES_FIXED_TEAMS' } };
   }
   const teams = getTeamNames(cfg);
   if (teams.length < 2) {
@@ -2471,36 +2608,22 @@ async function resolveFixtureLeagueTeams(env, leagueId) {
   return { value: { season: leagueData.current_season, teams, playoffConfig: resolveLeaguePlayoffConfig(leagueRow || {}) } };
 }
 
-// Shared by preview and approve: THE MODEL (task spec) -- total slots
-// (gym time already paid for) minus whatever playoffs consume (0 when
-// this league has none configured) leaves the regular season's own
-// budget. Computes and returns BOTH the arithmetic (for display) and
-// the actual dated proposal (regular season + playoffs, playoffs
-// scheduled right after the regular season's own last date) -- preview
-// and approve call this SAME function, so they can never disagree.
-function buildFixtureAndPlayoffProposal({ teams, playoffConfig, totalSlots, startDate, intervalDays, time, venue }) {
-  const playoff = playoffConfig ? computePlayoffSlots({ ...playoffConfig, numTeams: playoffConfig.numTeams || teams.length }) : null;
-  const playoffSlots = playoff ? playoff.playoffSlots : 0;
-  const regularSeasonSlots = totalSlots - playoffSlots;
-  if (regularSeasonSlots < 0) {
-    return { error: { ok: false, error: `This league's playoffs alone need ${playoffSlots} slots -- total_slots must be at least that many.`, errorKey: 'FIXTURE_TOTAL_SLOTS_TOO_LOW' } };
-  }
-
-  const regular = buildRegularSeasonForSlots({ teams, slotBudget: regularSeasonSlots, startDate, intervalDays, time, venue });
-  const playoffGroups = playoffConfig ? buildPlayoffPlaceholders({ ...playoffConfig, numTeams: playoffConfig.numTeams || teams.length }) : [];
-  const playoffRounds = scheduleFixtureGroups(playoffGroups, { startDate, startDateIndex: regular.nextDateIndex, intervalDays, time, venue });
-
-  return {
-    value: {
-      arithmetic: {
-        totalSlots, playoffSlots, regularSeasonSlots,
-        regularSeasonSlotsUsed: regular.slotsUsed, regularSeasonSlotsUnused: regularSeasonSlots - regular.slotsUsed,
-        playoffBreakdown: playoff ? playoff.breakdown : null
-      },
-      regularSeason: regular.rounds,
-      playoffs: playoffRounds
-    }
-  };
+// Shared by preview and approve: schedules buildPlayoffPlaceholders'
+// own flat, bye-free groups (one placeholder per date -- see that
+// function's own comment for why nothing is ever staggered onto a
+// shared date anymore) starting at startDate, and separately surfaces
+// the bye seed(s), if any, purely as an informational note (never a
+// scheduled date). Preview and approve call this SAME function, so
+// they can never disagree.
+function buildPlayoffOnlyProposal({ playoffConfig, teams, startDate, intervalDays, time, venue }) {
+  const numTeams = playoffConfig.numTeams || teams.length;
+  const groups = buildPlayoffPlaceholders({ ...playoffConfig, numTeams });
+  const playoffs = groups.map((placeholders, i) => {
+    const date = addDaysToDateStr(startDate, i * intervalDays);
+    return { round: i + 1, date, games: placeholders.map(meta => ({ meta, date, start_time: time || null, venue })) };
+  });
+  const byeSeeds = playoffConfig.format === 'reserved_slots' ? [] : resolvePlayoffByeSeeds(numTeams);
+  return { value: { playoffs, byeSeeds, gameCount: groups.length } };
 }
 
 export async function handleLeagueFixturePreview(req, env) {
@@ -2523,12 +2646,14 @@ export async function handleLeagueFixturePreview(req, env) {
 
   const teamsResult = await resolveFixtureLeagueTeams(env, leagueId);
   if (teamsResult.error) return Response.json(teamsResult.error, { status: 409 });
-  const inputResult = validateFixtureInput(env, body);
+  const { teams, playoffConfig } = teamsResult.value;
+  if (!playoffConfig) {
+    return Response.json({ ok: false, error: 'Turn on playoffs in Settings before generating a playoff schedule.', errorKey: 'PLAYOFFS_NOT_CONFIGURED' }, { status: 409 });
+  }
+  const inputResult = validatePlayoffScheduleInput(body);
   if (inputResult.error) return Response.json(inputResult.error, { status: 400 });
 
-  const { teams, playoffConfig } = teamsResult.value;
-  const proposal = buildFixtureAndPlayoffProposal({ teams, playoffConfig, ...inputResult.value });
-  if (proposal.error) return Response.json(proposal.error, { status: 409 });
+  const proposal = buildPlayoffOnlyProposal({ playoffConfig, teams, ...inputResult.value });
   return Response.json({ ok: true, league_id: leagueId, teams, ...proposal.value });
 }
 
@@ -2552,36 +2677,27 @@ export async function handleLeagueFixtureApprove(req, env) {
 
   const teamsResult = await resolveFixtureLeagueTeams(env, leagueId);
   if (teamsResult.error) return Response.json(teamsResult.error, { status: 409 });
-  const inputResult = validateFixtureInput(env, body);
+  const { teams, playoffConfig } = teamsResult.value;
+  if (!playoffConfig) {
+    return Response.json({ ok: false, error: 'Turn on playoffs in Settings before generating a playoff schedule.', errorKey: 'PLAYOFFS_NOT_CONFIGURED' }, { status: 409 });
+  }
+  const inputResult = validatePlayoffScheduleInput(body);
   if (inputResult.error) return Response.json(inputResult.error, { status: 400 });
 
   // Never trusts a client-supplied fixture list -- regenerated here,
-  // server-side, from the same real season team list AND the same
-  // league-stored playoff config the preview route itself used. A
-  // client can only ever approve exactly what preview would have
-  // shown it, never something it fabricated.
-  const { season, teams, playoffConfig } = teamsResult.value;
-  const proposal = buildFixtureAndPlayoffProposal({ teams, playoffConfig, ...inputResult.value });
-  if (proposal.error) return Response.json(proposal.error, { status: 409 });
+  // server-side, from the same league-stored playoff config the
+  // preview route itself used. A client can only ever approve exactly
+  // what preview would have shown it, never something it fabricated.
+  const proposal = buildPlayoffOnlyProposal({ playoffConfig, teams, ...inputResult.value });
 
   const leagueData = await getLeagueDataJson(env, leagueId);
   const created = [];
   const skipped = [];
-  for (const round of proposal.value.regularSeason) {
-    for (const game of round.games) {
-      const result = await createLeagueEventRow(env, leagueId, {
-        date: game.date, start_time: game.start_time || undefined, venue: game.venue || undefined,
-        season, home_team: game.home, away_team: game.away
-      }, leagueData);
-      if (result.ok) created.push(result.event);
-      else skipped.push({ round: round.round, home: game.home, away: game.away, date: game.date, errorKey: result.errorKey });
-    }
-  }
   for (const round of proposal.value.playoffs) {
     for (const game of round.games) {
       const result = await createLeagueEventRow(env, leagueId, {
         date: game.date, start_time: game.start_time || undefined, venue: game.venue || undefined,
-        season, is_playoff: true, playoff_meta: game.meta
+        season: teamsResult.value.season, is_playoff: true, playoff_meta: game.meta
       }, leagueData);
       if (result.ok) created.push(result.event);
       else skipped.push({ round: round.round, playoff: true, meta: game.meta, date: game.date, errorKey: result.errorKey });

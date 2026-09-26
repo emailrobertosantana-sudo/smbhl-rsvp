@@ -371,52 +371,60 @@ describe('Part 2 (fixed-teams scheduling task): events get a real matchup', () =
   });
 });
 
-// Part 3 (fixed-teams scheduling task): the fixture generator.
-// Reuses generateRoundRobinRounds (season_config.js, shared verbatim
-// with SMBHL's own season_hub.js -- see season_hub.spec.js for proof
-// SMBHL's own output is byte-identical after the extraction). A
-// PROPOSAL the admin reviews and approves, never writing events
-// directly -- preview computes it without touching the DB; approve
-// regenerates the exact same proposal server-side (never trusting a
-// client-supplied fixture list) and creates real events through the
-// same createLeagueEventRow every other event-creation route uses.
-describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
+// Part 3 (schedule-generation redesign task, Group D): assigning
+// round-robin matchups onto ALREADY-EXISTING events. REPLACES the
+// earlier generate-and-create fixture flow entirely (commit f52ca55,
+// removed) -- this action never creates an event, only assigns a real
+// matchup to one that already exists (created via the ordinary
+// /league/events or /league/events/bulk routes, exactly the way gym
+// time is actually booked). Reuses generateRoundRobinRounds
+// (season_config.js, shared verbatim with SMBHL's own season_hub.js --
+// see season_hub.spec.js for proof SMBHL's own output is byte-identical
+// after the extraction). Preview computes the plan without touching
+// the DB; confirm regenerates the exact same plan server-side (never
+// trusting a client-supplied plan) and writes it.
+describe('Part 3 (schedule-generation redesign task, Group D): assigning matchups to existing events', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     await applyRealSchema(env);
   });
 
-  async function fixturePreview(cookie, csrfToken, body) {
-    const res = await SELF.fetch('http://example.com/league/season/fixture-preview', {
+  async function bulkCreateEvents(cookie, csrfToken, body) {
+    const res = await SELF.fetch('http://example.com/league/events/bulk', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify(body)
     });
     return { status: res.status, json: await res.json() };
   }
-  async function fixtureApprove(cookie, csrfToken, body) {
-    const res = await SELF.fetch('http://example.com/league/season/fixture-approve', {
+  async function matchupsPreview(cookie, csrfToken, body) {
+    const res = await SELF.fetch('http://example.com/league/season/matchups-preview', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body || {})
     });
     return { status: res.status, json: await res.json() };
   }
-  // THE MODEL: total_slots is a GAME count (gym time already paid
-  // for), not a date/round count -- one full round-robin cycle for N
-  // teams is always N*(N-1)/2 games (everyone plays everyone once),
-  // regardless of how those games are spread across dates.
+  async function matchupsConfirm(cookie, csrfToken, body) {
+    const res = await SELF.fetch('http://example.com/league/season/matchups-confirm', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify(body || {})
+    });
+    return { status: res.status, json: await res.json() };
+  }
+  // One full round-robin cycle for N teams is always N*(N-1)/2 games
+  // (everyone plays everyone once), regardless of how those games are
+  // spread across dates -- THE MODEL: one event is one game.
   function fullCycleGames(numTeams) { return numTeams * (numTeams - 1) / 2; }
-  function allTeamsAppearBalanced(rounds, teams) {
+  function allTeamsAppearBalanced(plan, teams) {
     const gamesPerTeam = Object.fromEntries(teams.map(t => [t, 0]));
-    for (const round of rounds) {
-      const playing = new Set();
-      for (const g of round.games) {
-        // No team plays itself, and no team plays twice in the same round.
-        expect(g.home).not.toBe(g.away);
-        expect(playing.has(g.home)).toBe(false);
-        expect(playing.has(g.away)).toBe(false);
-        playing.add(g.home); playing.add(g.away);
-        gamesPerTeam[g.home]++; gamesPerTeam[g.away]++;
-      }
+    const byRound = new Map();
+    for (const p of plan) {
+      if (!byRound.has(p.round)) byRound.set(p.round, new Set());
+      const playing = byRound.get(p.round);
+      expect(p.home).not.toBe(p.away);
+      expect(playing.has(p.home)).toBe(false);
+      expect(playing.has(p.away)).toBe(false);
+      playing.add(p.home); playing.add(p.away);
+      gamesPerTeam[p.home]++; gamesPerTeam[p.away]++;
     }
     return gamesPerTeam;
   }
@@ -426,20 +434,19 @@ describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
     ['Rouge', 'Bleu', 'Vert', 'Jaune'],
     ['Rouge', 'Bleu', 'Vert', 'Jaune', 'Noir']
   ]) {
-    it(`produces a valid balanced round robin for ${teams.length} teams`, async () => {
+    it(`produces a valid balanced round robin for ${teams.length} teams, assigned onto that many already-existing events`, async () => {
       const { cookie, csrfToken } = await signup(`p3.rr${teams.length}@example.com`, `203.0.199.${teams.length}0`);
       await createLeague(cookie, csrfToken, { name: `RR ${teams.length} League`, teamNames: teams, tracksStats: true });
       await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+      const gameCount = fullCycleGames(teams.length);
+      const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: gameCount });
+      expect(bulk.json.createdCount).toBe(gameCount);
 
-      const totalSlots = fullCycleGames(teams.length);
-      const { status, json } = await fixturePreview(cookie, csrfToken, {
-        total_slots: totalSlots, start_date: '2099-09-06', interval_days: 7, time: '18:00', venue: 'Main Gym'
-      });
+      const { status, json } = await matchupsPreview(cookie, csrfToken, {});
       expect(status).toBe(200);
-      expect(json.arithmetic.regularSeasonSlots).toBe(totalSlots);
-      expect(json.arithmetic.regularSeasonSlotsUsed).toBe(totalSlots); // no playoffs configured -- no leftover
-      expect(json.playoffs).toEqual([]);
-      const gamesPerTeam = allTeamsAppearBalanced(json.regularSeason, teams);
+      expect(json.plan.length).toBe(gameCount);
+      expect(json.eventCount).toBe(gameCount);
+      const gamesPerTeam = allTeamsAppearBalanced(json.plan, teams);
       // A full single round-robin cycle: every team plays every other
       // team exactly once, so each plays (n-1) games total.
       for (const t of teams) expect(gamesPerTeam[t]).toBe(teams.length - 1);
@@ -450,74 +457,203 @@ describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
     const { cookie, csrfToken } = await signup('p3.nowrite@example.com', '203.0.199.101');
     const league = await createLeague(cookie, csrfToken, { name: 'No Write League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 3 });
 
-    const { status, json } = await fixturePreview(cookie, csrfToken, { total_slots: 3, start_date: '2099-09-06', time: '18:00', venue: 'Gym' });
+    const { status, json } = await matchupsPreview(cookie, csrfToken, {});
     expect(status).toBe(200);
-    const gameCount = json.regularSeason.reduce((n, r) => n + r.games.length, 0);
-    expect(gameCount).toBe(3);
+    expect(json.plan.length).toBe(3);
 
-    const row = await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ?').bind(league.id).first();
+    const row = await env.DB.prepare("SELECT COUNT(*) c FROM events WHERE league_id = ? AND home_team IS NOT NULL").bind(league.id).first();
     expect(row.c).toBe(0);
   });
 
-  it('approve creates real events with matchups matching the preview exactly, and the schedule page shows them', async () => {
-    const { cookie, csrfToken } = await signup('p3.approve@example.com', '203.0.199.102');
-    const league = await createLeague(cookie, csrfToken, { name: 'Approve League', teamNames: ['Rouge', 'Bleu', 'Vert', 'Jaune'], tracksStats: true });
+  it('confirm writes matchups matching the preview exactly, onto the SAME events (never creating a new one), and the schedule page shows them', async () => {
+    const { cookie, csrfToken } = await signup('p3.confirm@example.com', '203.0.199.102');
+    const league = await createLeague(cookie, csrfToken, { name: 'Confirm League', teamNames: ['Rouge', 'Bleu', 'Vert', 'Jaune'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 6 });
 
-    const params = { total_slots: 6, start_date: '2099-09-06', interval_days: 7, time: '18:00', venue: 'Main Gym' };
-    const preview = await fixturePreview(cookie, csrfToken, params);
-    const approve = await fixtureApprove(cookie, csrfToken, params);
-    expect(approve.status).toBe(200);
+    const eventCountBefore = (await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ?').bind(league.id).first()).c;
+    const preview = await matchupsPreview(cookie, csrfToken, {});
+    const confirm = await matchupsConfirm(cookie, csrfToken, {});
+    expect(confirm.status).toBe(200);
+    expect(confirm.json.updatedCount).toBe(preview.json.plan.length);
+    expect(confirm.json.skippedCount).toBe(0);
 
-    const expectedGameCount = preview.json.regularSeason.reduce((n, r) => n + r.games.length, 0);
-    expect(approve.json.createdCount).toBe(expectedGameCount);
-    expect(approve.json.skippedCount).toBe(0);
+    const eventCountAfter = (await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ?').bind(league.id).first()).c;
+    expect(eventCountAfter).toBe(eventCountBefore); // never creates -- same event count as before
 
-    const row = await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ?').bind(league.id).first();
-    expect(row.c).toBe(expectedGameCount);
-
-    // Round 2 (index 1) has 2 simultaneous games (4-team round robin) --
-    // staggered by 1 hour at the same venue, per this task's own
-    // decision, rather than colliding.
-    const round2 = preview.json.regularSeason[1];
-    expect(round2.games.length).toBe(2);
-    expect(round2.games[0].start_time).toBe('18:00');
-    expect(round2.games[1].start_time).toBe('19:00');
-    expect(round2.games[0].date).toBe(round2.games[1].date);
-    expect(round2.games[0].venue).toBe(round2.games[1].venue);
+    const matchedRow = await env.DB.prepare("SELECT COUNT(*) c FROM events WHERE league_id = ? AND home_team IS NOT NULL AND away_team IS NOT NULL").bind(league.id).first();
+    expect(matchedRow.c).toBe(preview.json.plan.length);
 
     const html = await scheduleHtml(cookie);
     for (const t of ['Rouge', 'Bleu', 'Vert', 'Jaune']) expect(html).toContain(t);
   });
 
+  it('a round with more games than the events available on one date spans further events (dates), never staggering onto an invented same-day time slot', async () => {
+    // 4 teams -> round 2 of the cycle has 2 simultaneous pairings, but
+    // events are booked one PER WEEK here (interval_days default 7) --
+    // the second of that round's own two games must land on the NEXT
+    // event chronologically, whatever date that turns out to be, not
+    // on an invented same-day staggered time.
+    const { cookie, csrfToken } = await signup('p3.spans@example.com', '203.0.199.103');
+    await createLeague(cookie, csrfToken, { name: 'Spans League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 6, start_time: '18:00' });
+
+    const { json } = await matchupsPreview(cookie, csrfToken, {});
+    const round2Games = json.plan.filter(p => p.round === 2);
+    expect(round2Games.length).toBe(2);
+    expect(round2Games[0].date).not.toBe(round2Games[1].date); // distinct dates, never the same day
+  });
+
+  it('a partial final round (more events than a whole number of rounds) is assigned, not dropped', async () => {
+    const { cookie, csrfToken } = await signup('p3.partial@example.com', '203.0.199.104');
+    await createLeague(cookie, csrfToken, { name: 'Partial League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    // A full cycle for 4 teams is 3 rounds / 6 games -- 7 events means
+    // one extra game starting a new (incomplete) round.
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 7 });
+
+    const { json } = await matchupsPreview(cookie, csrfToken, {});
+    expect(json.plan.length).toBe(7);
+    const lastRound = json.plan[json.plan.length - 1].round;
+    const gamesInLastRound = json.plan.filter(p => p.round === lastRound).length;
+    expect(gamesInLastRound).toBe(1); // partial -- the round's other game has no event yet
+  });
+
+  it('fewer events than one full round only uses that round\'s first pairings -- never invents a slot for the rest', async () => {
+    const { cookie, csrfToken } = await signup('p3.fewer@example.com', '203.0.199.105');
+    await createLeague(cookie, csrfToken, { name: 'Fewer League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 1 });
+
+    const { json } = await matchupsPreview(cookie, csrfToken, {});
+    expect(json.plan.length).toBe(1);
+    expect(json.plan[0].round).toBe(1);
+  });
+
+  it('an odd team count\'s bye is a NOTE, never an event -- no extra event is required or consumed for it', async () => {
+    const { cookie, csrfToken } = await signup('p3.byenote@example.com', '203.0.199.106');
+    await createLeague(cookie, csrfToken, { name: 'Bye Note League', teamNames: ['A', 'B', 'C'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    // 3 teams: one real game per round (the third team sits out) --
+    // 2 events booked for 2 full rounds.
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 2 });
+
+    const { json } = await matchupsPreview(cookie, csrfToken, {});
+    expect(json.plan.length).toBe(2); // exactly the 2 events booked -- no extra event for the bye
+    expect(json.byeNotes.length).toBe(2); // one bye note per round, informational only
+    expect(json.byeNotes[0].team).toBeTruthy();
+  });
+
+  it('fill_blanks (default) never overwrites an event that already has a matchup, but keeps assigning later blanks from where the pattern left off', async () => {
+    const { cookie, csrfToken } = await signup('p3.fillblanks@example.com', '203.0.199.107');
+    const league = await createLeague(cookie, csrfToken, { name: 'Fill Blanks League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 6 });
+    await matchupsConfirm(cookie, csrfToken, {}); // fill_blanks, from empty -- assigns all 6
+
+    const before = await env.DB.prepare('SELECT id, home_team, away_team FROM events WHERE league_id = ? ORDER BY date').bind(league.id).all();
+    const firstEventId = before.results[0].id;
+    // Hand-edit one event's matchup to something the cycle would never
+    // produce on its own -- proves fill_blanks truly never touches it.
+    await env.DB.prepare('UPDATE events SET home_team = ?, away_team = ? WHERE id = ?').bind('A', 'B', firstEventId).run();
+    // Book one more event -- a new blank slot at the end.
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-10-25', occurrences: 1 });
+
+    const { json: preview2 } = await matchupsPreview(cookie, csrfToken, { mode: 'fill_blanks' });
+    const firstPlanEntry = preview2.plan.find(p => p.eventId === firstEventId);
+    expect(firstPlanEntry.alreadyAssigned).toBe(true);
+    expect(firstPlanEntry.willWrite).toBe(false);
+
+    await matchupsConfirm(cookie, csrfToken, { mode: 'fill_blanks' });
+    const unchanged = await env.DB.prepare('SELECT home_team, away_team FROM events WHERE id = ?').bind(firstEventId).first();
+    expect(unchanged).toEqual({ home_team: 'A', away_team: 'B' }); // untouched
+
+    const newEvent = await env.DB.prepare("SELECT home_team, away_team FROM events WHERE league_id = ? AND date = '2099-10-25'").bind(league.id).first();
+    expect(newEvent.home_team).toBeTruthy(); // the new blank slot DID get assigned
+  });
+
+  it('"regenerate everything" needs an explicit second confirmation before it overwrites anything, then overwrites every event', async () => {
+    const { cookie, csrfToken } = await signup('p3.regenerate@example.com', '203.0.199.108');
+    const league = await createLeague(cookie, csrfToken, { name: 'Regenerate League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 6 });
+    await matchupsConfirm(cookie, csrfToken, {}); // fill_blanks, from empty -- assigns all 6
+
+    // First call, no confirmOverwrite -- rejected, nothing overwritten.
+    const rejected = await matchupsConfirm(cookie, csrfToken, { mode: 'regenerate' });
+    expect(rejected.status).toBe(409);
+    expect(rejected.json.errorKey).toBe('MATCHUPS_OVERWRITE_NEEDS_CONFIRM');
+    expect(rejected.json.alreadyAssignedCount).toBe(6);
+
+    // Second call, with confirmOverwrite -- proceeds, overwrites all 6.
+    const confirmed = await matchupsConfirm(cookie, csrfToken, { mode: 'regenerate', confirmOverwrite: true });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.json.updatedCount).toBe(6);
+    const row = await env.DB.prepare("SELECT COUNT(*) c FROM events WHERE league_id = ? AND home_team IS NOT NULL").bind(league.id).first();
+    expect(row.c).toBe(6);
+  });
+
+  it('playoff placeholder events are never touched or overwritten by this action, fill-blanks or regenerate alike', async () => {
+    const { cookie, csrfToken } = await signup('p3.playoffsafe@example.com', '203.0.199.109');
+    const league = await createLeague(cookie, csrfToken, { name: 'Playoff Safe League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-09-06', occurrences: 2 });
+    const playoffEv = await SELF.fetch('http://example.com/league/events', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ date: '2099-12-01', season: 'S1', is_playoff: true, playoff_meta: { role: 'final', matchupIndexInRound: 1, seedA: null, seedB: null, feederA: null, feederB: null, gameNumber: null, seriesLength: 1 } })
+    }).then(r => r.json()).then(r => r.event);
+
+    const { json: preview } = await matchupsPreview(cookie, csrfToken, {});
+    expect(preview.plan.some(p => p.eventId === playoffEv.id)).toBe(false); // never in the candidate list at all
+
+    await matchupsConfirm(cookie, csrfToken, { mode: 'regenerate', confirmOverwrite: true });
+    const playoffRow = await env.DB.prepare('SELECT home_team, away_team, is_playoff FROM events WHERE id = ?').bind(playoffEv.id).first();
+    expect(playoffRow.is_playoff).toBe(1);
+    expect(playoffRow.home_team).toBeNull();
+    expect(playoffRow.away_team).toBeNull();
+    const nonPlayoffRow = await env.DB.prepare('SELECT COUNT(*) c FROM events WHERE league_id = ? AND is_playoff = 0 AND home_team IS NOT NULL').bind(league.id).first();
+    expect(nonPlayoffRow.c).toBe(2);
+  });
+
+  it('rejects when there are no events yet to assign matchups to', async () => {
+    const { cookie, csrfToken } = await signup('p3.noevents@example.com', '203.0.199.110');
+    await createLeague(cookie, csrfToken, { name: 'No Events League', teamNames: ['A', 'B'], tracksStats: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    const res = await matchupsPreview(cookie, csrfToken, {});
+    expect(res.status).toBe(409);
+    expect(res.json.errorKey).toBe('MATCHUPS_NO_EVENTS');
+  });
+
   it('rejects for weekly_draw and headcount leagues -- only offered for fixed teams', async () => {
-    const { cookie: wdCookie, csrfToken: wdCsrf } = await signup('p3.wdreject@example.com', '203.0.199.103');
+    const { cookie: wdCookie, csrfToken: wdCsrf } = await signup('p3.wdreject@example.com', '203.0.199.111');
     await createLeague(wdCookie, wdCsrf, { name: 'WD Reject League', teamStructure: 'weekly_draw', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(wdCookie, wdCsrf, { season_name: 'S1' });
-    const wdRes = await fixturePreview(wdCookie, wdCsrf, { rounds: 2, start_date: '2099-09-06' });
+    const wdRes = await matchupsPreview(wdCookie, wdCsrf, {});
     expect(wdRes.status).toBe(409);
     expect(wdRes.json.errorKey).toBe('FIXTURE_REQUIRES_FIXED_TEAMS');
 
-    const { cookie: hcCookie, csrfToken: hcCsrf } = await signup('p3.hcreject@example.com', '203.0.199.104');
+    const { cookie: hcCookie, csrfToken: hcCsrf } = await signup('p3.hcreject@example.com', '203.0.199.112');
     await createLeague(hcCookie, hcCsrf, { name: 'HC Reject League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12, tracksStats: true });
     await publishSeason(hcCookie, hcCsrf, { season_name: 'S1', min_players: 8, max_players: 12 });
-    const hcRes = await fixturePreview(hcCookie, hcCsrf, { rounds: 2, start_date: '2099-09-06' });
+    const hcRes = await matchupsPreview(hcCookie, hcCsrf, {});
     expect(hcRes.status).toBe(409);
     expect(hcRes.json.errorKey).toBe('FIXTURE_REQUIRES_FIXED_TEAMS');
   });
 
   it('rejects when no season has been published yet', async () => {
-    const { cookie, csrfToken } = await signup('p3.noseason@example.com', '203.0.199.105');
+    const { cookie, csrfToken } = await signup('p3.noseason@example.com', '203.0.199.113');
     await createLeague(cookie, csrfToken, { name: 'No Season League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
-    const res = await fixturePreview(cookie, csrfToken, { rounds: 2, start_date: '2099-09-06' });
+    const res = await matchupsPreview(cookie, csrfToken, {});
     expect(res.status).toBe(409);
     expect(res.json.errorKey).toBe('SEASON_REQUIRED');
   });
 
   it('this route cannot be used against SMBHL', async () => {
-    const { cookie, csrfToken } = await signup('p3.smbhlblocked@example.com', '203.0.199.106');
-    const res = await fixturePreview(cookie, csrfToken, { rounds: 2, start_date: '2099-09-06' });
+    const { cookie, csrfToken } = await signup('p3.smbhlblocked@example.com', '203.0.199.114');
+    const res = await matchupsPreview(cookie, csrfToken, {});
     expect(res.status).toBe(404);
     expect(res.json.errorKey).toBe('NO_LEAGUE_FOUND');
   });
@@ -530,19 +666,20 @@ describe('Part 3 (fixed-teams scheduling task): the fixture generator', () => {
     expect(fromSeasonHub(teams)).toEqual(fromSeasonConfig(teams));
   });
 
-  it('the schedule page offers the generator panel for a fixed league with >=2 teams, and omits it for weekly_draw/headcount', async () => {
+  it('the schedule page offers the "assign matchups" panel for a fixed league with >=2 teams, and omits it for weekly_draw/headcount', async () => {
     const { cookie: c1, csrfToken: t1 } = await signup('p3.uifixed@example.com', '203.0.199.201');
     await createLeague(c1, t1, { name: 'UI Fixed League', teamNames: ['A', 'B'], tracksStats: true });
     await publishSeason(c1, t1, { season_name: 'S1' });
     const html1 = await scheduleHtml(c1);
-    expect(html1).toContain('id="sc_fixture_panel"');
-    expect(html1).toContain('id="fx_total_slots"');
-    expect(html1).toContain('data-i18n="fixtureGenBtn"');
+    expect(html1).toContain('id="sc_matchups_panel"');
+    expect(html1).toContain('id="mx_regenerate"');
+    expect(html1).toContain('data-i18n="matchupsGenBtn"');
+    expect(html1).not.toContain('id="sc_playoff_panel"'); // playoffs not configured for this league
 
     const { cookie: c2, csrfToken: t2 } = await signup('p3.uiwd@example.com', '203.0.199.202');
     await createLeague(c2, t2, { name: 'UI WD League', teamStructure: 'weekly_draw', teamNames: ['A', 'B', 'C'], tracksStats: true });
     await publishSeason(c2, t2, { season_name: 'S1' });
-    expect(await scheduleHtml(c2)).not.toContain('id="sc_fixture_panel"');
+    expect(await scheduleHtml(c2)).not.toContain('id="sc_matchups_panel"');
   });
 });
 

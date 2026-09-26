@@ -135,6 +135,10 @@ export const ERROR_I18N = {
   INVALID_COLOR: { fr: 'La couleur doit être une valeur hexadécimale comme #b3122e.', en: 'Colour must be a hex value like #b3122e.' },
   NO_TEAMS_TO_EDIT: { fr: "Cette ligue n'a pas de noms d'équipe à modifier.", en: 'This league has no team names to edit.' },
   SEASON_NOT_FOUND: { fr: 'Aucune saison publiée avec ce nom.', en: 'No published season with that name.' },
+  // Schedule-generation redesign task (Group D).
+  MATCHUPS_NO_EVENTS: { fr: "Cette ligue n'a pas encore de matchs pour assigner des affrontements -- crée d'abord tes créneaux de gym (Créer un match / Créer plusieurs matchs).", en: "This league has no events yet to assign matchups to -- create your schedule's gym slots first (Create a game / Create multiple games)." },
+  MATCHUPS_OVERWRITE_NEEDS_CONFIRM: { fr: 'Ceci écrasera des matchs qui ont déjà un affrontement assigné. Confirme pour continuer.', en: 'This will overwrite games that already have a matchup assigned. Confirm to continue.' },
+  PLAYOFFS_NOT_CONFIGURED: { fr: 'Active les séries éliminatoires dans les paramètres avant de générer leur calendrier.', en: 'Turn on playoffs in Settings before generating a playoff schedule.' },
   TEAM_HAS_GAMES: { fr: "L'équipe « {team} » a des matchs enregistrés et ne peut pas être retirée.", en: 'The team "{team}" has recorded games and cannot be removed.' },
   TEAM_HAS_PLAYERS: { fr: "L'équipe « {team} » a encore des joueurs assignés et ne peut pas être retirée.", en: 'The team "{team}" still has players assigned to it and cannot be removed.' },
   BROADCAST_FIELDS_REQUIRED: { fr: 'Le sujet et le message sont requis.', en: 'Subject and message are required.' },
