@@ -8226,7 +8226,7 @@ ${tabbar}`;
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="playerStatsSaveBtn" onclick="submitPlayerStats()">Enregistrer les statistiques</button></div>
     `}
   </section>` : ''}
-  <div class="ev-teams">${ev.is_playoff
+  <div class="ev-teams">${ev.is_playoff && !(ev.home_team && ev.away_team)
     ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
       <h2 data-i18n="playoffAwaitingSeedingTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingTitle)}</h2>
       ${playoffMeta ? `<p class="nl-help" style="font-weight:600">${esc(playoffRoleLabel(playoffMeta, lang))}</p>` : ''}
@@ -8237,7 +8237,7 @@ ${tabbar}`;
       <h2 data-i18n="noMatchupSetTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetTitle)}</h2>
       <p class="nl-help" data-i18n="noMatchupSetDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetDesc)}</p>
     </section>`
-    : (poolCardHtml || teamCards.join(''))}</div>
+    : (ev.is_playoff && playoffMeta ? `<p class="nl-help" style="font-weight:600;grid-column:1/-1">${esc(playoffRoleLabel(playoffMeta, lang))}</p>` : '') + (poolCardHtml || teamCards.join(''))}</div>
   ${unassignedHtml}
 </main>
 ${tabbar}`;

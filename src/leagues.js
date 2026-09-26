@@ -2081,6 +2081,71 @@ export function buildEliminationBracket(numTeams) {
   return rounds;
 }
 
+// Part 5 (stats tracking task): buildEliminationBracket's own `rounds`
+// says WHERE each matchup is (seedA/seedB) but not where its WINNER
+// goes next -- the seeding resolver below needs that to fill in later
+// rounds. Walks the exact same recursive structure a second time,
+// this time tracking each matchup's advancesToRound/
+// advancesToMatchupIndexInRound/advancesToSide ('A' or 'B', i.e.
+// which of the next round's two slots the winner lands in), plus a
+// separate `byes` list for a seed that skips round 1 entirely (advances
+// with no game at all -- buildEliminationBracket's own comment notes
+// byes only ever happen in round 1, since every round after the first
+// has an exact power-of-two participant count). Must never disagree
+// with buildEliminationBracket's own seedA/seedB output for the same
+// numTeams -- locked by a test that diffs the two.
+export function buildBracketAdvancement(numTeams) {
+  let bracketSize = 1;
+  while (bracketSize < numTeams) bracketSize *= 2;
+  let order = [1];
+  while (order.length < bracketSize) {
+    const mirror = order.length * 2 + 1;
+    const next = [];
+    for (const seed of order) next.push(seed, mirror - seed);
+    order = next;
+  }
+
+  const rounds = [];
+  const byes = [];
+  let participants = order;
+  let roundIndex = 0;
+  while (participants.length > 1) {
+    const matchups = [];
+    const nextParticipants = [];
+    let realMatchupCount = 0;
+    for (let i = 0, loopIdx = 0; i < participants.length; i += 2, loopIdx++) {
+      const a = participants[i], b = participants[i + 1];
+      const aReal = a <= numTeams, bReal = b <= numTeams;
+      const advancesToMatchupIndexInRound = Math.floor(loopIdx / 2) + 1;
+      const advancesToSide = loopIdx % 2 === 0 ? 'A' : 'B';
+      if (aReal && bReal) {
+        realMatchupCount++;
+        matchups.push({
+          matchupIndexInRound: realMatchupCount, seedA: a, seedB: b,
+          advancesToRound: roundIndex + 1, advancesToMatchupIndexInRound, advancesToSide
+        });
+        nextParticipants.push(a);
+      } else if (aReal) {
+        byes.push({ seed: a, advancesToRound: roundIndex + 1, advancesToMatchupIndexInRound, advancesToSide });
+        nextParticipants.push(a);
+      } else if (bReal) {
+        byes.push({ seed: b, advancesToRound: roundIndex + 1, advancesToMatchupIndexInRound, advancesToSide });
+        nextParticipants.push(b);
+      }
+    }
+    if (matchups.length) { rounds.push(matchups); roundIndex++; }
+    participants = nextParticipants;
+  }
+  // The final round's own winner is the champion -- nowhere further to
+  // advance to.
+  if (rounds.length) {
+    for (const m of rounds[rounds.length - 1]) {
+      m.advancesToRound = null; m.advancesToMatchupIndexInRound = null; m.advancesToSide = null;
+    }
+  }
+  return { rounds, byes };
+}
+
 // Ordered list of DATE GROUPS of playoff slot descriptors (each group
 // shares one calendar date, same "one date, possibly several games"
 // shape buildRegularSeasonForSlots' own rounds use) -- flattening every
@@ -3738,6 +3803,12 @@ export async function handleLeagueEventScore(req, env) {
       .bind(homeScore, awayScore, enteredAt, eventId, leagueId).run();
   }
 
+  // Part 5: a completed regular season seeds round 1 from final
+  // standings, and a decisive playoff result advances its winner into
+  // the next round -- both fixed-teams only, both no-ops otherwise
+  // (see resolvePlayoffSeeding's own guards).
+  await resolvePlayoffSeeding(env, leagueId, ev.season);
+
   return Response.json({
     ok: true,
     event: { id: eventId, home_team: homeTeam, away_team: awayTeam, home_score: homeScore, away_score: awayScore, result_entered_at: enteredAt, is_playoff: !!ev.is_playoff }
@@ -3974,4 +4045,172 @@ export async function computeGoalieStats(env, leagueId, season) {
     else if (record === 'tie') g.t++;
   }
   return [...byPlayer.values()].map(g => ({ ...g, gaa: g.games ? Math.round((g.goalsAgainst / g.games) * 100) / 100 : null }));
+}
+
+/* ---------- playoff seeding resolver (Part 5, stats tracking task) ----
+ * Placeholders from buildPlayoffPlaceholders (commit fa52ad8) carry
+ * round/matchup-index/seed numbers with home_team/away_team left
+ * null. This fills them in, two triggers, both called from
+ * handleLeagueEventScore right after a successful score write:
+ *   1. The regular season completes (every non-playoff event for the
+ *      season has a result) -> round 1 (and any bye's direct advance)
+ *      seeded from final standings.
+ *   2. A playoff game gets a decisive (non-tied) result -> its winner
+ *      fills the next round's slot it feeds, using
+ *      buildBracketAdvancement's own advancesToRound/
+ *      advancesToMatchupIndexInRound/advancesToSide.
+ * FIXED TEAMS ONLY (same as playoffs generally). No bracket exists for
+ * the 'reserved_slots' format (no seeds were ever assigned to those
+ * placeholders), so this is a no-op there.
+ *
+ * SEEDING TIEBREAK: reuses rankStandings' own chain (points, wins,
+ * goal differential, goals for) -- DECIDED here, flagged for review,
+ * same as rankStandings' own chain already is.
+ *
+ * A TIED regular-season standing has a real tiebreak (the chain
+ * above); a TIED PLAYOFF GAME does not -- there is no points system to
+ * fall back on for a single elimination game, and guessing who
+ * "really" won would be exactly the kind of guess the task says not
+ * to make. A tied playoff score is therefore left exactly as
+ * unresolved as an unplayed one: nobody advances, and the next
+ * round's placeholder stays empty until an admin corrects the score.
+ *
+ * BRACKET-ROUND IDENTIFICATION: an event only stores its role
+ * ('final'/'semifinal'/'quarterfinal'/'bracket') and its
+ * matchup-index WITHIN that role, never an absolute round number. For
+ * up to 8 playoff teams (quarterfinal/semifinal/final) every role is
+ * unique, so this is unambiguous. Past that, buildPlayoffPlaceholders
+ * itself reuses the generic 'bracket' label for more than one early
+ * round -- disambiguated here by chronological order (round 1's own
+ * games are always scheduled earliest; see buildPlayoffPlaceholders'
+ * own comment on generating groups in round order), matching each
+ * role's Nth-earliest date-group to the bracket's Nth round using
+ * that same role. Flagged in the final report as a real, if unlikely,
+ * limitation for very large brackets rather than a fully general
+ * solution.
+ */
+export async function resolvePlayoffSeeding(env, leagueId, season) {
+  const leagueRow = await env.DB.prepare(
+    `SELECT team_structure, playoffs_enabled, playoff_format, playoff_teams
+       FROM leagues WHERE id = ?`
+  ).bind(leagueId).first();
+  if (!leagueRow || (leagueRow.team_structure || 'fixed') !== 'fixed' || !leagueRow.playoffs_enabled) return;
+  if (leagueRow.playoff_format === 'reserved_slots') return;
+  const numTeams = leagueRow.playoff_teams || 0;
+  if (numTeams < 2) return;
+
+  const { rounds, byes } = buildBracketAdvancement(numTeams);
+  if (!rounds.length) return;
+
+  const events = (await env.DB.prepare(
+    `SELECT id, date, home_team, away_team, home_score, away_score, result_entered_at, playoff_meta
+       FROM events WHERE league_id = ? AND season = ? AND is_playoff = 1 ORDER BY date ASC`
+  ).bind(leagueId, season).all()).results || [];
+  if (!events.length) return;
+  const parsed = events.map(ev => {
+    let meta = {};
+    try { meta = JSON.parse(ev.playoff_meta || 'null') || {}; } catch (_) { meta = {}; }
+    return { ...ev, meta };
+  });
+
+  const roleForRound = roundIdx => {
+    const roundsFromFinal = rounds.length - 1 - roundIdx;
+    if (roundsFromFinal === 0) return 'final';
+    if (roundsFromFinal === 1) return 'semifinal';
+    if (roundsFromFinal === 2) return 'quarterfinal';
+    return 'bracket';
+  };
+  const roundIdxsByRole = new Map();
+  rounds.forEach((_, roundIdx) => {
+    const role = roleForRound(roundIdx);
+    if (!roundIdxsByRole.has(role)) roundIdxsByRole.set(role, []);
+    roundIdxsByRole.get(role).push(roundIdx);
+  });
+  const datesByRole = new Map();
+  for (const ev of parsed) {
+    if (!roundIdxsByRole.has(ev.meta.role)) continue; // bye/reserved/third_place -- not part of the seeded bracket
+    if (!datesByRole.has(ev.meta.role)) datesByRole.set(ev.meta.role, new Set());
+    datesByRole.get(ev.meta.role).add(ev.date);
+  }
+  const roundIdxForEvent = new Map();
+  for (const [role, roundIdxs] of roundIdxsByRole) {
+    const dates = [...(datesByRole.get(role) || [])].sort();
+    for (const ev of parsed) {
+      if (ev.meta.role !== role) continue;
+      const pos = dates.indexOf(ev.date);
+      if (pos >= 0 && pos < roundIdxs.length) roundIdxForEvent.set(ev.id, roundIdxs[pos]);
+    }
+  }
+  const eventsByRoundMatchup = new Map();
+  for (const ev of parsed) {
+    const roundIdx = roundIdxForEvent.get(ev.id);
+    if (roundIdx === undefined || !ev.meta.matchupIndexInRound) continue;
+    const key = `${roundIdx}:${ev.meta.matchupIndexInRound}`;
+    if (!eventsByRoundMatchup.has(key)) eventsByRoundMatchup.set(key, []);
+    eventsByRoundMatchup.get(key).push(ev);
+  }
+
+  // 1. Seed round 1 (+ any bye's direct advance) from final standings,
+  // once the regular season is fully played.
+  const regular = await env.DB.prepare(
+    `SELECT COUNT(*) AS total, COUNT(result_entered_at) AS done FROM events
+      WHERE league_id = ? AND season = ? AND is_playoff = 0`
+  ).bind(leagueId, season).first();
+  if (regular.total > 0 && regular.total === regular.done) {
+    const table = await computeStandings(env, leagueId, season);
+    // Every real team gets a seed, even one that somehow finished the
+    // season with zero recorded games (never silently dropped from a
+    // bracket it's entered) -- computeStandings only knows about teams
+    // that appear in a played game row, so any of the league's own
+    // teams missing from it are appended at the bottom, in their
+    // original team-list order, as 0-game entries.
+    const cfg = await getLeagueSeasonConfig(env, leagueId, season);
+    const known = new Set(table.map(s => s.team));
+    for (const team of getTeamNames(cfg)) {
+      if (!known.has(team)) table.push({ team, gp: 0, w: 0, l: 0, t: 0, gf: 0, ga: 0, pts: 0 });
+    }
+    const ranked = rankStandings(table);
+    const seedTeam = seed => (seed && ranked[seed - 1]) ? ranked[seed - 1].team : null;
+
+    for (const m of rounds[0]) {
+      const homeTeam = seedTeam(m.seedA), awayTeam = seedTeam(m.seedB);
+      if (!homeTeam || !awayTeam) continue; // fewer real teams than the bracket expects -- left unresolved
+      for (const ev of (eventsByRoundMatchup.get(`0:${m.matchupIndexInRound}`) || [])) {
+        if (ev.home_team && ev.away_team) continue; // already seeded -- never clobber
+        await env.DB.prepare('UPDATE events SET home_team = ?, away_team = ? WHERE id = ?').bind(homeTeam, awayTeam, ev.id).run();
+      }
+    }
+    for (const bye of byes) {
+      const team = seedTeam(bye.seed);
+      if (!team || bye.advancesToRound == null) continue;
+      const col = bye.advancesToSide === 'A' ? 'home_team' : 'away_team';
+      for (const ev of (eventsByRoundMatchup.get(`${bye.advancesToRound}:${bye.advancesToMatchupIndexInRound}`) || [])) {
+        if (ev[col]) continue;
+        await env.DB.prepare(`UPDATE events SET ${col} = ? WHERE id = ?`).bind(team, ev.id).run();
+      }
+    }
+  }
+
+  // 2. Advance the winner of any played, DECISIVE playoff game into
+  // the next round's slot it feeds.
+  for (const [key, evs] of eventsByRoundMatchup) {
+    const [roundIdxStr, matchupIdxStr] = key.split(':');
+    const roundIdx = Number(roundIdxStr), matchupIdx = Number(matchupIdxStr);
+    const m = (rounds[roundIdx] || []).find(x => x.matchupIndexInRound === matchupIdx);
+    if (!m || m.advancesToRound == null) continue; // final round -- champion, nothing further to fill
+    // A best-of-N series is still just individual game events here (no
+    // real series-win tracking exists yet -- flagged as a known
+    // simplification) -- the LATEST played, decisive game of the
+    // matchup is used as the advancing result.
+    const decided = evs
+      .filter(ev => ev.result_entered_at && ev.home_team && ev.away_team && ev.home_score !== ev.away_score)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+    if (!decided) continue; // no decisive result yet (unplayed or tied) -- left unresolved
+    const winner = decided.home_score > decided.away_score ? decided.home_team : decided.away_team;
+    const col = m.advancesToSide === 'A' ? 'home_team' : 'away_team';
+    for (const ev of (eventsByRoundMatchup.get(`${m.advancesToRound}:${m.advancesToMatchupIndexInRound}`) || [])) {
+      if (ev[col]) continue;
+      await env.DB.prepare(`UPDATE events SET ${col} = ? WHERE id = ?`).bind(winner, ev.id).run();
+    }
+  }
 }

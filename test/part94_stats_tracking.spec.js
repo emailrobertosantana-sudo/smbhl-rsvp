@@ -18,7 +18,7 @@
 // tracking, deliberately not the model for this.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { deriveGoalieRecord, computeStandings, rankStandings, computeTopScorers, computeGoalieStats } from '../src/leagues.js';
+import { deriveGoalieRecord, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, buildBracketAdvancement, buildEliminationBracket } from '../src/leagues.js';
 import { applyRealSchema } from './support/real_schema.js';
 
 const AUTH_SECRET = 'test-part94-stats-tracking-secret';
@@ -114,6 +114,20 @@ async function postPlayerStats(cookie, csrfToken, body) {
 }
 async function publicPageHtml(leagueId) {
   return (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(leagueId)}`)).text();
+}
+async function updatePlayoffs(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/settings/playoffs', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body)
+  });
+  return { status: res.status, json: await res.json() };
+}
+async function fixtureApprove(cookie, csrfToken, body) {
+  const res = await SELF.fetch('http://example.com/league/season/fixture-approve', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify(body)
+  });
+  return { status: res.status, json: await res.json() };
 }
 
 describe('Stats tracking, Part 1: two independent switches', () => {
@@ -702,5 +716,99 @@ describe('Stats tracking, Part 4: standings and leaderboards', () => {
     expect(off).not.toContain('data-i18n="topScorers"');
     const row = await env.DB.prepare('SELECT goals FROM player_game_stats WHERE event_id = ? AND player_id = ?').bind(ev.id, player.player_id).first();
     expect(row.goals).toBe(4); // the stat itself was never deleted, only hidden
+  });
+});
+
+// Part 5: playoff seeding resolver. Placeholders from
+// buildPlayoffPlaceholders (commit fa52ad8) carry round/matchup-index/
+// seed numbers with home_team/away_team left null. resolvePlayoffSeeding
+// (called from handleLeagueEventScore after every score write) fills
+// round 1 from final standings once the regular season completes, and
+// advances a playoff game's winner into the next round the moment
+// it's decided. FIXED TEAMS ONLY. A tied playoff game has no
+// tiebreak -- left exactly as unresolved as an unplayed one, rather
+// than guessed.
+describe('Stats tracking, Part 5: playoff seeding resolver', () => {
+  beforeAll(async () => {
+    env.AUTH_SECRET = AUTH_SECRET;
+    await applyRealSchema(env);
+  });
+
+  it("buildBracketAdvancement's own seedA/seedB never disagrees with buildEliminationBracket's, across a range of team counts", () => {
+    for (const numTeams of [2, 3, 4, 5, 6, 7, 8, 10, 16]) {
+      const expected = buildEliminationBracket(numTeams).map(round => round.map(m => ({ seedA: m.seedA, seedB: m.seedB })));
+      const actual = buildBracketAdvancement(numTeams).rounds.map(round => round.map(m => ({ seedA: m.seedA, seedB: m.seedB })));
+      expect(actual).toEqual(expected);
+    }
+  });
+
+  // Shared setup for the three end-to-end tests below: a 4-team fixed
+  // league, single-elimination (semifinal -> final, no third place, no
+  // bye -- numTeams is even), regular season + playoff placeholders
+  // generated together by the real fixture-generator routes (the same
+  // path an admin uses). Every regular-season game is then scored so
+  // Rouge finishes 1st, Bleu 2nd, Vert 3rd, Jaune 4th -- an
+  // unambiguous ranking, no tiebreak needed for THIS part.
+  async function setUpFourTeamBracket(email, ip) {
+    const { cookie, csrfToken } = await signup(email, ip);
+    const league = await createLeague(cookie, csrfToken, { name: 'Playoff Seeding League', teamNames: ['Rouge', 'Bleu', 'Vert', 'Jaune'], tracksStats: false });
+    await updateTracking(cookie, csrfToken, { tracksResults: true });
+    await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await updatePlayoffs(cookie, csrfToken, { playoffs_enabled: true, playoff_format: 'single_elimination', playoff_teams: 4, playoff_third_place: false });
+    // 6 regular-season games (round robin of 4) + 3 playoff slots (2 semifinals + 1 final).
+    const approve = await fixtureApprove(cookie, csrfToken, { total_slots: 9, start_date: '2099-01-05', interval_days: 7, time: '18:00', venue: 'Main Gym' });
+    expect(approve.status).toBe(200);
+    const regularEvents = approve.json.created.filter(e => !e.is_playoff);
+    const playoffEvents = approve.json.created.filter(e => e.is_playoff);
+    expect(regularEvents.length).toBe(6);
+    expect(playoffEvents.length).toBe(3);
+
+    const rankOrder = ['Rouge', 'Bleu', 'Vert', 'Jaune']; // best to worst
+    for (const ev of regularEvents) {
+      const homeBetter = rankOrder.indexOf(ev.home_team) < rankOrder.indexOf(ev.away_team);
+      await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: homeBetter ? 3 : 1, away_score: homeBetter ? 1 : 3 });
+    }
+
+    const rows = (await env.DB.prepare(
+      `SELECT id, home_team, away_team, playoff_meta FROM events WHERE id IN (${playoffEvents.map(() => '?').join(',')})`
+    ).bind(...playoffEvents.map(e => e.id)).all()).results;
+    const withMeta = rows.map(r => ({ ...r, meta: JSON.parse(r.playoff_meta || 'null') || {} }));
+    const semifinal1 = withMeta.find(r => r.meta.role === 'semifinal' && r.meta.matchupIndexInRound === 1);
+    const semifinal2 = withMeta.find(r => r.meta.role === 'semifinal' && r.meta.matchupIndexInRound === 2);
+    const final = withMeta.find(r => r.meta.role === 'final');
+    return { cookie, csrfToken, league, semifinal1, semifinal2, final };
+  }
+
+  it('the first playoff round is seeded from final standings the moment the regular season completes (seed 1 vs seed 4, seed 2 vs seed 3)', async () => {
+    const { semifinal1, semifinal2 } = await setUpFourTeamBracket('p5.seed1@example.com', '203.0.206.001');
+    const sf1 = await env.DB.prepare('SELECT home_team, away_team FROM events WHERE id = ?').bind(semifinal1.id).first();
+    const sf2 = await env.DB.prepare('SELECT home_team, away_team FROM events WHERE id = ?').bind(semifinal2.id).first();
+    expect(sf1).toEqual({ home_team: 'Rouge', away_team: 'Jaune' }); // seed 1 vs seed 4
+    expect(sf2).toEqual({ home_team: 'Bleu', away_team: 'Vert' }); // seed 2 vs seed 3
+  });
+
+  it("a decisive playoff result advances its winner into the next round's slot -- by the actual score, not seed ranking", async () => {
+    const { cookie, csrfToken, semifinal1, semifinal2, final } = await setUpFourTeamBracket('p5.advance@example.com', '203.0.206.002');
+    // Semifinal 1: the higher seed (Rouge) wins as expected.
+    await submitScore(cookie, csrfToken, { event_id: semifinal1.id, home_score: 5, away_score: 2 });
+    // Semifinal 2: an upset -- Vert (the away/lower seed) wins, proving
+    // the resolver follows the real score, never the seed number.
+    await submitScore(cookie, csrfToken, { event_id: semifinal2.id, home_score: 3, away_score: 4 });
+
+    const finalRow = await env.DB.prepare('SELECT home_team, away_team FROM events WHERE id = ?').bind(final.id).first();
+    expect(finalRow).toEqual({ home_team: 'Rouge', away_team: 'Vert' });
+  });
+
+  it('a tied playoff game has no tiebreak -- it stays unresolved (and says so on the page), while the OTHER, decided semifinal still advances normally', async () => {
+    const { cookie, csrfToken, semifinal1, semifinal2, final } = await setUpFourTeamBracket('p5.tie@example.com', '203.0.206.003');
+    await submitScore(cookie, csrfToken, { event_id: semifinal1.id, home_score: 3, away_score: 3 }); // tied -- no winner to advance
+    await submitScore(cookie, csrfToken, { event_id: semifinal2.id, home_score: 4, away_score: 1 }); // Bleu (home) wins decisively
+
+    const finalRow = await env.DB.prepare('SELECT home_team, away_team FROM events WHERE id = ?').bind(final.id).first();
+    expect(finalRow.home_team).toBeNull(); // semifinal 1's tie left this slot genuinely unresolved
+    expect(finalRow.away_team).toBe('Bleu'); // semifinal 2's real winner still advanced
+
+    const html = await eventDetailHtml(cookie, final.id);
+    expect(html).toContain('data-i18n="playoffAwaitingSeedingTitle"'); // still says so, rather than guessing
   });
 });
