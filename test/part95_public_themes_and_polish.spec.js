@@ -197,7 +197,9 @@ describe('Public-page themes, Part 2: Classique and Quartier', () => {
   // than just checking the page returned 200.
   const THEME_FINGERPRINT = {
     classique: '.nl-header { background: var(--pb-accent',
-    quartier: '.pb-hero:before { content: ""'
+    // (was '.pb-hero:before { content: ""' -- that accent bar was removed in
+    // the public page QA batch, A2; Quartier's pinned page surface is unique.)
+    quartier: '.nl { color-scheme: light; --surface: #f4f4f2;'
   };
 
   it.each(['classique', 'quartier'])('%s: selecting the theme in Settings renders that theme\'s own stylesheet on the public page', async (themeName) => {

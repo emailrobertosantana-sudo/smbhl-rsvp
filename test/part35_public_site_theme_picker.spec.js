@@ -78,7 +78,7 @@ describe('Part 2 (live-testing task): public site theme picker', () => {
     expect((await res.json()).settings.publicTheme).toBe('clean');
 
     const html = await (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.id)}`)).text();
-    expect(html).toContain('.nl { background: #ffffff; color: #1a1a1a;');
+    expect(html).toContain('background: #ffffff; color: #1a1a1a; min-height: 100dvh;');
     expect(html).toContain('font-family: Inter, var(--font-sans)');
     expect(html).not.toContain('background: var(--surface-hero, #16181d)');
   });

@@ -3204,7 +3204,7 @@ window.addEventListener('admin_lang_changed', function(e) {
 //   preset. Computed with the same relative-luminance formula
 //   leagueFillColor() itself uses (WCAG 2.x); a real browser render
 //   was also checked -- see this task's own final report.
-const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d); color: var(--ink-inverse, #f4f4f2); min-height: 100dvh; display: flex; flex-direction: column; }
+const PUBLIC_THEME_ARENE_CSS = `  .nl { color-scheme: dark; --surface: #16181d; --surface-sunken: #1c1f25; --surface-raised: #1c1f25; --ink: #f4f4f2; --ink-muted: #a3a6ad; --line: #2a2e36; --line-strong: #6f737c; --primary: #f2f2ef; --on-primary: #16181d; --primary-tint: #262a31; background: var(--surface-hero, #16181d); color: var(--ink-inverse, #f4f4f2); min-height: 100dvh; display: flex; flex-direction: column; }
   .pb-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .pb-hero { margin: var(--space-4) 0; padding: var(--space-5); background: var(--primary); border-radius: var(--radius-lg); }
   .pb-hero-when { font: 800 28px/32px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #fff; margin-top: 6px; }
@@ -3297,9 +3297,9 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
      token, matching this file's own header comment on avoiding the
      a236130 contrast-bug class. */
   .pb-nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); padding: var(--space-3) 0; border-bottom: 1px solid #2a2e36; margin-bottom: var(--space-2); }
-  .pb-nav-link { font: 600 13px/20px var(--font-sans); color: #a3a6ad; text-decoration: none; padding: 4px 2px; border-bottom: 2px solid transparent; }
-  .pb-nav-link:hover { color: #f4f4f2; }
-  .pb-nav-link[aria-current="page"] { color: #f4f4f2; border-bottom-color: #f4f4f2; }
+  .nl .pb-nav-link { font: 600 13px/20px var(--font-sans); color: #a3a6ad; text-decoration: none; padding: 4px 2px; border-bottom: 2px solid transparent; }
+  .nl .pb-nav-link:hover { color: #f4f4f2; }
+  .nl .pb-nav-link[aria-current="page"] { color: #f4f4f2; border-bottom-color: #f4f4f2; }
   .pb-season-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); background: #1c1f25; border: 1px solid #2a2e36; border-radius: var(--radius-md); padding: 10px var(--space-4); margin-bottom: var(--space-2); font-size: 14px; color: #f4f4f2; }
   .pb-season-banner a { color: #a3a6ad; font-weight: 600; }
   .pb-season-banner a:hover { color: #f4f4f2; }
@@ -3313,7 +3313,7 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
   .pb-lead-rank { font: 700 13px/18px var(--font-sans); color: #a3a6ad; width: 16px; }
   .pb-lead-name { flex: 1; font: 600 15px/20px var(--font-sans); }
   .pb-lead-val { font: 800 16px/20px var(--font-display); font-stretch: 118%; }
-  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-3); } .pb-nav-link { font-size: 12px; } }`;
+  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-3); } .nl .pb-nav-link { font-size: 12px; } }`;
 
 // "Épuré" per the guideline: white bg #ffffff, text #1a1a1a, muted
 // #666666, Inter only, a single 24x4px bar as the only signature
@@ -3321,14 +3321,22 @@ const PUBLIC_THEME_ARENE_CSS = `  .nl { background: var(--surface-hero, #16181d)
 // tiles become plain bordered cards with a dot, not a filled block).
 // Reuses the exact same class names/HTML as Arène -- only this block
 // differs.
-const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min-height: 100dvh; display: flex; flex-direction: column; font-family: Inter, var(--font-sans); }
+const PUBLIC_THEME_CLEAN_CSS = `  .nl { color-scheme: light; --surface: #ffffff; --surface-sunken: #f4f4f2; --surface-raised: #ffffff; --ink: #1a1a1a; --ink-muted: #666666; --line: #eeeeee; --line-strong: #8a8d94; --primary: #16181d; --on-primary: #ffffff; --primary-tint: #eeeeeb; background: #ffffff; color: #1a1a1a; min-height: 100dvh; display: flex; flex-direction: column; font-family: Inter, var(--font-sans); }
   .pb-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
-  .pb-hero { margin: 40px 0 16px; padding: 0; background: none; border-radius: 0; position: relative; }
-  .pb-hero:before { content: ""; display: block; width: 24px; height: 4px; background: var(--primary, #b3122e); margin-bottom: 20px; }
-  .pb-hero-when { font: 600 30px/36px Inter, var(--font-sans); letter-spacing: -.02em; color: #1a1a1a; margin-top: 0; }
-  .pb-hero-venue { font-size: 15px; color: #666666; margin-top: 10px; }
-  .pb-hero-pool { font: 500 15px/20px Inter, var(--font-sans); color: #666666; margin-top: 10px; }
-  .pb-hero-pool .tnum { font: 700 20px/24px Inter, var(--font-sans); color: #1a1a1a; }
+  /* Rendered-contrast fix (public page QA batch, A2/A3): heroHtml
+     always paints this card with the league's own colour via an INLINE
+     style (fillColor), which beats any theme rule -- so Épuré's
+     intended "no fill" hero never actually rendered: the page showed
+     #1a1a1a/#666666 text on the red fill (1.06:1 measured on the venue
+     line) with padding 0 (text touching the card edge) and the 24x4
+     :before bar sitting on the card's top-left corner. Now the same
+     filled card Arène/Classique render, with solid white text -- the
+     one foreground leagueFillColor() guarantees >=4.5:1 against. */
+  .pb-hero { margin: 40px 0 16px; padding: var(--space-5); border-radius: 8px; }
+  .pb-hero-when { font: 600 30px/36px Inter, var(--font-sans); letter-spacing: -.02em; color: #fff; margin-top: 6px; }
+  .pb-hero-venue { font-size: 15px; color: #fff; margin-top: 10px; }
+  .pb-hero-pool { font: 500 15px/20px Inter, var(--font-sans); color: #fff; margin-top: 10px; }
+  .pb-hero-pool .tnum { font: 700 20px/24px Inter, var(--font-sans); color: #fff; }
   .pb-main h2 { font: 600 13px/16px Inter, var(--font-sans); letter-spacing: 0; text-transform: none; color: #666666; margin: 32px 0 8px; padding-top: 0; }
   .pb-table { width: 100%; border-collapse: collapse; font-size: 15px; }
   .pb-table th { font: 500 12px/16px Inter, var(--font-sans); color: #666666; border-bottom: 1px solid #eeeeee; padding: 8px 6px; text-align: center; }
@@ -3372,14 +3380,14 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
   .pb-note .overline { color: #666666; }
   .pb-note p { margin: 8px 0 0; font-size: 15px; line-height: 22px; color: #1a1a1a; }
   .pb-nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); padding: var(--space-3) 0; border-bottom: 1px solid #eeeeee; margin-bottom: var(--space-2); }
-  .pb-nav-link { font: 600 13px/20px Inter, var(--font-sans); color: #666666; text-decoration: none; padding: 4px 2px; border-bottom: 2px solid transparent; }
-  .pb-nav-link:hover { color: #1a1a1a; }
-  .pb-nav-link[aria-current="page"] { color: #1a1a1a; border-bottom-color: #1a1a1a; }
+  .nl .pb-nav-link { font: 600 13px/20px Inter, var(--font-sans); color: #666666; text-decoration: none; padding: 4px 2px; border-bottom: 2px solid transparent; }
+  .nl .pb-nav-link:hover { color: #1a1a1a; }
+  .nl .pb-nav-link[aria-current="page"] { color: #1a1a1a; border-bottom-color: #1a1a1a; }
   .pb-season-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); border: 1px solid #eeeeee; border-radius: 8px; padding: 10px var(--space-4); margin-bottom: var(--space-2); font-size: 14px; color: #1a1a1a; }
   .pb-season-banner a { color: #666666; font-weight: 600; }
   .pb-season-banner a:hover { color: #1a1a1a; }
   .pb-empty { font-size: 15px; font-style: italic; color: #666666; padding: var(--space-3) 0; }
-  .pb-hero-matchup { font: 600 18px/24px Inter, var(--font-sans); color: #1a1a1a; margin-top: 6px; }
+  .pb-hero-matchup { font: 600 18px/24px Inter, var(--font-sans); color: #fff; margin-top: 6px; }
   .pb-g-matchup { font-weight: 600; font-size: 15px; }
   a.pb-g.pb-g-link { text-decoration: none; color: inherit; }
   .pb-leaders { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
@@ -3388,7 +3396,7 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
   .pb-lead-rank { font: 600 13px/18px Inter, var(--font-sans); color: #666666; width: 16px; }
   .pb-lead-name { flex: 1; font: 500 15px/20px Inter, var(--font-sans); }
   .pb-lead-val { font-weight: 700; font-size: 16px; }
-  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-3); } .pb-nav-link { font-size: 12px; } }`;
+  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-3); } .nl .pb-nav-link { font-size: 12px; } }`;
 
 // "Classique" per the guideline: a bold, light team-site look -- a
 // colour-blocked header/hero in the LEAGUE'S OWN colour (var(
@@ -3402,7 +3410,7 @@ const PUBLIC_THEME_CLEAN_CSS = `  .nl { background: #ffffff; color: #1a1a1a; min
 // per the task's explicit constraint, not the reference mockup's
 // Barlow Condensed). Reuses the exact same class names/HTML as the
 // other three themes -- only this block differs.
-const PUBLIC_THEME_CLASSIQUE_CSS = `  .nl { background: #ffffff; color: #111318; min-height: 100dvh; display: flex; flex-direction: column; }
+const PUBLIC_THEME_CLASSIQUE_CSS = `  .nl { color-scheme: light; --surface: #ffffff; --surface-sunken: #f4f4f2; --surface-raised: #ffffff; --ink: #111318; --ink-muted: #55585f; --line: #e3e3e0; --line-strong: #8a8d94; --primary: #16181d; --on-primary: #ffffff; --primary-tint: #eeeeeb; background: #ffffff; color: #111318; min-height: 100dvh; display: flex; flex-direction: column; }
   .pb-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .nl-header { background: var(--pb-accent, #16181d); border-bottom: none; }
   .nl-header .nl-brand { color: #fff; }
@@ -3443,9 +3451,9 @@ const PUBLIC_THEME_CLASSIQUE_CSS = `  .nl { background: #ffffff; color: #111318;
   .nl .pb-g-venue a { color: #55585f; }
   .nl .pb-g-venue a:hover { color: #111318; }
   .pb-nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); padding: var(--space-3) 0; border-bottom: 2px solid #111318; margin-bottom: var(--space-2); }
-  .pb-nav-link { font: 700 13px/20px var(--font-sans); text-transform: uppercase; letter-spacing: .02em; color: #55585f; text-decoration: none; padding: 4px 2px; border-bottom: 3px solid transparent; }
-  .pb-nav-link:hover { color: #111318; }
-  .pb-nav-link[aria-current="page"] { color: #111318; border-bottom-color: var(--pb-accent, #16181d); }
+  .nl .pb-nav-link { font: 700 13px/20px var(--font-sans); text-transform: uppercase; letter-spacing: .02em; color: #55585f; text-decoration: none; padding: 4px 2px; border-bottom: 3px solid transparent; }
+  .nl .pb-nav-link:hover { color: #111318; }
+  .nl .pb-nav-link[aria-current="page"] { color: #111318; border-bottom-color: var(--pb-accent, #16181d); }
   .pb-season-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); background: #f4f4f2; border: 2px solid #111318; border-radius: var(--radius-md); padding: 10px var(--space-4); margin-bottom: var(--space-2); font-size: 14px; color: #111318; }
   /* Contrast: NOT var(--pb-accent) here on purpose -- this banner's
      own background is #f4f4f2, not solid white, and leagueFillColor()
@@ -3467,7 +3475,7 @@ const PUBLIC_THEME_CLASSIQUE_CSS = `  .nl { background: #ffffff; color: #111318;
   .pb-lead-rank { font: 800 13px/18px var(--font-display); font-stretch: 118%; color: var(--pb-accent, #16181d); width: 18px; }
   .pb-lead-name { flex: 1; font: 600 15px/20px var(--font-sans); }
   .pb-lead-val { font: 800 16px/20px var(--font-display); font-stretch: 118%; }
-  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-3); } .pb-nav-link { font-size: 11px; } }`;
+  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-3); } .nl .pb-nav-link { font-size: 11px; } }`;
 
 // "Quartier" per the guideline: warm, friendly, recreational-league
 // feel -- expressed through STRUCTURE (a prominent bordered card for
@@ -3483,18 +3491,25 @@ const PUBLIC_THEME_CLASSIQUE_CSS = `  .nl { background: #ffffff; color: #111318;
 // --ink-inverse token, already used elsewhere as a soft neutral) is
 // used as a fixed, warm-adjacent background instead of inventing a
 // new hex -- "same palette," not a new one, per the task's own words.
-const PUBLIC_THEME_QUARTIER_CSS = `  .nl { background: #f4f4f2; color: #16181d; min-height: 100dvh; display: flex; flex-direction: column; }
+const PUBLIC_THEME_QUARTIER_CSS = `  .nl { color-scheme: light; --surface: #f4f4f2; --surface-sunken: #ffffff; --surface-raised: #ffffff; --ink: #16181d; --ink-muted: #55585f; --line: #e3e3e0; --line-strong: #8a8d94; --primary: #16181d; --on-primary: #ffffff; --primary-tint: #eeeeeb; background: #f4f4f2; color: #16181d; min-height: 100dvh; display: flex; flex-direction: column; }
   .pb-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: 0 var(--space-4) var(--space-6); display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .nl-header { background: #f4f4f2; border-bottom: 1px solid #e3e3e0; }
   .nl-lang { border: 1px solid #d0d0d0; background: #ffffff; }
   .nl-lang button { color: #55585f; }
   .nl-lang button[aria-pressed="true"] { background: #16181d; color: #fff; }
-  .pb-hero { margin: 32px 0 16px; padding: var(--space-5); background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); }
-  .pb-hero:before { content: ""; display: block; width: 28px; height: 4px; background: var(--pb-accent, #16181d); border-radius: 2px; margin-bottom: 16px; }
-  .pb-hero-when { font: 700 26px/30px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #16181d; margin-top: 0; }
-  .pb-hero-venue { font-size: 14px; color: #55585f; margin-top: 8px; }
-  .pb-hero-pool { font: 600 15px/20px var(--font-sans); color: #55585f; margin-top: 10px; }
-  .pb-hero-pool .tnum { font: 800 20px/24px var(--font-display); font-stretch: 118%; color: #16181d; }
+  /* Rendered-contrast fix (public page QA batch, A2): same cause as
+     Épuré's -- heroHtml's inline league-colour background always wins
+     over this theme's #ffffff card, so #16181d/#55585f text actually
+     rendered on the league's red (1.31:1 measured on the venue line).
+     Consistent with the other three themes now: the filled card with
+     solid white text. The :before accent bar is dropped -- it was the
+     same league colour as the card itself, so it only ever rendered as
+     an invisible 28x4 gap. */
+  .pb-hero { margin: 32px 0 16px; padding: var(--space-5); border-radius: var(--radius-lg); }
+  .pb-hero-when { font: 700 26px/30px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; color: #fff; margin-top: 6px; }
+  .pb-hero-venue { font-size: 14px; color: #fff; margin-top: 8px; }
+  .pb-hero-pool { font: 600 15px/20px var(--font-sans); color: #fff; margin-top: 10px; }
+  .pb-hero-pool .tnum { font: 800 20px/24px var(--font-display); font-stretch: 118%; color: #fff; }
   .pb-note { margin: var(--space-4) 0; padding: var(--space-5); background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); }
   .pb-note .overline { color: var(--pb-accent, #16181d); }
   .pb-note p { margin: 10px 0 0; font-size: 16px; line-height: 24px; color: #16181d; }
@@ -3524,14 +3539,14 @@ const PUBLIC_THEME_QUARTIER_CSS = `  .nl { background: #f4f4f2; color: #16181d; 
   .nl .pb-g-venue a { color: #55585f; }
   .nl .pb-g-venue a:hover { color: #16181d; }
   .pb-nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); padding: var(--space-3) 0; border-bottom: 1px solid #e3e3e0; margin-bottom: var(--space-2); }
-  .pb-nav-link { font: 600 13px/20px var(--font-sans); color: #55585f; text-decoration: none; padding: 4px 10px; border-radius: 999px; }
-  .pb-nav-link:hover { color: #16181d; background: #ffffff; }
-  .pb-nav-link[aria-current="page"] { color: #16181d; background: #ffffff; border: 1px solid #e3e3e0; }
+  .nl .pb-nav-link { font: 600 13px/20px var(--font-sans); color: #55585f; text-decoration: none; padding: 4px 10px; border-radius: 999px; border: 1px solid transparent; }
+  .nl .pb-nav-link:hover { color: #16181d; background: #ffffff; }
+  .nl .pb-nav-link[aria-current="page"] { color: #16181d; background: #ffffff; border-color: #e3e3e0; }
   .pb-season-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); padding: 10px var(--space-4); margin-bottom: var(--space-2); font-size: 14px; color: #16181d; }
   .pb-season-banner a { color: var(--pb-accent, #16181d); font-weight: 700; }
   .pb-season-banner a:hover { text-decoration: underline; }
   .pb-empty { font-size: 15px; font-style: italic; color: #55585f; padding: var(--space-3) 0; background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); padding: var(--space-4); }
-  .pb-hero-matchup { font: 700 17px/22px var(--font-display); font-stretch: 118%; color: #16181d; margin-top: 6px; }
+  .pb-hero-matchup { font: 700 17px/22px var(--font-display); font-stretch: 118%; color: #fff; margin-top: 6px; }
   .pb-g-matchup { font: 700 15px/20px var(--font-display); font-stretch: 118%; color: #16181d; }
   a.pb-g.pb-g-link { text-decoration: none; color: inherit; }
   .pb-leaders { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
@@ -3540,7 +3555,7 @@ const PUBLIC_THEME_QUARTIER_CSS = `  .nl { background: #f4f4f2; color: #16181d; 
   .pb-lead-rank { font: 700 13px/18px var(--font-sans); color: #55585f; width: 16px; }
   .pb-lead-name { flex: 1; font: 600 15px/20px var(--font-sans); }
   .pb-lead-val { font: 800 16px/20px var(--font-display); font-stretch: 118%; color: #16181d; }
-  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-2); } .pb-nav-link { font-size: 12px; padding: 4px 8px; } }`;
+  @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-2); } .nl .pb-nav-link { font-size: 12px; padding: 4px 8px; } }`;
 
 // Live-testing task (batch 2), Part 10: shared response for BOTH "this
 // league id/slug doesn't exist at all" and "this league exists but its
