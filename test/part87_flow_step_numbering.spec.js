@@ -184,6 +184,8 @@ describe('B1: one continuous "STEP n OF m" count, signup through onboarding', ()
     expect(step3).toContain("prog.setAttribute('aria-valuemax', '6')");
     expect(step3).toContain("while (prog.children.length > 6) prog.removeChild(prog.lastElementChild)");
     expect(step3).toContain('function applyHeadcountStepLabel()');
-    expect(step3).toContain("window.__onLangApplied = function() { renderTeams(); applyHeadcountStepLabel(); }");
+    // Onboarding polish task (B1): renderTeams() (the per-team name
+    // input renderer) was removed along with the name-input UI itself.
+    expect(step3).toContain('window.__onLangApplied = function() { applyHeadcountStepLabel(); }');
   });
 });

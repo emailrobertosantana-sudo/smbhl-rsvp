@@ -114,21 +114,13 @@ describe('Bug 3: blank team-name fields fall back to their own placeholder, matc
     await applyRealSchema(env);
   });
 
-  it("step 3's client script falls back to the placeholder text instead of dropping blank fields", async () => {
-    // Signup/recovery task (A2): step 2/3 now redirect to real
-    // onboarding for a session that already has a league (back
-    // navigation after a completed signup must not re-offer the
-    // pre-league wizard) -- this test is checking step 3's own
-    // rendered FORM, so it needs a session mid-wizard, before any
-    // league exists yet, not signupAndCreateLeague's already-created one.
+  it("step 3 no longer has per-team NAME fields to leave blank at all -- superseded by the onboarding polish task (B1): team names are asked once, at onboarding's own \"Confirm your team names\" step, not here. Placeholder names (\"Équipe 1\"..\"Équipe N\") are generated directly from the chosen COUNT, so team count sent always equals teamCount (2-16), never below the server's 2-name minimum", async () => {
     const signupRes = await signup('bug3.blank@example.com', '203.0.113.904');
     const cookie = extractCookie(signupRes);
     const res = await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie } });
     const html = await res.text();
-    // The fixed fallback -- a blank field's own placeholder becomes the
-    // real submitted name -- not the old .filter(Boolean) that silently
-    // dropped blank rows below the server's 2-name minimum.
-    expect(html).toContain('v || (dict.teamPlaceholder + (idx + 1))');
+    expect(html).not.toContain('id="su_teams"');
+    expect(html).toContain('for (var ti = 0; ti < teamCount; ti++)');
     expect(html).not.toContain(".filter(Boolean)");
   });
 

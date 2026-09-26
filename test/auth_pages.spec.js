@@ -63,7 +63,9 @@ describe('Frontend pages: /signup, /login, /dashboard', () => {
       expect(step3Res.status).toBe(200);
       const step3Html = await step3Res.text();
       expect(step3Html).toContain('id="su_team_count_out"');
-      expect(step3Html).toContain('id="su_teams"');
+      // Onboarding polish task (B1): team NAMES are no longer asked
+      // here (see su_teams_section's own comment) -- only the count.
+      expect(step3Html).not.toContain('id="su_teams"');
     });
 
     it('GET /signup?step=2 without a session redirects back to step 1, not a broken form', async () => {

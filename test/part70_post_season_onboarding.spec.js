@@ -362,11 +362,17 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
 
     const before = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
     expect(before).toContain('data-i18n="nextStepsTitle"');
+    // B3 (onboarding polish task): "Create the schedule" folded into
+    // this SAME checklist -- no events exist yet either, so its own item
+    // shows here too, alongside the original three.
+    expect(before).toContain('data-i18n="nsCreateSchedule"');
     expect(before).toContain('data-i18n="nsAddPlayers"');
     expect(before).toContain('data-i18n="nsNameTeams"');
     expect(before).toContain('data-i18n="nsRosterLimits"');
 
-    // Address all three: add a player, rename teams, set roster limits.
+    // Address all four: create the schedule, add a player, rename
+    // teams, set roster limits.
+    await post(cookie, csrfToken, '/league/events', { date: '2099-01-05', season: 'S1' });
     await post(cookie, csrfToken, '/league/contacts', { name: 'Real Player One', role: 'roster' });
     await post(cookie, csrfToken, '/league/settings/teams', { teamNames: ['Nord', 'Sud'], teamColors: ['#b3122e', '#b3122e'] });
     await post(cookie, csrfToken, '/league/settings/structure', { min_players: 8, max_players: 16 });
@@ -375,10 +381,11 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(after).not.toContain('data-i18n="nextStepsTitle"');
   });
 
-  it('a fixed league that already has real team names and roster limits never shows the next-steps card at all', async () => {
+  it('a fixed league that already has a schedule, real team names, roster limits, and a player never shows the next-steps card at all', async () => {
     const { cookie, csrfToken } = await signup('ob.nonextsteps@example.com', '203.0.185.012');
     await createLeague(cookie, csrfToken, { name: 'Complete League', teamNames: ['Nord', 'Sud'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await post(cookie, csrfToken, '/league/events', { date: '2099-01-05', season: 'S1' });
     await post(cookie, csrfToken, '/league/settings/structure', { min_players: 8, max_players: 16 });
     await post(cookie, csrfToken, '/league/contacts', { name: 'Real Player One', role: 'roster' });
 

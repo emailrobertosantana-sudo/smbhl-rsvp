@@ -690,7 +690,8 @@ const I18N_SIGNUP = {
     back: 'Retour',
     step3: 'Étape 3 sur 8', title3: "Combien d'équipes?",
     teamCountGroupAria: "Nombre d'équipes", decreaseTeamsAria: 'Moins', increaseTeamsAria: 'Plus',
-    teamNamesLabel: 'Noms des équipes', teamPlaceholder: 'Équipe ', teamHelp: 'Pas encore décidé? Garde « Équipe 1, 2… ».',
+    teamPlaceholder: 'Équipe ',
+    teamCountHelp: 'Tu nommeras tes équipes pendant la configuration de ta ligue.',
     title3Headcount: 'Combien de joueurs?',
     // B1 (stale-copy polish task): "total" to match onboarding/settings.
     lblMinPlayers: 'Minimum total de joueurs', lblMaxPlayers: 'Maximum total de joueurs',
@@ -733,7 +734,8 @@ const I18N_SIGNUP = {
     back: 'Back',
     step3: 'Step 3 of 8', title3: 'How many teams?',
     teamCountGroupAria: 'Number of teams', decreaseTeamsAria: 'Decrease', increaseTeamsAria: 'Increase',
-    teamNamesLabel: 'Team names', teamPlaceholder: 'Team ', teamHelp: 'Not decided yet? Keep "Team 1, 2...".',
+    teamPlaceholder: 'Team ',
+    teamCountHelp: "You'll name your teams while setting up your league.",
     title3Headcount: 'How many players?',
     lblMinPlayers: 'Minimum total players', lblMaxPlayers: 'Maximum total players',
     minMaxHelp: 'Subs are invited automatically when you drop below the minimum.',
@@ -1190,11 +1192,14 @@ function renderSignupStep3(langParam) {
       <output id="su_team_count_out">4</output>
       <button type="button" data-i18n-aria="increaseTeamsAria" aria-label="${esc(i18nStep3.increaseTeamsAria)}" onclick="changeCount(1)">+</button>
     </div>
-    <div class="nl-field">
-      <span class="nl-label" data-i18n="teamNamesLabel">Noms des équipes</span>
-      <div class="su-teams" id="su_teams"></div>
-      <p class="nl-help" data-i18n="teamHelp">Pas encore décidé? Garde « Équipe 1, 2… ».</p>
-    </div>
+    <!-- Onboarding polish task (B1): team NAMES used to be asked here
+         too (an input row per team) -- the exact same question
+         onboarding's own "teams" step asks again a few screens later
+         ("Confirme les noms des équipes"). DECIDED: keep that
+         confirmation screen, remove this one -- this step only ever
+         needs the COUNT (placeholder names, "Équipe 1".."Équipe N",
+         are generated at submit time; see submitStep3). -->
+    <p class="nl-help" data-i18n="teamCountHelp">${esc(i18nStep3.teamCountHelp)}</p>
   </div>
   <div id="su_headcount_section" style="display:none">
     <div class="su-two">
@@ -1255,29 +1260,11 @@ function applyHeadcountStepLabel() {
 }
 applyHeadcountStepLabel();
 var teamCount = 4;
-function teamsEl() { return document.getElementById('su_teams'); }
-function renderTeams() {
-  var container = teamsEl();
-  var existing = Array.prototype.map.call(container.querySelectorAll('input'), function(i) { return i.value; });
-  container.innerHTML = '';
-  var dict = window.__pageDict();
-  for (var i = 0; i < teamCount; i++) {
-    var row = document.createElement('div'); row.className = 'su-team-in';
-    var n = document.createElement('span'); n.className = 'n'; n.textContent = String(i + 1);
-    var input = document.createElement('input'); input.className = 'nl-input';
-    input.placeholder = dict.teamPlaceholder + (i + 1);
-    input.value = existing[i] || '';
-    row.appendChild(n); row.appendChild(input);
-    container.appendChild(row);
-  }
-}
 function changeCount(delta) {
   teamCount = Math.max(2, Math.min(16, teamCount + delta));
   document.getElementById('su_team_count_out').textContent = String(teamCount);
-  renderTeams();
 }
-window.__onLangApplied = function() { renderTeams(); applyHeadcountStepLabel(); };
-renderTeams();
+window.__onLangApplied = function() { applyHeadcountStepLabel(); };
 function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 function clearError() { document.getElementById('formErr').style.display = 'none'; }
 async function submitStep3() {
@@ -1295,19 +1282,15 @@ async function submitStep3() {
     var minGoalies = minGoaliesEl ? Number(minGoaliesEl.value) : 0;
     if (minGoalies > 0) { payload.minGoalies = minGoalies; }
   } else {
-    // Bug fix (live testing): the field's own placeholder ("Équipe 1")
-    // and helper text ("Pas encore décidé? Garde « Équipe 1, 2… ».")
-    // both promise a blank field is fine -- and the real design spec
-    // (ScreenSignup's own design-rules aside) says so explicitly: "Les
-    // noms sont optionnels. Rien ne bloque la création." A blank field
-    // now falls back to its own placeholder text as the real submitted
-    // name, so team count sent always equals teamCount (2-16), never
-    // silently dropped below the server's 2-name minimum.
+    // Onboarding polish task (B1): this step only ever asks for the
+    // COUNT now (see su_teams_section's own comment) -- real names are
+    // asked once, at onboarding's own "Confirm your team names" step.
+    // Placeholder names ("Équipe 1".."Équipe N") generated here so team
+    // count sent always equals teamCount (2-16), never below the
+    // server's 2-name minimum.
     var dict = window.__pageDict();
-    payload.teamNames = Array.prototype.map.call(teamsEl().querySelectorAll('input'), function(i, idx) {
-      var v = i.value.trim();
-      return v || (dict.teamPlaceholder + (idx + 1));
-    });
+    payload.teamNames = [];
+    for (var ti = 0; ti < teamCount; ti++) { payload.teamNames.push(dict.teamPlaceholder + (ti + 1)); }
   }
   var btn = document.getElementById('su_submit');
   btn.disabled = true;
@@ -1697,7 +1680,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // real state (no players yet, team names still the generic
       // default, roster limits never set), not a one-time flag, so it
       // naturally disappears once each is genuinely addressed.
-      nextStepsTitle: 'Prochaines étapes', nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif"
+      nextStepsTitle: 'Prochaines étapes', nsCreateSchedule: "Créer l'horaire", nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif"
       // Live-testing task (batch 5), Part 7: coAdmins/invite*/
       // deactivate*/hardDelete* used to live here too -- moved to
       // I18N_SETTINGS alongside the sections that use them (see
@@ -1716,7 +1699,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsPerGameCount: 'team names available',
       noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
-      nextStepsTitle: 'Next steps', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size'
+      nextStepsTitle: 'Next steps', nsCreateSchedule: 'Create the schedule', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size'
     });
     if (needsSeason) {
       Object.assign(fr, {
@@ -1766,15 +1749,17 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // (eventWeekStatus) -- only ever rendered once a season exists
       // (weekStatusHtml itself is '' under needsSeason), so scoped here
       // exactly like currentSeasonLabel/editSeason just above.
+      // B3: weekStatusNoEvent/weekStatusCreateBtn removed -- this card
+      // no longer has a "no event yet" state at all (see weekStatusHtml's
+      // own comment); that prompt now lives in the unified next-steps
+      // checklist as nsCreateSchedule instead.
       Object.assign(fr, {
-        weekStatusTitle: 'Cette semaine', weekStatusNoEvent: 'Aucun match à venir pour le moment.',
-        weekStatusCreateBtn: "Créer l'horaire", weekStatusDetailBtn: 'Voir le match',
+        weekStatusTitle: 'Cette semaine', weekStatusDetailBtn: 'Voir le match',
         weekStatusConfirmed: 'confirmés', weekStatusOut: 'absents', weekStatusNoResponse: 'sans réponse',
         weekStatusShort: 'Manque de joueurs'
       });
       Object.assign(en, {
-        weekStatusTitle: 'This week', weekStatusNoEvent: 'No upcoming game for now.',
-        weekStatusCreateBtn: 'Create the schedule', weekStatusDetailBtn: 'View the game',
+        weekStatusTitle: 'This week', weekStatusDetailBtn: 'View the game',
         weekStatusConfirmed: 'confirmed', weekStatusOut: 'out', weekStatusNoResponse: 'no reply',
         weekStatusShort: 'Short players'
       });
@@ -2047,7 +2032,19 @@ async function handleDashboardPage(req, env, url) {
     // on that SAME nearest date (not just the first one found) and
     // renders one row per event, each with its own real counts.
     let nextDateEvents = [];
+    // Onboarding polish task (B3): "has this season's schedule been
+    // started at all" -- ANY non-cancelled event, not just an upcoming
+    // one (a season could be entirely in the past with a real schedule
+    // behind it; that's a finished schedule, not a missing one).
+    // Reused below to fold "Create the schedule" into the ONE next-
+    // steps checklist instead of a separate card of its own.
+    let hasAnyEvents = false;
     if (!needsSeason) {
+      const anyEventRow = await env.DB.prepare(
+        `SELECT id FROM events WHERE league_id = ? AND season = ? AND state != 'cancelled' LIMIT 1`
+      ).bind(leagueRow.id, currentSeason).first();
+      hasAnyEvents = !!anyEventRow;
+
       const today = new Date().toISOString().slice(0, 10);
       const nextOne = await env.DB.prepare(
         `SELECT date FROM events WHERE league_id = ? AND state != 'cancelled' AND date >= ? ORDER BY date ASC LIMIT 1`
@@ -2064,12 +2061,18 @@ async function handleDashboardPage(req, env, url) {
         }
       }
     }
-    const weekStatusHtml = needsSeason ? '' : `
+    // Onboarding polish task (B3): "Create the schedule" used to live
+    // here as its own always-shown card the moment a season existed
+    // but had no upcoming event -- sitting right above the SEPARATE
+    // "Prochaines étapes" card below, both saying "next step," neither
+    // saying how they relate. This card now only ever shows real
+    // upcoming-game status; with no events at all yet, it renders
+    // nothing (the unified next-steps checklist carries that
+    // "create the schedule" prompt instead -- see nextStepsItems).
+    const weekStatusHtml = (needsSeason || !nextDateEvents.length) ? '' : `
     <section class="nl-card nl-card--pad-lg">
       <div class="h3" data-i18n="weekStatusTitle">Cette semaine</div>
-      ${!nextDateEvents.length ? `
-      <p class="nl-help" style="margin-top:4px" data-i18n="weekStatusNoEvent">Aucun match à venir pour le moment.</p>
-      <div style="margin-top:6px"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/schedule" data-i18n="weekStatusCreateBtn">Créer l'horaire</a></div>` : nextDateEvents.map(({ event: nextEvent, status: weekStatus }) => `
+      ${nextDateEvents.map(({ event: nextEvent, status: weekStatus }) => `
       <div class="dash-week-when">${dateTimeSpanHtml('span', nextEvent.date, nextEvent.start_time, 'short')}${nextEvent.venue ? `<span class="dash-week-venue">${esc(nextEvent.venue)}</span>` : ''}</div>
       <div class="dash-week-counts">
         <span class="nl-badge nl-badge--in">${weekStatus.confirmed} <span data-i18n="weekStatusConfirmed">confirmés</span></span>
@@ -2156,6 +2159,10 @@ async function handleDashboardPage(req, env, url) {
     // defaultTeamNamePattern/stillDefaultTeamNames computed once above
     // (B3), shared with the pre-season checklist.
     const nextStepsItems = !needsSeason ? [
+      // B3: folded in from the old, separately-carded "Create the
+      // schedule" prompt (weekStatusHtml's own comment) -- one
+      // checklist, not two cards both claiming to be "next."
+      !hasAnyEvents ? { key: 'nsCreateSchedule', href: '/league/schedule', fr: "Créer l'horaire" } : null,
       playerCount === 0 ? { key: 'nsAddPlayers', href: '/league/roster', fr: 'Ajouter des joueurs' } : null,
       stillDefaultTeamNames ? { key: 'nsNameTeams', href: '/onboarding/season?step=2', fr: 'Nommer tes équipes' } : null,
       (!dashIsHeadcount && !dashHasRosterLimits) ? { key: 'nsRosterLimits', href: '/onboarding/season?step=1', fr: "Définir l'effectif" } : null
@@ -6150,7 +6157,7 @@ async function handleLeagueRosterPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name, team_colors, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, team_colors, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, min_players FROM leagues WHERE id = ?').bind(leagueId).first();
 
   const allContacts = (await env.DB.prepare(
     'SELECT player_id, name, email, phone, role, preferred_team, is_goalie, is_backup_goalie, is_active FROM contacts WHERE league_id = ? ORDER BY name'
@@ -6173,7 +6180,22 @@ async function handleLeagueRosterPage(req, env, url) {
   // (batch 5, Part 6) already established.
   const eventCountRow = await env.DB.prepare('SELECT COUNT(*) AS c FROM events WHERE league_id = ?').bind(leagueId).first();
   const eventCount = eventCountRow ? Number(eventCountRow.c) || 0 : 0;
-  const showScheduleNudge = contacts.length > 0 && eventCount === 0;
+  // Onboarding polish task (B4): this used to declare the roster
+  // "ready" the instant a SINGLE player existed, in a league that
+  // might need a dozen to field a game -- min_players is the league's
+  // own real total-roster minimum (onboarding's own "roster" step,
+  // leagues.min_players, the same TOTAL figure every team structure
+  // already asks for -- fixed's own per-team math isn't needed here,
+  // this column already IS the whole-league total). Ready only once
+  // the real roster count reaches it; otherwise a progress message
+  // instead of a premature "ready" claim. A league that hasn't set a
+  // minimum yet (min_players still null) has nothing to count
+  // against -- falls back to the original "any player at all" signal
+  // rather than blocking the nudge on a number nobody has entered.
+  const rosterMinimum = leagueRow.min_players;
+  const rosterMeetsMinimum = rosterMinimum != null ? contacts.length >= rosterMinimum : contacts.length > 0;
+  const showScheduleNudge = rosterMeetsMinimum && eventCount === 0;
+  const showRosterProgress = !rosterMeetsMinimum && rosterMinimum != null && eventCount === 0;
 
   // F2 (players/reminders polish task): F1 defaults reminders off, but
   // a league that already turned them on can still walk into the same
@@ -6254,6 +6276,12 @@ async function handleLeagueRosterPage(req, env, url) {
       nextStep: 'Prochaine étape', rosterNudgeTitle: 'Tes joueurs sont prêts. Prochaine étape : crée ton horaire.',
       rosterNudgeDesc: 'Ajoute tes premiers matchs pour que tes joueurs puissent commencer à répondre.',
       rosterNudgeBtn: "Créer l'horaire",
+      // Onboarding polish task (B4): readiness now respects the
+      // league's own real roster minimum instead of claiming "ready"
+      // the instant a single player exists -- see showRosterProgress's
+      // own comment.
+      rosterProgressOfWord: 'sur', rosterProgressLabel: 'joueurs ajoutés',
+      rosterProgressDesc: 'Ton horaire pourra être créé une fois le minimum atteint.',
       // F2 (players/reminders polish task): backstop banner for a
       // mid-season player add close to an already-armed game.
       remindersBannerTitle: 'Rappels automatiques actifs',
@@ -6317,6 +6345,8 @@ async function handleLeagueRosterPage(req, env, url) {
       nextStep: 'Next step', rosterNudgeTitle: 'Your players are ready. Next step: create your schedule.',
       rosterNudgeDesc: 'Add your first games so your players can start responding.',
       rosterNudgeBtn: 'Create the schedule',
+      rosterProgressOfWord: 'of', rosterProgressLabel: 'players added',
+      rosterProgressDesc: "You'll be able to create your schedule once you reach the minimum.",
       remindersBannerTitle: 'Automated reminders are active',
       remindersBannerDesc: 'A game is coming up and automated reminders are active for it. Adding a player now may trigger a send.',
       remindersBannerTitlePaused: 'Automated reminders are paused',
@@ -6500,6 +6530,10 @@ async function handleLeagueRosterPage(req, env, url) {
     <h2 data-i18n="rosterNudgeTitle">Tes joueurs sont prêts. Prochaine étape : crée ton horaire.</h2>
     <p class="nl-help" data-i18n="rosterNudgeDesc">Ajoute tes premiers matchs pour que tes joueurs puissent commencer à répondre.</p>
     <div style="margin-top:var(--space-2)"><a class="nl-btn nl-btn--primary" href="/league/schedule" data-i18n="rosterNudgeBtn">Créer l'horaire</a></div>
+  </section>` : ''}
+  ${showRosterProgress ? `<section class="nl-card nl-card--pad-lg">
+    <h2><span class="tnum">${contacts.length}</span> <span data-i18n="rosterProgressOfWord">sur</span> <span class="tnum">${rosterMinimum}</span> <span data-i18n="rosterProgressLabel">joueurs ajoutés</span></h2>
+    <p class="nl-help" data-i18n="rosterProgressDesc">Ton horaire pourra être créé une fois le minimum atteint.</p>
   </section>` : ''}
   <div class="ro-filters">${filterPills}</div>
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);" class="ro-grid">

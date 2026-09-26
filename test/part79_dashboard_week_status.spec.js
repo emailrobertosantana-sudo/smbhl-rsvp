@@ -102,23 +102,25 @@ describe('Part 8 (live-testing task, batch 6): dashboard home shows "current-wee
     expect(html).not.toContain('data-i18n="weekStatusTitle"');
   });
 
-  it('a season with no events yet shows the empty state, with a link to create the schedule', async () => {
+  it("a season with no events yet shows NO week-status card at all -- \"create the schedule\" now lives in the one, unified next-steps checklist instead (B3)", async () => {
     const { cookie, csrfToken } = await signup('weekstatus.noevents@example.com', '203.0.196.002');
     await createLeague(cookie, csrfToken, { name: 'Week Status No Events League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const html = await fetchDashboard(cookie);
-    expect(html).toContain('data-i18n="weekStatusTitle"');
-    expect(html).toContain('data-i18n="weekStatusNoEvent"');
+    expect(html).not.toContain('data-i18n="weekStatusTitle"');
+    expect(html).toContain('data-i18n="nextStepsTitle"');
+    expect(html).toContain('data-i18n="nsCreateSchedule"');
     expect(html).toContain('href="/league/schedule"');
   });
 
-  it('only shows an UPCOMING event -- a past-dated event is ignored, same empty state applies', async () => {
+  it('the week-status card only counts an UPCOMING event (a past-dated one doesn\'t show it), but a past-only schedule still counts as "already created" for the next-steps checklist -- it\'s a finished schedule, not a missing one', async () => {
     const { cookie, csrfToken } = await signup('weekstatus.pastevent@example.com', '203.0.196.003');
     await createLeague(cookie, csrfToken, { name: 'Week Status Past Event League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await createEvent(cookie, csrfToken, { date: '2020-01-01' });
     const html = await fetchDashboard(cookie);
-    expect(html).toContain('data-i18n="weekStatusNoEvent"');
+    expect(html).not.toContain('data-i18n="weekStatusTitle"');
+    expect(html).not.toContain('data-i18n="nsCreateSchedule"');
   });
 
   it('fixed structure: shows real confirmed/out/no-response counts for the next event, and a shortage badge while under the season minimum', async () => {
@@ -234,6 +236,7 @@ describe('Part 8 (live-testing task, batch 6): dashboard home shows "current-wee
 
     const htmlA = await fetchDashboard(a.cookie);
     expect(htmlA).not.toContain('League B Only Rink');
-    expect(htmlA).toContain('data-i18n="weekStatusNoEvent"');
+    expect(htmlA).not.toContain('data-i18n="weekStatusTitle"');
+    expect(htmlA).toContain('data-i18n="nsCreateSchedule"');
   });
 });
