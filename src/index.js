@@ -9631,7 +9631,8 @@ async function getContact(db, id) {
 
 async function teamRows(db, eventId, team) {
   return (await db.prepare(
-    `SELECT r.player_id, r.guest_name, r.status, r.role, r.status_by, c.name, c.position
+    `SELECT r.player_id, r.guest_name, r.status, r.role, r.status_by, c.name, c.position,
+            COALESCE(c.is_goalie, 0) AS is_goalie
        FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
       WHERE r.event_id = ? AND r.team = ?
       ORDER BY (r.role='guest'), COALESCE(c.name, r.guest_name)`
@@ -11331,24 +11332,29 @@ export async function teamState(db, eventId, team, cfg) {
     uniqueRows.push(r);
   }
   const ins = uniqueRows.filter(r => r.status === 'in');
-  const primaryKeepers = ins.filter(r => r.is_goalie === 1).length;
-  let goalies = 0;
-  if (primaryKeepers > 0) {
-    goalies = Math.min(primaryKeepers, maxGoalies);
+  // Any confirmed goalie on this team for this event counts -- a rostered
+  // goalie or a SUB goalie the admin (or the sub) placed on the team; the
+  // rsvp row is what puts them on the team, their role doesn't matter.
+  const primaryIns = ins.filter(r => r.is_goalie === 1);
+  let goalieRows = [];
+  if (primaryIns.length > 0) {
+    goalieRows = primaryIns.slice(0, maxGoalies);
   } else {
     // If starting goalie is not in (or out), check if a backup goalie is confirmed in
     const primaryRow = uniqueRows.find(r => r.is_goalie === 1);
     const primaryIsOut = !primaryRow || primaryRow.status === 'out';
     if (primaryIsOut) {
-      const backupKeepers = ins.filter(r => r.is_backup_goalie === 1).length;
-      if (backupKeepers > 0) {
-        goalies = Math.min(backupKeepers, maxGoalies);
-      }
+      goalieRows = ins.filter(r => r.is_backup_goalie === 1).slice(0, maxGoalies);
     }
   }
+  const goalies = goalieRows.length;
   const skaters = ins.length - goalies;
   return {
     rows: uniqueRows, skaters, goalies,
+    // Which confirmed players were counted as the goalie(s): the public
+    // team page labels and counts from this, so it can never disagree
+    // with the admin (both read teamState).
+    goalieIds: goalieRows.map(r => r.player_id).filter(Boolean),
     shortGoalie: goalies < targetGoalies,
     shortSkaters: skaters < minSkaters,
     short: goalies < targetGoalies || skaters < minSkaters
@@ -12746,22 +12752,32 @@ async function teamGet(req, env, url) {
   const counts = await allCounts(env.DB, ev.id, teamNames);
   const c = counts[team] || { in: 0 };
 
-  const goalieIds = await rosterGoalies(env.DB, ev.id, team);
-  const shortGoalie = !rows.some(r => r.status === 'in' && goalieIds.includes(r.player_id));
-  const skaters = rows.filter(r => r.status === 'in' && !goalieIds.includes(r.player_id)).length;
-  const shortSkaters = skaters < cfg.minSkaters;
+  // Counts, goalie and shortage come from teamState() -- the admin's own
+  // resolution -- so a sub the admin placed on this team counts here
+  // exactly as it does there. (This page used to have its own goalie
+  // lookup, rosterGoalies(): it took the first goalie row on the team,
+  // so with the rostered goalie OUT and a sub goalie IN it counted the
+  // sub as a SKATER and showed "no goalie yet" while the admin showed
+  // "6 + 1G".) isGoalie below is identity (for the G tag): every goalie
+  // on the list is tagged, whether or not they are playing.
+  const st = await teamState(env.DB, ev.id, team, cfg);
+  const goalieIds = st.goalieIds;
+  const isGoalie = r => r.is_goalie === 1 || goalieIds.includes(r.player_id);
+  const shortGoalie = st.shortGoalie;
+  const skaters = st.skaters;
+  const shortSkaters = st.shortSkaters;
 
   const list = rows.map(r => {
     const name = r.name || r.guest_name || '?';
     const by = r.status !== 'pending' && r.status_by !== 'self'
       ? `<span class="by">${esc(r.status_by === 'manager' ? 'admin' : 'coéquipier')}</span>` : '';
-    const g = goalieIds.includes(r.player_id) ? '<span class="by">G</span>' : '';
+    const g = isGoalie(r) ? '<span class="by">G</span>' : '';
     const guest = r.role === 'guest' ? '<span class="by">invité</span>' : '';
     const who = r.player_id ? `p=${encodeURIComponent(r.player_id)}` : `g=${encodeURIComponent(r.guest_name)}`;
 
     const canUndo = r.status !== 'pending' && r.role === 'roster' && r.player_id && r.status_by === 'teammate';
 
-    const posToggle = !goalieIds.includes(r.player_id) && r.player_id
+    const posToggle = !isGoalie(r) && r.player_id
       ? `<span class="pos-toggle" data-pid="${esc(r.player_id)}" style="margin-left:6px;display:inline-flex;gap:2px;vertical-align:middle;">
           <button type="button" class="pos-btn ${r.position === 'F' ? 'on' : ''}" data-pos="F" title="Attaquant / Forward" style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;cursor:pointer;line-height:1.2;border:1px solid var(--rule2);background:${r.position === 'F' ? 'var(--blue)' : 'var(--card)'};color:${r.position === 'F' ? '#fff' : 'var(--soft)'}">A</button>
           <button type="button" class="pos-btn ${r.position === 'D' ? 'on' : ''}" data-pos="D" title="Défenseur / Defense" style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;cursor:pointer;line-height:1.2;border:1px solid var(--rule2);background:${r.position === 'D' ? 'var(--blue)' : 'var(--card)'};color:${r.position === 'D' ? '#fff' : 'var(--soft)'}">D</button>
@@ -13258,24 +13274,6 @@ async function subPool(db, eventId) {
       WHERE c.role IN ('sub_skater','sub_goalie') AND c.opted_out = 0
       ORDER BY c.role, c.name`
   ).bind(eventId, eventId).all()).results || [];
-}
-
-async function rosterGoalies(db, eventId, team) {
-  const rows = (await db.prepare(
-    `SELECT r.player_id, r.status, COALESCE(c.is_goalie,0) as is_goalie, COALESCE(c.is_backup_goalie,0) as is_backup_goalie
-       FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
-      WHERE r.event_id = ? AND r.team = ? AND (c.is_goalie = 1 OR c.is_backup_goalie = 1)`
-  ).bind(eventId, team).all()).results || [];
-
-  const primary = rows.find(r => r.is_goalie === 1);
-  if (primary && primary.status !== 'out') {
-    return [primary.player_id];
-  }
-  const backup = rows.find(r => r.is_backup_goalie === 1);
-  if (backup) {
-    return [backup.player_id];
-  }
-  return primary ? [primary.player_id] : [];
 }
 
 async function availRoute(req, env, url) {
