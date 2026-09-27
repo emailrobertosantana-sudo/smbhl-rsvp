@@ -11,7 +11,7 @@
     // Emails per calendar day (UTC) the Resend plan allows -- sub calls
     // defer to the next day once roster mail has what it needs (see
     // src/mail_queue.js, DAILY SEND CAP). Change here if the plan changes.
-    "MAIL_DAILY_CAP": "100"
+    "MAIL_DAILY_CAP": "90"
   },
   "triggers": {
     "crons": ["*/5 * * * *"]
