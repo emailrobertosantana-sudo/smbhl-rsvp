@@ -174,3 +174,21 @@ describe('5: an admin action whose email is deferred says so', () => {
     expect(page).toContain("statusDeferred: 'DEFERRED'");
   });
 });
+
+describe('2 (continued): the backlog can always drain', () => {
+  it('a roster reserve estimate bigger than the cap cannot starve sub calls: they still get a fifth of the day', async () => {
+    // 15 more rostered players on the open game: reserve estimate 17 + 3 > cap 10.
+    for (let i = 0; i < 15; i++) {
+      await env.DB.prepare(`INSERT OR IGNORE INTO contacts (player_id, name, email, role, is_sub, is_goalie, token_salt, league_id) VALUES (?, ?, ?, 'roster', 0, 0, 's', 'smbhl')`)
+        .bind(`R111X${i}`, `Roster X${i}`, `r111x${i}@example.com`).run();
+    }
+    for (let i = 0; i < 5; i++) {
+      await env.DB.prepare(`INSERT OR IGNORE INTO contacts (player_id, name, email, role, is_sub, is_goalie, token_salt, league_id) VALUES (?, ?, ?, 'sub_skater', 1, 0, 's', 'smbhl')`)
+        .bind(`S111X${i}`, `Sub X${i}`, `s111x${i}@example.com`).run();
+      await queue('sub_call', `S111X${i}`, '{"need":"skater"}');
+    }
+    const { sent, result } = await withResend(() => drain(env));
+    expect(sent.length).toBe(2); // cap 10 - reserve held at 80% (8)
+    expect(result.deferred).toBe(3);
+  });
+});

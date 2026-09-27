@@ -220,10 +220,18 @@ export async function readDailyCount(db, now = new Date()) {
 // How many sub calls may still go out today.
 //   allowance = cap - sentToday - max(0, reserve - rosterSentToday)
 // where rosterSentToday = everything sent today that was not a sub call.
+//
+// The reserve is an estimate (one email per rostered player on every
+// open game in the next 6 days), and it can reach the whole cap -- demo:
+// 14 against a cap of 10 -- which would defer sub calls to "tomorrow"
+// every day, forever. So it never holds back more than
+// ROSTER_RESERVE_MAX_SHARE of the cap: sub calls always get at least the
+// rest. Roster mail is unaffected (it is never held back by the cap).
+export const ROSTER_RESERVE_MAX_SHARE = 0.8;
 export function subCallAllowance({ cap, sentToday, subCallsToday, reserve }) {
   if (!cap) return Infinity;
   const rosterSentToday = Math.max(0, sentToday - subCallsToday);
-  const reserveLeft = Math.max(0, reserve - rosterSentToday);
+  const reserveLeft = Math.max(0, Math.min(reserve, Math.floor(cap * ROSTER_RESERVE_MAX_SHARE)) - rosterSentToday);
   return Math.max(0, cap - sentToday - reserveLeft);
 }
 
