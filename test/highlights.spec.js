@@ -1,4 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+
+// No network in this file. getWeeklyHighlights falls back to fetching the
+// live smbhl.com/data.json when its storage has no data_json -- so these
+// tests used to change result whenever a week was published on the real
+// site (week 3, 27 Sept 2026). Every fetch is refused here, as if the site
+// were unreachable, and recorded so the file proves it never went out.
+let realFetch;
+const networkAttempts = [];
+beforeAll(() => {
+  realFetch = globalThis.fetch;
+  globalThis.fetch = async url => { networkAttempts.push(String(url)); throw new Error('network disabled in highlights.spec.js'); };
+});
+afterAll(() => { globalThis.fetch = realFetch; });
 import {
   isFullName,
   cleanPlayerName,
@@ -608,5 +621,11 @@ describe('Weekly Highlights & Honors Engine', () => {
     expect(jump.rank).toBe(2);
     expect(jump.passedNames).toEqual(['Second Skater', 'Third Skater']);
     expect(jump.fr).toBe('2e rang historique · 810 pts (dépasse Second Skater, Third Skater)');
+  });
+});
+
+describe('No network', () => {
+  it('nothing in this file reached a real host (the smbhl.com fallback was refused, not sent)', () => {
+    expect(networkAttempts.every(u => /smbhl\.com\/data\.json/.test(u))).toBe(true);
   });
 });
