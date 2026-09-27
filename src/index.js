@@ -3557,6 +3557,11 @@ const PUBLIC_THEME_QUARTIER_CSS = `  .nl { color-scheme: light; --surface: #f4f4
   .pb-lead-val { font: 800 16px/20px var(--font-display); font-stretch: 118%; color: #16181d; }
   @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-2); } .nl .pb-nav-link { font-size: 12px; padding: 4px 8px; } }`;
 
+// Public page QA batch: rules every theme shares, appended AFTER the
+// theme's own block.
+//  - D1: the theme-preview banner.
+const PUBLIC_THEME_SHARED_CSS = `  .pb-preview-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 0; padding: 10px var(--space-4); border-radius: 8px; background: #ffd23f; color: #16181d; font: 600 14px/20px var(--font-sans); }`;
+
 // Live-testing task (batch 2), Part 10: shared response for BOTH "this
 // league id/slug doesn't exist at all" and "this league exists but its
 // admin turned off the public page" -- deliberately the SAME response
@@ -3608,7 +3613,30 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // Arène/Épuré -- any other/legacy stored value still falls back to
   // 'arene' (every existing league's own default, migrate-033.sql).
   const VALID_PUBLIC_THEMES = ['arene', 'clean', 'classique', 'quartier'];
-  const theme = VALID_PUBLIC_THEMES.includes(leagueRow.public_theme) ? leagueRow.public_theme : 'arene';
+  const savedTheme = VALID_PUBLIC_THEMES.includes(leagueRow.public_theme) ? leagueRow.public_theme : 'arene';
+  // Public page QA batch (D1): ?theme=<name> previews any of the four
+  // themes WITHOUT saving it -- the only way to see a theme used to be
+  // applying it live to the league's real public page. Read-only and
+  // purely visual (it only picks which <style> block renders; the data
+  // is the same public data either way), so it needs no auth -- an
+  // admin can share a preview link before committing to it. An unknown
+  // value is ignored (the saved theme renders, no banner). A preview of
+  // a theme OTHER than the saved one carries a banner saying so, so a
+  // shared preview link can never be mistaken for the live page.
+  const requestedTheme = url.searchParams.get('theme');
+  const previewTheme = VALID_PUBLIC_THEMES.includes(requestedTheme) ? requestedTheme : null;
+  const theme = previewTheme || savedTheme;
+  const isThemePreview = !!previewTheme && previewTheme !== savedTheme;
+  // Every in-page link that changes the query string (season selector,
+  // History, "back to current season") goes through this, so a preview
+  // stays a preview while the visitor clicks around in it.
+  function pageQuery(params) {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, v);
+    if (previewTheme) q.set('theme', previewTheme);
+    const s = q.toString();
+    return s ? `?${s}` : '?';
+  }
   if (leagueRow.deactivated_at) {
     // Distinct from the forcedLang below (that's the LEAGUE's own
     // configured language_mode; this notice has no toggle and no
@@ -3892,6 +3920,14 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
         ? { recentResults: 'Résultats récents', statePlayed: 'Joué', stateCancelled: 'Annulé' }
         : { recentResults: 'Recent results', statePlayed: 'Played', stateCancelled: 'Cancelled' });
     }
+    // Public page QA batch (D1): only carried on a real preview (a
+    // ?theme= different from the saved one) -- same "never ship an
+    // unused word" discipline as every other conditional block here.
+    if (isThemePreview) {
+      Object.assign(base, lang === 'fr'
+        ? { themePreviewBanner: 'Aperçu du thème {theme} — non enregistré. Les visiteurs voient toujours ton thème actuel.' }
+        : { themePreviewBanner: 'Preview of the {theme} theme — not saved. Visitors still see your current theme.' });
+    }
     if (leagueRow.organizer_note) {
       Object.assign(base, lang === 'fr'
         ? { organizerNoteLabel: "Le mot de l'organisateur" }
@@ -4125,8 +4161,16 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   ].filter(n => n.show);
   const navHtml = `<nav class="pb-nav" aria-label="Sections">${NAV_ITEMS.map(n => `<a href="#${n.id}" class="pb-nav-link" data-section="${n.id}" data-i18n="${n.key}">${esc(t[n.key])}</a>`).join('')}</nav>`;
 
+  const THEME_DISPLAY_NAMES = { arene: 'Arène', clean: 'Épuré', classique: 'Classique', quartier: 'Quartier' };
+  const previewBannerHtml = isThemePreview ? (() => {
+    const fr = I18N_PUBLIC.fr.themePreviewBanner.split('{theme}').join(THEME_DISPLAY_NAMES[theme]);
+    const en = I18N_PUBLIC.en.themePreviewBanner.split('{theme}').join(THEME_DISPLAY_NAMES[theme]);
+    return `
+  <div class="pb-preview-banner" role="status"><span data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(lang === 'en' ? en : fr)}</span></div>`;
+  })() : '';
   const bodyHtml = `<style>
 ${THEME_CSS_BY_NAME[theme]}
+${PUBLIC_THEME_SHARED_CSS}
   /* Classique/Quartier only reference this; harmless no-op for
      Arène/Épuré, which don't. Same fillColor already guaranteed
      >=4.5:1 against white/near-white by leagueFillColor -- see that
@@ -4145,6 +4189,7 @@ ${THEME_CSS_BY_NAME[theme]}
   </div>`}
 </header>
 <main class="pb-main">
+  ${previewBannerHtml}
   ${navHtml}
   ${seasonBannerHtml}
   <section id="home" class="pb-view">
@@ -5119,7 +5164,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblPublicTheme: 'Thème de la page publique', themeArene: 'Arène (sombre, actuel)', themeClean: 'Épuré (blanc, minimal)',
       themeClassique: 'Classique (couleurs de la ligue, gras)', themeQuartier: 'Quartier (chaleureux, arrondi)',
       themeHelp: 'Quatre thèmes sont offerts.',
-      themePreview: 'Voir la page publique',
+      themePreview: "Aperçu de ce thème (sans l'enregistrer)",
       lblOrganizerNote: "Mot de l'organisateur",
       organizerNoteHelp: "Un mot permanent affiché sur ta page publique -- pas un avis hebdomadaire. Laisse vide pour ne rien afficher.",
       organizerNotePlaceholder: 'Ex. : Les dimanches matin à Letendre depuis 2005, nouveaux joueurs bienvenus.',
@@ -5259,7 +5304,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblPublicTheme: 'Public page theme', themeArene: 'Arène (dark, current)', themeClean: 'Épuré (white, minimal)',
       themeClassique: 'Classique (bold, league colours)', themeQuartier: 'Quartier (warm, rounded)',
       themeHelp: 'Four themes are available.',
-      themePreview: 'View the public page',
+      themePreview: 'Preview this theme (without saving)',
       lblOrganizerNote: "Organizer's note",
       organizerNoteHelp: "A standing message shown on your public page -- not a weekly notice. Leave blank to show nothing.",
       organizerNotePlaceholder: 'E.g.: Sunday mornings at Letendre since 2005, new players welcome.',
@@ -5446,14 +5491,14 @@ async function handleLeagueSettingsPage(req, env, url) {
     </div>
     <div class="nl-field">
       <label class="nl-label" for="se_theme" data-i18n="lblPublicTheme">Thème de la page publique</label>
-      <select class="nl-select" id="se_theme" style="max-width:260px">
+      <select class="nl-select" id="se_theme" style="max-width:260px" onchange="var a=document.getElementById('se_theme_preview');if(a)a.href=a.getAttribute('data-base')+'?theme='+encodeURIComponent(this.value)">
         <option value="arene" data-i18n="themeArene" ${(leagueRow.public_theme || 'arene') === 'arene' ? 'selected' : ''}>Arène (sombre, actuel)</option>
         <option value="clean" data-i18n="themeClean" ${leagueRow.public_theme === 'clean' ? 'selected' : ''}>Épuré (blanc, minimal)</option>
         <option value="classique" data-i18n="themeClassique" ${leagueRow.public_theme === 'classique' ? 'selected' : ''}>Classique (couleurs de la ligue, gras)</option>
         <option value="quartier" data-i18n="themeQuartier" ${leagueRow.public_theme === 'quartier' ? 'selected' : ''}>Quartier (chaleureux, arrondi)</option>
       </select>
       <p class="nl-help" data-i18n="themeHelp">Quatre thèmes sont offerts.</p>
-      <p class="nl-help"><a href="/${esc(leagueSlug)}" target="_blank" rel="noopener" data-i18n="themePreview">Voir la page publique</a></p>
+      <p class="nl-help"><a id="se_theme_preview" href="/${esc(leagueSlug)}?theme=${esc(leagueRow.public_theme || 'arene')}" data-base="/${esc(leagueSlug)}" target="_blank" rel="noopener" data-i18n="themePreview">Aperçu de ce thème (sans l'enregistrer)</a></p>
     </div>
     <div class="nl-field">
       <label class="nl-label" for="se_organizer_note" data-i18n="lblOrganizerNote">Mot de l'organisateur</label>
