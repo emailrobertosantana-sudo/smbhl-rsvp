@@ -3446,8 +3446,8 @@ export async function handleLeagueUpdateReminderCadence(req, env, url) {
     return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
   }
   await env.DB.prepare(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-  ).bind(emailSettingsKey(leagueId), JSON.stringify(next)).run();
+    'INSERT INTO settings (key, value, league_id) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+  ).bind(emailSettingsKey(leagueId), JSON.stringify(next), leagueId).run();
   return Response.json({ ok: true, settings: next });
 }
 

@@ -11921,13 +11921,17 @@ async function openSpots(db, eventId, team, need, cfg) {
     : Math.max(0, targetSkaters - e.skaters);
 }
 
+// Rows written here carry the EVENT's own league_id: a league's sub calls
+// link to this same /avail route, and an untagged row defaulted to 'smbhl'
+// -- invisible to that league's hard delete (which removes by league_id).
 export async function acceptAvailability(env, ev, playerId, need) {
   const now = new Date().toISOString();
+  const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
   await env.DB.prepare(
-    `INSERT INTO availability (event_id,player_id,need,status,answered_at)
-     VALUES (?,?,?,'yes',?)
+    `INSERT INTO availability (event_id,player_id,need,status,answered_at,league_id)
+     VALUES (?,?,?,'yes',?,?)
      ON CONFLICT(event_id,player_id,need) DO UPDATE SET status='yes'`
-  ).bind(ev.id, playerId, need, now).run();
+  ).bind(ev.id, playerId, need, now, leagueId).run();
 
   const already = await env.DB.prepare(
     'SELECT team FROM rsvp WHERE event_id=? AND player_id=?').bind(ev.id, playerId).first();
@@ -11965,9 +11969,9 @@ export async function acceptAvailability(env, ev, playerId, need) {
   for (const candidate of candidateTeams) {
     const team = candidate.team;
     await env.DB.prepare(
-      `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at)
-       VALUES (?,?,?, 'in','sub','self',?)`
-    ).bind(ev.id, playerId, team, now).run();
+      `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at,league_id)
+       VALUES (?,?,?, 'in','sub','self',?,?)`
+    ).bind(ev.id, playerId, team, now, leagueId).run();
     // Do not send an automated email right away if > 24 hours out.
     // Subs will receive their final reminder (gameday) at 24h before game time.
     if (hoursOut(ev) <= 24) {
@@ -11997,9 +12001,9 @@ async function fillFromWaitlist(env, ev, team, need, cfg) {
 
   const now = new Date().toISOString();
   await env.DB.prepare(
-    `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at)
-     VALUES (?,?,?, 'in','sub','auto',?)`
-  ).bind(ev.id, next.player_id, team, now).run();
+    `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at,league_id)
+     VALUES (?,?,?, 'in','sub','auto',?,?)`
+  ).bind(ev.id, next.player_id, team, now, ev.league_id || SMBHL_LEAGUE_ID).run();
   // Do not send an automated email right away if > 24 hours out.
   // Subs will receive their final reminder (gameday) at 24h before game time.
   if (hoursOut(ev) <= 24) {
@@ -13118,9 +13122,9 @@ async function availRoute(req, env, url) {
 
   if (ans === 'no') {
     await env.DB.prepare(
-      `INSERT INTO availability (event_id,player_id,need,status,answered_at)
-       VALUES (?,?,?,'no',?) ON CONFLICT(event_id,player_id,need) DO UPDATE SET status='no'`
-    ).bind(eventId, playerId, need, new Date().toISOString()).run();
+      `INSERT INTO availability (event_id,player_id,need,status,answered_at,league_id)
+       VALUES (?,?,?,'no',?,?) ON CONFLICT(event_id,player_id,need) DO UPDATE SET status='no'`
+    ).bind(eventId, playerId, need, new Date().toISOString(), ev.league_id || SMBHL_LEAGUE_ID).run();
     return notice('Merci, noté', 'Thanks, noted');
   }
 

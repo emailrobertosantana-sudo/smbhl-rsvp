@@ -64,6 +64,23 @@ export const LEAGUE_SCOPED_TABLES = [
   'venues', 'league_mail_failure_log', 'player_game_stats'
 ];
 
+// Rows keyed by one of this league's events, deleted by event_id as well
+// as by league_id: a row whose league_id was left at the column's 'smbhl'
+// DEFAULT by a shared code path (the /avail sub answer did this until the
+// slug-reuse task) still belongs to this league's event and must go.
+// Event ids are league-prefixed (league_ids.js makeEventId), so this can
+// never reach another league's rows. league_team_assigned_email_log is
+// handled the same way just above (it has no league_id at all).
+export const EVENT_KEYED_TABLES = [
+  'rsvp', 'availability', 'team_messages', 'outbox', 'jobs', 'sheet_reviews',
+  'player_game_stats', 'league_reminder_log', 'league_auto_draw_log', 'league_mail_failure_log'
+];
+
+// settings rows whose KEY names this league or one of its events.
+function leagueSettingsKeys(leagueId, eventIds) {
+  return [`email_cadence_settings:${leagueId}`, ...eventIds.map(id => `league_message:${id}`)];
+}
+
 export async function checkHardDeleteEligibility(env, leagueId) {
   if (!leagueId) return { status: 'not_found' };
   if (leagueId === SMBHL_LEAGUE_ID) return { status: 'protected' };
@@ -99,13 +116,21 @@ export async function performLeagueHardDelete(env, leagueId, leagueName, deleted
   const eventIdRows = (await env.DB.prepare('SELECT id FROM events WHERE league_id = ?').bind(leagueId).all()).results || [];
   let rowsDeleted = 0;
 
-  if (eventIdRows.length) {
-    const placeholders = eventIdRows.map(() => '?').join(',');
+  const eventIds = eventIdRows.map(r => r.id);
+  if (eventIds.length) {
+    const placeholders = eventIds.map(() => '?').join(',');
     const res = await env.DB.prepare(
       `DELETE FROM league_team_assigned_email_log WHERE event_id IN (${placeholders})`
-    ).bind(...eventIdRows.map(r => r.id)).run();
+    ).bind(...eventIds).run();
     rowsDeleted += res.meta?.changes || 0;
+    for (const table of EVENT_KEYED_TABLES) {
+      const r = await env.DB.prepare(`DELETE FROM ${table} WHERE event_id IN (${placeholders})`).bind(...eventIds).run();
+      rowsDeleted += r.meta?.changes || 0;
+    }
   }
+  const keys = leagueSettingsKeys(leagueId, eventIds);
+  const keyRes = await env.DB.prepare(`DELETE FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).bind(...keys).run();
+  rowsDeleted += keyRes.meta?.changes || 0;
 
   for (const table of LEAGUE_SCOPED_TABLES) {
     const res = await env.DB.prepare(`DELETE FROM ${table} WHERE league_id = ?`).bind(leagueId).run();
