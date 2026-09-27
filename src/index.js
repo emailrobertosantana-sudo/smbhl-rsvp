@@ -6,10 +6,10 @@ import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmail
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
-import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
+import { REMINDER_WINDOW_THRESHOLD_HOURS, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -5139,6 +5139,11 @@ async function handleLeagueSettingsPage(req, env, url) {
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
+  // The advanced reminder timing block, in the same Comms section as the
+  // on/off toggles -- shown only when a super-admin turned the league's
+  // advanced_reminders flag on (src/reminders.js).
+  const advancedCadence = leagueRow && (await usesAdvancedReminders(env, leagueId)) ? await getEmailSettings(env.DB, leagueId) : null;
+  const cadVal = v => (v === null || v === undefined ? '' : esc(String(v)));
   const leagueSlug = await getOrCreateLeagueSlug(env, leagueRow);
   const teamStructure = leagueRow.team_structure || 'fixed';
   const isHeadcount = teamStructure === 'headcount';
@@ -5350,6 +5355,14 @@ async function handleLeagueSettingsPage(req, env, url) {
       reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder72Desc: "Envoyé aux joueurs qui n'ont pas encore répondu.",
       reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder24Desc: 'Même chose, plus proche du match.',
       reminder12Label: 'Détails 12 h avant (joueurs confirmés)', reminder12Desc: 'Heure, lieu, et un lien pour se désister si besoin.',
+      advTitle: 'Horaire avancé',
+      advDesc: "Combien d'heures avant le match chaque envoi part, et l'heure de la journée qu'il attend. Les courriels automatiques attendent la fin des heures de silence.",
+      advFirstHours: 'Premier rappel : heures avant', advFirstHod: 'Premier rappel : pas avant (h)',
+      advLastHours: 'Dernier rappel : heures avant', advLastHod: 'Dernier rappel : pas avant (h)',
+      advDetailsHours: 'Détails du match : heures avant',
+      advHodHelp: "Heure de 0 à 23. Laisse vide pour envoyer dès que la fenêtre s'ouvre.",
+      advQuiet: 'Heures de silence', advQuietDesc: 'Aucun courriel automatique entre ces heures.',
+      advQuietFrom: 'De (h)', advQuietTo: 'À (h)',
       autoDrawTitle: 'Tirage automatique des équipes',
       autoDrawDesc: "Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.",
       autoDrawEnableLabel: 'Activer le tirage automatique',
@@ -5461,6 +5474,14 @@ async function handleLeagueSettingsPage(req, env, url) {
       reminder72Label: '72h reminder (no reply yet)', reminder72Desc: "Sent to players who haven't answered yet.",
       reminder24Label: '24h reminder (no reply yet)', reminder24Desc: 'Same thing, closer to the game.',
       reminder12Label: '12h game details (confirmed players)', reminder12Desc: 'Time, venue, and a link to drop out if needed.',
+      advTitle: 'Advanced timing',
+      advDesc: 'How many hours before the game each email goes out, and the time of day it waits for. Automatic emails wait until quiet hours are over.',
+      advFirstHours: 'First reminder: hours before', advFirstHod: 'First reminder: not before (h)',
+      advLastHours: 'Last reminder: hours before', advLastHod: 'Last reminder: not before (h)',
+      advDetailsHours: 'Game details: hours before',
+      advHodHelp: 'Hour from 0 to 23. Leave empty to send as soon as the window opens.',
+      advQuiet: 'Quiet hours', advQuietDesc: 'No automatic email between these hours.',
+      advQuietFrom: 'From (h)', advQuietTo: 'To (h)',
       autoDrawTitle: 'Automatic team draw',
       autoDrawDesc: 'Automatically forms teams a set number of hours before each game -- off by default, like every other automation.',
       autoDrawEnableLabel: 'Enable automatic draw',
@@ -6005,6 +6026,30 @@ async function handleLeagueSettingsPage(req, env, url) {
       <div><div class="nl-label" data-i18n="reminder12Label">Détails 12 h avant (joueurs confirmés)</div><div class="nl-help" data-i18n="reminder12Desc">Heure, lieu, et un lien pour se désister si besoin.</div></div>
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="reminder_12h_switch" onclick="toggleReminderSwitch(this,'reminder12h')"></button>
     </div>
+    ${advancedCadence ? `
+    <div id="advanced-cadence" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--rule,#e2e4e8)">
+      <div class="nl-label" data-i18n="advTitle">Horaire avancé</div>
+      <p class="nl-help" data-i18n="advDesc">Combien d'heures avant le match chaque envoi part, et l'heure de la journée qu'il attend. Les courriels automatiques attendent la fin des heures de silence.</p>
+      <div id="advErr" class="nl-error" style="display:none"></div>
+      <div id="advOk" class="nl-ok" style="display:none"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 16px;margin-top:8px">
+        <div class="nl-field"><label class="nl-label" for="adv_r72_hours" data-i18n="advFirstHours">Premier rappel : heures avant</label><input class="nl-input" id="adv_r72_hours" type="number" min="1" max="168" value="${cadVal(advancedCadence.r72_hours)}"></div>
+        <div class="nl-field"><label class="nl-label" for="adv_r72_hod" data-i18n="advFirstHod">Premier rappel : pas avant (h)</label><input class="nl-input" id="adv_r72_hod" type="number" min="0" max="23" value="${cadVal(advancedCadence.r72_hour_of_day)}"></div>
+        <div class="nl-field"><label class="nl-label" for="adv_r24_hours" data-i18n="advLastHours">Dernier rappel : heures avant</label><input class="nl-input" id="adv_r24_hours" type="number" min="1" max="168" value="${cadVal(advancedCadence.r24_hours)}"></div>
+        <div class="nl-field"><label class="nl-label" for="adv_r24_hod" data-i18n="advLastHod">Dernier rappel : pas avant (h)</label><input class="nl-input" id="adv_r24_hod" type="number" min="0" max="23" value="${cadVal(advancedCadence.r24_hour_of_day)}"></div>
+        <div class="nl-field"><label class="nl-label" for="adv_logistics_hours" data-i18n="advDetailsHours">Détails du match : heures avant</label><input class="nl-input" id="adv_logistics_hours" type="number" min="1" max="168" value="${cadVal(advancedCadence.logistics_hours)}"></div>
+      </div>
+      <p class="nl-help" data-i18n="advHodHelp">Heure de 0 à 23. Laisse vide pour envoyer dès que la fenêtre s'ouvre.</p>
+      <div class="nl-toggle" style="margin-top:8px">
+        <div><div class="nl-label" data-i18n="advQuiet">Heures de silence</div><div class="nl-help" data-i18n="advQuietDesc">Aucun courriel automatique entre ces heures.</div></div>
+        <button type="button" class="nl-switch" role="switch" aria-checked="${advancedCadence.quiet_hours_enabled ? 'true' : 'false'}" id="adv_quiet_switch" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 16px">
+        <div class="nl-field"><label class="nl-label" for="adv_quiet_start" data-i18n="advQuietFrom">De (h)</label><input class="nl-input" id="adv_quiet_start" type="number" min="0" max="23" value="${cadVal(advancedCadence.quiet_hours_start)}"></div>
+        <div class="nl-field"><label class="nl-label" for="adv_quiet_end" data-i18n="advQuietTo">À (h)</label><input class="nl-input" id="adv_quiet_end" type="number" min="0" max="23" value="${cadVal(advancedCadence.quiet_hours_end)}"></div>
+      </div>
+      <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="adv_save" data-i18n="save" onclick="submitAdvancedCadence()">Enregistrer</button></div>
+    </div>` : ''}
   </section>
   ${teamStructure === 'weekly_draw' ? `
   <section class="nl-card nl-card--pad-lg" id="section-autodraw">
@@ -6551,6 +6596,30 @@ async function submitPlayoffs() {
     ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
     btn.disabled = false;
   } catch (e) { err.style.display = 'block'; err.textContent = window.__errorText('NETWORK_ERROR'); btn.disabled = false; }
+}
+async function submitAdvancedCadence() {
+  var err = document.getElementById('advErr'); var ok = document.getElementById('advOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var v = function(id) { return document.getElementById(id).value; };
+  var payload = {
+    r72_hours: v('adv_r72_hours'), r72_hour_of_day: v('adv_r72_hod'),
+    r24_hours: v('adv_r24_hours'), r24_hour_of_day: v('adv_r24_hod'),
+    logistics_hours: v('adv_logistics_hours'),
+    quiet_hours_enabled: document.getElementById('adv_quiet_switch').getAttribute('aria-checked') === 'true',
+    quiet_hours_start: v('adv_quiet_start'), quiet_hours_end: v('adv_quiet_end')
+  };
+  var btn = document.getElementById('adv_save'); btn.disabled = true;
+  try {
+    var res = await fetch('/league/reminders/cadence', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
+  } catch (e) { err.style.display = 'block'; err.textContent = window.__errorText('NETWORK_ERROR'); }
+  btn.disabled = false;
 }
 async function submitAutoDrawHours() {
   var err = document.getElementById('autoDrawErr'); var ok = document.getElementById('autoDrawOk');
@@ -9752,7 +9821,6 @@ function formatFixtureText(matches, team, isGoalie) {
  * -- moved there so leagues.js can compute a real event's hoursUntil
  * too, without a circular import. See that file's own comment. */
 
-const reached = (p, h, m = 0) => p.hour > h || (p.hour === h && p.minute >= m);
 
 function formatMsgTime(isoString) {
   try {
@@ -9901,36 +9969,6 @@ async function sendMailViaResend(env, to, subject, text, html = null, attachment
 
 /* ---------- quiet hours ---------- */
 
-const QUIET_FROM = 23, QUIET_TO = 7;
-// Live-testing task (batch 4), Part 2: SMBHL bug -- the Comms
-// quiet-hours card read and wrote quiet_hours_enabled/_start/_end
-// (email_cadence_settings, via getEmailSettings below), but this
-// function used to unconditionally apply the hardcoded QUIET_FROM/
-// QUIET_TO constants and never looked at those settings at all.
-// Toggling the card in the UI changed nothing about real send timing.
-//
-// QUIET_FROM/QUIET_TO remain as the FALLBACK when a stored setting is
-// missing or malformed (never NaN/undefined -- Number.isFinite guards
-// below), and DEFAULT_EMAIL_SETTINGS.quiet_hours_enabled was changed
-// from false to true alongside this fix (see that object's own
-// comment) so that an account with no saved settings row at all --
-// every league today, and SMBHL unless an operator already saved this
-// card at some point -- resolves to the exact same enabled/23/7
-// behavior this function already had unconditionally. Byte-identical
-// today; only changes for an operator who deliberately sets it.
-async function afterQuiet(env, d) {
-  const settings = await getEmailSettings(env.DB);
-  if (!settings.quiet_hours_enabled) return new Date(d);
-  const from = Number.isFinite(settings.quiet_hours_start) ? settings.quiet_hours_start : QUIET_FROM;
-  const to = Number.isFinite(settings.quiet_hours_end) ? settings.quiet_hours_end : QUIET_TO;
-  let t = new Date(d);
-  for (let i = 0; i < 24; i++) {
-    const p = localParts(t);
-    if (p.hour >= to && p.hour < from) return t;
-    t = new Date(t.getTime() + 30 * 60000);
-  }
-  return t;
-}
 
 /* ---------- outbox ---------- */
 
@@ -9967,11 +10005,14 @@ async function afterQuiet(env, d) {
 // player or admin just created a real shortage for a real upcoming
 // game) whose own comment already promises "Sends right away" -- quiet
 // hours were silently breaking that promise by design, not on purpose.
+// quietLeagueId: whose quiet hours to hold for -- a league on the advanced
+// reminder model passes its own id; everyone else passes nothing and gets
+// SMBHL's settings, exactly as before (src/reminders.js).
 async function enqueue(env, { kind, event_id, player_id = null, team = null,
-                              dedup_key = null, payload = {}, delayMin = 0, league_id = SMBHL_LEAGUE_ID, skipQuietHours = false }) {
+                              dedup_key = null, payload = {}, delayMin = 0, league_id = SMBHL_LEAGUE_ID, skipQuietHours = false, quietLeagueId = null }) {
   const now = new Date();
   const target = new Date(now.getTime() + delayMin * 60000);
-  const after = (skipQuietHours ? target : await afterQuiet(env, target)).toISOString();
+  const after = (skipQuietHours ? target : await afterQuiet(env, target, quietLeagueId)).toISOString();
   if (dedup_key) {
     await env.DB.prepare(
       `UPDATE outbox SET cancelled = 1
@@ -11599,14 +11640,20 @@ async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
   const isLeague = leagueId !== SMBHL_LEAGUE_ID;
   const usesIndependentGoalieAxis = isLeague && sportHasGoalie(cfg.sportType);
   const hasGoalies = !isLeague || sportHasGoalie(cfg.sportType);
+  // Quiet hours: SMBHL's shortfall calls wait for them; a league's are sent
+  // straight away -- unless it is on the advanced reminder model, whose
+  // calls wait for ITS quiet hours (src/reminders.js).
+  const advancedLeague = isLeague && await usesAdvancedReminders(env, leagueId);
+  const skipQuiet = isLeague && !advancedLeague;
+  const quietLeagueId = advancedLeague ? leagueId : null;
   let queued = 0;
   for (const team of teams) {
     const a = await availableForTeam(env, ev, team, cfg, isHeadcount);
     if (hasGoalies && a.goalies < (cfg.goaliesPerTeam || 0)) {
-      queued += await callSubs(env, ev, team, 'goalie', 0, leagueId, usesIndependentGoalieAxis, isLeague, isLeague);
+      queued += await callSubs(env, ev, team, 'goalie', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId);
     }
     if (a.skaters < shortfallMinSkaters(cfg, leagueId)) {
-      queued += await callSubs(env, ev, team, 'skater', 0, leagueId, usesIndependentGoalieAxis, isLeague, isLeague);
+      queued += await callSubs(env, ev, team, 'skater', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId);
     }
   }
   if (queued && drainNow) await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id);
@@ -11787,7 +11834,7 @@ function subPoolOrderBinds(ev) {
   return [season, season];
 }
 
-async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false, requireActive = false) {
+async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false, requireActive = false, quietLeagueId = null) {
   const poolCondition = usesIndependentGoalieAxis
     ? (need === 'goalie' ? `c.role = 'sub_skater' AND c.is_goalie = 1` : `c.role = 'sub_skater' AND c.is_goalie != 1`)
     : `c.role = ?`;
@@ -11815,7 +11862,7 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
   for (const p of pool) {
     await enqueue(env, { kind: 'sub_call', event_id: ev.id, player_id: p.player_id,
       team, dedup_key: `call:${ev.id}:${need}:${p.player_id}`,
-      payload: { need }, delayMin: startDelay + p.wave * gap, league_id: leagueId, skipQuietHours });
+      payload: { need }, delayMin: startDelay + p.wave * gap, league_id: leagueId, skipQuietHours, quietLeagueId });
   }
   return pool.length;
 }
@@ -11998,14 +12045,6 @@ async function remindSubs(env, ev) {
 
 /* ---------- scheduled jobs ---------- */
 
-async function jobDone(db, eventId, job) {
-  return !!(await db.prepare('SELECT 1 FROM jobs WHERE event_id=? AND job=?')
-    .bind(eventId, job).first());
-}
-async function markJob(db, eventId, job) {
-  await db.prepare('INSERT OR IGNORE INTO jobs (event_id,job,ran_at) VALUES (?,?,?)')
-    .bind(eventId, job, new Date().toISOString()).run();
-}
 
 async function notifyEventCreated(env, made) {
   if (!made) return;
@@ -12204,305 +12243,6 @@ async function deadMan(env) {
   return problems;
 }
 
-const DEFAULT_EMAIL_SETTINGS = {
-  invite_hours: 120,
-  invite_hour_of_day: 18,
-  r72_hours: 72,
-  r72_hour_of_day: 15,
-  r49_hours: 49,
-  short48_hours: 48,
-  pool_hours: 36,
-  r24_hours: 24,
-  r24_hour_of_day: 18,
-  gameday_morning_hours: 2,
-  // Live-testing task (batch 4), Part 2: was `false`, but nothing ever
-  // read this field, so the REAL behavior (afterQuiet's own hardcoded
-  // QUIET_FROM/QUIET_TO, unconditionally applied) was always "enabled,
-  // 23, 7" regardless of what this said. Now that afterQuiet() actually
-  // reads it, the default has to match the behavior it's replacing --
-  // `true` here is what makes every account with no saved settings row
-  // (every league today, and SMBHL unless an operator already saved
-  // this card) see byte-identical send timing to before this fix.
-  quiet_hours_enabled: true,
-  quiet_hours_start: 23,
-  quiet_hours_end: 7
-};
-
-async function getEmailSettings(db) {
-  try {
-    const row = await db.prepare("SELECT value FROM settings WHERE key = 'email_cadence_settings'").first();
-    if (row && row.value) {
-      const parsed = JSON.parse(row.value);
-      return Object.assign({}, DEFAULT_EMAIL_SETTINGS, parsed);
-    }
-  } catch (_) {}
-  return Object.assign({}, DEFAULT_EMAIL_SETTINGS);
-}
-
-async function runSchedule(env) {
-  const log = [];
-  const now = new Date();
-  const emailSettings = await getEmailSettings(env.DB);
-  const evs = (await env.DB.prepare(
-    `SELECT * FROM events WHERE state = 'open' ORDER BY week`).all()).results || [];
-
-  for (const ev of evs) {
-    const start = eventStart(ev);
-    if (!start) continue;
-    const hrs = (start - now) / 3600000;
-    const p = localParts();
-
-    const fire = async (job, when, who) => {
-      if (!when) return;
-      if (await jobDone(env.DB, ev.id, job)) return;
-      await who();
-      await markJob(env.DB, ev.id, job);
-      log.push(`${job} ${ev.id}`);
-    };
-
-    const roster = async where => (await env.DB.prepare(
-      `SELECT player_id FROM rsvp WHERE event_id=? AND role='roster' ${where}`
-    ).bind(ev.id).all()).results || [];
-
-    const mailEach = async (rows, kind, extra = {}) => {
-      for (const r of rows)
-        await enqueue(env, { kind, event_id: ev.id, player_id: r.player_id,
-          dedup_key: `${kind}:${ev.id}:${r.player_id}`, ...extra });
-    };
-
-    const inviteHours = emailSettings.invite_hours ?? 120;
-    const inviteHourOfDay = emailSettings.invite_hour_of_day ?? 18;
-    const r72Hours = emailSettings.r72_hours ?? 72;
-    const r72HourOfDay = emailSettings.r72_hour_of_day ?? 15;
-    const r49Hours = emailSettings.r49_hours ?? 49;
-    const short48Hours = emailSettings.short48_hours ?? 48;
-    const poolHours = emailSettings.pool_hours ?? 36;
-    const r24Hours = emailSettings.r24_hours ?? 24;
-    const r24HourOfDay = emailSettings.r24_hour_of_day;
-    const gamedayMorningHours = emailSettings.gameday_morning_hours ?? 2;
-
-    await fire('invite', hrs <= inviteHours && hrs > 0 && reached(p, inviteHourOfDay), async () => {
-      // 1. All regular roster players
-      await mailEach(await roster(''), 'invite');
-
-      // 2. Anyone who played in the previous week (substitutes)
-      const prevEv = await env.DB.prepare(
-        `SELECT id FROM events WHERE season = ? AND week < ? ORDER BY week DESC LIMIT 1`
-      ).bind(ev.season, ev.week).first();
-
-      if (prevEv) {
-        const prevSubs = (await env.DB.prepare(
-          `SELECT DISTINCT r.player_id FROM rsvp r
-            JOIN contacts c ON c.player_id = r.player_id
-           WHERE r.event_id = ? AND r.status = 'in' AND r.player_id IS NOT NULL
-             AND c.opted_out = 0
-             AND r.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND role = 'roster')`
-        ).bind(prevEv.id, ev.id).all()).results || [];
-
-        for (const s of prevSubs) {
-          await enqueue(env, {
-            kind: 'invite',
-            event_id: ev.id,
-            player_id: s.player_id,
-            dedup_key: `invite:${ev.id}:${s.player_id}`,
-            payload: { is_sub: true }
-          });
-        }
-      }
-    });
-
-    await fire('r72', hrs <= r72Hours && hrs > 0 && reached(p, r72HourOfDay),
-      async () => mailEach(await roster("AND status='pending'"), 'chase',
-        { payload: { stage: '72' } }));
-
-    await fire('r49', hrs <= r49Hours && hrs > 0,
-      async () => mailEach(await roster("AND status='pending'"), 'chase',
-        { payload: { stage: '49' } }));
-
-    await fire('short48', hrs <= short48Hours && hrs > 0, async () => {
-      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
-      const cfgTeams = getTeamNames(cfg);
-      for (const team of cfgTeams) {
-        const st = await teamState(env.DB, ev.id, team, cfg);
-        if (!st.short) continue;
-        const confirmed = st.rows.filter(r => r.status === 'in' && r.player_id);
-        for (const r of confirmed)
-          await enqueue(env, { kind: 'team_short', event_id: ev.id,
-            player_id: r.player_id, team,
-            dedup_key: `team_short:${ev.id}:${r.player_id}`,
-            payload: { skaters: st.skaters, goalies: st.goalies,
-                       needGoalie: st.shortGoalie, needSkaters: st.shortSkaters } });
-      }
-    });
-
-    await fire('pool36', hrs <= poolHours && hrs > 0, async () => {
-      await remindSubs(env, ev);
-      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
-      const cfgTeams = getTeamNames(cfg);
-      for (const team of cfgTeams) {
-        const st = await teamState(env.DB, ev.id, team, cfg);
-        if (st.shortGoalie) await callSubs(env, ev, team, 'goalie');
-        if (st.shortSkaters) await callSubs(env, ev, team, 'skater');
-      }
-    });
-
-    await fire('friday_board', p.weekday === 'Fri' && reached(p, 14) && hrs > 24, async () => {
-      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
-      const cfgTeams = getTeamNames(cfg);
-      for (const team of cfgTeams) {
-        const msgs = await getTeamMessages(env.DB, ev.id, team, 5);
-        if (!msgs || !msgs.length) continue;
-        const recipients = (await env.DB.prepare(
-          `SELECT player_id FROM rsvp 
-           WHERE event_id=? AND team=? AND player_id IS NOT NULL 
-             AND (status='in' OR (role='roster' AND status='pending'))`
-        ).bind(ev.id, team).all()).results || [];
-        for (const r of recipients) {
-          await enqueue(env, {
-            kind: 'friday_board',
-            event_id: ev.id,
-            player_id: r.player_id,
-            team,
-            dedup_key: `friday_board:${ev.id}:${r.player_id}`
-          });
-        }
-      }
-    });
-
-    await fire('r24', hrs <= r24Hours && hrs > 0 && (r24HourOfDay == null || reached(p, r24HourOfDay)),
-      async () => mailEach(await roster("AND status='pending'"), 'chase',
-        { payload: { stage: '24' } }));
-
-    await fire('gameday24', hrs <= r24Hours && hrs > 0 && (r24HourOfDay == null || reached(p, r24HourOfDay)), async () => {
-      const recipients = (await env.DB.prepare(
-        `SELECT player_id, team FROM rsvp 
-         WHERE event_id=? AND player_id IS NOT NULL 
-           AND (status='in' OR (role='roster' AND status='pending'))`
-      ).bind(ev.id).all()).results || [];
-      for (const r of recipients) {
-        await enqueue(env, {
-          kind: 'gameday',
-          event_id: ev.id,
-          player_id: r.player_id,
-          team: r.team,
-          dedup_key: `gameday24:${ev.id}:${r.player_id}`,
-        });
-      }
-      await markJob(env.DB, ev.id, 'r24');
-    });
-
-    await fire('gameday_morning', hrs <= gamedayMorningHours && hrs > 0, async () => {
-      const start = eventStart(ev);
-      const cutoff24 = start ? new Date(start.getTime() - 24 * 3600000).toISOString() : new Date(Date.now() - 24 * 3600000).toISOString();
-      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
-      const cfgTeams = getTeamNames(cfg);
-      for (const team of cfgTeams) {
-        const newMsgs = await getTeamMessages(env.DB, ev.id, team, 10, cutoff24);
-        if (!newMsgs || !newMsgs.length) continue;
-        const recipients = (await env.DB.prepare(
-          `SELECT player_id FROM rsvp 
-           WHERE event_id=? AND team=? AND player_id IS NOT NULL 
-             AND (status='in' OR (role='roster' AND status='pending'))`
-        ).bind(ev.id, team).all()).results || [];
-        for (const r of recipients) {
-          await enqueue(env, {
-            kind: 'gameday_morning',
-            event_id: ev.id,
-            player_id: r.player_id,
-            team,
-            dedup_key: `gameday_morning:${ev.id}:${r.player_id}`
-          });
-        }
-      }
-    });
-
-    await fire('summary', hrs <= 24 && hrs > 0 && reached(p, 20), async () => {
-      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
-      const cfgTeams = getTeamNames(cfg);
-      const lines = [];
-      for (const team of cfgTeams) {
-        const st = await teamState(env.DB, ev.id, team, cfg);
-        lines.push(`${team}: ${st.skaters} joueurs, ${st.goalies} gardien(s)` +
-          (st.short ? '   <-- SHORT' : ''));
-      }
-      const wait = (await env.DB.prepare(
-        `SELECT c.name, a.need FROM availability a JOIN contacts c ON c.player_id=a.player_id
-          WHERE a.event_id=? AND a.status='yes'
-            AND a.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id=? AND player_id IS NOT NULL)
-          ORDER BY a.answered_at`).bind(ev.id, ev.id).all()).results || [];
-      await enqueue(env, { kind: 'summary', event_id: ev.id,
-        dedup_key: `summary:${ev.id}`,
-        payload: { text: `Semaine ${ev.week} — ${ev.date}\n\n` + lines.join('\n') +
-          (wait.length ? `\n\nListe d'attente: ` +
-            wait.map(w => `${w.name} (${w.need === 'goalie' ? 'G' : 'J'})`).join(', ') : '') } });
-    });
-
-    await fire('lock', hrs <= 0 && reached(p, 13), async () => {
-      await env.DB.prepare("UPDATE events SET state='locked' WHERE id=?").bind(ev.id).run();
-    });
-
-    await fire('season_recap_prompt', hrs <= -3 || (ev.end_time && reached(p, 13, 30)), async () => {
-      let isFinalWeek = false;
-      try {
-        const rawData = await env.SHEETS_KV.get('data_json');
-        if (rawData) {
-          const d = JSON.parse(rawData);
-          const s0 = d.seasons?.find(s => s && s.name === ev.season) || d.seasons?.find(Boolean);
-          if (s0 && s0.fixtures) {
-            const maxWeek = Math.max(...s0.fixtures.map(f => Number(f.week) || 0));
-            if (Number(ev.week) === maxWeek) {
-              isFinalWeek = true;
-            }
-          }
-        }
-      } catch (e) {}
-
-      if (isFinalWeek) {
-        await enqueue(env, {
-          kind: 'season_recap_prompt',
-          event_id: ev.id,
-          dedup_key: `season_recap_prompt:${ev.season}`,
-          payload: {
-            season: ev.season,
-            to: env.ADMIN_EMAIL || ADMIN_EMAIL
-          }
-        });
-      }
-    });
-
-    // Sub-call rework, Part 3: every pass, a team that can no longer
-    // reach its minimum from who is still available calls subs -- not
-    // only when someone cancels. Idempotent: callSubs skips subs already
-    // invited for this game, so repeated passes add only new eligible
-    // subs (e.g. one added since the last pass).
-    try {
-      const n = await callSubsForShortfall(env, ev);
-      if (n) log.push(`shortfall ${ev.id}: ${n} sub call(s) queued`);
-    } catch (e) { log.push(`shortfall check failed for ${ev.id}: ${e.message}`); }
-  }
-
-  try {
-    const made = await ensureNextEvent(env);
-    if (made) {
-      log.push(`created ${made.id} week ${made.week} (${made.players} players)`);
-      // A team already below its minimum is short from the moment the
-      // game exists: call subs now, in this same pass (drained below).
-      const madeEv = await getEvent(env.DB, made.id);
-      const n = await callSubsForShortfall(env, madeEv);
-      if (n) log.push(`shortfall at creation ${made.id}: ${n} sub call(s) queued`);
-    }
-  } catch (e) { log.push('ensureNextEvent failed: ' + e.message); }
-
-  const d = await drain(env);
-  log.push(`outbox due=${d.due} sent=${d.sent} failed=${d.failed}`);
-
-  try {
-    const probs = await deadMan(env);
-    if (probs.length) log.push('ALERT: ' + probs.join('; '));
-  } catch (e) { log.push('deadMan failed: ' + e.message); }
-
-  return log;
-}
 
 /* ---------- team link ---------- */
 
@@ -17801,28 +17541,12 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
 }
 
 /* ============================================================
- * Part 2 (automated reminder/logistics task): per-league automatic
- * reminder emails.
- *
- * GENUINELY SEPARATE from SMBHL's own reminder/cron system by
- * construction, not just by convention:
- *   - Its own cron trigger (wrangler.jsonc's env.demo block, its own
- *     "triggers.crons", which REPLACES rather than merges with the
- *     top-level one) -- fires only on the notreligue-rsvp deployment,
- *     against notreligue-demo's own D1 database. SMBHL's production
- *     Worker (smbhl-rsvp) keeps its own top-level every-5-minutes cron
- *     completely unchanged and never executes a line of this code.
- *   - scheduled() below branches on env.LEAGUE_PRODUCT (set only in
- *     that env block) to call runLeagueReminders() INSTEAD OF
- *     runSchedule() -- the two never run in the same invocation, and
- *     runSchedule() itself is not modified at all.
- *   - Its own email templates (nlEmailWrap/nlEmailButton,
- *     src/design_system.js, the design system Part 5 task) -- never
- *     emailWrap()/body() (this file, above), which render SMBHL's own
- *     real, live transactional emails.
- *   - Its own sent-tracking table (league_reminder_log,
- *     migrate-026.sql) -- never the outbox/drain() pipeline SMBHL's
- *     own cron drains.
+ * Part 2 (automated reminder/logistics task): the league product's
+ * reminder emails (templates, recipients, links) used by the shared
+ * reminder module, src/reminders.js -- which owns WHEN they are sent (the
+ * simple 72/24/12 model, or the advanced model for a flagged league) and
+ * runs the pass for both products. They are queued through the same
+ * outbox/drain() as SMBHL's mail, logged in league_reminder_log.
  *
  * The ONE piece of existing logic this deliberately DOES reuse,
  * unmodified, per the task's own explicit instruction ("reuse the
@@ -18180,10 +17904,13 @@ async function maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, 
 // is rendered from league data drain() doesn't otherwise load, and a
 // queued copy keeps the exact content an admin can inspect in Comms.
 // Not held for quiet hours: every caller sends at a moment it chose
-// (a reminder window the cron just reached, or an admin's action).
-async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId = null, team = null, dedupKey = null, to, mail, identity = null }) {
+// (a reminder window the cron just reached, or an admin's action) --
+// except a league on the advanced reminder model, whose automatic waves
+// are held for its quiet hours (quietHours: true, src/reminders.js).
+async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId = null, team = null, dedupKey = null, to, mail, identity = null, quietHours = false }) {
   await enqueue(env, {
-    kind, event_id: eventId, player_id: playerId, team, dedup_key: dedupKey, league_id: leagueId, skipQuietHours: true,
+    kind, event_id: eventId, player_id: playerId, team, dedup_key: dedupKey, league_id: leagueId,
+    skipQuietHours: !quietHours, quietLeagueId: quietHours ? leagueId : null,
     payload: {
       prerendered: {
         to, subject: mail.subject, text: mail.text, html: mail.html || null,
@@ -18193,36 +17920,6 @@ async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId =
   });
 }
 
-// Sends one reminder wave for one event: real recipients (never a
-// static count), real per-league branding and color, real dedup via
-// league_reminder_log (never re-sent automatically for the same
-// event+kind once logged). kind: 'reminder_72h' | 'reminder_24h' |
-// 'logistics_12h'. Each kind has its OWN hours-until-start threshold
-// -- a 70h-out event only qualifies for reminder_72h, never also
-// reminder_24h/logistics_12h just because it's already <= 72h out.
-// Returns the number of emails actually sent, per kind.
-// Threshold hours now live in reminder_scheduling.js (reminder-window-
-// skip-on-create/reschedule bug fix task) -- that file's own
-// applyReminderWindowSkipRule needs the identical 3 numbers to decide
-// whether a step's window has already elapsed at event-creation time,
-// and a single source of truth means the two can never drift apart.
-async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil) {
-  const kindToColumn = { reminder_72h: 'reminder_72h_enabled', reminder_24h: 'reminder_24h_enabled', logistics_12h: 'reminder_12h_enabled' };
-  const results = {};
-  for (const kind of ['reminder_72h', 'reminder_24h', 'logistics_12h']) {
-    if (hoursUntil > REMINDER_WINDOW_THRESHOLD_HOURS[kind]) { results[kind] = 0; continue; }
-    if (!leagueRow[kindToColumn[kind]]) { results[kind] = 0; continue; }
-    const already = await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(ev.id, kind).first();
-    if (already) { results[kind] = 0; continue; }
-    // The automated cron wave only ever logs a summary count -- no
-    // admin is watching a live message for it, so only .sent (not the
-    // eligible/failed breakdown Bug 2 added for the manual trigger) is
-    // needed here; this keeps runLeagueReminders' own summing logic
-    // unchanged.
-    results[kind] = (await sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog: true })).queued;
-  }
-  return results;
-}
 
 // writeLog: false for the manual "send now" trigger below -- see its
 // own comment for why a manual send must never suppress the automatic
@@ -18235,7 +17932,7 @@ async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil) {
 // 0, sent === 0), which used to be indistinguishable and, combined
 // with Bug 1's from-address rejection, made every league's reminders
 // silently fail while the admin saw a success-shaped message.
-async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false, drainNow = false, budget = null } = {}) {
+async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false, drainNow = false, budget = null, quietHours = false } = {}) {
   const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
   const recipients = kind === 'logistics_12h'
     ? await getConfirmedPlayers(env, leagueRow.id, ev.id)
@@ -18268,7 +17965,7 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
       await enqueuePrerenderedMail(env, {
         kind, leagueId: leagueRow.id, eventId: ev.id, playerId: contact.player_id, team: contact.rsvp_team || null,
         dedupKey: `${writeLog ? 'lrem' : 'lrem-manual'}:${ev.id}:${kind}:${contact.player_id}`,
-        to: contact.email, mail, identity: cfg.league
+        to: contact.email, mail, identity: cfg.league, quietHours
       });
       queued++;
     } catch (err) {
@@ -18294,105 +17991,6 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
   return { sent: 0, eligible: recipients.length, failed: failedToQueue, queued };
 }
 
-// The cron entry point (scheduled(), below the export default). Scans
-// every non-SMBHL, non-deactivated league's own OPEN events with a
-// real start_time (no start_time = no countdown to measure against --
-// the manual "send now" trigger still works for those, since it
-// targets non-responders directly, not a time window) and sends
-// whichever of the 3 waves have crossed their own threshold and
-// haven't been sent yet for that event. Self-healing by construction:
-// if a tick is ever missed, the NEXT tick still finds hoursUntil under
-// the threshold and sends it late, rather than silently skipping it
-// forever -- league_reminder_log is what prevents a duplicate send,
-// not a narrow time window.
-async function runLeagueReminders(env, budget = createSendBudget()) {
-  const log = [];
-  const leagues = (await env.DB.prepare(
-    `SELECT * FROM leagues WHERE id != ? AND deactivated_at IS NULL`
-  ).bind(SMBHL_LEAGUE_ID).all()).results || [];
-
-  for (const leagueRow of leagues) {
-    // Live-testing task (batch 6), Part 10: an event created (or later
-    // toggled) with auto_reminders_enabled = 0 is skipped entirely here
-    // -- the per-event opt-out this part adds. Every pre-existing event
-    // defaults to 1 (migrate-042.sql), so this filter changes nothing
-    // for an event nobody has ever opted out.
-    const events = (await env.DB.prepare(
-      `SELECT * FROM events WHERE league_id = ? AND state = 'open' AND start_time IS NOT NULL AND auto_reminders_enabled = 1`
-    ).bind(leagueRow.id).all()).results || [];
-
-    for (const ev of events) {
-      const start = eventStart(ev);
-      if (!start) continue;
-      const hoursUntil = (start.getTime() - Date.now()) / 3600000;
-      if (hoursUntil <= 0 || hoursUntil > 72) continue;
-
-      // Season-level team-structure override task: resolved PER EVENT
-      // (this event's own ev.season), not once per league -- a league
-      // can have open events spanning more than one published season
-      // (an older season's event left open while a new season is
-      // already current), and each must use its OWN season's config,
-      // not whichever season happens to be current right now.
-      const cfg = await getLeagueSeasonConfig(env, leagueRow.id, ev.season);
-      const results = await sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil);
-      const total = results.reminder_72h + results.reminder_24h + results.logistics_12h;
-      if (total > 0) log.push(`${leagueRow.id}:${ev.id} 72h=${results.reminder_72h} 24h=${results.reminder_24h} logistics=${results.logistics_12h}`);
-
-      // Live-testing task, Part 9: scheduled auto-draw, extending this
-      // SAME cron rather than building a second trigger -- per the
-      // standing principle (do not touch SMBHL's own cron, do not build
-      // a second parallel scheduler when one already exists for this
-      // exact "N hours before an event" purpose). Off by default
-      // (auto_draw_enabled); only meaningful for weekly_draw. Runs the
-      // EXACT same draw randomAssignEventTeams uses for the admin's own
-      // manual button -- never a second copy of the shuffle logic.
-      // league_auto_draw_log is the same self-healing idempotency
-      // pattern as league_reminder_log: a missed tick still draws late
-      // on the next one instead of skipping forever, and a re-run never
-      // re-shuffles an event already drawn once.
-      if (leagueRow.auto_draw_enabled && cfg.teamStructure === 'weekly_draw' && hoursUntil <= leagueRow.auto_draw_hours_before) {
-        const alreadyDrawn = await env.DB.prepare('SELECT 1 FROM league_auto_draw_log WHERE event_id = ?').bind(ev.id).first();
-        if (!alreadyDrawn) {
-          const drawResult = await randomAssignEventTeams(env, leagueRow, ev, cfg);
-          if (drawResult.ok) {
-            await env.DB.prepare(
-              `INSERT INTO league_auto_draw_log (event_id, league_id, drawn_at, assigned_count) VALUES (?, ?, ?, ?)
-               ON CONFLICT(event_id) DO NOTHING`
-            ).bind(ev.id, leagueRow.id, new Date().toISOString(), drawResult.assigned).run();
-            log.push(`${leagueRow.id}:${ev.id} auto-draw assigned=${drawResult.assigned}`);
-          }
-        }
-      }
-    }
-
-    // Sub-call rework, Part 3: every pass, a team that can no longer
-    // reach its minimum calls subs (queued here, delivered just below).
-    try {
-      const openEvents = (await env.DB.prepare(`SELECT * FROM events WHERE league_id = ? AND state = 'open'`).bind(leagueRow.id).all()).results || [];
-      for (const ev of openEvents) {
-        const n = await callSubsForShortfall(env, ev);
-        if (n) log.push(`${leagueRow.id}:${ev.id} shortfall: ${n} sub call(s) queued`);
-      }
-    } catch (e) { log.push(`${leagueRow.id} shortfall check failed: ${e.message}`); }
-
-    // Delivers this league's outbox: the reminder waves and team-
-    // assigned follow-ups queued above (outbox QA batch), plus sub-call
-    // invites and retries. Every league shares ONE budget for the whole
-    // invocation (src/mail_queue.js): once it is spent, the remaining
-    // leagues' mail simply waits for the next pass (every 15 minutes on
-    // demo) -- queued, never dropped.
-    const leagueDrain = await drain(env, MAIL_SENDS_PER_INVOCATION, null, leagueRow.id, budget);
-    if (leagueDrain.sent > 0 || leagueDrain.failed > 0) {
-      log.push(`${leagueRow.id} drain sent=${leagueDrain.sent} failed=${leagueDrain.failed} retrying=${leagueDrain.retrying}`);
-    }
-  }
-  // Mail that belongs to no league (sign-up and password emails, deferred
-  // when Resend's daily quota ran out) -- the per-league drains above never
-  // pick it up. SMBHL's own cron drains everything, so it's covered there.
-  const systemDrain = await drain(env, MAIL_SENDS_PER_INVOCATION, null, 'system', budget);
-  if (systemDrain.sent > 0 || systemDrain.failed > 0) log.push(`system drain sent=${systemDrain.sent} failed=${systemDrain.failed}`);
-  return log;
-}
 
 // Admin-initiated manual "send now" -- session+CSRF+checkLeagueAccess-
 // gated, same discipline as every other league-admin write route.
@@ -26980,21 +26578,23 @@ async function handleChampionPhoto(req, env, url) {
   });
 }
 
+// The shared reminder module (src/reminders.js) calls back into these.
+installReminderHost({
+  enqueue, teamState, remindSubs, callSubs, getTeamMessages, callSubsForShortfall, ensureNextEvent, getEvent,
+  drain, deadMan, ADMIN_EMAIL, sendLeagueReminderKind, getLeagueSeasonConfig, randomAssignEventTeams
+});
+
 export default {
-  // Part 2 (automated reminders task): env.LEAGUE_PRODUCT is set ONLY
-  // in wrangler.jsonc's env.demo block (and would be set the same way
-  // in any future real league-product production env) -- SMBHL's own
-  // production deployment never sets it, so this branch, and every
-  // line of runLeagueReminders() it calls, never executes under
-  // SMBHL's own cron/deployment. runSchedule() itself is completely
-  // untouched, called exactly as before for every deployment that
-  // doesn't set this flag.
+  // Both products' reminder passes go through the one shared module
+  // (src/reminders.js, runReminderPass). env.LEAGUE_PRODUCT is set only in
+  // wrangler.jsonc's env.demo block, so SMBHL's production deployment runs
+  // SMBHL's pass and the demo deployment runs the leagues' -- as before.
+  // Log lines are unchanged.
   async scheduled(event, env, ctx) {
-    if (env.LEAGUE_PRODUCT === 'true') {
-      ctx.waitUntil(runLeagueReminders(env).then(log => console.log('league-reminders cron:', log.join(' | ') || '(nothing due)')));
-      return;
-    }
-    ctx.waitUntil(runSchedule(env).then(log => console.log('cron:', log.join(' | '))));
+    ctx.waitUntil(runReminderPass(env).then(({ product, log }) => product === 'leagues'
+      ? console.log('league-reminders cron:', log.join(' | ') || '(nothing due)')
+      : console.log('cron:', log.join(' | '))));
+    if (env.LEAGUE_PRODUCT === 'true') return;
     ctx.waitUntil(cleanupOldReviews(env));
   },
 
@@ -27129,6 +26729,10 @@ async function handleFetch(req, env, ctx) {
       // switches on the dashboard's own reminder-settings card.
       if (url.pathname === '/league/reminders/settings' && req.method === 'POST')
         return await handleLeagueUpdateReminderSettings(req, env, url);
+      // The advanced reminder cadence (src/reminders.js) -- only for a
+      // league whose advanced_reminders flag is on.
+      if (url.pathname === '/league/reminders/cadence' && req.method === 'POST')
+        return await handleLeagueUpdateReminderCadence(req, env, url);
       // Live-testing task, Part 1: the consolidated settings page's own
       // write routes -- identity (name/colour/stats), team names/colours,
       // and the league-level team-structure/roster-limits default.

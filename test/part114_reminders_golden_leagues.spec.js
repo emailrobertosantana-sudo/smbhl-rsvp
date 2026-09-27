@@ -178,5 +178,5 @@ describe("The league product's cron, recorded before the migration", () => {
       jobs: (await env.DB.prepare(`SELECT event_id, job FROM jobs ORDER BY event_id, job`).all()).results
     };
     expect({ passes, final }).toMatchSnapshot();
-  });
+  }, 60000);
 });

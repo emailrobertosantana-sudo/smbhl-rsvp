@@ -25,6 +25,7 @@ import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail } from './design_system.js';
 import { hasCapability } from './super_admin.js';
 import { applyReminderWindowSkipRule } from './reminder_scheduling.js';
+import { usesAdvancedReminders, getEmailSettings, emailSettingsKey } from './reminders.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -3391,6 +3392,63 @@ export async function handleLeagueUpdateReminderSettings(req, env, url) {
       autoDrawHoursBefore: row.auto_draw_hours_before
     }
   });
+}
+
+// The advanced reminder cadence (src/reminders.js), for a league whose
+// advanced_reminders flag a super-admin turned on: hours before the game
+// for each of its three steps, the hour of the day the two reminders wait
+// for (empty = as soon as the window opens), and its quiet hours. Stored as
+// the league's own email_cadence_settings:<leagueId> row. PATCH-style: only
+// the fields sent change. A league without the flag is refused -- the block
+// isn't shown to it either.
+const LEAGUE_CADENCE_FIELDS = ['r72_hours', 'r72_hour_of_day', 'r24_hours', 'r24_hour_of_day', 'logistics_hours', 'quiet_hours_enabled', 'quiet_hours_start', 'quiet_hours_end'];
+export async function handleLeagueUpdateReminderCadence(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) {
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  }
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (!(await usesAdvancedReminders(env, leagueId))) {
+    return Response.json({ ok: false, error: 'Advanced reminder timing is not enabled for this league.', errorKey: 'ADVANCED_REMINDERS_OFF' }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const current = await getEmailSettings(env.DB, leagueId);
+  const next = Object.fromEntries(LEAGUE_CADENCE_FIELDS.map(k => [k, current[k] ?? null]));
+  const invalid = () => Response.json({ ok: false, error: 'Hours before the game must be 1 to 168; an hour of the day must be 0 to 23.', errorKey: 'CADENCE_INVALID' }, { status: 400 });
+  const blank = v => v === null || v === undefined || String(v).trim() === '';
+  const wholeIn = (v, lo, hi) => { if (blank(v)) return null; const n = Number(v); return Number.isInteger(n) && n >= lo && n <= hi ? n : null; };
+  let changed = 0;
+  for (const k of ['r72_hours', 'r24_hours', 'logistics_hours']) {
+    if (body[k] === undefined) continue;
+    const n = wholeIn(body[k], 1, 168); if (n === null) return invalid();
+    next[k] = n; changed++;
+  }
+  for (const k of ['r72_hour_of_day', 'r24_hour_of_day']) {
+    if (body[k] === undefined) continue;
+    if (blank(body[k])) { next[k] = null; changed++; continue; }
+    const n = wholeIn(body[k], 0, 23); if (n === null) return invalid();
+    next[k] = n; changed++;
+  }
+  for (const k of ['quiet_hours_start', 'quiet_hours_end']) {
+    if (body[k] === undefined) continue;
+    const n = wholeIn(body[k], 0, 23); if (n === null) return invalid();
+    next[k] = n; changed++;
+  }
+  if (typeof body.quiet_hours_enabled === 'boolean') { next.quiet_hours_enabled = body.quiet_hours_enabled; changed++; }
+  if (!changed) {
+    return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
+  }
+  await env.DB.prepare(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+  ).bind(emailSettingsKey(leagueId), JSON.stringify(next)).run();
+  return Response.json({ ok: true, settings: next });
 }
 
 /* ---------- consolidated settings page routes (live-testing task, Part 1) ---------- */

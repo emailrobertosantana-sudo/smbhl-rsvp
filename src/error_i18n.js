@@ -159,6 +159,9 @@ export const ERROR_I18N = {
   INVALID_LANGUAGE_MODE: { fr: "La langue doit être 'les deux', 'français' ou 'anglais'.", en: "Language must be 'both', 'fr', or 'en'." },
   NO_SETTINGS_PROVIDED: { fr: 'Aucun réglage fourni.', en: 'No settings provided.' },
   AUTO_DRAW_HOURS_INVALID: { fr: 'Le nombre d\'heures avant le match doit être au moins 1.', en: 'Auto-draw hours-before must be at least 1.' },
+  ADVANCED_REMINDERS_OFF: { fr: 'L\'horaire avancé des rappels n\'est pas activé pour ta ligue.', en: 'Advanced reminder timing is not enabled for your league.' },
+  FLAG_ALWAYS_ON: { fr: 'Cet indicateur est toujours actif pour cette ligue.', en: 'This flag is always on for this league.' },
+  CADENCE_INVALID: { fr: 'Les heures avant le match vont de 1 à 168, et l\'heure de la journée de 0 à 23.', en: 'Hours before the game must be 1 to 168; an hour of the day must be 0 to 23.' },
   NO_UPCOMING_EVENT: { fr: 'Aucun prochain match trouvé.', en: 'No upcoming event found.' },
 
   // Client-side-only validation keys (no server round trip needed for

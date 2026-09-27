@@ -39,29 +39,57 @@ const PLAN_TIER_KEYS = new Set(PLAN_TIERS.map(t => t.key));
 // see mechanism note above); a super-admin can disable it for a specific
 // league to cap it at its current single admin. Wired into
 // handleLeagueAdminInvite (leagues.js).
+// defaultEnabled: what a league with no row for the flag gets (and what a
+// failed lookup falls back to). multi_admin predates this field and keeps
+// its original default, true. alwaysOnFor: leagues for which the flag is
+// on by definition and can't be switched off here.
 export const CAPABILITY_FLAGS = [
   {
     key: 'multi_admin',
     label: 'Plusieurs admins / Multiple admins',
-    description: "Permet d'inviter plus d'un administrateur pour cette ligue. / Allows inviting more than one admin for this league."
+    description: "Permet d'inviter plus d'un administrateur pour cette ligue. / Allows inviting more than one admin for this league.",
+    defaultEnabled: true
+  },
+  // The advanced reminder cadence (src/reminders.js): hours-before /
+  // hour-of-day steps held for quiet hours, set in the league's Comms
+  // settings. Off unless a super-admin turns it on for a league. SMBHL
+  // runs it always -- its reminders are built on it.
+  {
+    key: 'advanced_reminders',
+    label: 'Rappels avancés / Advanced reminders',
+    description: "Horaire des rappels à l'heure près et heures de silence. / Hour-by-hour reminder timing and quiet hours.",
+    defaultEnabled: false,
+    alwaysOnFor: ['smbhl']
   }
 ];
+const CAPABILITY_FLAG_BY_KEY = new Map(CAPABILITY_FLAGS.map(f => [f.key, f]));
+function flagDefault(flagKey) {
+  const f = CAPABILITY_FLAG_BY_KEY.get(flagKey);
+  return f ? f.defaultEnabled !== false : true;
+}
+function flagAlwaysOn(flagKey, leagueId) {
+  const f = CAPABILITY_FLAG_BY_KEY.get(flagKey);
+  return !!(f && f.alwaysOnFor && f.alwaysOnFor.includes(leagueId));
+}
 const CAPABILITY_FLAG_KEYS = new Set(CAPABILITY_FLAGS.map(f => f.key));
 
 // Never throws. Returns true (the safe, pre-existing-behavior default)
 // for any flag key with no explicit row, including a key this function
 // doesn't recognize -- callers that care about validity check
 // CAPABILITY_FLAG_KEYS themselves before writing.
+// A flag with defaultEnabled: false (advanced_reminders) answers false
+// when there is no row, or when the lookup fails -- never "on" by accident.
 export async function hasCapability(env, leagueId, flagKey) {
-  if (!env?.DB || !leagueId || !flagKey) return true;
+  if (leagueId && flagAlwaysOn(flagKey, leagueId)) return true;
+  if (!env?.DB || !leagueId || !flagKey) return flagDefault(flagKey);
   try {
     const row = await env.DB.prepare(
       'SELECT enabled FROM league_capability_flags WHERE league_id = ? AND flag_key = ?'
     ).bind(leagueId, flagKey).first();
-    if (!row) return true;
+    if (!row) return flagDefault(flagKey);
     return !!row.enabled;
   } catch (_) {
-    return true;
+    return flagDefault(flagKey);
   }
 }
 
@@ -102,7 +130,8 @@ export async function listLeaguesWithMetadata(env) {
     const overrides = flagsByLeague.get(l.id) || {};
     const flags = {};
     for (const f of CAPABILITY_FLAGS) {
-      flags[f.key] = Object.prototype.hasOwnProperty.call(overrides, f.key) ? overrides[f.key] : true;
+      flags[f.key] = flagAlwaysOn(f.key, l.id) ? true
+        : Object.prototype.hasOwnProperty.call(overrides, f.key) ? overrides[f.key] : flagDefault(f.key);
     }
     return {
       id: l.id,
@@ -128,6 +157,7 @@ export async function updateLeaguePlanTier(env, leagueId, planTier) {
 
 export async function updateLeagueCapabilityFlag(env, leagueId, flagKey, enabled) {
   if (!isValidCapabilityFlag(flagKey)) return { ok: false, error: 'Unknown capability flag.', errorKey: 'INVALID_FLAG' };
+  if (flagAlwaysOn(flagKey, leagueId) && !enabled) return { ok: false, error: 'This flag is always on for this league.', errorKey: 'FLAG_ALWAYS_ON' };
   const league = await env.DB.prepare('SELECT id FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!league) return { ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' };
   const now = new Date().toISOString();

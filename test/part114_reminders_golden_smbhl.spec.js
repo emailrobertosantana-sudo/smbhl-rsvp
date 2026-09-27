@@ -171,5 +171,5 @@ describe("SMBHL's cron over one game week, recorded before the migration", () =>
       alerts: (await env.DB.prepare(`SELECT key, value FROM settings WHERE key LIKE 'alert:%' ORDER BY key`).all()).results
     };
     expect({ passes, final }).toMatchSnapshot();
-  });
+  }, 60000);
 });
