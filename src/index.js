@@ -173,6 +173,15 @@ function dateSpanHtml(tag, dateISO, style, extraAttrs) {
   const en = formatEventDate(dateISO, 'en', style);
   return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(fr)}</${tag}>`;
 }
+// A playoff role label ("Finale -- seed 1 contre seed 4" / "Final -- seed 1
+// vs seed 4") in BOTH languages, swapped by the page's FR/EN toggle through
+// the same data-date-fr/-en attributes dates use -- it used to be rendered
+// server-side in the page's first language only.
+function playoffLabelSpanHtml(tag, meta, lang, extraAttrs) {
+  let fr = '', en = '';
+  try { fr = playoffRoleLabel(meta || {}, 'fr'); en = playoffRoleLabel(meta || {}, 'en'); } catch (_) {}
+  return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(lang === 'en' ? en : fr)}</${tag}>`;
+}
 function timeSpanHtml(tag, timeHHMM, extraAttrs) {
   const fr = formatEventTime(timeHHMM, 'fr');
   const en = formatEventTime(timeHHMM, 'en');
@@ -4004,17 +4013,21 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // resolved matchup (Part 1's assign-matchups action, or the manual
   // picker) before showing one, same as everywhere else this app
   // already makes that distinction.
+  // Returns HTML: the joining word ("contre" / "vs") is a data-i18n span so
+  // the page's FR/EN toggle switches it -- it used to be baked in, in the
+  // language the page was first rendered in.
   function matchupTextFor(ev) {
     if (teamStructure !== 'fixed') return null;
-    if (teamNames.length === 2) return `${teamNames[0]} ${t.vsWord} ${teamNames[1]}`;
-    if (ev.home_team && ev.away_team) return `${ev.home_team} ${t.vsWord} ${ev.away_team}`;
+    const vs = `<span data-i18n="vsWord">${esc(t.vsWord)}</span>`;
+    if (teamNames.length === 2) return `${esc(teamNames[0])} ${vs} ${esc(teamNames[1])}`;
+    if (ev.home_team && ev.away_team) return `${esc(ev.home_team)} ${vs} ${esc(ev.away_team)}`;
     return null;
   }
   const heroMatchup = nextEvent ? matchupTextFor(nextEvent) : null;
   const heroHtml = nextEvent ? `<div class="pb-hero" style="background:${esc(fillColor)}">
     <div class="overline" style="color:#fff" data-i18n="nextGame">${esc(t.nextGame)}</div>
     ${dateTimeSpanHtml('div', nextEvent.date, nextEvent.start_time, 'short', 'class="pb-hero-when"')}
-    ${heroMatchup ? `<div class="pb-hero-matchup">${esc(heroMatchup)}</div>` : ''}
+    ${heroMatchup ? `<div class="pb-hero-matchup">${heroMatchup}</div>` : ''}
     ${isHeadcount ? `<div class="pb-hero-pool"><span class="tnum">${poolConfirmed}</span>${poolMax ? `<span>/${poolMax}</span>` : ''} <span data-i18n="poolConfirmed">${esc(t.poolConfirmed)}</span></div>` : ''}
     ${isHeadcount && poolGoalieMin > 0 ? `<div class="pb-hero-pool"><span class="tnum">${poolGoaliesConfirmed}</span><span>/${poolGoalieMin}</span> <span data-i18n="poolGoalies">${esc(t.poolGoalies)}</span></div>` : ''}
     ${nextEvent.venue ? `<div class="pb-hero-venue">${esc(nextEvent.venue)}${resolveEventMapLink(nextEvent, venueMapLinks) ? ` · <a href="${esc(resolveEventMapLink(nextEvent, venueMapLinks))}" target="_blank" rel="noopener" style="color:inherit" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>` : ''}
@@ -4146,7 +4159,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   <div class="pb-glist">${events.map(ev => { const mu = matchupTextFor(ev); return `<div class="pb-g">
       <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
       <div>
-        ${mu ? `<div class="pb-g-matchup">${esc(mu)}</div>` : ''}
+        ${mu ? `<div class="pb-g-matchup">${mu}</div>` : ''}
         <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${resolveEventMapLink(ev, venueMapLinks) ? ` · <a href="${esc(resolveEventMapLink(ev, venueMapLinks))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
       </div>
     </div>`; }).join('')}</div>` : `<p class="nl-help" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
@@ -7940,7 +7953,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     ? events.map(ev => `<div class="nl-card sc-game-row">
       <a class="sc-game" href="/league/events/detail?e=${encodeURIComponent(ev.id)}">
         <div class="sc-when">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
-        ${ev.is_playoff ? `<div class="sc-venue">${esc((() => { try { return playoffRoleLabel(JSON.parse(ev.playoff_meta || 'null') || {}, lang); } catch (_) { return ''; } })())}</div>` : (ev.home_team && ev.away_team ? `<div class="sc-venue">${esc(ev.home_team)} <span data-i18n="matchupVsWord">contre</span> ${esc(ev.away_team)}</div>` : '')}
+        ${ev.is_playoff ? playoffLabelSpanHtml('div', (() => { try { return JSON.parse(ev.playoff_meta || 'null') || {}; } catch (_) { return {}; } })(), lang, 'class="sc-venue"') : (ev.home_team && ev.away_team ? `<div class="sc-venue">${esc(ev.home_team)} <span data-i18n="matchupVsWord">contre</span> ${esc(ev.away_team)}</div>` : '')}
         <div class="sc-venue">${ev.venue ? esc(ev.venue) : ''}</div>
         <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
         <span class="sc-chevron">&rsaquo;</span>
@@ -9338,13 +9351,13 @@ ${tabbar}`;
   <div class="ev-teams">${ev.is_playoff && ev.state === 'cancelled'
     ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
       <h2 data-i18n="playoffSeriesDecidedTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffSeriesDecidedTitle)}</h2>
-      ${playoffMeta ? `<p class="nl-help" style="font-weight:600">${esc(playoffRoleLabel(playoffMeta, lang))}</p>` : ''}
+      ${playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600"') : ''}
       <p class="nl-help" data-i18n="playoffSeriesDecidedDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffSeriesDecidedDesc)}</p>
     </section>`
     : ev.is_playoff && !(ev.home_team && ev.away_team)
     ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
       <h2 data-i18n="playoffAwaitingSeedingTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingTitle)}</h2>
-      ${playoffMeta ? `<p class="nl-help" style="font-weight:600">${esc(playoffRoleLabel(playoffMeta, lang))}</p>` : ''}
+      ${playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600"') : ''}
       <p class="nl-help" data-i18n="playoffAwaitingSeedingDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingDesc)}</p>
     </section>`
     : fixedMatchupUnknown
@@ -9352,7 +9365,7 @@ ${tabbar}`;
       <h2 data-i18n="noMatchupSetTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetTitle)}</h2>
       <p class="nl-help" data-i18n="noMatchupSetDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetDesc)}</p>
     </section>`
-    : (ev.is_playoff && playoffMeta ? `<p class="nl-help" style="font-weight:600;grid-column:1/-1">${esc(playoffRoleLabel(playoffMeta, lang))}</p>` : '') + (poolCardHtml || teamCards.join(''))}</div>
+    : (ev.is_playoff && playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600;grid-column:1/-1"') : '') + (poolCardHtml || teamCards.join(''))}</div>
   ${unassignedHtml}
 </main>
 ${tabbar}`;

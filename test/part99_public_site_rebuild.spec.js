@@ -308,8 +308,8 @@ describe('Public site rebuild, matchup display (item 7)', () => {
     await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
 
     const html = await publicPageHtml(league.id);
-    expect(html).toContain('class="pb-hero-matchup">Rouge contre Bleu<');
-    expect(html).toContain('class="pb-g-matchup">Rouge contre Bleu<');
+    expect(html).toContain('class="pb-hero-matchup">Rouge <span data-i18n="vsWord">contre</span> Bleu<');
+    expect(html).toContain('class="pb-g-matchup">Rouge <span data-i18n="vsWord">contre</span> Bleu<');
   });
 
   it('a >2-team fixed league only shows the matchup once one is actually resolved', async () => {
@@ -325,7 +325,7 @@ describe('Public site rebuild, matchup display (item 7)', () => {
     // The hero always shows the NEXT event -- still the no-matchup one
     // (earliest date) -- but the schedule list shows the later,
     // resolved one correctly.
-    expect(html).toContain('class="pb-g-matchup">Vert contre Jaune<');
+    expect(html).toContain('class="pb-g-matchup">Vert <span data-i18n="vsWord">contre</span> Jaune<');
   });
 
   it('a headcount league never shows a matchup line at all', async () => {
