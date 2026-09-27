@@ -688,8 +688,8 @@ describe('Stats tracking, Part 4: standings and leaderboards', () => {
     // convention -- see resolveScoreEventSides' own comment), so assert
     // against the score route's own response rather than assuming which
     // team landed on which side.
-    expect(html).toContain(`${scored.json.event.home_team} <b>6</b>`);
-    expect(html).toContain(`<b>3</b> ${scored.json.event.away_team}`);
+    expect(html).toContain(`${scored.json.event.home_team} <span class="pb-g-score-n"><b>6</b>`);
+    expect(html).toContain(`<b>3</b></span> ${scored.json.event.away_team}`);
   });
 
   it('a headcount (no-teams) league never shows a standings table, regardless of player stats tracking', async () => {

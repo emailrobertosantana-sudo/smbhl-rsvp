@@ -80,6 +80,13 @@ describe('Theme preview (?theme=) on the public page', () => {
     expect(html).not.toContain('<script>"');
   });
 
+  it('in-page links (History, All time) keep the preview while the visitor clicks around', async () => {
+    const { slug } = await setup('preview.links@example.com', '203.0.221.004', 'Preview Links League');
+    const html = await page(slug, '?theme=clean');
+    expect(html).toContain('href="?season=all&amp;theme=clean#standings"');
+    expect(await page(slug)).toContain('href="?season=all#standings"');
+  });
+
   it('the Settings page links to a preview of whichever theme is selected', async () => {
     const { slug, cookie } = await setup('preview.settings@example.com', '203.0.221.005', 'Preview Settings League');
     const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();

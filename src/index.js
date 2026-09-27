@@ -3431,6 +3431,8 @@ const PUBLIC_THEME_CLASSIQUE_CSS = `  .nl { color-scheme: light; --surface: #fff
   .pb-table th:first-child, .pb-table td.pb-tm { text-align: left; }
   .pb-table td { padding: 9px 6px; text-align: center; border-bottom: 1px solid #e3e3e0; }
   .pb-table tbody tr:nth-child(odd) { background: #f4f4f2; }
+  .pb-table { --pb-th-bg: #111318; }
+  .pb-table tbody tr:nth-child(odd) td.pb-nm { background: #f4f4f2; }
   .pb-tm i { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 2px; }
   .pb-glist { display: flex; flex-direction: column; }
   .pb-g { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #e3e3e0; gap: var(--space-3); }
@@ -3514,7 +3516,10 @@ const PUBLIC_THEME_QUARTIER_CSS = `  .nl { color-scheme: light; --surface: #f4f4
   .pb-note .overline { color: var(--pb-accent, #16181d); }
   .pb-note p { margin: 10px 0 0; font-size: 16px; line-height: 24px; color: #16181d; }
   .pb-main h2 { font: 700 15px/20px var(--font-sans); color: #55585f; margin: var(--space-5) 0 var(--space-2); }
-  .pb-table { width: 100%; border-collapse: collapse; font: 500 15px/20px var(--font-sans); background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); overflow: hidden; }
+  /* The rounded white card moved from the table to its scroll wrapper: a table with overflow:hidden is itself a scroll container, which would pin the sticky name column to the table instead of to the wrapper that actually scrolls. */
+  .pb-table { width: 100%; border-collapse: collapse; font: 500 15px/20px var(--font-sans); --pb-table-bg: #ffffff; }
+  .pb-table-wrap { background: #ffffff; border: 1px solid #e3e3e0; border-radius: var(--radius-lg); }
+  .pb-table tbody tr:last-child td { border-bottom: none; }
   .pb-table th { font: 600 12px/16px var(--font-sans); color: #55585f; border-bottom: 1px solid #e3e3e0; padding: 10px 6px; text-align: center; }
   .pb-table th:first-child, .pb-table td.pb-tm { text-align: left; }
   .pb-table td { padding: 10px 6px; text-align: center; border-bottom: 1px solid #e3e3e0; }
@@ -3558,9 +3563,54 @@ const PUBLIC_THEME_QUARTIER_CSS = `  .nl { color-scheme: light; --surface: #f4f4
   @media (max-width: 640px) { .pb-nav { gap: var(--space-1) var(--space-2); } .nl .pb-nav-link { font-size: 12px; padding: 4px 8px; } }`;
 
 // Public page QA batch: rules every theme shares, appended AFTER the
-// theme's own block.
+// theme's own block. Each fixes something a rendered pass (Playwright/
+// Chromium, both OS colour schemes, 1440px and 390px) caught that
+// reading the CSS had not:
+//  - B1: nlDocument() never reset the browser's default 8px body
+//    margin, so every theme's header stopped 8px short of both window
+//    edges (measured: header 8..1432 of a 1440px viewport).
+//  - B3/C2: tables. Players/Goalies name cells were CENTRED (only
+//    Standings' td.pb-tm was ever left-aligned), and at 390px a long
+//    name either wrapped or squeezed the stat columns to ~20px. Every
+//    table now sits in its own horizontal-scroll wrapper (the page
+//    itself never scrolls sideways), names stay on one line and stay
+//    pinned (sticky) while the numbers scroll under them; on a phone a
+//    name keeps its natural width up to a cap and only a genuinely long
+//    one wraps, inside that cap.
+//  - C2: the other places a long team/player name lands -- team
+//    tiles (were a fixed 64px tall), leaders rows, and a past game's
+//    "Team 5 - 3 Team" score line (was nowrap, so two long team names
+//    pushed the page wider than the phone).
 //  - D1: the theme-preview banner.
-const PUBLIC_THEME_SHARED_CSS = `  .pb-preview-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 0; padding: 10px var(--space-4); border-radius: 8px; background: #ffd23f; color: #16181d; font: 600 14px/20px var(--font-sans); }`;
+// --pb-table-bg is whatever surface the table actually sits on (the
+// sticky cells need an opaque copy of it); it defaults to the theme's
+// own pinned --surface token and is overridden where a theme draws its
+// table on a different card colour (Quartier) or header (Classique).
+const PUBLIC_THEME_SHARED_CSS = `  body.nl { margin: 0; }
+  .pb-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+  .pb-table th, .pb-table td { white-space: nowrap; }
+  .pb-table td.pb-nm { text-align: left; }
+  .pb-table th:first-child, .pb-table td.pb-nm { position: sticky; left: 0; z-index: 1; background: var(--pb-table-bg, var(--surface)); }
+  .pb-table th:first-child { background: var(--pb-th-bg, var(--pb-table-bg, var(--surface))); }
+  .pb-table td:not(.pb-nm), .pb-table th:not(:first-child) { font-variant-numeric: tabular-nums; min-width: 2.25em; }
+  .pb-tg div { height: auto; min-height: 64px; overflow-wrap: anywhere; }
+  .pb-lead-name { min-width: 0; overflow-wrap: anywhere; }
+  .pb-g > * { min-width: 0; }
+  .pb-g-score { white-space: normal; overflow-wrap: anywhere; }
+  .pb-g-score .pb-g-score-n { white-space: nowrap; }
+  .pb-g-sub { display: block; font-size: 13px; color: var(--ink-muted); font-weight: 400; margin-top: 2px; }
+  .pb-g-link .pb-g-chev { font-size: 20px; line-height: 20px; color: var(--ink-muted); flex: none; }
+  .pb-preview-banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 0; padding: 10px var(--space-4); border-radius: 8px; background: #ffd23f; color: #16181d; font: 600 14px/20px var(--font-sans); }
+  @media (max-width: 640px) {
+    .pb-table { font-size: 14px; }
+    /* Shrink-to-fit, capped: a short name keeps its natural width (so
+       a "Rouge vs Bleu" table fits the phone with every column visible),
+       a normal full name stays on one line, and only a genuinely long
+       one wraps -- inside the cap, never squeezed to one word per line. */
+    .pb-table .pb-nm-t { display: inline-block; width: max-content; max-width: min(13em, 52vw); white-space: normal; overflow-wrap: break-word; vertical-align: top; }
+    .pb-table th, .pb-table td { padding-left: 6px; padding-right: 6px; }
+    .pb-table td:not(.pb-nm), .pb-table th:not(:first-child) { min-width: 1.9em; }
+  }`;
 
 // Live-testing task (batch 2), Part 10: shared response for BOTH "this
 // league id/slug doesn't exist at all" and "this league exists but its
@@ -3837,15 +3887,15 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
       // itself disappearing until seasons accumulate.
       Object.assign(base, lang === 'fr'
         ? {
-            navHistory: 'Historique', allTime: 'Toutes saisons', currentSeasonLabel: 'Saison actuelle',
+            navHistory: 'Historique', allTime: 'Toutes saisons', allTimeDesc: 'Totaux de carrière, toutes saisons confondues', currentSeasonLabel: 'Saison actuelle',
             viewingSeasonBanner: 'Tu consultes : {season}', backToCurrentSeason: 'Retour à la saison actuelle',
-            pastSeasonsTitle: 'Saisons précédentes', noPastSeasonsYet: "Cette ligue n'a qu'une seule saison pour l'instant -- les saisons précédentes apparaîtront ici une fois la prochaine commencée.",
+            pastSeasonsTitle: 'Saisons précédentes', noPastSeasonsYet: "Cette ligue n'a qu'une seule saison pour l'instant — les saisons précédentes apparaîtront ici une fois la prochaine commencée.",
             seasonEventCount: '{n} match(s)'
           }
         : {
-            navHistory: 'History', allTime: 'All time', currentSeasonLabel: 'Current season',
+            navHistory: 'History', allTime: 'All time', allTimeDesc: 'Career totals across every season', currentSeasonLabel: 'Current season',
             viewingSeasonBanner: 'Viewing: {season}', backToCurrentSeason: 'Back to current season',
-            pastSeasonsTitle: 'Past seasons', noPastSeasonsYet: 'This league only has one season so far -- past seasons will appear here once the next one starts.',
+            pastSeasonsTitle: 'Past seasons', noPastSeasonsYet: 'This league only has one season so far — past seasons will appear here once the next one starts.',
             seasonEventCount: '{n} game(s)'
           });
     }
@@ -3882,15 +3932,15 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
       }
       Object.assign(base, lang === 'fr'
         ? { navLeaders: 'Meneurs', leadersTitle: 'Meneurs', leadersPoints: 'Points', leadersGoals: 'Buts', leadersGaa: 'Meilleure MBA',
-            noLeadersYet: "Rien à afficher pour l'instant -- les meneurs apparaîtront une fois des statistiques enregistrées." }
+            noLeadersYet: "Rien à afficher pour l'instant — les meneurs apparaîtront une fois des statistiques enregistrées." }
         : { navLeaders: 'Leaders', leadersTitle: 'Leaders', leadersPoints: 'Points', leadersGoals: 'Goals', leadersGaa: 'Best GAA',
-            noLeadersYet: 'Nothing to show yet -- leaders will appear once stats are recorded.' });
+            noLeadersYet: 'Nothing to show yet — leaders will appear once stats are recorded.' });
     } else if (leagueRow.tracks_results && teamStructure === 'fixed') {
       // Leaders is also reachable from standings alone (no player-stats
       // tracking) -- same union gate leadersHtml's own comment explains.
       Object.assign(base, lang === 'fr'
-        ? { navLeaders: 'Meneurs', leadersTitle: 'Meneurs', noLeadersYet: "Rien à afficher pour l'instant -- les meneurs apparaîtront une fois des statistiques enregistrées." }
-        : { navLeaders: 'Leaders', leadersTitle: 'Leaders', noLeadersYet: 'Nothing to show yet -- leaders will appear once stats are recorded.' });
+        ? { navLeaders: 'Meneurs', leadersTitle: 'Meneurs', noLeadersYet: "Rien à afficher pour l'instant — les meneurs apparaîtront une fois des statistiques enregistrées." }
+        : { navLeaders: 'Leaders', leadersTitle: 'Leaders', noLeadersYet: 'Nothing to show yet — leaders will appear once stats are recorded.' });
     }
     if (isHeadcount) {
       Object.assign(base, lang === 'fr' ? { poolConfirmed: 'confirmés' } : { poolConfirmed: 'confirmed' });
@@ -3988,13 +4038,13 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // All-time sections below follow too.
   const standingsHtml = (leagueRow.tracks_results && teamStructure === 'fixed') ? (standings.length ? `
   <h2 data-i18n="standings">${esc(t.standings)}</h2>
-  <table class="pb-table">
+  <div class="pb-table-wrap"><table class="pb-table">
     <thead><tr><th data-i18n="teams">${esc(t.teams)}</th><th data-i18n="played">${esc(t.played)}</th><th data-i18n="wins">${esc(t.wins)}</th><th data-i18n="losses">${esc(t.losses)}</th><th data-i18n="ties">${esc(t.ties)}</th><th data-i18n="goalsFor">${esc(t.goalsFor)}</th><th data-i18n="goalsAgainst">${esc(t.goalsAgainst)}</th><th data-i18n="pts">${esc(t.pts)}</th></tr></thead>
     <tbody>${standings.map((s, i) => {
       const dotIdx = teamNames.indexOf(s.team);
-      return `<tr><td class="pb-tm"><i style="background:${esc(teamDot(dotIdx >= 0 ? dotIdx : i))}"></i>${esc(s.team)}</td><td>${s.gp}</td><td>${s.w}</td><td>${s.l}</td><td>${s.t}</td><td>${s.gf}</td><td>${s.ga}</td><td>${s.pts}</td></tr>`;
+      return `<tr><td class="pb-tm pb-nm"><i style="background:${esc(teamDot(dotIdx >= 0 ? dotIdx : i))}"></i><span class="pb-nm-t">${esc(s.team)}</span></td><td>${s.gp}</td><td>${s.w}</td><td>${s.l}</td><td>${s.t}</td><td>${s.gf}</td><td>${s.ga}</td><td>${s.pts}</td></tr>`;
     }).join('')}</tbody>
-  </table>` : `<h2 data-i18n="standings">${esc(t.standings)}</h2><p class="pb-empty" data-i18n="noStandingsYet">${esc(t.noStandingsYet)}</p>`) : '';
+  </table></div>` : `<h2 data-i18n="standings">${esc(t.standings)}</h2><p class="pb-empty" data-i18n="noStandingsYet">${esc(t.noStandingsYet)}</p>`) : '';
 
   // Part 4: top scorers -- ANY league with player stats enabled,
   // regardless of team structure (goals/assists don't depend on
@@ -4004,19 +4054,19 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // (below) is the condensed highlight, Players is the complete table.
   const topScorersHtml = leagueRow.tracks_player_stats ? (topScorers.length ? `
   <h2 data-i18n="topScorers">${esc(t.topScorers)}</h2>
-  <table class="pb-table">
+  <div class="pb-table-wrap"><table class="pb-table">
     <thead><tr><th data-i18n="player">${esc(t.player)}</th><th data-i18n="goals">${esc(t.goals)}</th><th data-i18n="assists">${esc(t.assists)}</th><th data-i18n="points">${esc(t.points)}</th></tr></thead>
-    <tbody>${topScorers.map(p => `<tr><td>${esc(p.name)}</td><td>${p.goals}</td><td>${p.assists}</td><td>${p.points}</td></tr>`).join('')}</tbody>
-  </table>` : `<h2 data-i18n="topScorers">${esc(t.topScorers)}</h2><p class="pb-empty" data-i18n="noPlayersYet">${esc(t.noPlayersYet)}</p>`) : '';
+    <tbody>${topScorers.map(p => `<tr><td class="pb-nm"><span class="pb-nm-t">${esc(p.name)}</span></td><td>${p.goals}</td><td>${p.assists}</td><td>${p.points}</td></tr>`).join('')}</tbody>
+  </table></div>` : `<h2 data-i18n="topScorers">${esc(t.topScorers)}</h2><p class="pb-empty" data-i18n="noPlayersYet">${esc(t.noPlayersYet)}</p>`) : '';
 
   // Public site rebuild task (Part 3, item 3): goalie stats get a
   // public surface for the first time.
   const goalieStatsHtml = (leagueRow.tracks_player_stats && leagueRow.tracks_results) ? (goalieStats.length ? `
   <h2 data-i18n="goalieStats">${esc(t.goalieStats)}</h2>
-  <table class="pb-table">
+  <div class="pb-table-wrap"><table class="pb-table">
     <thead><tr><th data-i18n="goalieName">${esc(t.goalieName)}</th><th data-i18n="gp">${esc(t.gp)}</th><th data-i18n="wins">${esc(t.wins)}</th><th data-i18n="losses">${esc(t.losses)}</th><th data-i18n="ties">${esc(t.ties)}</th><th data-i18n="goalsAgainst">${esc(t.goalsAgainst)}</th><th data-i18n="gaa">${esc(t.gaa)}</th></tr></thead>
-    <tbody>${goalieStats.map(g => `<tr><td>${esc(g.name)}</td><td>${g.games}</td><td>${g.w}</td><td>${g.l}</td><td>${g.t}</td><td>${g.goalsAgainst}</td><td>${g.gaa != null ? g.gaa : '--'}</td></tr>`).join('')}</tbody>
-  </table>` : `<h2 data-i18n="goalieStats">${esc(t.goalieStats)}</h2><p class="pb-empty" data-i18n="noGoaliesYet">${esc(t.noGoaliesYet)}</p>`) : '';
+    <tbody>${goalieStats.map(g => `<tr><td class="pb-nm"><span class="pb-nm-t">${esc(g.name)}</span></td><td>${g.games}</td><td>${g.w}</td><td>${g.l}</td><td>${g.t}</td><td>${g.goalsAgainst}</td><td>${g.gaa != null ? g.gaa : '&mdash;'}</td></tr>`).join('')}</tbody>
+  </table></div>` : `<h2 data-i18n="goalieStats">${esc(t.goalieStats)}</h2><p class="pb-empty" data-i18n="noGoaliesYet">${esc(t.noGoaliesYet)}</p>`) : '';
 
   // Public site rebuild task (Part 3, item 2): Leaders is the
   // condensed highlight -- top 3 scorers by points, top 3 goalies by
@@ -4051,13 +4101,23 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // missing nav item -- so the layout/logic is already there the
   // moment a second season exists, per the task's own explicit
   // instruction.
+  // Public page QA batch (B4): these links used to land on #history
+  // itself -- so choosing "All time" or a past season just re-showed
+  // this same list (under a "Viewing: All time" banner) with nothing
+  // all-time beneath it. They now open the first stat section that
+  // actually reflects the selected season. A league whose switches
+  // give it no season-aware section at all (results tracked on a
+  // weekly_draw league: no standings, players, goalies or leaders)
+  // keeps the old #history target -- there is nowhere better to go.
+  const firstStatSection = (leagueRow.tracks_results && teamStructure === 'fixed') ? 'standings'
+    : leagueRow.tracks_player_stats ? 'players' : 'history';
   const otherSeasons = seasonsList.filter(s => !s.isCurrent);
   const historyHtml = statsTracked ? `
   <h2 data-i18n="pastSeasonsTitle">${esc(t.pastSeasonsTitle)}</h2>
   <div class="pb-glist">
-    <a class="pb-g pb-g-link" href="?season=all#history"><span class="pb-g-d"><b data-i18n="allTime">${esc(t.allTime)}</b></span></a>
+    <a class="pb-g pb-g-link" href="${esc(pageQuery({ season: 'all' }))}#${firstStatSection}"><span class="pb-g-d"><b data-i18n="allTime">${esc(t.allTime)}</b><span class="pb-g-sub" data-i18n="allTimeDesc">${esc(t.allTimeDesc)}</span></span><span class="pb-g-chev" aria-hidden="true">&rsaquo;</span></a>
   </div>
-  ${otherSeasons.length ? `<div class="pb-glist">${otherSeasons.map(s => `<a class="pb-g pb-g-link" href="?season=${encodeURIComponent(s.season)}#history"><span class="pb-g-d"><b>${esc(s.season)}</b><span>${esc((t.seasonEventCount || '{n}').split('{n}').join(String(s.eventCount)))}</span></span></a>`).join('')}</div>`
+  ${otherSeasons.length ? `<div class="pb-glist">${otherSeasons.map(s => `<a class="pb-g pb-g-link" href="${esc(pageQuery({ season: s.season }))}#${firstStatSection}"><span class="pb-g-d"><b>${esc(s.season)}</b><span>${esc((t.seasonEventCount || '{n}').split('{n}').join(String(s.eventCount)))}</span></span><span class="pb-g-chev" aria-hidden="true">&rsaquo;</span></a>`).join('')}</div>`
     : `<p class="pb-empty" data-i18n="noPastSeasonsYet">${esc(t.noPastSeasonsYet)}</p>`}` : '';
 
   // The "you're looking at a season that isn't the current one" banner
@@ -4076,7 +4136,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const seasonBannerHtml = showSeasonBanner ? `
   <div class="pb-season-banner">
     <span data-date-fr="${esc(bannerTextFr)}" data-date-en="${esc(bannerTextEn)}">${esc(lang === 'en' ? bannerTextEn : bannerTextFr)}</span>
-    <a href="?#standings" data-i18n="backToCurrentSeason">${esc(t.backToCurrentSeason)}</a>
+    <a href="${esc(pageQuery({}))}#${firstStatSection}" data-i18n="backToCurrentSeason">${esc(t.backToCurrentSeason)}</a>
   </div>` : '';
 
   const upcomingHtml = events.length ? `
@@ -4112,7 +4172,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
         <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${resolveEventMapLink(ev, venueMapLinks) ? ` · <a href="${esc(resolveEventMapLink(ev, venueMapLinks))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
       </div>
       ${hasScore
-        ? `<span class="pb-g-score">${esc(ev.home_team)} <b>${ev.home_score}</b> &ndash; <b>${ev.away_score}</b> ${esc(ev.away_team)}</span>`
+        ? `<span class="pb-g-score">${esc(ev.home_team)} <span class="pb-g-score-n"><b>${ev.home_score}</b> &ndash; <b>${ev.away_score}</b></span> ${esc(ev.away_team)}</span>`
         : `<span class="nl-badge nl-badge--${PAST_STATE_TONE[ev.state] || 'pending'}" data-i18n="${PAST_STATE_KEY[ev.state] || ''}">${esc(t[PAST_STATE_KEY[ev.state]] || ev.state)}</span>`}
     </div>`;
     }).join('')}</div>` : '';

@@ -356,7 +356,11 @@ describe('Public site rebuild, History and All-time (items 5)', () => {
     expect(html).toContain('data-section="history"');
     expect(html).toContain('data-i18n="noPastSeasonsYet"');
     // All-time is still reachable even with only one season on record.
-    expect(html).toContain('?season=all#history');
+    // All-time is still reachable even with only one season on record --
+    // and (public page QA batch, B4) it opens a stat section that actually
+    // shows all-time numbers, not this same History list again.
+    expect(html).toContain('?season=all#standings');
+    expect(html).not.toContain('?season=all#history');
   });
 
   it('once a second season exists, the first appears as a real, linked past season, and All-time aggregates across both', async () => {
@@ -377,19 +381,19 @@ describe('Public site rebuild, History and All-time (items 5)', () => {
     // History lists the OTHER (non-current) season as a real link.
     const historyHtml = await publicPageHtml(league.id);
     expect(historyHtml).toContain('Winter 2026');
-    expect(historyHtml).toContain('?season=' + encodeURIComponent('Winter 2026') + '#history');
+    expect(historyHtml).toContain('?' + new URLSearchParams({ season: 'Winter 2026' }) + '#standings');
     expect(historyHtml).not.toContain('data-i18n="noPastSeasonsYet"');
 
     // Viewing the past season directly shows ONLY its own stats.
     const pastSeasonHtml = await publicPageHtml(league.id, '&season=' + encodeURIComponent('Winter 2026'));
     expect(pastSeasonHtml).toContain('class="pb-season-banner"');
     expect(pastSeasonHtml).toContain('Tu consultes : Winter 2026');
-    expect(pastSeasonHtml).toMatch(/Two Season Player<\/td><td>3<\/td>/);
+    expect(pastSeasonHtml).toMatch(/Two Season Player<\/span><\/td><td>3<\/td>/);
 
     // All-time sums both seasons: 3 + 2 = 5 goals.
     const allTimeHtml = await publicPageHtml(league.id, '&season=all');
     expect(allTimeHtml).toContain('data-i18n="allTime"');
-    expect(allTimeHtml).toMatch(/Two Season Player<\/td><td>5<\/td>/);
+    expect(allTimeHtml).toMatch(/Two Season Player<\/span><\/td><td>5<\/td>/);
   });
 
   it('an unrecognized ?season= value falls back to the current season rather than erroring', async () => {
