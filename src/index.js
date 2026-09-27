@@ -11221,7 +11221,9 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
             if (isSub) {
               const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
               const perGame = isGoalie ? Number(pricing?.price_sub_goalie || 0) : Number(pricing?.price_sub_player ?? 5);
-              const totalFee = perGame * 2;
+              // Tonight's fee: games per night from the season config (2 for
+              // SMBHL unless its season sets otherwise; 1 for any other league).
+              const totalFee = perGame * gamesPerNight(seasonCfg, m.league_id || SMBHL_LEAGUE_ID);
               if (totalFee > 0) {
                 payload.subFee = { perGame, total: totalFee, phone };
               }
