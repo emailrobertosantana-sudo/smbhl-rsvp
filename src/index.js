@@ -11473,9 +11473,9 @@ async function eventWeekStatus(env, leagueId, ev, cfg) {
 // minimum from the players still available -- not only when someone
 // cancels. Available = everyone on the team not marked out (confirmed or
 // not yet answered). Minimum = the league's own configured floor:
-// cfg.goaliesPerTeam goalies and cfg.minSkaters skaters (season config;
-// SMBHL's comes from its season config in data_json, falling back to
-// DEFAULT_SEASON_CONFIG: 1 goalie, 5 skaters). Note: the cancellation
+// cfg.goaliesPerTeam goalies and the season's configured minSkaters
+// (SMBHL with none configured: SMBHL_SHORTFALL_MIN_SKATERS, 7; a league
+// with none: DEFAULT_SEASON_CONFIG's 5; goalies default to 1). Note: the cancellation
 // path (openSpots) keeps calling until the FULL team (skatersPerTeam, 8
 // by default) -- unchanged.
 //
@@ -11488,6 +11488,20 @@ async function eventWeekStatus(env, leagueId, ev, cfg) {
 // window for creating its next game, so every SMBHL game is checked the
 // moment it exists.
 const SHORTFALL_HORIZON_HOURS = 192;
+
+// Skater minimum the shortfall trigger uses for SMBHL when its season
+// has no configured minSkaters (Fall 2026's season object has no config
+// at all). The question here is "can this team field a game", and SMBHL
+// wants 7 skaters for that. Only this trigger uses it: the 36-hour check,
+// the admin board and the public team page keep minSkaters (default 5),
+// the cancellation path keeps filling to skatersPerTeam (default 8), and
+// goaliesPerTeam stays 1. A season with its own minSkaters uses that. The
+// league product keeps DEFAULT_SEASON_CONFIG's 5 for leagues with none.
+const SMBHL_SHORTFALL_MIN_SKATERS = 7;
+function shortfallMinSkaters(cfg, leagueId) {
+  if (leagueId === SMBHL_LEAGUE_ID && !cfg.minSkatersConfigured) return SMBHL_SHORTFALL_MIN_SKATERS;
+  return cfg.minSkaters || 0;
+}
 
 async function eventSeasonConfig(env, ev) {
   const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
@@ -11536,7 +11550,7 @@ async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
     if (hasGoalies && a.goalies < (cfg.goaliesPerTeam || 0)) {
       queued += await callSubs(env, ev, team, 'goalie', 0, leagueId, usesIndependentGoalieAxis, isLeague, isLeague);
     }
-    if (a.skaters < (cfg.minSkaters || 0)) {
+    if (a.skaters < shortfallMinSkaters(cfg, leagueId)) {
       queued += await callSubs(env, ev, team, 'skater', 0, leagueId, usesIndependentGoalieAxis, isLeague, isLeague);
     }
   }

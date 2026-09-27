@@ -157,6 +157,10 @@ export function normalizeSeasonConfig(rawConfig) {
       ? Number(rawConfig.maxGoalies) : resolvedGoaliesPerTeam,
     skatersPerTeam: Number(rawConfig.skatersPerTeam) || DEFAULT_SEASON_CONFIG.skatersPerTeam,
     minSkaters: Number(rawConfig.minSkaters) || DEFAULT_SEASON_CONFIG.minSkaters,
+    // Whether minSkaters above came from the league's own configuration
+    // rather than DEFAULT_SEASON_CONFIG. SMBHL's shortfall trigger uses its
+    // own fallback when it didn't (index.js, SMBHL_SHORTFALL_MIN_SKATERS).
+    minSkatersConfigured: Number(rawConfig.minSkaters) > 0,
     playoffFormat: rawConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat,
     league,
     tracksStats: rawConfig.tracksStats === false ? false : DEFAULT_SEASON_CONFIG.tracksStats,
