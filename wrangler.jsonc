@@ -46,7 +46,7 @@
         "LEAGUE_PRODUCT": "true",
         // Same meaning as the top-level MAIL_DAILY_CAP (this env block's
         // vars replace, not merge with, the top-level ones).
-        "MAIL_DAILY_CAP": "100"
+        "MAIL_DAILY_CAP": "10"
       },
       "d1_databases": [
         {
