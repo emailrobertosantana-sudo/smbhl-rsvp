@@ -6,6 +6,8 @@
  * fallback to historical SMBHL defaults.
  */
 
+import { SMBHL_LEAGUE_ID } from './league_ids.js';
+
 export const DEFAULT_SEASON_CONFIG = {
   teams: [
     { name: 'Red', name_fr: 'Rouge', colour: '#c9152f', aliases: ['Red Wings'] },
@@ -161,6 +163,8 @@ export function normalizeSeasonConfig(rawConfig) {
     // rather than DEFAULT_SEASON_CONFIG. SMBHL's shortfall trigger uses its
     // own fallback when it didn't (index.js, SMBHL_SHORTFALL_MIN_SKATERS).
     minSkatersConfigured: Number(rawConfig.minSkaters) > 0,
+    gamesPerNight: Number(rawConfig.gamesPerNight) > 0 ? Number(rawConfig.gamesPerNight) : DEFAULT_GAMES_PER_NIGHT,
+    gamesPerNightConfigured: Number(rawConfig.gamesPerNight) > 0,
     playoffFormat: rawConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat,
     league,
     tracksStats: rawConfig.tracksStats === false ? false : DEFAULT_SEASON_CONFIG.tracksStats,
@@ -346,6 +350,22 @@ export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTea
   }
 
   return fallbackSeasonConfig(leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure, leagueSportType);
+}
+
+// Games each player plays in one event (one night): a season's
+// config.gamesPerNight. Sub dues are events attended x games per night x
+// the sub rate. SMBHL plays two games a night and one event is one night
+// (events.id is a date), so SMBHL uses SMBHL_GAMES_PER_NIGHT when its
+// season doesn't set one (Fall 2026's season object has no config at
+// all). Any other league with none configured gets
+// DEFAULT_GAMES_PER_NIGHT. Kept out of DEFAULT_SEASON_CONFIG, whose shape
+// is pinned (review.spec.js), for the same reason.
+export const DEFAULT_GAMES_PER_NIGHT = 1;
+export const SMBHL_GAMES_PER_NIGHT = 2;
+export function gamesPerNight(cfg, leagueId) {
+  if (cfg && cfg.gamesPerNightConfigured) return cfg.gamesPerNight;
+  if (leagueId === SMBHL_LEAGUE_ID) return SMBHL_GAMES_PER_NIGHT;
+  return DEFAULT_GAMES_PER_NIGHT;
 }
 
 /**

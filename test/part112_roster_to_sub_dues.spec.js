@@ -10,6 +10,9 @@
 // Nothing ever creates a player_dues row automatically; those rows hold
 // payments / custom amounts the admin records.
 //
+// SMBHL plays two games a night (one event = one night), so each event
+// below is two games (part113: per game, not per night).
+//
 // Now a current sub is charged the sub rate for every game they played
 // this season (status 'in' on a completed event, whatever their role
 // then), with any payment toward the season fee credited, and a credit
@@ -69,27 +72,27 @@ beforeAll(async () => {
 });
 
 describe('Roster -> sub conversion: retroactive per-game dues', () => {
-  it('before converting, the regulars owe the season fee and the always-sub owes 2 x 5', async () => {
+  it('before converting, the regulars owe the season fee and the always-sub owes 4 x 5', async () => {
     const { row } = await finance();
     expect(row('CONVPAID')).toMatchObject({ is_sub: false, total_due: 170, amount_paid: 170, outstanding: 0 });
-    expect(row('ALWAYSSUB')).toMatchObject({ is_sub: true, games_played: 2, total_due: 10 });
+    expect(row('ALWAYSSUB')).toMatchObject({ is_sub: true, games_played: 4, total_due: 20 });
   });
 
-  it('a regular with 3 games converting to sub is charged 3 x the sub rate; a cancelled game and an upcoming one do not count; previous_role is recorded', async () => {
+  it('a regular with 3 nights (6 games) converting to sub is charged 6 x the sub rate; a cancelled game and an upcoming one do not count; previous_role is recorded', async () => {
     expect((await convert('CONV3')).status).toBe(200);
     const c = await env.DB.prepare(`SELECT role, is_sub, previous_role FROM contacts WHERE player_id = 'CONV3'`).first();
     expect(c).toEqual({ role: 'sub_skater', is_sub: 1, previous_role: 'roster' });
     const { row } = await finance();
-    expect(row('CONV3')).toMatchObject({ is_sub: true, games_played: 3, total_due: 15, amount_paid: 0, outstanding: 15, credit: 0, status: 'unpaid' });
+    expect(row('CONV3')).toMatchObject({ is_sub: true, games_played: 6, total_due: 30, amount_paid: 0, outstanding: 30, credit: 0, status: 'unpaid' });
   });
 
-  it('a regular who paid the 170 season fee and played 5 games converts into a CREDIT of 145, not zero', async () => {
+  it('a regular who paid the 170 season fee and played 5 nights (10 games) converts into a CREDIT of 120, not zero', async () => {
     expect((await convert('CONVPAID')).status).toBe(200);
     expect((await env.DB.prepare(`SELECT previous_role FROM contacts WHERE player_id = 'CONVPAID'`).first()).previous_role).toBe('roster');
     const { d, row } = await finance();
-    expect(row('CONVPAID')).toMatchObject({ is_sub: true, games_played: 5, total_due: 25, amount_paid: 170, outstanding: -145, credit: 145 });
-    expect(d.summary.totalCredit).toBeGreaterThanOrEqual(145);
-    // The finance page shows a credit as "+145 $ credit", never "0 $".
+    expect(row('CONVPAID')).toMatchObject({ is_sub: true, games_played: 10, total_due: 50, amount_paid: 170, outstanding: -120, credit: 120 });
+    expect(d.summary.totalCredit).toBeGreaterThanOrEqual(120);
+    // The finance page shows a credit as "+120 $ credit", never "0 $".
     const html = await (await admin('/admin/finances')).text();
     const creditBranch = html.indexOf("if (p.outstanding < 0) {");
     const zeroBranch = html.indexOf("} else if (p.outstanding === 0 && p.total_due > 0) {");
@@ -100,12 +103,12 @@ describe('Roster -> sub conversion: retroactive per-game dues', () => {
   it('a goalie is charged the goalie sub rate for games played in net', async () => {
     expect((await convert('CONVG', 'sub_goalie')).status).toBe(200);
     const { row } = await finance();
-    expect(row('CONVG')).toMatchObject({ is_sub: true, is_goalie: true, games_played: 2, total_due: 6 });
+    expect(row('CONVG')).toMatchObject({ is_sub: true, is_goalie: true, games_played: 4, total_due: 12 });
   });
 
   it('a player who was always a sub is unaffected', async () => {
     const { row } = await finance();
-    expect(row('ALWAYSSUB')).toMatchObject({ is_sub: true, games_played: 2, total_due: 10, credit: 0 });
+    expect(row('ALWAYSSUB')).toMatchObject({ is_sub: true, games_played: 4, total_due: 20, credit: 0 });
     expect((await env.DB.prepare(`SELECT previous_role FROM contacts WHERE player_id = 'ALWAYSSUB'`).first()).previous_role).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 // GENERATED FILE -- do not hand-edit.
 // Produced by scripts/generate_schema_manifest.js from
 // test/support/base_schema_v1.sql +
-// all migrate-*.sql files (51 files parsed, as of this
+// all migrate-*.sql files (52 files parsed, as of this
 // generation). Re-run that script after adding a new migration, then
 // run the full test suite -- test/schema_manifest.spec.js fails loudly
 // if this file and the real migrated schema disagree.
@@ -11,7 +11,7 @@
 // this list against a real database's actual PRAGMA table_info output.
 // This is the single source of truth both share.
 //
-// 28 tables, 255 columns tracked.
+// 28 tables, 256 columns tracked.
 export const SCHEMA_MANIFEST = {
   "availability": [
     "answered_at",
@@ -201,6 +201,7 @@ export const SCHEMA_MANIFEST = {
     "notes",
     "player_id",
     "season",
+    "settled_nights",
     "updated_at"
   ],
   "player_game_stats": [

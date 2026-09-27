@@ -61,7 +61,8 @@ import {
   getLeagueConfig,
   tracksStats,
   getTeamColour,
-  sportHasGoalie
+  sportHasGoalie,
+  gamesPerNight
 } from './season_config.js';
 import { checkSchemaOnce, formatSchemaDriftMessage } from './schema_guard.js';
 
@@ -20139,6 +20140,19 @@ async function handleFinancesData(req, env, url) {
   ).bind(season).all()).results || [];
   const playedGpMap = new Map(playedGpRows.map(r => [r.player_id, r.gp]));
 
+  // The counts above are EVENTS (one event = one night); dues are per
+  // GAME. SMBHL plays gamesPerNight games a night (2 unless the season
+  // sets its own -- season_config.js). A sub whose dues row recorded a
+  // payment before this rule (migrate-052.sql, settled_nights) keeps
+  // those nights at one game each: they're settled. Later nights count
+  // in full.
+  const nightGames = gamesPerNight(getSeasonConfig(d, season), SMBHL_LEAGUE_ID);
+  const nightsToGames = (pid, nights) => {
+    const n = Number(nights || 0);
+    const settled = Math.min(n, Number(duesMap.get(pid)?.settled_nights || 0));
+    return settled + (n - settled) * nightGames;
+  };
+
   // 4. Contacts
   const contactsList = (await env.DB.prepare(
     'SELECT player_id, name, email, role, is_goalie, is_sub, preferred_team FROM contacts'
@@ -20158,7 +20172,7 @@ async function handleFinancesData(req, env, url) {
       const team = sData?.team || gData?.team || null;
       const isSub = (c && c.is_sub === 1) || !team || (sData && sData.team === null);
       let gamesPlayed = 0;
-      const rsvpGp = (isSub ? playedGpMap : subGpMap).get(p.id) || 0;
+      const rsvpGp = nightsToGames(p.id, (isSub ? playedGpMap : subGpMap).get(p.id));
       if (c && c.role === 'sub_goalie') {
         gamesPlayed = Math.max(gData?.gp ?? sData?.gp ?? 0, rsvpGp);
       } else if (isGoalie && gData && sData && sData.gp === gData.gp && (sData.g || 0) === 0 && (sData.a || 0) === 0) {
@@ -20214,7 +20228,7 @@ async function handleFinancesData(req, env, url) {
       const c = contactMap.get(rr.player_id);
       const isSub = (c && c.is_sub === 1) || rr.is_sub === 1;
       const isGoalie = c ? (c.is_goalie === 1 || c.role === 'sub_goalie') : rr.is_goalie === 1;
-      const gp = (isSub ? playedGpMap : subGpMap).get(rr.player_id) || 0;
+      const gp = nightsToGames(rr.player_id, (isSub ? playedGpMap : subGpMap).get(rr.player_id));
       if (isSub && gp === 0 && !duesMap.has(rr.player_id)) {
         continue;
       }
@@ -20244,7 +20258,7 @@ async function handleFinancesData(req, env, url) {
         role: isGoalie ? 'sub_goalie' : 'sub_skater',
         is_goalie: isGoalie,
         is_sub: true,
-        games_played: gp
+        games_played: nightsToGames(pid, gp)
       });
     }
   }
@@ -20261,7 +20275,7 @@ async function handleFinancesData(req, env, url) {
         role: isGoalie ? 'sub_goalie' : 'sub_skater',
         is_goalie: isGoalie,
         is_sub: true,
-        games_played: playedGpMap.get(pid) || 0
+        games_played: nightsToGames(pid, playedGpMap.get(pid))
       });
     }
   }
@@ -20269,7 +20283,7 @@ async function handleFinancesData(req, env, url) {
   // 7. Calculate dues for each player
   const players = playerEntries.map(p => {
     const dues = duesMap.get(p.player_id) || {};
-    const gamesPlayed = p.games_played != null ? p.games_played : (subGpMap.get(p.player_id) || 0);
+    const gamesPlayed = p.games_played != null ? p.games_played : nightsToGames(p.player_id, subGpMap.get(p.player_id));
 
     let basePrice = 0;
     if (!p.is_sub) {
@@ -20286,7 +20300,7 @@ async function handleFinancesData(req, env, url) {
     const amountPaid = Number(dues.amount_paid || 0);
     const outstanding = totalDue - amountPaid;
     // Paid more than is due (e.g. paid the 170 season fee, then became a
-    // sub owing 5 x 5 = 25): a credit, reported as such -- never shown as 0.
+    // sub owing 10 games x 5 = 50): a credit, reported as such -- never shown as 0.
     const credit = Math.max(0, amountPaid - totalDue);
     const notes = dues.notes || '';
 
