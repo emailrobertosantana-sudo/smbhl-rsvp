@@ -103,6 +103,10 @@ describe('1-2: deferred, then drained at the reset with no manual nudge', () => 
 describe('3: quiet hours', () => {
   it('when 00:00 UTC falls inside quiet hours, the deferred send is held until they end, not sent at 00:00', async () => {
     await setQuiet(19, 8); // quiet 19:00-08:00 Montreal: 00:00 UTC (19:00/20:00 local) is inside
+    // Queued and first drained at 12:00 Montreal (outside quiet hours), whatever time the suite runs:
+    // a drain inside quiet hours holds the row for them before the daily cap is even considered.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(nextUtcMidnight().getTime() - 8 * 3600000));
     await env.DB.prepare(`INSERT INTO mail_daily_count (day, sent, sub_calls) VALUES (?, 10, 10)`).bind(utcDay()).run();
     const id = await queue('sub_call', 'S111', '{"need":"skater"}');
     await withResend(() => drain(env));
