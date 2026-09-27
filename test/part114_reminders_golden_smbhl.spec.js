@@ -107,6 +107,8 @@ beforeAll(async () => {
   await add('SD001', 'Dormant Sub', 'sd001@example.com', 'sub_skater', { dormant: 1, streak: 12 });
   await add('SO001', 'Opted-out Sub', 'so001@example.com', 'sub_skater', { optedOut: 1 });
   await env.SHEETS_KV.put('data_json', JSON.stringify({ current_season: SEASON, seasons: [{ name: SEASON, fixtures, standings: [] }], players }));
+  // Team links are signed with a per-team salt created at random on first use: fixed here so the record is repeatable.
+  for (const team of Object.keys(TEAMS)) await env.DB.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`).bind(`teamsalt:${SEASON}:${team}`, `golden-salt-${team}`).run();
 
   // Last week's game, already played: S0001 subbed and played.
   await env.DB.prepare(`INSERT INTO events (id, season, week, date, venue, state, start_time, end_time, league_id) VALUES ('smbhl:2026-11-08', ?, 5, 'Sunday November 8 2026', 'Aréna Golden', 'done', '10:30', '12:30', 'smbhl')`).bind(SEASON).run();

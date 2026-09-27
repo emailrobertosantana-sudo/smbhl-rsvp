@@ -73,6 +73,9 @@ beforeAll(async () => {
     }
     return new Response('{}', { status: 404 });
   };
+  // The weekly draw shuffles with Math.random: seeded here so the record is repeatable.
+  let seed = 114;
+  vi.spyOn(Math, 'random').mockImplementation(() => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; });
   vi.spyOn(console, 'log').mockImplementation((...a) => { logs.push(a.map(String).join(' ')); });
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
