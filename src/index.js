@@ -11460,6 +11460,114 @@ async function eventWeekStatus(env, leagueId, ev, cfg) {
   return { confirmed: counts.in, out: counts.out, noResponse: counts.pending, short };
 }
 
+// ---------------------------------------------------------------------
+// Sub calls on a real shortfall (sub-call rework, Part 3)
+// ---------------------------------------------------------------------
+// A team needs subs as soon as it CANNOT MATHEMATICALLY reach its
+// minimum from the players still available -- not only when someone
+// cancels. Available = everyone on the team not marked out (confirmed or
+// not yet answered). Minimum = the league's own configured floor:
+// cfg.goaliesPerTeam goalies and cfg.minSkaters skaters (season config;
+// SMBHL's comes from its season config in data_json, falling back to
+// DEFAULT_SEASON_CONFIG: 1 goalie, 5 skaters). Note: the cancellation
+// path (openSpots) keeps calling until the FULL team (skatersPerTeam, 8
+// by default) -- unchanged.
+//
+// Checked at event creation, on every cron pass, when a sub is added,
+// and when a league event is created; it only ever invites through
+// callSubs(), so the responsiveness order, the two-invite limit and the
+// daily cap all apply. Games more than SHORTFALL_HORIZON_HOURS away are
+// left alone (a league can create a whole season of games at once; the
+// cron picks each one up as it comes within range). 192h = SMBHL's own
+// window for creating its next game, so every SMBHL game is checked the
+// moment it exists.
+const SHORTFALL_HORIZON_HOURS = 192;
+
+async function eventSeasonConfig(env, ev) {
+  const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
+  return leagueId === SMBHL_LEAGUE_ID
+    ? getSeasonConfigForEvent(env, ev.id, ev.season)
+    : getLeagueSeasonConfig(env, leagueId, ev.season);
+}
+
+// { goalies, skaters } still available to a team for this event.
+async function availableForTeam(env, ev, team, cfg, isHeadcount) {
+  const e = await expected(env.DB, ev.id, team, cfg);
+  let { goalies, skaters } = e;
+  const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
+  if (leagueId !== SMBHL_LEAGUE_ID) {
+    // The league product creates no rsvp row until a player answers, so
+    // its rostered players who haven't answered yet count as available.
+    // (SMBHL seeds a row for every rostered player when it creates the
+    // game, so its rsvp rows are already the whole picture.)
+    const rows = (await env.DB.prepare(
+      `SELECT COALESCE(c.is_goalie, 0) AS is_goalie FROM contacts c
+        WHERE c.league_id = ? AND c.role = 'roster' AND COALESCE(c.is_active, 1) = 1
+          ${isHeadcount ? '' : 'AND c.preferred_team = ?'}
+          AND c.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)`
+    ).bind(...(isHeadcount ? [leagueId, ev.id] : [leagueId, team, ev.id])).all()).results || [];
+    for (const r of rows) { if (r.is_goalie === 1 && goalies < (cfg.maxGoalies || 1)) goalies++; else skaters++; }
+  }
+  return { goalies, skaters };
+}
+
+async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
+  if (!ev || ev.state !== 'open') return 0;
+  const hrs = hoursOut(ev);
+  if (hrs < CUTOFF_HOURS || hrs > SHORTFALL_HORIZON_HOURS) return 0;
+  const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
+  const cfg = await eventSeasonConfig(env, ev);
+  const structure = cfg.teamStructure || 'fixed';
+  if (structure === 'weekly_draw') return 0; // teams are drawn per game: no team to be short until the draw
+  const isHeadcount = structure === 'headcount';
+  const teams = isHeadcount ? [HEADCOUNT_TEAM_NAME] : getTeamNames(cfg);
+  const isLeague = leagueId !== SMBHL_LEAGUE_ID;
+  const usesIndependentGoalieAxis = isLeague && sportHasGoalie(cfg.sportType);
+  const hasGoalies = !isLeague || sportHasGoalie(cfg.sportType);
+  let queued = 0;
+  for (const team of teams) {
+    const a = await availableForTeam(env, ev, team, cfg, isHeadcount);
+    if (hasGoalies && a.goalies < (cfg.goaliesPerTeam || 0)) {
+      queued += await callSubs(env, ev, team, 'goalie', 0, leagueId, usesIndependentGoalieAxis, isLeague, isLeague);
+    }
+    if (a.skaters < (cfg.minSkaters || 0)) {
+      queued += await callSubs(env, ev, team, 'skater', 0, leagueId, usesIndependentGoalieAxis, isLeague, isLeague);
+    }
+  }
+  if (queued && drainNow) await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id);
+  return queued;
+}
+
+// A sub was just added (or became a sub): if any of the league's games
+// in range is short, they are called straight away -- not at the next
+// wave or cron pass.
+async function callSubsForShortfallAfterSubAdded(env, leagueId) {
+  const evs = (await env.DB.prepare(
+    `SELECT * FROM events WHERE league_id = ? AND state = 'open'`
+  ).bind(leagueId || SMBHL_LEAGUE_ID).all()).results || [];
+  let queued = 0;
+  for (const ev of evs) queued += await callSubsForShortfall(env, ev, { drainNow: true });
+  return queued;
+}
+
+// After a successful league write that can create a shortfall or a sub
+// to call -- a new game, a new or changed contact -- re-check the
+// league's games in range straight away (sub-call rework, Part 3): a
+// team short at creation calls subs immediately, and a sub added late is
+// contacted immediately. Idempotent (already-invited subs are skipped).
+// Never lets a failure here turn the admin's successful write into an
+// error.
+async function afterLeagueRosterOrScheduleChange(req, env, url, res) {
+  if (!res || res.status !== 200) return res;
+  try {
+    const leagueId = await resolveSessionLeagueId(req, env, url);
+    if (leagueId) await callSubsForShortfallAfterSubAdded(env, leagueId);
+  } catch (e) {
+    console.error(`[shortfall] check after league change failed: ${e.message}`);
+  }
+  return res;
+}
+
 // A sub gets at most this many AUTOMATIC invites per event: the first
 // invite and one follow-up. The only way a third goes out is an admin's
 // deliberate manual extra (sendExtraSubInvite). Enforced in drain().
@@ -12277,12 +12385,27 @@ async function runSchedule(env) {
         });
       }
     });
+
+    // Sub-call rework, Part 3: every pass, a team that can no longer
+    // reach its minimum from who is still available calls subs -- not
+    // only when someone cancels. Idempotent: callSubs skips subs already
+    // invited for this game, so repeated passes add only new eligible
+    // subs (e.g. one added since the last pass).
+    try {
+      const n = await callSubsForShortfall(env, ev);
+      if (n) log.push(`shortfall ${ev.id}: ${n} sub call(s) queued`);
+    } catch (e) { log.push(`shortfall check failed for ${ev.id}: ${e.message}`); }
   }
 
   try {
     const made = await ensureNextEvent(env);
     if (made) {
       log.push(`created ${made.id} week ${made.week} (${made.players} players)`);
+      // A team already below its minimum is short from the moment the
+      // game exists: call subs now, in this same pass (drained below).
+      const madeEv = await getEvent(env.DB, made.id);
+      const n = await callSubsForShortfall(env, madeEv);
+      if (n) log.push(`shortfall at creation ${made.id}: ${n} sub call(s) queued`);
     }
   } catch (e) { log.push('ensureNextEvent failed: ' + e.message); }
 
@@ -16382,6 +16505,14 @@ async function peopleAction(req, env) {
         ).bind(id, name, emailVal, newRole, isGoalie, salt).run();
       } catch (_) {}
     }
+    // A sub who just got an email address is now reachable: if a game is
+    // short, call them now (sub-call rework, Part 3).
+    if (emailVal) {
+      try {
+        const c = await getContact(env.DB, id);
+        if (c && (c.is_sub === 1 || c.role === 'sub_skater' || c.role === 'sub_goalie')) await callSubsForShortfallAfterSubAdded(env, SMBHL_LEAGUE_ID);
+      } catch (e) { console.error(`[shortfall] check after sub email failed: ${e.message}`); }
+    }
     return Response.json({ ok: true, email: emailVal });
   }
 
@@ -16596,6 +16727,9 @@ async function peopleAction(req, env) {
        VALUES (?,?,?,?,1,?,?,?)`
     ).bind(id, name, emailVal, phoneVal, b.role, salt,
            b.role === 'sub_goalie' ? 1 : 0).run();
+    // A sub added late is contacted straight away if a game is short.
+    try { await callSubsForShortfallAfterSubAdded(env, SMBHL_LEAGUE_ID); }
+    catch (e) { console.error(`[shortfall] check after new sub failed: ${e.message}`); }
     return Response.json({ ok: true, player_id: id, email: emailVal, phone: phoneVal });
   }
 
@@ -16618,6 +16752,8 @@ async function peopleAction(req, env) {
        VALUES (?,?,NULL,NULL,1,?,?,?)
        ON CONFLICT(player_id) DO UPDATE SET role=excluded.role, is_sub=1, is_goalie=excluded.is_goalie`
     ).bind(id, p.name, b.role, salt, b.role === 'sub_goalie' ? 1 : 0).run();
+    try { await callSubsForShortfallAfterSubAdded(env, SMBHL_LEAGUE_ID); }
+    catch (e) { console.error(`[shortfall] check after added sub failed: ${e.message}`); }
     return Response.json({ ok: true });
   }
   return new Response('unknown action', { status: 400 });
@@ -18113,6 +18249,16 @@ async function runLeagueReminders(env, budget = createSendBudget()) {
         }
       }
     }
+
+    // Sub-call rework, Part 3: every pass, a team that can no longer
+    // reach its minimum calls subs (queued here, delivered just below).
+    try {
+      const openEvents = (await env.DB.prepare(`SELECT * FROM events WHERE league_id = ? AND state = 'open'`).bind(leagueRow.id).all()).results || [];
+      for (const ev of openEvents) {
+        const n = await callSubsForShortfall(env, ev);
+        if (n) log.push(`${leagueRow.id}:${ev.id} shortfall: ${n} sub call(s) queued`);
+      }
+    } catch (e) { log.push(`${leagueRow.id} shortfall check failed: ${e.message}`); }
 
     // Delivers this league's outbox: the reminder waves and team-
     // assigned follow-ups queued above (outbox QA batch), plus sub-call
@@ -26844,14 +26990,14 @@ async function handleFetch(req, env, ctx) {
       // session+checkLeagueAccess-gated ONLY, no ADMIN_KEY path at all —
       // these must never become a new door into SMBHL's data.
       if (url.pathname === '/league/contacts' && req.method === 'POST')
-        return await handleLeagueContactCreate(req, env);
+        return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueContactCreate(req, env));
       if (url.pathname === '/league/contacts/bulk' && req.method === 'POST')
-        return await handleLeagueContactsBulkCreate(req, env);
+        return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueContactsBulkCreate(req, env));
       // Live-testing task (batch 6), Part 5: inline role/goalie editing
       // on the roster list -- see handleLeagueContactUpdate's own
       // comment (leagues.js).
       if (url.pathname === '/league/contacts/update' && req.method === 'POST')
-        return await handleLeagueContactUpdate(req, env, url);
+        return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueContactUpdate(req, env, url));
       // Item 3 (players polish task): inactive players.
       if (url.pathname === '/league/contacts/active' && req.method === 'POST')
         return await handleLeagueContactSetActive(req, env, url);
@@ -26877,9 +27023,9 @@ async function handleFetch(req, env, ctx) {
       if (url.pathname === '/league/season/matchups-confirm' && req.method === 'POST')
         return await handleLeagueMatchupsConfirm(req, env);
       if (url.pathname === '/league/events' && req.method === 'POST')
-        return await handleLeagueEventCreate(req, env);
+        return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueEventCreate(req, env));
       if (url.pathname === '/league/events/bulk' && req.method === 'POST')
-        return await handleLeagueEventsBulkCreate(req, env);
+        return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueEventsBulkCreate(req, env));
       if (url.pathname === '/league/events/duplicate' && req.method === 'POST')
         return await handleLeagueEventDuplicate(req, env);
       if (url.pathname === '/league/venues' && req.method === 'POST')

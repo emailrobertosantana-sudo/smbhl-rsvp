@@ -122,10 +122,13 @@ describe('League product: the same limit', () => {
     const post = (p, b) => SELF.fetch('http://example.com' + p, { method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf }, body: JSON.stringify(b) });
     const league = (await (await post('/leagues/create', { name: 'P106 League', teamNames: ['Otters', 'Falcons'], tracksStats: true })).json()).league;
     await post('/league/season/publish', { season_name: 'S1', goalies_per_team: 0, skaters_per_team: 3, min_skaters: 3 });
+    // Both teams start exactly at their minimum (3), so nobody is short
+    // until someone says OUT (a team below its minimum at creation would
+    // call subs straight away -- Part 3, tested in part108).
     const players = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 6; i++) {
       const c = (await (await post('/league/contacts', { name: `Roster ${i}`, email: `p106.r${i}@example.com`, role: 'roster' })).json()).contact;
-      await env.DB.prepare(`UPDATE contacts SET preferred_team = 'Otters' WHERE player_id = ?`).bind(c.player_id).run();
+      await env.DB.prepare(`UPDATE contacts SET preferred_team = ? WHERE player_id = ?`).bind(i < 3 ? 'Otters' : 'Falcons', c.player_id).run();
       players.push(c.player_id);
     }
     await post('/league/contacts', { name: 'League Sub', email: 'p106.sub@example.com', role: 'sub_skater' });

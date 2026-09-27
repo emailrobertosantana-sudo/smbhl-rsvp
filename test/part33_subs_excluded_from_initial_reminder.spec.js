@@ -153,7 +153,13 @@ describe('Part 10 (live-testing task): subs never get the initial reminder, only
     const { sentMails } = await withMailMock(() => runLeagueReminders(env));
     const recipients = sentMails.map(m => m.to);
     expect(recipients).toContain('pendingroster@example.com');
-    expect(recipients).not.toContain('neveremailedsub@example.com');
+    // Sub-call rework, Part 3: team A (one rostered player) is below its
+    // minimum, so the same cron pass now also calls subs -- the sub may
+    // get a SUB CALL, which is the point of that change. What this test
+    // guards is unchanged: a sub never gets the roster reminder.
+    const subKinds = (await env.DB.prepare('SELECT kind FROM outbox WHERE player_id = ?').bind(sub.player_id).all()).results.map(r => r.kind);
+    expect(subKinds).not.toContain('reminder_72h');
+    expect(subKinds.every(k => k === 'sub_call')).toBe(true);
   });
 
   it('the SAME sub who never got the initial reminder DOES get emailed once a real shortage triggers a sub invite -- confirms this is a real distinction, not "subs never get emailed"', async () => {
