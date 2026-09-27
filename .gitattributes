@@ -1,0 +1,2 @@
+# Vitest snapshots are compared byte for byte: keep them LF on every checkout.
+*.snap text eol=lf
