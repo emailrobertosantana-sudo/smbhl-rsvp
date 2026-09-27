@@ -19857,7 +19857,7 @@ async function handleFinancesData(req, env, url) {
         processedPlayerIds.add(p.id);
         playerEntries.push({
           player_id: p.id,
-          name: p.name,
+          name: c?.name || p.name, // the contact record is the current, correctly encoded name
           team: team || c?.preferred_team || null,
           role: isGoalie ? 'sub_goalie' : 'sub_skater',
           is_goalie: isGoalie,
@@ -19868,7 +19868,7 @@ async function handleFinancesData(req, env, url) {
         processedPlayerIds.add(p.id);
         playerEntries.push({
           player_id: p.id,
-          name: p.name,
+          name: c?.name || p.name,
           team,
           role: isGoalie ? 'roster_goalie' : 'roster_skater',
           is_goalie: isGoalie,
