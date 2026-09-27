@@ -634,6 +634,14 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
 
     const playerStatsDelta = new Map(); // id or cleanName -> { gp, g, a, name, team, isGoalie, isSub, goalieStats: { gp, ga, w, l, t, so } }
 
+  // Which team each of a player's games was for, and whether it was flagged a
+  // sub appearance: one publish can hold a regular's game for their own team
+  // AND a game for another team the same night.
+  const portion = (record, team) => {
+    if (!record.teams) record.teams = {};
+    if (!record.teams[team]) record.teams[team] = { isSub: false, gp: 0, g: 0, a: 0, ggp: 0 };
+    return record.teams[team];
+  };
   for (const g of games) {
     const hScore = Number(g.home_score);
     const aScore = Number(g.away_score);
@@ -651,6 +659,8 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
       }
       const record = playerStatsDelta.get(key);
       if (isSub) record.isSub = true;
+      const part = portion(record, g.home_team);
+      if (isSub) part.isSub = true;
       if (isThisGoalie) {
         record.isGoalie = true;
         if (!record.goalieStats) record.goalieStats = { gp: 0, ga: 0, w: 0, l: 0, t: 0, so: 0, g: 0, a: 0 };
@@ -660,6 +670,9 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
         record.gp += 1;
         record.g += Number(p.goals) || 0;
         record.a += Number(p.assists) || 0;
+        part.gp += 1;
+        part.g += Number(p.goals) || 0;
+        part.a += Number(p.assists) || 0;
       }
     }
 
@@ -674,6 +687,8 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
       }
       const record = playerStatsDelta.get(key);
       if (isSub) record.isSub = true;
+      const part = portion(record, g.away_team);
+      if (isSub) part.isSub = true;
       if (isThisGoalie) {
         record.isGoalie = true;
         if (!record.goalieStats) record.goalieStats = { gp: 0, ga: 0, w: 0, l: 0, t: 0, so: 0, g: 0, a: 0 };
@@ -683,6 +698,9 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
         record.gp += 1;
         record.g += Number(p.goals) || 0;
         record.a += Number(p.assists) || 0;
+        part.gp += 1;
+        part.g += Number(p.goals) || 0;
+        part.a += Number(p.assists) || 0;
       }
     }
 
@@ -701,6 +719,9 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
       }
       const record = playerStatsDelta.get(key);
       if (isSub) record.isSub = true;
+      const gpart = portion(record, g.home_team);
+      if (isSub) gpart.isSub = true;
+      gpart.ggp += 1;
       record.isGoalie = true;
       if (!record.goalieStats) record.goalieStats = { gp: 0, ga: 0, w: 0, l: 0, t: 0, so: 0 };
       record.goalieStats.gp += 1;
@@ -726,6 +747,9 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
       }
       const record = playerStatsDelta.get(key);
       if (isSub) record.isSub = true;
+      const gpart = portion(record, g.away_team);
+      if (isSub) gpart.isSub = true;
+      gpart.ggp += 1;
       record.isGoalie = true;
       if (!record.goalieStats) record.goalieStats = { gp: 0, ga: 0, w: 0, l: 0, t: 0, so: 0 };
       record.goalieStats.gp += 1;
@@ -766,17 +790,24 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
     if (!p.career) p.career = { gp: 0, g: 0, a: 0, pts: 0 };
     if (!p.gcareer) p.gcareer = { gp: 0, w: 0, l: 0, t: 0, ga: 0, so: 0 };
 
-    const isSub = !!delta.isSub ||
-      (subPlayerIds && ((delta.id && subPlayerIds.has(delta.id)) || (p.id && subPlayerIds.has(p.id)))) ||
-      (p.seasons?.[seasonName]?.team === null) ||
-      (p.gseasons?.[seasonName]?.team === null);
+    // A regular keeps their season team for good: publishing never changes
+    // or clears it (only the Teams tab does). A game for any OTHER team is a
+    // sub appearance, recorded in that season's "with" block. A player with
+    // no season entry yet gets the team of their first non-sub game, or null
+    // (a sub) if every game was a sub appearance. Season totals still count
+    // every game, as they always have for subs.
+    const flaggedSub = team => !!(delta.teams && delta.teams[team] && delta.teams[team].isSub) ||
+      (subPlayerIds && ((delta.id && subPlayerIds.has(delta.id)) || (p.id && subPlayerIds.has(p.id))));
+    const firstTeam = (field) => {
+      const parts = Object.entries(delta.teams || {}).filter(([, x]) => x[field] > 0);
+      const own = parts.find(([t]) => !flaggedSub(t));
+      return own ? own[0] : null;
+    };
 
     // Skater stats
     if (delta.gp > 0) {
       if (!p.seasons[seasonName]) {
-        p.seasons[seasonName] = { team: isSub ? null : delta.team, pos: null, gp: 0, g: 0, a: 0, pts: 0 };
-      } else if (isSub) {
-        p.seasons[seasonName].team = null;
+        p.seasons[seasonName] = { team: firstTeam('gp'), pos: null, gp: 0, g: 0, a: 0, pts: 0 };
       }
       const sStat = p.seasons[seasonName];
       sStat.gp += delta.gp;
@@ -784,13 +815,14 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
       sStat.a += delta.a;
       sStat.pts = sStat.g + sStat.a;
 
-      if (isSub && delta.team) {
+      for (const [team, part] of Object.entries(delta.teams || {})) {
+        if (!(part.gp > 0) || team === sStat.team) continue;
         if (!sStat.with) sStat.with = {};
-        if (!sStat.with[delta.team]) sStat.with[delta.team] = { gp: 0, g: 0, a: 0, pts: 0 };
-        sStat.with[delta.team].gp += delta.gp;
-        sStat.with[delta.team].g += delta.g;
-        sStat.with[delta.team].a += delta.a;
-        sStat.with[delta.team].pts += (delta.g + delta.a);
+        if (!sStat.with[team]) sStat.with[team] = { gp: 0, g: 0, a: 0, pts: 0 };
+        sStat.with[team].gp += part.gp;
+        sStat.with[team].g += part.g;
+        sStat.with[team].a += part.a;
+        sStat.with[team].pts += (part.g + part.a);
       }
 
       p.career.gp += delta.gp;
@@ -802,9 +834,7 @@ export function updateLeagueDataWithReview(originalData, week, games, subPlayerI
     // Goalie stats
     if (delta.isGoalie && delta.goalieStats) {
       if (!p.gseasons[seasonName]) {
-        p.gseasons[seasonName] = { team: isSub ? null : delta.team, gp: 0, ga: 0, w: 0, l: 0, t: 0, so: 0, g: 0, a: 0 };
-      } else if (isSub) {
-        p.gseasons[seasonName].team = null;
+        p.gseasons[seasonName] = { team: firstTeam('ggp'), gp: 0, ga: 0, w: 0, l: 0, t: 0, so: 0, g: 0, a: 0 };
       }
       const gStat = p.gseasons[seasonName];
       gStat.gp += delta.goalieStats.gp;
