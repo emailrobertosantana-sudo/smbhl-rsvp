@@ -406,7 +406,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       },
       {
         "day": "2026-11-15",
-        "sent": 30,
+        "sent": 29,
         "sub_calls": 5,
       },
     ],
@@ -484,11 +484,6 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       },
       {
         "event_id": "smbhl:2026-11-15",
-        "job": "season_recap_prompt",
-        "ran_at": "2026-11-10T22:05:00.000Z",
-      },
-      {
-        "event_id": "smbhl:2026-11-15",
         "job": "short48",
         "ran_at": "2026-11-13T15:35:00.000Z",
       },
@@ -496,11 +491,6 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         "event_id": "smbhl:2026-11-15",
         "job": "summary",
         "ran_at": "2026-11-15T01:05:00.000Z",
-      },
-      {
-        "event_id": "smbhl:2026-11-22",
-        "job": "season_recap_prompt",
-        "ran_at": "2026-11-15T19:00:00.000Z",
       },
     ],
     "outbox": [
@@ -4190,25 +4180,6 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         "sent_at": "2026-11-15T18:05:00.000Z",
         "team": null,
       },
-      {
-        "attempts": 1,
-        "cancelled": 0,
-        "created_at": "2026-11-15T19:00:00.000Z",
-        "dedup_key": "season_recap_prompt:Fall 2026",
-        "defer_reason": null,
-        "error": null,
-        "event_id": "smbhl:2026-11-22",
-        "failed_at": null,
-        "id": 195,
-        "kind": "season_recap_prompt",
-        "league_id": "smbhl",
-        "next_attempt_at": null,
-        "payload": "{"season":"Fall 2026","to":"admin@smbhl.test"}",
-        "player_id": null,
-        "send_after": "2026-11-15T19:00:00.000Z",
-        "sent_at": "2026-11-15T19:00:00.000Z",
-        "team": null,
-      },
     ],
     "rsvp": [
       {
@@ -4742,7 +4713,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-10T22:05:00Z",
       "log": [
-        "cron: season_recap_prompt smbhl:2026-11-15 | outbox due=0 sent=0 failed=0",
+        "cron: outbox due=0 sent=0 failed=0",
       ],
       "outbox": [
         {
@@ -6670,7 +6641,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T19:00:00Z",
       "log": [
-        "cron: season_recap_prompt smbhl:2026-11-22 | outbox due=1 sent=1 failed=0 | ALERT: 2 message(s) stuck in the outbox over an hour; 4 email(s) failed permanently in the last 24 hours",
+        "cron: outbox due=0 sent=0 failed=0 | ALERT: 2 message(s) stuck in the outbox over an hour; 4 email(s) failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -6739,11 +6710,6 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
           "state": "sent",
         },
         {
-          "kind": "season_recap_prompt",
-          "n": 1,
-          "state": "sent",
-        },
-        {
           "kind": "sub_call",
           "n": 27,
           "state": "sent",
@@ -6759,13 +6725,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
           "state": "sent",
         },
       ],
-      "sent": [
-        {
-          "h": "e84a25dfc9d2d00c",
-          "subject": "[SMBHL] Préparation du bilan de fin de saison (Fall 2026) / Season Recap Ready",
-          "to": "admin@smbhl.test",
-        },
-      ],
+      "sent": [],
     },
   ],
 }

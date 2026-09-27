@@ -398,34 +398,9 @@ export async function runSchedule(env) {
       await env.DB.prepare("UPDATE events SET state='locked' WHERE id=?").bind(ev.id).run();
     });
 
-    await fire('season_recap_prompt', hrs <= -3 || (ev.end_time && reached(p, 13, 30)), async () => {
-      let isFinalWeek = false;
-      try {
-        const rawData = await env.SHEETS_KV.get('data_json');
-        if (rawData) {
-          const d = JSON.parse(rawData);
-          const s0 = d.seasons?.find(s => s && s.name === ev.season) || d.seasons?.find(Boolean);
-          if (s0 && s0.fixtures) {
-            const maxWeek = Math.max(...s0.fixtures.map(f => Number(f.week) || 0));
-            if (Number(ev.week) === maxWeek) {
-              isFinalWeek = true;
-            }
-          }
-        }
-      } catch (e) {}
-
-      if (isFinalWeek) {
-        await enqueue(env, {
-          kind: 'season_recap_prompt',
-          event_id: ev.id,
-          dedup_key: `season_recap_prompt:${ev.season}`,
-          payload: {
-            season: ev.season,
-            to: env.ADMIN_EMAIL || ADMIN_EMAIL
-          }
-        });
-      }
-    });
+    // No season-recap step here: it fired at 13:30 on any day for any open
+    // game and marked the job done on non-final weeks. Publishing the final
+    // week queues the admin's recap prompt once a champion is crowned.
 
     // Sub-call rework, Part 3: every pass, a team that can no longer
     // reach its minimum from who is still available calls subs -- not
