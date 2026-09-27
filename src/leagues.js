@@ -17,6 +17,7 @@
 // which routes have been migrated so far and which remain.
 
 import { checkUserSession, checkCsrfToken, hashPassword, sessionResponseHeaders } from './auth.js';
+import { isMailDeferred } from './mail_queue.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie, generateRoundRobinRounds } from './season_config.js';
@@ -3153,6 +3154,11 @@ export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null
   const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
   const inviteLink = `${publicUrl}/league/admins/accept?token=${encodeURIComponent(token)}`;
 
+  // What actually happened to the invite email, reported back so the
+  // page never says "sent" when it was deferred (daily send limit) or
+  // failed -- it used to return ok regardless.
+  let emailStatus = 'not_sent';
+  let emailUntil = null;
   if (typeof sendMailFunc === 'function') {
     try {
       // Bug fix (Part 1, an earlier task this session): this league
@@ -3166,12 +3172,14 @@ export async function handleLeagueAdminInvite(req, env, url, sendMailFunc = null
       const cfg = await getLeagueSeasonConfig(env, leagueId);
       const { subject, text, html } = buildInviteEmail(leagueRow.name, inviteLink, cfg.league.color, cfg.league.languageMode);
       await sendMailFunc(env, email, subject, text, html, null, cfg.league);
+      emailStatus = 'sent';
     } catch (err) {
-      console.error(`[leagues] Failed to send admin invite to ${email}: ${err.message}`);
+      if (isMailDeferred(err)) { emailStatus = 'deferred'; emailUntil = err.until; }
+      else { emailStatus = 'failed'; console.error(`[leagues] Failed to send admin invite to ${email}: ${err.message}`); }
     }
   }
 
-  return Response.json({ ok: true, email, hasExistingAccount: !!existingUser });
+  return Response.json({ ok: true, email, hasExistingAccount: !!existingUser, emailStatus, emailUntil });
 }
 
 // POST /league/admins/accept -- body: { token, password? }. Deliberately

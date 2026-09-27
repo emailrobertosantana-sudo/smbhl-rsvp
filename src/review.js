@@ -1,6 +1,7 @@
 import PostalMime from 'postal-mime';
 import { checkAdminAuth, adminPageHeaders, generateReviewToken } from './admin_auth.js';
 import { computeWeeklyRecap } from './highlights.js';
+import { isMailDeferred } from './mail_queue.js';
 import { sortStandings, getRegularGoalsByTeam, updatePlayoffSchedule } from './awards.js';
 import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getSeasonConfigFromEnv, getTeamNames, normalizeTeamWithConfig, tracksStats, getLeagueConfig } from './season_config.js';
 
@@ -1463,6 +1464,8 @@ const I18N_REVIEW_PAGE = {
     alertCannotPublish: "Impossible de publier :\\n\\nVeuillez corriger les écarts de pointage et renseigner les noms complets (prénom et nom) pour tous les nouveaux joueurs avant de publier.",
     confirmPublish: "Confirmer et mettre à jour le site SMBHL en direct ?\\n\\nNote : Toutes les photos de feuilles de match seront immédiatement supprimées du serveur.",
     alertPublishSuccess: "Bravo ! Les statistiques sont maintenant en direct sur smbhl.com et les photos temporaires ont été supprimées.",
+    backupEmailDeferred: "Le courriel de sauvegarde n'est PAS encore parti : la limite d'envois quotidienne est atteinte. Il est en file d'attente et partira le {date}.",
+    backupEmailFailed: "Le courriel de sauvegarde n'a PAS pu être envoyé : {error}",
     alertError: err => "Erreur: " + err,
     alertNetError: err => "Erreur réseau: " + err,
     confirmDiscard: "Voulez-vous vraiment rejeter et supprimer ces feuilles et photos ?",
@@ -1536,6 +1539,8 @@ const I18N_REVIEW_PAGE = {
     alertCannotPublish: "Cannot publish:\\n\\nPlease fix score discrepancies and enter full names (first and last) for all new players before publishing.",
     confirmPublish: "Confirm and update live SMBHL site?\\n\\nNote: All scoresheet photos will be immediately deleted from the server.",
     alertPublishSuccess: "Success! Stats are now live on smbhl.com and temporary photos have been deleted.",
+    backupEmailDeferred: "The backup email has NOT gone out yet: the daily send limit is reached. It is queued and will go out {date}.",
+    backupEmailFailed: "The backup email could NOT be sent: {error}",
     alertError: err => "Error: " + err,
     alertNetError: err => "Network error: " + err,
     confirmDiscard: "Are you sure you want to discard and delete these sheets and photos?",
@@ -2072,7 +2077,21 @@ async function publishReview() {
     });
     const data = await res.json();
     if (data.ok) {
-      alert(dict.alertPublishSuccess);
+      // Say what happened to the backup email -- never imply it went out
+      // when it was deferred (daily send limit) or failed.
+      const be = data.backup_email || {};
+      let msg = dict.alertPublishSuccess;
+      if (be.status === 'deferred') {
+        const when = new Date(be.until).toLocaleString(currentLang === 'en' ? 'en-CA' : 'fr-CA', { timeZone: 'America/Toronto', dateStyle: 'medium', timeStyle: 'short' });
+        msg += '
+
+' + dict.backupEmailDeferred.replace('{date}', when);
+      } else if (be.status === 'failed') {
+        msg += '
+
+' + dict.backupEmailFailed.replace('{error}', be.error || '');
+      }
+      alert(msg);
       window.location.reload();
     } else {
       alert(dict.alertError(data.error || 'Erreur inconnue'));
@@ -3307,6 +3326,10 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
   }
 
   // 3. Automated Email Backup to Roberto with data.json attached
+  // Its real outcome goes back to the admin (see the response below):
+  // publishing succeeded either way, but the page must not imply the
+  // backup email went out when it was deferred or failed.
+  let backupEmail = { status: 'not_sent' };
   if (typeof sendMailFunc === 'function' && replyToEmail) {
     try {
       const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
@@ -3402,8 +3425,15 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
 
       await sendMailFunc(env, replyToEmail, subj, text, html, attachments, publishLeagueCfg);
       console.log(`Backup email sent to ${replyToEmail}`);
+      backupEmail = { status: 'sent' };
     } catch (mailErr) {
-      console.error('Error sending backup email:', mailErr);
+      if (isMailDeferred(mailErr)) {
+        console.log(`Backup email to ${replyToEmail} deferred until ${mailErr.until}`);
+        backupEmail = { status: 'deferred', until: mailErr.until };
+      } else {
+        console.error('Error sending backup email:', mailErr);
+        backupEmail = { status: 'failed', error: String(mailErr && mailErr.message || mailErr).slice(0, 200) };
+      }
     }
   }
 
@@ -3530,7 +3560,7 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
     }
   }
 
-  return Response.json({ ok: true, published: true });
+  return Response.json({ ok: true, published: true, backup_email: backupEmail });
 }
 
 export async function handleReviewDiscard(req, env) {

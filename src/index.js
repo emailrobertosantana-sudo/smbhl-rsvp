@@ -7,7 +7,7 @@ import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateT
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
-import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE } from './mail_queue.js';
+import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
@@ -4758,17 +4758,18 @@ async function handleLeagueCommsBroadcast(req, env, url) {
     footerHtml: 'Notre Ligue'
   });
 
-  let sent = 0, failed = 0;
+  let sent = 0, failed = 0, deferred = 0;
   for (const r of recipients) {
     try {
       await sendMail(env, r.email, subject, text, html, null, cfg.league);
       sent++;
     } catch (e) {
-      failed++;
+      // Deferred = queued for when the daily limit resets: not sent, not failed.
+      if (isMailDeferred(e)) deferred++; else failed++;
     }
   }
 
-  return Response.json({ ok: true, sent_count: sent, failed_count: failed, total: recipients.length });
+  return Response.json({ ok: true, sent_count: sent, failed_count: failed, deferred_count: deferred, total: recipients.length });
 }
 
 // Cadence is deliberately READ-ONLY here -- editing already lives on
@@ -4833,7 +4834,8 @@ async function handleLeagueCommsPage(req, env, url) {
       bcSubjectPh: 'ex. Info importante pour les séries', bcMessagePh: 'Écris ton message ici...',
       btnBroadcast: 'Envoyer la diffusion', broadcastConfirmPrefix: 'Envoyer ce message à', broadcastConfirmSuffix: 'destinataire(s) ?',
       broadcastNoRecipients: 'Aucun destinataire ne correspond à cette cible.',
-      broadcastSentSuffix: 'envoyé(s).', broadcastFailedSuffix: 'échec(s).'
+      broadcastSentSuffix: 'envoyé(s).', broadcastFailedSuffix: 'échec(s).',
+      broadcastDeferredSuffix: "reporté(s) : limite d'envois du jour atteinte, envoi dès sa réinitialisation."
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navComms: 'Comms', navSettings: 'Settings', logout: 'Log out',
@@ -4864,7 +4866,8 @@ async function handleLeagueCommsPage(req, env, url) {
       bcSubjectPh: 'e.g. Important playoff info', bcMessagePh: 'Write your message here...',
       btnBroadcast: 'Send broadcast', broadcastConfirmPrefix: 'Send this message to', broadcastConfirmSuffix: 'recipient(s)?',
       broadcastNoRecipients: 'No recipients match this target.',
-      broadcastSentSuffix: 'sent.', broadcastFailedSuffix: 'failed.'
+      broadcastSentSuffix: 'sent.', broadcastFailedSuffix: 'failed.',
+      broadcastDeferredSuffix: 'deferred: daily send limit reached, they go out as soon as it resets.'
     }
   };
 
@@ -5065,6 +5068,7 @@ async function sendBroadcast() {
     } else {
       ok.textContent = data.sent_count + ' ' + d.broadcastSentSuffix;
     }
+    if (data.deferred_count > 0) ok.textContent += ' ' + data.deferred_count + ' ' + d.broadcastDeferredSuffix;
     ok.style.display = 'block';
     document.getElementById('bc-subject').value = '';
     document.getElementById('bc-message').value = '';
@@ -6583,7 +6587,18 @@ async function submitInvite() {
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     var isFr = (window.__currentLang || 'fr') === 'fr';
-    ok.textContent = isFr ? ('Invitation envoyée à ' + email + '.') : ('Invitation sent to ' + email + '.');
+    // The invite is created either way; say what happened to its email.
+    if (data.emailStatus === 'deferred') {
+      ok.textContent = isFr
+        ? ('Invitation créée pour ' + email + ", mais le courriel n'est PAS encore parti : la limite d'envois du jour est atteinte. Il partira dès sa réinitialisation.")
+        : ('Invitation created for ' + email + ', but the email has NOT gone out yet: the daily send limit is reached. It will go out as soon as it resets.');
+    } else if (data.emailStatus === 'failed') {
+      ok.textContent = isFr
+        ? ('Invitation créée pour ' + email + ", mais le courriel n'a PAS pu être envoyé. Réessaie plus tard.")
+        : ('Invitation created for ' + email + ', but the email could NOT be sent. Try again later.');
+    } else {
+      ok.textContent = isFr ? ('Invitation envoyée à ' + email + '.') : ('Invitation sent to ' + email + '.');
+    }
     ok.style.display = 'block';
     document.getElementById('invite_email').value = '';
     btn.disabled = false;
@@ -9803,13 +9818,52 @@ function extractEmailAddress(fromValue) {
 // daily count (src/mail_queue.js, DAILY SEND CAP) is kept: one per send
 // Resend accepts, whatever the path. opts.subCall tags sub calls, whose
 // share of the day is what the cap limits.
+//
+// Direct sends (everything that doesn't go through the outbox: alerts,
+// scoresheet confirmations, broadcasts, invites, sign-up mail): if Resend
+// refuses for its daily quota, the email is QUEUED as a deferred outbox
+// row (attachments included) instead of being lost, and MailDeferredError
+// is thrown so no caller can mistake it for a send. opts.fromQueue: the
+// drain's own sends -- the drain defers its rows itself.
 async function sendMail(env, to, subject, text, html = null, attachments = null, leagueCfg = null, opts = {}) {
-  await sendMailViaResend(env, to, subject, text, html, attachments, leagueCfg);
+  try {
+    await sendMailViaResend(env, to, subject, text, html, attachments, leagueCfg);
+  } catch (e) {
+    if (!opts.fromQueue && env.DB && isResendQuotaError(e)) {
+      const until = await queueDeferredDirectMail(env, { to, subject, text, html, attachments, leagueCfg, ...opts });
+      if (until) throw new MailDeferredError(until.toISOString());
+    }
+    throw e;
+  }
   if (env.DB) {
     try { await countSentMail(env.DB, { subCall: !!opts.subCall }); }
     catch (e) { console.error(`[sendMail] daily count not updated: ${e.message}`); }
   }
   return true;
+}
+
+// When today's budget is gone, the next chance to send: 00:00 UTC, moved
+// past quiet hours if that falls inside them (afterQuiet).
+async function deferralTarget(env, now = new Date()) {
+  return afterQuiet(env, nextUtcMidnight(now));
+}
+
+// Queues a direct send Resend refused for quota. Returns when it will be
+// tried, or null if it could not be queued (too big for one row).
+async function queueDeferredDirectMail(env, { to, subject, text, html, attachments, leagueCfg, kind, leagueId, eventId }) {
+  const payload = JSON.stringify({ prerendered: {
+    to, subject, text, html: html || null, attachments: attachments && attachments.length ? attachments : null,
+    identity: leagueCfg ? { fromEmail: leagueCfg.fromEmail || null, replyToEmail: leagueCfg.replyToEmail || null } : null
+  } });
+  if (payload.length > MAX_QUEUED_MAIL_BYTES) return null;
+  await recordResendQuotaExhausted(env.DB, dailyCapFromEnv(env));
+  const now = new Date();
+  const until = await deferralTarget(env, now);
+  await env.DB.prepare(
+    `INSERT INTO outbox (kind, event_id, player_id, payload, send_after, created_at, next_attempt_at, defer_reason, league_id)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, 'resend_quota', ?)`
+  ).bind(kind || 'direct_mail', eventId || 'system', payload, now.toISOString(), now.toISOString(), until.toISOString(), leagueId || 'system').run();
+  return until;
 }
 
 async function sendMailViaResend(env, to, subject, text, html = null, attachments = null, leagueCfg = null) {
@@ -10978,7 +11032,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       if (payload.prerendered) {
         const pm = payload.prerendered;
         if (!budget.take()) break;
-        await sendMail(env, pm.to, pm.subject, pm.text, pm.html, null, pm.identity || null);
+        await sendMail(env, pm.to, pm.subject, pm.text, pm.html, pm.attachments || null, pm.identity || null, { fromQueue: true });
         if (daily) daily.sent++;
         await recordSendSuccess(env.DB, m.id);
         sent++;
@@ -11223,7 +11277,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       if (m.kind === 'sub_call' && dailyCap) {
         const dc = await loadDaily();
         if (subCallAllowance({ cap: dailyCap, sentToday: dc.sent, subCallsToday: dc.subCalls, reserve: dc.reserve }) <= 0) {
-          await deferToNextDay(env.DB, m.id, 'daily_cap');
+          await deferToNextDay(env.DB, m.id, 'daily_cap', new Date(), await deferralTarget(env));
           deferred++;
           continue;
         }
@@ -11231,7 +11285,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       // Over this invocation's cap: stop here. This row and every one
       // after it stay queued, untouched, for the next pass.
       if (!budget.take()) break;
-      await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg, { subCall: m.kind === 'sub_call' });
+      await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg, { subCall: m.kind === 'sub_call', fromQueue: true });
       if (daily) { daily.sent++; if (m.kind === 'sub_call') daily.subCalls++; }
       // Resend accepted it: it is sent, whatever happens next. (The
       // sub-call bookkeeping below used to run BEFORE this, so a failure
@@ -11254,7 +11308,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       if (isResendQuotaError(e)) {
         await recordResendQuotaExhausted(env.DB, dailyCap);
         if (daily && dailyCap) daily.sent = Math.max(daily.sent, dailyCap);
-        await deferToNextDay(env.DB, m.id, 'resend_quota');
+        await deferToNextDay(env.DB, m.id, 'resend_quota', new Date(), await deferralTarget(env));
         deferred++;
         continue;
       }
@@ -12134,7 +12188,16 @@ async function deadMan(env) {
           .bind(f.key, now.toISOString()).run();
       }
     } catch (e) {
-      console.error(`[deadMan] admin alert failed, will retry next pass: ${e.message}`);
+      if (isMailDeferred(e)) {
+        // Queued for when the daily budget is back: it will arrive, so
+        // it counts as raised (otherwise every pass would queue another).
+        for (const f of fresh) {
+          await env.DB.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)')
+            .bind(f.key, now.toISOString()).run();
+        }
+      } else {
+        console.error(`[deadMan] admin alert failed, will retry next pass: ${e.message}`);
+      }
     }
   }
   return problems;
@@ -14541,6 +14604,8 @@ const I18N_SUBS = {
     extraInviteErr_not_a_sub: "Ce joueur n'est pas un remplaçant.",
     extraInviteErr_unknown_player: 'Joueur inconnu.',
     extraInviteErr_unknown: "L'invitation n'a pas pu être envoyée.",
+    extraInviteDeferred: "L'invitation n'est PAS encore partie : la limite d'envois du jour est atteinte. Elle est en file d'attente et partira dès que la limite sera réinitialisée.",
+    extraInviteQueuedMsg: "L'invitation est en file d'attente et partira au prochain envoi.",
     callingWaves: '...',
     invitedSubsTitle: 'Substituts sollicités pour ce match',
     noSubsInvited: 'Aucun substitut sollicité pour ce match.',
@@ -14566,6 +14631,8 @@ const I18N_SUBS = {
     statusFailed: '⚠️ ÉCHEC',
     statusFailedDetail: 'courriel rejeté',
     statusQueued: 'FILE D’ATTENTE',
+    statusDeferred: 'REPORTÉ',
+    statusDeferredSub: 'limite d’envois du jour atteinte · part {date}',
     statusQueuedSub: 'vague future',
     statusCancelled: 'ANNULÉ',
     statusCancelledSub: 'place comblée',
@@ -14616,6 +14683,8 @@ const I18N_SUBS = {
     extraInviteErr_not_a_sub: 'This player is not a sub.',
     extraInviteErr_unknown_player: 'Unknown player.',
     extraInviteErr_unknown: 'The invite could not be sent.',
+    extraInviteDeferred: 'The invite has NOT gone out yet: the daily send limit is reached. It is queued and will go out as soon as the limit resets.',
+    extraInviteQueuedMsg: 'The invite is queued and will go out with the next send.',
     callingWaves: '...',
     invitedSubsTitle: 'Subs Invited & Response Status',
     noSubsInvited: 'No subs invited for this game.',
@@ -14641,6 +14710,8 @@ const I18N_SUBS = {
     statusFailed: '⚠️ FAILED',
     statusFailedDetail: 'email bounced',
     statusQueued: 'IN QUEUE',
+    statusDeferred: 'DEFERRED',
+    statusDeferredSub: 'daily send limit reached · goes out {date}',
     statusQueuedSub: 'future wave',
     statusCancelled: 'CANCELLED',
     statusCancelledSub: 'spot filled',
@@ -14820,6 +14891,8 @@ function renderSubsUI() {
         else statusHtml += '<div style="margin-top:4px"><button class="mini" data-extra-invite="' + esc(s.player_id) + '" data-extra-name="' + esc(s.name) + '">' + esc(t('extraInviteBtn')) + '</button></div>';
       } else if (s.statusCode === 'failed') {
         statusHtml = '<span class="out" style="font-weight:700">' + esc(t('statusFailed')) + '</span><div class="by" style="color:var(--red)">' + esc(s.statusDetail || t('statusFailedDetail')) + '</div>';
+      } else if (s.statusCode === 'deferred') {
+        statusHtml = '<span style="color:var(--orange);font-weight:700">' + esc(t('statusDeferred')) + '</span><div class="by">' + esc(t('statusDeferredSub').replace('{date}', fmtTime(s.deferredUntil))) + '</div>';
       } else if (s.statusCode === 'queued') {
         statusHtml = '<span style="color:var(--orange);font-weight:700">' + esc(t('statusQueued')) + '</span><div class="by">' + esc(t('statusQueuedSub')) + '</div>';
       } else if (s.statusCode === 'cancelled') {
@@ -14867,6 +14940,8 @@ function renderSubsUI() {
       });
       const out = await res.json().catch(() => ({}));
       if (!out.ok) { alert(t('extraInviteErr_' + (out.code || 'unknown')) || t('extraInviteErr_unknown')); b.disabled = false; return; }
+      if (out.status === 'deferred') alert(t('extraInviteDeferred'));
+      else if (out.status !== 'sent') alert(t('extraInviteQueuedMsg'));
       load(currentEventId);
     } catch (e) {
       alert(e.message);
@@ -15022,7 +15097,7 @@ async function subsData(env, url) {
   const contactMap = new Map(contactsList.map(c => [c.player_id, c]));
 
   const outboxRows = (await env.DB.prepare(
-    `SELECT id, kind, event_id, player_id, team, dedup_key, payload, send_after, sent_at, cancelled, error, created_at
+    `SELECT id, kind, event_id, player_id, team, dedup_key, payload, send_after, sent_at, cancelled, error, created_at, defer_reason, next_attempt_at, failed_at
        FROM outbox
       WHERE event_id = ? AND kind = 'sub_call'
       ORDER BY id ASC`
@@ -15080,6 +15155,7 @@ async function subsData(env, url) {
     // SUB_INVITES_PER_EVENT) and the state of the one manual extra.
     let autoInvitesSent = 0;
     let extraInvite = 'none';
+    let deferredUntil = null; // an invite waiting for tomorrow's send budget
 
     for (const o of outs) {
       const pl = JSON.parse(o.payload || '{}');
@@ -15096,6 +15172,7 @@ async function subsData(env, url) {
       if (o.sent_at && (!initialSentAt || o.sent_at < initialSentAt)) initialSentAt = o.sent_at;
       if (o.cancelled) isCancelled = true;
       if (!o.sent_at && !o.cancelled) isQueued = true;
+      if (!o.sent_at && !o.cancelled && o.defer_reason) deferredUntil = o.next_attempt_at;
       if (o.error) errorMsg = o.error;
     }
 
@@ -15136,6 +15213,14 @@ async function subsData(env, url) {
       statusLabelFr = "⚠️ Échec d'envoi";
       statusLabelEn = '⚠️ Delivery Failed';
       statusDetail = (errorMsg.includes('422') || errorMsg.toLowerCase().includes('email')) ? 'Courriel invalide / rejeté' : 'Erreur d\'envoi';
+    } else if (deferredUntil) {
+      // Not sent yet, and not just waiting for its wave: today's send
+      // budget is used up, so it goes out when the budget is back.
+      statusCode = 'deferred';
+      sortPriority = 4;
+      statusLabelFr = 'Reporté (limite quotidienne)';
+      statusLabelEn = 'Deferred (daily limit)';
+      statusDetail = deferredUntil;
     } else if (isQueued) {
       statusCode = 'queued';
       sortPriority = 4;
@@ -15181,6 +15266,7 @@ async function subsData(env, url) {
       errorMsg,
       autoInvitesSent,
       extraInvite,
+      deferredUntil,
       ppg: st ? st.ppg : null,
       gp: st ? st.gp : null
     });
@@ -18283,6 +18369,11 @@ async function runLeagueReminders(env, budget = createSendBudget()) {
       log.push(`${leagueRow.id} drain sent=${leagueDrain.sent} failed=${leagueDrain.failed} retrying=${leagueDrain.retrying}`);
     }
   }
+  // Mail that belongs to no league (sign-up and password emails, deferred
+  // when Resend's daily quota ran out) -- the per-league drains above never
+  // pick it up. SMBHL's own cron drains everything, so it's covered there.
+  const systemDrain = await drain(env, MAIL_SENDS_PER_INVOCATION, null, 'system', budget);
+  if (systemDrain.sent > 0 || systemDrain.failed > 0) log.push(`system drain sent=${systemDrain.sent} failed=${systemDrain.failed}`);
   return log;
 }
 
@@ -21457,7 +21548,13 @@ SMBHL · smbhl.com`;
        </p>`
     );
 
-    await sendMail(env, adminEmail, subj, text, html);
+    // A test send refused for the daily limit is queued, not sent: say so.
+    try {
+      await sendMail(env, adminEmail, subj, text, html);
+    } catch (e) {
+      if (!isMailDeferred(e)) throw e;
+      return Response.json({ ok: false, deferred: true, until: e.until, error: "Courriel reporté : limite d'envois du jour atteinte / Email deferred: daily send limit reached" }, { status: 409 });
+    }
     return Response.json({ ok: true, test: true, sent_to: adminEmail });
   }
 
@@ -21487,6 +21584,7 @@ SMBHL · smbhl.com`;
   const recipients = [...map.values()];
 
   let sentCount = 0;
+  let deferredCount = 0;
   let failedCount = 0;
 
   for (const p of recipients) {
@@ -21528,8 +21626,8 @@ SMBHL · smbhl.com`;
 
       await sendMail(env, p.email, subj, text, html);
       sentCount++;
-    } catch (_) {
-      failedCount++;
+    } catch (e) {
+      if (isMailDeferred(e)) deferredCount++; else failedCount++;
     }
   }
 
@@ -21542,6 +21640,7 @@ SMBHL · smbhl.com`;
     poll_id: poll.id,
     sent_count: sentCount,
     failed_count: failedCount,
+    deferred_count: deferredCount,
     total_eligible: recipients.length,
     last_sent_at: now
   });
@@ -21670,6 +21769,7 @@ const I18N_POLLS = {
     confirmBroadcast: "Confirmer le lancement et l'envoi des courriels d'invitation à voter à tous les électeurs éligibles ?",
     sendingBroadcast: "Envoi des courriels en cours...",
     broadcastSuccess: "✓ Envoyé à {sent} joueurs ({failed} échecs) !",
+    deferredSuffix: "{n} reporté(s) : limite d'envois du jour atteinte, ils partiront dès sa réinitialisation.",
     resultsHeading: "📊 Résultats ({total} votes au total) :",
     auditSummary: "Voir le détail des votes ({n}) ▾",
     colVoter: "Votant",
@@ -21731,6 +21831,7 @@ const I18N_POLLS = {
     confirmBroadcast: "Confirm launching and sending voting invitations to all eligible voters?",
     sendingBroadcast: "Sending emails in progress...",
     broadcastSuccess: "✓ Sent to {sent} players ({failed} failed)!",
+    deferredSuffix: "{n} deferred: daily send limit reached, they will go out as soon as it resets.",
     resultsHeading: "📊 Results ({total} total votes):",
     auditSummary: "View vote details ({n}) ▾",
     colVoter: "Voter",
@@ -21944,7 +22045,7 @@ function renderPolls(d) {
       if (msg) { msg.textContent = t('sendingBroadcast'); msg.style.color = 'var(--soft)'; msg.style.display = 'block'; }
       try {
         const res = await api('/admin/polls/send', { method: 'POST', body: JSON.stringify({ poll_id: Number(pid), test_only: false }) });
-        if (msg) { msg.textContent = t('broadcastSuccess').replace('{sent}', res.sent_count).replace('{failed}', res.failed_count || 0); msg.style.color = 'var(--green)'; }
+        if (msg) { msg.textContent = t('broadcastSuccess').replace('{sent}', res.sent_count).replace('{failed}', res.failed_count || 0) + (res.deferred_count > 0 ? ' ' + t('deferredSuffix').replace('{n}', res.deferred_count) : ''); msg.style.color = res.deferred_count > 0 ? 'var(--orange)' : 'var(--green)'; }
         setTimeout(load, 1500);
       } catch (err) {
         if (msg) { msg.textContent = 'Erreur: ' + err.message; msg.style.color = 'var(--red)'; }
@@ -22402,6 +22503,7 @@ async function schedulePage(env = null, isAuthed = false) {
       testSentSuccess: "✓ Courriel de test envoyé à {to} ({n} joueurs concernés) !",
       sendingBlast: "Diffusion en cours...",
       blastSuccess: "✓ Avis d'annulation envoyé à {sent} joueurs ({failed} échecs) !",
+      deferredSuffix: "{n} reporté(s) : limite d'envois du jour atteinte, ils partiront dès sa réinitialisation.",
       fillReqFields: "Veuillez remplir les champs obligatoires (ID, saison, semaine, date)."
     },
     en: {
@@ -22475,6 +22577,7 @@ async function schedulePage(env = null, isAuthed = false) {
       testSentSuccess: "✓ Test email sent to {to} ({n} players affected)!",
       sendingBlast: "Broadcasting in progress...",
       blastSuccess: "✓ Cancellation notice sent to {sent} players ({failed} failed)!",
+      deferredSuffix: "{n} deferred: daily send limit reached, they will go out as soon as it resets.",
       fillReqFields: "Please fill required fields (ID, season, week, date)."
     }
   };
@@ -22776,7 +22879,7 @@ async function schedulePage(env = null, isAuthed = false) {
         body: JSON.stringify({ event_id: id, test_only: false })
       });
       msg.style.color = 'var(--green)';
-      msg.textContent = t('blastSuccess').replace('{sent}', res.sent_count).replace('{failed}', res.failed_count || 0);
+      msg.textContent = t('blastSuccess').replace('{sent}', res.sent_count).replace('{failed}', res.failed_count || 0) + (res.deferred_count > 0 ? ' ' + t('deferredSuffix').replace('{n}', res.deferred_count) : '');
       setTimeout(() => { $('cancel-email-modal').style.display = 'none'; }, 2000);
     } catch (err) {
       msg.style.color = 'var(--red)';
@@ -23335,21 +23438,27 @@ scores@smbhl.com · https://smbhl.com`;
 
   if (testOnly) {
     const adminEmail = env.ADMIN_EMAIL || ADMIN_EMAIL;
-    await sendMail(env, adminEmail, `[TEST ADMIN] ${subj}`, plain, html);
+    // A test send refused for the daily limit is queued, not sent: say so.
+    try {
+      await sendMail(env, adminEmail, `[TEST ADMIN] ${subj}`, plain, html);
+    } catch (e) {
+      if (!isMailDeferred(e)) throw e;
+      return Response.json({ ok: false, deferred: true, until: e.until, error: "Courriel reporté : limite d'envois du jour atteinte / Email deferred: daily send limit reached" }, { status: 409 });
+    }
     return Response.json({ ok: true, test: true, sent_to: adminEmail, total_recipients: recipients.length });
   }
 
-  let sent = 0, failed = 0;
+  let sent = 0, failed = 0, deferred = 0;
   for (const r of recipients) {
     try {
       await sendMail(env, r.email, subj, plain, html);
       sent++;
     } catch (e) {
-      failed++;
+      if (isMailDeferred(e)) deferred++; else failed++;
     }
   }
 
-  return Response.json({ ok: true, sent_count: sent, failed_count: failed, total: recipients.length });
+  return Response.json({ ok: true, sent_count: sent, failed_count: failed, deferred_count: deferred, total: recipients.length });
 }
 
 async function handleSendSampleInvites(req, env) {
@@ -23726,21 +23835,27 @@ async function handleEmailsBroadcast(req, env) {
 
   if (test_only) {
     const adminEmail = env.ADMIN_EMAIL || ADMIN_EMAIL;
-    await sendMail(env, adminEmail, `[TEST ADMIN] ${subj}`, plain, html);
+    // A test send refused for the daily limit is queued, not sent: say so.
+    try {
+      await sendMail(env, adminEmail, `[TEST ADMIN] ${subj}`, plain, html);
+    } catch (e) {
+      if (!isMailDeferred(e)) throw e;
+      return Response.json({ ok: false, deferred: true, until: e.until, error: "Courriel reporté : limite d'envois du jour atteinte / Email deferred: daily send limit reached" }, { status: 409 });
+    }
     return Response.json({ ok: true, test: true, sent_to: adminEmail, total_recipients: recipients.length });
   }
 
-  let sent = 0, failed = 0;
+  let sent = 0, failed = 0, deferred = 0;
   for (const r of recipients) {
     try {
       await sendMail(env, r.email, subj, plain, html);
       sent++;
     } catch (e) {
-      failed++;
+      if (isMailDeferred(e)) deferred++; else failed++;
     }
   }
 
-  return Response.json({ ok: true, sent_count: sent, failed_count: failed, total: recipients.length });
+  return Response.json({ ok: true, sent_count: sent, failed_count: failed, deferred_count: deferred, total: recipients.length });
 }
 
 async function emailsPage(env = null, isAuthed = false) {
@@ -24395,6 +24510,12 @@ async function emailsPage(env = null, isAuthed = false) {
 
   const KIND_INFO = {
     fr: {
+      'direct_mail': {
+        label: "⏸ Courriel reporté",
+        badgeClass: "badge-pending",
+        audience: "Destinataire du courriel d'origine",
+        desc: "Un courriel envoyé directement (alerte, confirmation de feuille de match, diffusion, invitation, inscription) que Resend a refusé faute de quota quotidien : mis en file d'attente, il part dès que la limite est réinitialisée."
+      },
       'gameday': {
         label: "🚨 Veille de match (24h)",
         badgeClass: "badge-alert",
@@ -24511,6 +24632,12 @@ async function emailsPage(env = null, isAuthed = false) {
       }
     },
     en: {
+      'direct_mail': {
+        label: "⏸ Deferred email",
+        badgeClass: "badge-pending",
+        audience: "The original email's recipient",
+        desc: "An email sent directly (alert, scoresheet confirmation, broadcast, invite, sign-up) that Resend refused because the daily quota was used up: queued, it goes out as soon as the limit resets."
+      },
       'gameday': {
         label: "🚨 Eve of Game (24h)",
         badgeClass: "badge-alert",
@@ -25339,6 +25466,12 @@ async function emailsPage(env = null, isAuthed = false) {
       fb.textContent = isEn
         ? ('✓ Message broadcast to ' + res.sent_count + ' recipients (' + (res.failed_count || 0) + ' failures)!')
         : ('✓ Message diffusé à ' + res.sent_count + ' destinataires (' + (res.failed_count || 0) + ' échecs) !');
+      if (res.deferred_count > 0) {
+        fb.style.color = 'var(--orange)';
+        fb.textContent += isEn
+          ? (' ' + res.deferred_count + ' deferred: daily send limit reached, they will go out as soon as it resets.')
+          : (' ' + res.deferred_count + " reporté(s) : limite d'envois du jour atteinte, ils partiront dès sa réinitialisation.");
+      }
       $('bc-subject').value = '';
       $('bc-msg').value = '';
       load();

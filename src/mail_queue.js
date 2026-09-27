@@ -227,8 +227,33 @@ export function subCallAllowance({ cap, sentToday, subCallsToday, reserve }) {
   return Math.max(0, cap - sentToday - reserveLeft);
 }
 
-export async function deferToNextDay(db, id, reason, now = new Date()) {
+// until: when the budget is back -- the caller passes the next UTC
+// midnight moved past quiet hours (index.js deferralTarget), so a backlog
+// never goes out at 3am just because that is when the budget freed up.
+export async function deferToNextDay(db, id, reason, now = new Date(), until = null) {
   await db.prepare(
     `UPDATE outbox SET next_attempt_at = ?, defer_reason = ? WHERE id = ?`
-  ).bind(nextUtcMidnight(now).toISOString(), reason, id).run();
+  ).bind((until || nextUtcMidnight(now)).toISOString(), reason, id).run();
 }
+
+// Thrown by sendMail() when Resend refused for quota and the email was
+// queued for later instead (deferred, not lost). A caller that reports
+// to a person must say "deferred", never "sent"; a caller that doesn't
+// catch it reports an error -- never a false success.
+export class MailDeferredError extends Error {
+  constructor(until, reason = 'resend_quota') {
+    super(`email deferred until ${until} (${reason})`);
+    this.name = 'MailDeferredError';
+    this.deferred = true;
+    this.until = until;
+    this.reason = reason;
+  }
+}
+export function isMailDeferred(err) {
+  return !!(err && err.deferred === true);
+}
+
+// A queued copy lives in one outbox row (D1 rows max out at 2 MB); an
+// email too big to store -- large attachments -- is not queued, and its
+// send fails visibly instead.
+export const MAX_QUEUED_MAIL_BYTES = 1500000;
