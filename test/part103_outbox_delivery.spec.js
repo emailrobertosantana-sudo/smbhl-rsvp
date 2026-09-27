@@ -136,6 +136,11 @@ describe('Part 1: bounded work per invocation', () => {
         .bind(EVENT_ID, pid, TEAMS[i % 4], new Date().toISOString()).run();
     }
     await env.DB.prepare(`DELETE FROM jobs WHERE event_id = ?`).bind(EVENT_ID).run();
+    // Make the pass independent of the time of day the suite runs at:
+    // the invite job normally waits for 18:00 Montreal and quiet hours
+    // (23:00-07:00) hold every queued invite until morning.
+    await env.DB.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('email_cadence_settings', ?)`)
+      .bind(JSON.stringify({ invite_hour_of_day: 0, quiet_hours_enabled: false })).run();
     const first = await asInvocation(() => runSchedule(env));
     expect(first.refused).toBe(0);
     expect(first.fetches).toBeLessThanOrEqual(EXTERNAL_SUBREQUEST_LIMIT);
@@ -159,6 +164,7 @@ describe('Part 1: bounded work per invocation', () => {
     expect(done.every(r => r.sent_at && !r.error)).toBe(true);
     expect(passes).toBe(Math.ceil(total / MAIL_SENDS_PER_INVOCATION));
     await env.DB.prepare(`DELETE FROM rsvp WHERE player_id LIKE 'W%'`).run();
+    await env.DB.prepare(`DELETE FROM settings WHERE key = 'email_cadence_settings'`).run();
   }, 60000);
 
   it('if the platform still refuses a subrequest, the drain stops at once: the refused row is retrying, the rest untouched and queued', async () => {
