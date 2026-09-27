@@ -14383,6 +14383,9 @@ const I18N_SUBS = {
     openSpots: 'Besoins par équipe',
     skatersLabel: 'patineurs',
     needed: 'manquant',
+    neededForFull: 'manquant(s) pour une équipe complète',
+    confirmedLabel: 'Confirmés',
+    noAnswerLabel: 'Sans réponse',
     full: 'complet',
     callWaves: 'LANCER LES VAGUES',
     subCallsHeldNote: "Appels aux remplaçants en attente : ils partiront avec l'invitation aux joueurs réguliers.",
@@ -14464,6 +14467,9 @@ const I18N_SUBS = {
     openSpots: 'Open Spots Remaining',
     skatersLabel: 'skaters',
     needed: 'needed',
+    neededForFull: 'short of a full team',
+    confirmedLabel: 'Confirmed',
+    noAnswerLabel: 'No answer yet',
     full: 'full',
     callWaves: 'LAUNCH WAVES',
     subCallsHeldNote: "Sub calls on hold: they go out with the regulars' invite.",
@@ -14630,7 +14636,7 @@ function renderSubsUI() {
     const isShort = s.openGoalies > 0 || s.openSkaters > 0;
     const shortTxt = isShort
       ? '<span class="short">' + (s.openGoalies > 0 ? s.openGoalies + 'G ' : '') +
-        (s.openSkaters > 0 ? s.openSkaters + ' ' + esc(t('skaterShort')) + '(s) ' : '') + esc(t('needed')) + '</span>'
+        (s.openSkaters > 0 ? s.openSkaters + ' ' + esc(t('skaterShort')) + '(s) ' : '') + esc(t('neededForFull')) + '</span>'
       : '<span style="color:var(--green)">' + esc(t('full')) + '</span>';
     const btn = isShort
       ? '<div style="margin-top:6px"><button class="mini in" data-call-team="' + esc(s.team) +
@@ -14638,7 +14644,8 @@ function renderSubsUI() {
         '">' + esc(t('callWaves')) + '</button></div>'
       : '';
     shHtml += '<li><b>' + esc(s.team) + '</b>' + shortTxt +
-      '<div style="font-size:12px;color:var(--soft);margin-top:2px">' + s.skaters + ' ' + esc(t('skatersLabel')) + ', ' + s.goalies + 'G</div>' + btn + '</li>';
+      '<div style="font-size:12px;color:var(--soft);margin-top:2px">' + esc(t('confirmedLabel')) + ' : ' + s.skaters + ' ' + esc(t('skatersLabel')) + ', ' + s.goalies + ' G' +
+        ' · ' + esc(t('noAnswerLabel')) + ' : ' + (s.pendingSkaters || 0) + ' ' + esc(t('skatersLabel')) + ', ' + (s.pendingGoalies || 0) + ' G</div>' + btn + '</li>';
   }
   shHtml += '</ul>';
   if (d.subCallsHeld) {
@@ -14896,10 +14903,16 @@ async function subsData(env, url) {
     const st = await teamState(env.DB, ev.id, team, cfg);
     const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
     const openSkaters = await openSpots(env.DB, ev.id, team, 'skater', cfg);
+    // skaters/goalies are CONFIRMED ("in"); the pending counts are everyone
+    // else not marked out -- they have simply not answered yet, and the
+    // shortfall check counts them as available.
+    const avail = await expected(env.DB, ev.id, team, cfg);
     shortages.push({
       team,
       skaters: st.skaters,
       goalies: st.goalies,
+      pendingSkaters: Math.max(0, avail.skaters - st.skaters),
+      pendingGoalies: Math.max(0, avail.goalies - st.goalies),
       openGoalies,
       openSkaters,
       short: st.short
