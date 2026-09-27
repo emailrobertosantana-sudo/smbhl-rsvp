@@ -100,8 +100,8 @@ describe('A1: onboarding reminders copy matches the real off-by-default behaviou
 
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.remindersSub).toBe("Désactivés par défaut. Active ceux que tu veux -- tu peux changer ça n'importe quand dans les réglages.");
-    expect(dict.en.remindersSub).toBe('Off by default. Turn on the ones you want -- you can change this any time in Settings.');
+    expect(dict.fr.remindersSub).toBe("Désactivés par défaut. Active ceux que tu veux — tu peux changer ça n'importe quand dans les réglages.");
+    expect(dict.en.remindersSub).toBe('Off by default. Turn on the ones you want — you can change this any time in Settings.');
     expect(dict.fr.remindersSub).not.toContain('Déjà activés par défaut');
     expect(dict.en.remindersSub).not.toContain('Already on by default');
 
@@ -113,7 +113,7 @@ describe('A1: onboarding reminders copy matches the real off-by-default behaviou
   });
 });
 
-describe('A2: event detail page and Comms agree on reminder state -- one source of truth', () => {
+describe('A2: event detail page and Comms agree on reminder state — one source of truth', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     await applyRealSchema(env);
@@ -173,7 +173,7 @@ describe('A2: event detail page and Comms agree on reminder state -- one source 
     expect(html).not.toContain('data-i18n="remindersNoneArmedHelp"');
   });
 
-  it('sweep: every other reminder-state surface already reads the league-level cadence columns and needed no fix -- dashboard checklist, settings, and the roster backstop banner', async () => {
+  it('sweep: every other reminder-state surface already reads the league-level cadence columns and needed no fix — dashboard checklist, settings, and the roster backstop banner', async () => {
     const { cookie, csrfToken } = await signup('a2.sweep@example.com', '203.0.211.005');
     await createLeague(cookie, csrfToken, { name: 'A2 Sweep League', teamNames: ['A', 'B'] });
 
@@ -232,7 +232,7 @@ describe('A3: "Send a reminder now" requires confirmation with a real recipient 
     expect(html).toContain('var EV_REMIND_NOW_COUNT = 0;');
   });
 
-  it('the underlying send route itself is unchanged -- still callable directly, same response shape', async () => {
+  it('the underlying send route itself is unchanged — still callable directly, same response shape', async () => {
     const { cookie, csrfToken } = await signup('a3.routeunchanged@example.com', '203.0.211.008');
     await createLeague(cookie, csrfToken, { name: 'A3 Route League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });

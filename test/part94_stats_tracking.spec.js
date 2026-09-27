@@ -179,11 +179,11 @@ describe('Stats tracking, Part 1: two independent switches', () => {
 
     const m = step4.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.lblTracksResultsDescPickup).toBe("Le score de chaque match, gardé comme historique -- les équipes changent chaque semaine, donc pas de classement.");
-    expect(dict.en.lblTracksResultsDescPickup).toBe("Each game's score, kept as history -- teams change every week, so there's no standings table.");
+    expect(dict.fr.lblTracksResultsDescPickup).toBe("Le score de chaque match, gardé comme historique — les équipes changent chaque semaine, donc pas de classement.");
+    expect(dict.en.lblTracksResultsDescPickup).toBe("Each game's score, kept as history — teams change every week, so there's no standings table.");
   });
 
-  it('a no-teams (headcount) league never offers game results at all -- onboarding, Settings, and the route itself all reject it', async () => {
+  it('a no-teams (headcount) league never offers game results at all — onboarding, Settings, and the route itself all reject it', async () => {
     const { cookie, csrfToken } = await signup('p1.headcount@example.com', '203.0.202.003');
     await createLeague(cookie, csrfToken, { name: 'Headcount Stats League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12, tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1', min_players: 8, max_players: 12 });
@@ -218,7 +218,7 @@ describe('Stats tracking, Part 1: two independent switches', () => {
     expect(row.tracks_player_stats).toBe(1);
   });
 
-  it('a headcount league created with the legacy tracksStats:true never gets tracks_results forced on -- no sides to attach a score to', async () => {
+  it('a headcount league created with the legacy tracksStats:true never gets tracks_results forced on — no sides to attach a score to', async () => {
     const { cookie, csrfToken } = await signup('p1.legacyheadcount@example.com', '203.0.202.005');
     const league = await createLeague(cookie, csrfToken, { name: 'Legacy Headcount League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12, tracksStats: true });
     const row = await env.DB.prepare('SELECT tracks_stats, tracks_results, tracks_player_stats FROM leagues WHERE id = ?').bind(league.id).first();
@@ -287,7 +287,7 @@ describe('Stats tracking, Part 2: score entry', () => {
     expect(row.home_score).toBe(5); expect(row.away_score).toBe(2);
   });
 
-  it('a score for a >2-team fixed league needs a matchup set first -- rejected without one', async () => {
+  it('a score for a >2-team fixed league needs a matchup set first — rejected without one', async () => {
     const { cookie, csrfToken } = await signup('p2.nomatchup@example.com', '203.0.203.002');
     await createLeague(cookie, csrfToken, { name: 'No Matchup Score League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true });
@@ -326,7 +326,7 @@ describe('Stats tracking, Part 2: score entry', () => {
     expect(row.away_team).toBeTruthy();
   });
 
-  it('a headcount league is rejected outright -- no sides to attach a score to -- normally via RESULTS_NOT_TRACKED (Part 1 never lets tracks_results turn on for headcount in the first place), and the route\'s own structure guard is genuine defense in depth even if that were somehow bypassed', async () => {
+  it('a headcount league is rejected outright — no sides to attach a score to — normally via RESULTS_NOT_TRACKED (Part 1 never lets tracks_results turn on for headcount in the first place), and the route\'s own structure guard is genuine defense in depth even if that were somehow bypassed', async () => {
     const { cookie, csrfToken } = await signup('p2.headcount@example.com', '203.0.203.004');
     const league = await createLeague(cookie, csrfToken, { name: 'Headcount Score League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12, tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1', min_players: 8, max_players: 12 });
@@ -382,7 +382,7 @@ describe('Stats tracking, Part 2: score entry', () => {
 
     await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 2, away_score: 1 });
     const after = await eventDetailHtml(cookie, ev.id);
-    expect(after).toContain('Rouge 2 -- 1 Bleu');
+    expect(after).toContain('Rouge 2 — 1 Bleu');
     expect(after).toContain('data-i18n="scoreEditBtn"');
   });
 
@@ -407,7 +407,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     await applyRealSchema(env);
   });
 
-  it('only players CONFIRMED IN for this event can have stats entered -- a non-confirmed player is rejected', async () => {
+  it('only players CONFIRMED IN for this event can have stats entered — a non-confirmed player is rejected', async () => {
     const { cookie, csrfToken } = await signup('p3.confirmed@example.com', '203.0.204.001');
     await createLeague(cookie, csrfToken, { name: 'Confirmed League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
@@ -429,7 +429,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     expect(row.goals).toBe(2); expect(row.assists).toBe(1);
   });
 
-  it('the event page only lists CONFIRMED players in the stats form -- not the whole roster', async () => {
+  it('the event page only lists CONFIRMED players in the stats form — not the whole roster', async () => {
     const { cookie, csrfToken } = await signup('p3.uilist@example.com', '203.0.204.002');
     await createLeague(cookie, csrfToken, { name: 'UI List League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
@@ -466,7 +466,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     expect(row.goals_against).toBe(3);
   });
 
-  it('a goalie\'s win/loss/tie is DERIVED from the event\'s own score and which side they were on -- never asked for, never stored', async () => {
+  it('a goalie\'s win/loss/tie is DERIVED from the event\'s own score and which side they were on — never asked for, never stored', async () => {
     const { cookie, csrfToken } = await signup('p3.derive@example.com', '203.0.204.004');
     await createLeague(cookie, csrfToken, { name: 'Derive League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
@@ -489,7 +489,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     expect(deriveGoalieRecord(noResultEv, 'Rouge')).toBeNull();
   });
 
-  it('a player can be a skater in one game and a goalie in another, within the same season -- the model never prevents it', async () => {
+  it('a player can be a skater in one game and a goalie in another, within the same season — the model never prevents it', async () => {
     const { cookie, csrfToken } = await signup('p3.bothroles@example.com', '203.0.204.005');
     await createLeague(cookie, csrfToken, { name: 'Both Roles League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
@@ -522,7 +522,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     expect(res.json.errorKey).toBe('PLAYER_STATS_NOT_TRACKED');
   });
 
-  it('editable afterward -- re-submitting the same player overwrites their stats for that game', async () => {
+  it('editable afterward — re-submitting the same player overwrites their stats for that game', async () => {
     const { cookie, csrfToken } = await signup('p3.edit@example.com', '203.0.204.007');
     await createLeague(cookie, csrfToken, { name: 'Edit Stats League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
@@ -551,7 +551,7 @@ describe('Stats tracking, Part 4: standings and leaderboards', () => {
     await applyRealSchema(env);
   });
 
-  it('computeStandings aggregates real, asymmetric per-team totals from game results -- wins, losses, a tie, goals for/against, and points (win=2, tie=1, loss=0)', async () => {
+  it('computeStandings aggregates real, asymmetric per-team totals from game results — wins, losses, a tie, goals for/against, and points (win=2, tie=1, loss=0)', async () => {
     const { cookie, csrfToken } = await signup('p4.standings@example.com', '203.0.205.001');
     const league = await createLeague(cookie, csrfToken, { name: 'Standings League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true });
@@ -599,7 +599,7 @@ describe('Stats tracking, Part 4: standings and leaderboards', () => {
     ]).map(s => s.team)).toEqual(['B', 'A']);
   });
 
-  it('computeTopScorers sums goals/assists across the season for ANY team structure -- not just fixed -- and sorts by points then goals', async () => {
+  it('computeTopScorers sums goals/assists across the season for ANY team structure — not just fixed — and sorts by points then goals', async () => {
     const { cookie, csrfToken } = await signup('p4.topscorers@example.com', '203.0.205.002');
     const league = await createLeague(cookie, csrfToken, { name: 'Top Scorers Pickup League', teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
@@ -645,7 +645,7 @@ describe('Stats tracking, Part 4: standings and leaderboards', () => {
     expect(stats.gaa).toBe(3);
   });
 
-  it('the public page shows a full standings table for a fixed-teams league with results on, and hides it again the moment the switch is turned off -- even though the scores stay in the DB', async () => {
+  it('the public page shows a full standings table for a fixed-teams league with results on, and hides it again the moment the switch is turned off — even though the scores stay in the DB', async () => {
     const { cookie, csrfToken } = await signup('p4.pubstandings@example.com', '203.0.205.004');
     const league = await createLeague(cookie, csrfToken, { name: 'Public Standings League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true });
@@ -804,7 +804,7 @@ describe('Stats tracking, Part 5: playoff seeding resolver', () => {
     expect(sf2).toEqual({ home_team: 'Bleu', away_team: 'Vert' }); // seed 2 vs seed 3
   });
 
-  it("a decisive playoff result advances its winner into the next round's slot -- by the actual score, not seed ranking", async () => {
+  it("a decisive playoff result advances its winner into the next round's slot — by the actual score, not seed ranking", async () => {
     const { cookie, csrfToken, semifinal1, semifinal2, final } = await setUpFourTeamBracket('p5.advance@example.com', '203.0.206.002');
     // Semifinal 1: the higher seed (Rouge) wins as expected.
     await submitScore(cookie, csrfToken, { event_id: semifinal1.id, home_score: 5, away_score: 2 });
@@ -816,7 +816,7 @@ describe('Stats tracking, Part 5: playoff seeding resolver', () => {
     expect(finalRow).toEqual({ home_team: 'Rouge', away_team: 'Vert' });
   });
 
-  it('a tied playoff game has no tiebreak -- it stays unresolved (and says so on the page), while the OTHER, decided semifinal still advances normally', async () => {
+  it('a tied playoff game has no tiebreak — it stays unresolved (and says so on the page), while the OTHER, decided semifinal still advances normally', async () => {
     const { cookie, csrfToken, semifinal1, semifinal2, final } = await setUpFourTeamBracket('p5.tie@example.com', '203.0.206.003');
     await submitScore(cookie, csrfToken, { event_id: semifinal1.id, home_score: 3, away_score: 3 }); // tied -- no winner to advance
     await submitScore(cookie, csrfToken, { event_id: semifinal2.id, home_score: 4, away_score: 1 }); // Bleu (home) wins decisively
@@ -851,7 +851,7 @@ describe('Stats correctness task, Part 2a: goalie goals-against is derived, not 
     expect(deriveGoalsAgainst(noResult, 'Rouge')).toBeNull(); // nothing to derive from yet
   });
 
-  it("once a real result is recorded, the server ALWAYS derives goals_against -- a contradicting client-submitted number is silently overridden, matching the recorded score", async () => {
+  it("once a real result is recorded, the server ALWAYS derives goals_against — a contradicting client-submitted number is silently overridden, matching the recorded score", async () => {
     const { cookie, csrfToken } = await signup('p2a.derive@example.com', '203.0.207.001');
     await createLeague(cookie, csrfToken, { name: 'Derive League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
@@ -909,8 +909,8 @@ describe('Stats correctness task, Part 2a: goalie goals-against is derived, not 
     const html = await eventDetailHtml(cookie, ev.id);
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.goalsAgainstDerivedTitle).toBe("Calculé automatiquement à partir du résultat du match -- le nombre de buts de l'équipe adverse.");
-    expect(dict.en.goalsAgainstDerivedTitle).toBe("Calculated automatically from the recorded result -- the opposing team's own score.");
+    expect(dict.fr.goalsAgainstDerivedTitle).toBe("Calculé automatiquement à partir du résultat du match — le nombre de buts de l'équipe adverse.");
+    expect(dict.en.goalsAgainstDerivedTitle).toBe("Calculated automatically from the recorded result — the opposing team's own score.");
   });
 });
 
@@ -930,7 +930,7 @@ describe('Stats correctness task, Part 2b: goals-vs-score running tally, warns o
     await setRsvp(cookie, csrfToken, ev.id, p1.player_id, 'in');
 
     let html = await eventDetailHtml(cookie, ev.id);
-    expect(html).not.toContain('id="ps_goal_tally"'); // no score yet -- nothing to validate against
+    expect(html).not.toContain('id="ps_goal_tally"'); // no score yet — nothing to validate against
 
     await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 14, away_score: 5 });
     html = await eventDetailHtml(cookie, ev.id);
@@ -942,7 +942,7 @@ describe('Stats correctness task, Part 2b: goals-vs-score running tally, warns o
     expect(html).toContain("updateGoalTally(); // a goalie's own goals never count toward the team's tally");
   });
 
-  it('the tally logic sums entered goals per team and only flags a mismatch when the sum differs from the recorded score -- never blocking, either way', async () => {
+  it('the tally logic sums entered goals per team and only flags a mismatch when the sum differs from the recorded score — never blocking, either way', async () => {
     const { cookie, csrfToken } = await signup('p2b.logic@example.com', '203.0.208.002');
     await createLeague(cookie, csrfToken, { name: 'Logic League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });

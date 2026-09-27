@@ -686,7 +686,7 @@ const I18N_SIGNUP = {
     // own input listener updates su_slug as you type) -- this is just
     // the missing warning line, phrased consistently with Settings'
     // own justification (permanent = shared links always keep working).
-    slugHelp: 'Devient permanente à la création de ta ligue -- ça garantit que les liens que tu partages continuent toujours de fonctionner.',
+    slugHelp: 'Devient permanente à la création de ta ligue — ça garantit que les liens que tu partages continuent toujours de fonctionner.',
     structureLabel: 'Comment sont organisées tes équipes?',
     // B2 (stale-copy polish task): "Équipes qui changent"/"Teams
     // shuffle" was jargon, and "Aucune équipe"/"No teams" was
@@ -737,7 +737,7 @@ const I18N_SIGNUP = {
     pwHelp: '8 characters minimum.', continueBtn: 'Continue', alreadySignedUp: 'Already signed up?', login: 'Log in',
     step2: 'Step 2 of 8', title2: 'Tell us about your league',
     lblLeagueName: 'League name', lblSlug: 'Your page address',
-    slugHelp: "Becomes permanent once your league is created -- that guarantees the links you share always keep working.",
+    slugHelp: "Becomes permanent once your league is created — that guarantees the links you share always keep working.",
     structureLabel: 'How are your teams organized?',
     structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
     structureWeeklyTitle: 'Pickup with teams', structureWeeklyDesc: 'Pickup, but split into teams each game — drawn automatically or set by you.',
@@ -1083,7 +1083,7 @@ function renderSignupStep2(langParam) {
   <div class="nl-field">
     <label class="nl-label" for="su_slug" data-i18n="lblSlug">Adresse de ta page</label>
     <div class="nl-prefix"><span>notreligue.ca/</span><input class="nl-input" id="su_slug"></div>
-    <p class="nl-help" data-i18n="slugHelp">Devient permanente à la création de ta ligue -- ça garantit que les liens que tu partages continuent toujours de fonctionner.</p>
+    <p class="nl-help" data-i18n="slugHelp">Devient permanente à la création de ta ligue — ça garantit que les liens que tu partages continuent toujours de fonctionner.</p>
   </div>
   <div class="nl-field">
     <span class="nl-label" data-i18n="structureLabel">Comment sont organisées tes équipes?</span>
@@ -1668,7 +1668,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       noSeason: 'Pas de saison active',
       teamsLabel: 'équipes', playersLabel: 'joueurs',
       publicPage: 'Page publique', copyLink: 'Copier', copied: 'Copié !',
-      publicPageDisabled: 'Désactivée -- personne ne peut voir cette page.',
+      publicPageDisabled: 'Désactivée — personne ne peut voir cette page.',
       teams: 'Équipes', tracksResultsLabel: 'Résultats suivis :', tracksPlayerStatsLabel: 'Statistiques des joueurs suivies :', yes: 'Oui', no: 'Non',
       // B2 (stale-copy polish task): superseding the "Nouvelles
       // équipes chaque match" wording test/part49_teams_per_game_label.spec.js
@@ -1684,7 +1684,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // C2 (empty-states polish task): clarifies what the dashboard
       // tile's bare number counts, for weekly_draw only.
       teamsPerGameCount: 'équipes disponibles',
-      noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.",
+      noFixedTeamsDesc: "Cette ligue n'a pas d'équipes fixes — c'est une liste de joueurs unique, sans répartition en équipes.",
       weeklyDrawTeamsDesc: 'Ces équipes sont assignées à chaque match, pas de façon permanente aux joueurs.',
       // Live-testing task (batch 5), Part 6: the dashboard's own
       // ongoing "what's still worth doing" checklist -- computed from
@@ -1704,11 +1704,11 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       noSeason: 'No active season',
       teamsLabel: 'teams', playersLabel: 'players',
       publicPage: 'Public page', copyLink: 'Copy', copied: 'Copied!',
-      publicPageDisabled: "Disabled -- no one can see this page.",
+      publicPageDisabled: "Disabled — no one can see this page.",
       teams: 'Teams', tracksResultsLabel: 'Results tracked:', tracksPlayerStatsLabel: 'Player stats tracked:', yes: 'Yes', no: 'No',
       teamsPerGame: 'Pickup with teams', noFixedTeams: 'No fixed teams',
       teamsPerGameCount: 'team names available',
-      noFixedTeamsDesc: "This league has no fixed teams -- it's a single player list, with no team split.",
+      noFixedTeamsDesc: "This league has no fixed teams — it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
       nextStepsTitle: 'Next steps', nsCreateSchedule: 'Create the schedule', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size'
     });
@@ -2252,13 +2252,13 @@ async function handleDashboardPage(req, env, url) {
       <div class="overline" data-i18n="publicPage">Page publique</div>
       ${leagueRow.public_page_enabled
         ? `<div class="dash-share"><code id="publicUrlLink" data-href="${esc(publicUrl)}">${esc(publicUrl)}</code><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="copyPublicUrlBtn" data-i18n="copyLink" onclick="copyPublicUrl()">Copier</button></div>`
-        : `<p class="nl-help" style="margin-top:4px" data-i18n="publicPageDisabled">Désactivée -- personne ne peut voir cette page.</p>`}
+        : `<p class="nl-help" style="margin-top:4px" data-i18n="publicPageDisabled">Désactivée — personne ne peut voir cette page.</p>`}
     </section>
   </div>
   <section class="nl-card nl-card--pad-lg">
     <div class="h3" data-i18n="teams">Équipes</div>
     ${dashIsHeadcount ? `
-    <p class="nl-help" style="margin-top:12px" data-i18n="noFixedTeamsDesc">Cette ligue n'a pas d'équipes fixes -- c'est une liste de joueurs unique, sans répartition en équipes.</p>` : `
+    <p class="nl-help" style="margin-top:12px" data-i18n="noFixedTeamsDesc">Cette ligue n'a pas d'équipes fixes — c'est une liste de joueurs unique, sans répartition en équipes.</p>` : `
     <div class="nl-list" style="margin-top:12px">
       ${teamNames.map(t => `<div class="nl-row"><span class="grow">${esc(t)}</span></div>`).join('')}
     </div>
@@ -2483,33 +2483,33 @@ function buildOnboardingI18n() {
     // inaccurate, so it gets its own variant making the same "total, not
     // per team" point without claiming a team draw that doesn't happen.
     rosterSubPool: "Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l'ensemble du bassin.",
-    rosterSubHeadcount: "Tous les joueurs confirmés comptent dans ce total -- cette ligue n'a pas d'équipes.",
+    rosterSubHeadcount: "Tous les joueurs confirmés comptent dans ce total — cette ligue n'a pas d'équipes.",
     lblMinPlayers: 'Minimum total de joueurs', lblMaxPlayers: 'Maximum total de joueurs',
     lblMinGoalies: 'Minimum de gardiens (optionnel)', lblMaxGoalies: 'Maximum de gardiens (optionnel)',
-    teamsTitle: 'Confirme les noms des équipes', teamsSubDefault: 'Choisis les vrais noms de tes équipes -- tu pourras les changer plus tard dans Paramètres.',
+    teamsTitle: 'Confirme les noms des équipes', teamsSubDefault: 'Choisis les vrais noms de tes équipes — tu pourras les changer plus tard dans Paramètres.',
     teamsSubWeekly: 'Ces équipes changent à chaque match, mais leurs noms restent les mêmes toute la saison. Tu peux garder « Équipe 1, 2… » et revenir plus tard.',
     // A1 (onboarding polish task): F1 made new leagues start with
     // reminders OFF -- this copy still claimed the opposite. Reframed
     // as opting in, since that's what this screen actually is now.
-    remindersTitle: 'Rappels automatiques', remindersSub: "Désactivés par défaut. Active ceux que tu veux -- tu peux changer ça n'importe quand dans les réglages.",
+    remindersTitle: 'Rappels automatiques', remindersSub: "Désactivés par défaut. Active ceux que tu veux — tu peux changer ça n'importe quand dans les réglages.",
     reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder12Label: 'Détails 12 h avant (confirmés)',
     // Stats tracking task (Part 1): replaced the single "Track
     // stats?" question with two independent ones -- see this step's
     // own render-site comment for why.
     statsTitle: 'Suivre les statistiques?',
-    statsSub: 'Choisis indépendamment ce que tu veux suivre -- tu pourras changer ça plus tard dans Paramètres.',
+    statsSub: 'Choisis indépendamment ce que tu veux suivre — tu pourras changer ça plus tard dans Paramètres.',
     lblTracksResults: 'Résultats des matchs',
     lblTracksResultsDesc: 'Le score de chaque match, calculé en classement (V-D-N).',
-    lblTracksResultsDescPickup: "Le score de chaque match, gardé comme historique -- les équipes changent chaque semaine, donc pas de classement.",
+    lblTracksResultsDescPickup: "Le score de chaque match, gardé comme historique — les équipes changent chaque semaine, donc pas de classement.",
     lblTracksPlayerStats: 'Statistiques des joueurs',
     lblTracksPlayerStatsDesc: 'Buts et passes par joueur, par match.',
     // Playoff extension, Part 1: fixed-teams only. THE MODEL -- séries
     // consomment des créneaux; l'horaire régulier utilise ce qui reste.
     playoffsTitle: 'Y a-t-il des séries éliminatoires?',
-    playoffsSub: "Les séries consomment des créneaux de ta ligue -- l'horaire de la saison régulière est calculé en fonction de ce qui reste.",
+    playoffsSub: "Les séries consomment des créneaux de ta ligue — l'horaire de la saison régulière est calculé en fonction de ce qui reste.",
     playoffsEnabledLabel: 'Il y a des séries éliminatoires',
     formatLabel: 'Format des séries', formatSingleElim: 'Élimination simple', formatBestOfN: 'Série la meilleure de N', formatReserved: 'Créneaux réservés',
-    formatReservedDesc: "Tu dis combien de matchs il te faut -- on réserve les créneaux, sans équipes assignées. Idéal si ton format ne correspond à aucun modèle, ou si tu décideras plus tard.",
+    formatReservedDesc: "Tu dis combien de matchs il te faut — on réserve les créneaux, sans équipes assignées. Idéal si ton format ne correspond à aucun modèle, ou si tu décideras plus tard.",
     bestOfLabel: 'Le meilleur de combien de matchs?',
     playoffTeamsLabel: "Combien d'équipes participent aux séries?",
     byeNote: "Un nombre impair d'équipes a besoin d'une ronde de repos (bye), ce qui utilise un créneau de plus.",
@@ -2520,25 +2520,25 @@ function buildOnboardingI18n() {
     skip: 'Skip for now', next: 'Continue', finish: 'Go to dashboard', saveErr: 'Something went wrong. Please try again.',
     rosterTitle: 'How many players?', rosterSubTeam: 'These numbers apply to each team. Leave blank if you\'re not ready to decide.',
     rosterSubPool: 'Everyone who confirms goes into one pool and gets drawn into teams. These numbers cover the whole pool.',
-    rosterSubHeadcount: "Everyone who confirms counts toward this total -- this league has no teams.",
+    rosterSubHeadcount: "Everyone who confirms counts toward this total — this league has no teams.",
     lblMinPlayers: 'Minimum total players', lblMaxPlayers: 'Maximum total players',
     lblMinGoalies: 'Minimum goalies (optional)', lblMaxGoalies: 'Maximum goalies (optional)',
-    teamsTitle: 'Confirm your team names', teamsSubDefault: 'Pick the real names of your teams -- you can change them later in Settings.',
+    teamsTitle: 'Confirm your team names', teamsSubDefault: 'Pick the real names of your teams — you can change them later in Settings.',
     teamsSubWeekly: 'These teams change every game, but their names stay the same all season. You can keep "Team 1, 2…" and come back later.',
-    remindersTitle: 'Automated reminders', remindersSub: "Off by default. Turn on the ones you want -- you can change this any time in Settings.",
+    remindersTitle: 'Automated reminders', remindersSub: "Off by default. Turn on the ones you want — you can change this any time in Settings.",
     reminder72Label: '72h reminder (no reply yet)', reminder24Label: '24h reminder (no reply yet)', reminder12Label: '12h details (confirmed players)',
     statsTitle: 'Track stats?',
-    statsSub: 'Pick what you want to track, independently -- you can change this later in Settings.',
+    statsSub: 'Pick what you want to track, independently — you can change this later in Settings.',
     lblTracksResults: 'Game results',
     lblTracksResultsDesc: "Each game's score, computed into a standings table (W-L-T).",
-    lblTracksResultsDescPickup: "Each game's score, kept as history -- teams change every week, so there's no standings table.",
+    lblTracksResultsDescPickup: "Each game's score, kept as history — teams change every week, so there's no standings table.",
     lblTracksPlayerStats: 'Player stats',
     lblTracksPlayerStatsDesc: 'Goals and assists per player, per game.',
     playoffsTitle: 'Are there playoffs?',
-    playoffsSub: "Playoffs consume slots from your league's total -- the regular-season schedule is calculated from what's left.",
+    playoffsSub: "Playoffs consume slots from your league's total — the regular-season schedule is calculated from what's left.",
     playoffsEnabledLabel: 'There are playoffs',
     formatLabel: 'Playoff format', formatSingleElim: 'Single elimination', formatBestOfN: 'Best-of-N series', formatReserved: 'Reserved slots',
-    formatReservedDesc: "Tell us how many games you need -- we reserve the slots, with no teams assigned. For a format that doesn't fit a template, or if you'll decide later.",
+    formatReservedDesc: "Tell us how many games you need — we reserve the slots, with no teams assigned. For a format that doesn't fit a template, or if you'll decide later.",
     bestOfLabel: 'Best of how many games?',
     playoffTeamsLabel: 'How many teams make the playoffs?',
     byeNote: 'An odd number of teams needs a bye round, which costs one extra slot.',
@@ -2644,7 +2644,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
     stepHtml = `
   <div class="su-title">
     <h1 data-i18n="teamsTitle">Confirme les noms des équipes</h1>
-    <p class="nl-help" data-i18n="${isWeekly ? 'teamsSubWeekly' : 'teamsSubDefault'}">${isWeekly ? 'Ces équipes changent à chaque match, mais leurs noms restent les mêmes toute la saison. Tu peux garder « Équipe 1, 2… » et revenir plus tard.' : 'Choisis les vrais noms de tes équipes -- tu pourras les changer plus tard dans Paramètres.'}</p>
+    <p class="nl-help" data-i18n="${isWeekly ? 'teamsSubWeekly' : 'teamsSubDefault'}">${isWeekly ? 'Ces équipes changent à chaque match, mais leurs noms restent les mêmes toute la saison. Tu peux garder « Équipe 1, 2… » et revenir plus tard.' : 'Choisis les vrais noms de tes équipes — tu pourras les changer plus tard dans Paramètres.'}</p>
   </div>
   <div id="formErr" class="nl-error" style="display:none"></div>
   <div class="su-teams" id="ob_teams">
@@ -2665,7 +2665,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
     stepHtml = `
   <div class="su-title">
     <h1 data-i18n="playoffsTitle">Y a-t-il des séries éliminatoires?</h1>
-    <p class="nl-help" data-i18n="playoffsSub">Les séries consomment des créneaux de ta ligue -- l'horaire de la saison régulière est calculé en fonction de ce qui reste.</p>
+    <p class="nl-help" data-i18n="playoffsSub">Les séries consomment des créneaux de ta ligue — l'horaire de la saison régulière est calculé en fonction de ce qui reste.</p>
   </div>
   <div id="formErr" class="nl-error" style="display:none"></div>
   <div class="nl-toggle">
@@ -2681,7 +2681,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
         <option value="reserved_slots" data-i18n="formatReserved"${leagueRow.playoff_format === 'reserved_slots' ? ' selected' : ''}>Créneaux réservés</option>
       </select>
     </div>
-    <p class="nl-help" id="ob_format_reserved_desc" style="display:none" data-i18n="formatReservedDesc">Tu dis combien de matchs il te faut -- on réserve les créneaux, sans équipes assignées. Idéal si ton format ne correspond à aucun modèle, ou si tu décideras plus tard.</p>
+    <p class="nl-help" id="ob_format_reserved_desc" style="display:none" data-i18n="formatReservedDesc">Tu dis combien de matchs il te faut — on réserve les créneaux, sans équipes assignées. Idéal si ton format ne correspond à aucun modèle, ou si tu décideras plus tard.</p>
     <div class="nl-field" id="ob_bestof_wrap" style="display:none">
       <label class="nl-label" for="ob_best_of" data-i18n="bestOfLabel">Le meilleur de combien de matchs?</label>
       <input class="nl-input" id="ob_best_of" type="number" min="1" value="${esc(leagueRow.playoff_best_of ? String(leagueRow.playoff_best_of) : '3')}">
@@ -2706,7 +2706,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
     stepHtml = `
   <div class="su-title">
     <h1 data-i18n="remindersTitle">Rappels automatiques</h1>
-    <p class="nl-help" data-i18n="remindersSub">Déjà activés par défaut -- désactive ceux que tu ne veux pas.</p>
+    <p class="nl-help" data-i18n="remindersSub">Déjà activés par défaut — désactive ceux que tu ne veux pas.</p>
   </div>
   <div id="formErr" class="nl-error" style="display:none"></div>
   <div class="nl-toggle">
@@ -2733,11 +2733,11 @@ async function handleOnboardingSeasonPage(req, env, url) {
     stepHtml = `
   <div class="su-title">
     <h1 data-i18n="statsTitle">Suivre les statistiques?</h1>
-    <p class="nl-help" data-i18n="statsSub">Choisis indépendamment ce que tu veux suivre -- tu pourras changer ça plus tard dans Paramètres.</p>
+    <p class="nl-help" data-i18n="statsSub">Choisis indépendamment ce que tu veux suivre — tu pourras changer ça plus tard dans Paramètres.</p>
   </div>
   <div id="formErr" class="nl-error" style="display:none"></div>
   ${offerResults ? `<div class="nl-toggle">
-    <div><div class="nl-label" data-i18n="lblTracksResults">Résultats des matchs</div><p class="nl-help" data-i18n="${teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickup' : 'lblTracksResultsDesc'}" style="margin:2px 0 0">${teamStructure === 'weekly_draw' ? "Le score de chaque match, gardé comme historique -- les équipes changent chaque semaine, donc pas de classement." : 'Le score de chaque match, calculé en classement (V-D-N).'}</p></div>
+    <div><div class="nl-label" data-i18n="lblTracksResults">Résultats des matchs</div><p class="nl-help" data-i18n="${teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickup' : 'lblTracksResultsDesc'}" style="margin:2px 0 0">${teamStructure === 'weekly_draw' ? "Le score de chaque match, gardé comme historique — les équipes changent chaque semaine, donc pas de classement." : 'Le score de chaque match, calculé en classement (V-D-N).'}</p></div>
     <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_results ? 'true' : 'false'}" id="ob_tracks_results" onclick="obToggle(this)"></button>
   </div>` : ''}
   <div class="nl-toggle">
@@ -4825,7 +4825,7 @@ async function handleLeagueCommsPage(req, env, url) {
       editCadence: 'Modifier dans Paramètres',
       activityTitle: 'Activité récente',
       colType: 'Type', colRecipient: 'Destinataire', colEvent: 'Match', colStatus: 'Statut', colWhen: 'Quand', colReason: 'Raison',
-      emptyState: "Aucune activité pour l'instant -- les envois apparaîtront ici.",
+      emptyState: "Aucune activité pour l'instant — les envois apparaîtront ici.",
       statusSent: 'Envoyé', statusFailed: 'Échec', statusRetrying: 'Échec, nouvel essai prévu', statusDeferred: 'Reporté à demain (plafond quotidien)', statusSkipped: 'Ignoré', statusPending: 'En attente',
       // E3 (Comms polish task): a 0-recipient automated send used to
       // show the same green "Envoyé" status as a real send -- reads as
@@ -4838,7 +4838,7 @@ async function handleLeagueCommsPage(req, env, url) {
       // language only.
       recipientCountLabel: '{n} destinataire(s)',
       btnDrain: '⚡ Envoyer maintenant', drainConfirm: "Déclencher l'envoi immédiat des courriels en attente pour cette ligue ?",
-      drainNonePending: 'Rien était en attente -- déjà à jour.',
+      drainNonePending: 'Rien était en attente — déjà à jour.',
       drainSentSuffix: 'envoyé(s).', drainFailedSuffix: 'échec(s).',
       broadcastTitle: 'Composer une diffusion', broadcastDesc: 'Envoyer un message ponctuel à un groupe de joueurs.',
       lblBcTarget: 'Destinataires', lblBcEvent: 'Match', lblBcSubject: 'Sujet', lblBcMessage: 'Message',
@@ -4865,12 +4865,12 @@ async function handleLeagueCommsPage(req, env, url) {
       editCadence: 'Edit in Settings',
       activityTitle: 'Recent activity',
       colType: 'Type', colRecipient: 'Recipient', colEvent: 'Game', colStatus: 'Status', colWhen: 'When', colReason: 'Reason',
-      emptyState: 'No activity yet -- sends will appear here.',
+      emptyState: 'No activity yet — sends will appear here.',
       statusSent: 'Sent', statusFailed: 'Failed', statusRetrying: 'Failed, retry scheduled', statusDeferred: 'Deferred to tomorrow (daily cap)', statusSkipped: 'Skipped', statusPending: 'Pending',
       statusNoRecipients: 'No one to notify', noRecipientsReason: 'No one was eligible for this automated send.',
       recipientCountLabel: '{n} recipient(s)',
       btnDrain: '⚡ Send now', drainConfirm: 'Trigger immediate delivery of pending emails for this league?',
-      drainNonePending: 'Nothing was pending -- already up to date.',
+      drainNonePending: 'Nothing was pending — already up to date.',
       drainSentSuffix: 'sent.', drainFailedSuffix: 'failed.',
       broadcastTitle: 'Compose a broadcast', broadcastDesc: 'Send a one-off message to a group of players.',
       lblBcTarget: 'Recipients', lblBcEvent: 'Game', lblBcSubject: 'Subject', lblBcMessage: 'Message',
@@ -5251,11 +5251,11 @@ async function handleLeagueSettingsPage(req, env, url) {
       navIdentity: 'Identité', navVenues: 'Lieux', navTeams: 'Équipes', navStructure: 'Structure',
       navLanguage: 'Langue', navReminders: 'Rappels', navAutoDraw: 'Tirage auto', navAdmins: 'Co-admins', navDeactivate: 'Désactiver',
       identityTitle: 'Identité de la ligue', lblLeagueName: 'Nom de la ligue',
-      lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée -- ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
+      lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée — ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
       lblColor: 'Couleur de la ligue', save: 'Enregistrer', saved: 'Enregistré !',
       lblTracksResults: 'Résultats des matchs',
       lblTracksResultsDesc: 'Le score de chaque match, calculé en classement (V-D-N).',
-      lblTracksResultsDescPickup: "Le score de chaque match, gardé comme historique -- les équipes changent chaque semaine, donc pas de classement.",
+      lblTracksResultsDescPickup: "Le score de chaque match, gardé comme historique — les équipes changent chaque semaine, donc pas de classement.",
       lblTracksPlayerStats: 'Statistiques des joueurs',
       lblTracksPlayerStatsDesc: 'Buts et passes par joueur, par match.',
       // D2 (settings polish task): swatch names, both for the visible
@@ -5265,21 +5265,21 @@ async function handleLeagueSettingsPage(req, env, url) {
       colorPresetOrange: 'Orange', colorPresetPink: 'Rose', colorPresetIndigo: 'Indigo', colorPresetGold: 'Or',
       colorPresetHelp: 'Chaque couleur est vérifiée lisible sur les deux thèmes de page publique.',
       lblPublicPageEnabled: 'Page publique',
-      publicPageEnabledHelp: "Quand c'est désactivé, personne ne peut voir ta page publique -- même pas avec le lien direct.",
+      publicPageEnabledHelp: "Quand c'est désactivé, personne ne peut voir ta page publique — même pas avec le lien direct.",
       lblPublicTheme: 'Thème de la page publique', themeArene: 'Arène (sombre, actuel)', themeClean: 'Épuré (blanc, minimal)',
       themeClassique: 'Classique (couleurs de la ligue, gras)', themeQuartier: 'Quartier (chaleureux, arrondi)',
       themeHelp: 'Quatre thèmes sont offerts.',
       themePreview: "Aperçu de ce thème (sans l'enregistrer)",
       lblOrganizerNote: "Mot de l'organisateur",
-      organizerNoteHelp: "Un mot permanent affiché sur ta page publique -- pas un avis hebdomadaire. Laisse vide pour ne rien afficher.",
+      organizerNoteHelp: "Un mot permanent affiché sur ta page publique — pas un avis hebdomadaire. Laisse vide pour ne rien afficher.",
       organizerNotePlaceholder: 'Ex. : Les dimanches matin à Letendre depuis 2005, nouveaux joueurs bienvenus.',
       venuesTitle: 'Lieux', venuesDesc: "Enregistre tes patinoires ou gymnases une fois, puis choisis-les à la création d'un match au lieu de retaper l'adresse à chaque fois.",
       lblVenueName: 'Nom', lblVenueAddress: 'Adresse (optionnel)', lblVenueMapLink: 'Lien vers une carte (optionnel)',
       venueNamePh: 'Ex. Aréna Notre-Dame', venueAddressPh: '123 rue Principale, Ville', venueMapLinkPh: 'https://maps.google.com/...',
       addVenue: 'Ajouter le lieu', removeVenue: 'Retirer', noVenuesYet: "Aucun lieu enregistré pour l'instant.",
       viewOnMap: 'Voir sur la carte',
-      teamsTitle: 'Équipes par défaut', teamsDesc: "Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue -- republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).",
-      teamsHeadcountNote: "Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.",
+      teamsTitle: 'Équipes par défaut', teamsDesc: "Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue — republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).",
+      teamsHeadcountNote: "Cette ligue n'a pas d'équipes fixes — rien à nommer ici.",
       addTeam: 'Ajouter une équipe', removeTeam: 'Retirer', lblTeamName: 'Nom', lblTeamColor: 'Couleur',
       seasonTeamsTitle: 'Équipes de cette saison',
       seasonTeamsDescPrefix: 'Ajoute ou retire une équipe pour la saison « ',
@@ -5304,9 +5304,9 @@ async function handleLeagueSettingsPage(req, env, url) {
       // E3 (season-model polish task): a closed, read-only season
       // viewed via the picker.
       seasonHistoryTitle: 'Saison passée',
-      seasonHistoryDesc: "Cette saison est fermée. Consultation seulement -- rien ici ne peut être modifié.",
+      seasonHistoryDesc: "Cette saison est fermée. Consultation seulement — rien ici ne peut être modifié.",
       seasonPickerLabel: 'Voir la saison',
-      seasonReadOnlyBanner: '🔒 Saison fermée -- lecture seule.',
+      seasonReadOnlyBanner: '🔒 Saison fermée — lecture seule.',
       // E1/E2 (season-model polish task): creating a season is now its
       // own explicit action, separate from renaming the current one,
       // and shows the rollover confirmation BEFORE anything changes.
@@ -5323,12 +5323,12 @@ async function handleLeagueSettingsPage(req, env, url) {
       rolloverConfirmBtn: 'Créer la saison',
       rolloverExplainNewCurrent: '{new} devient ta saison actuelle.',
       rolloverExplainOldClosed: '{old} ferme et devient une saison consultable en lecture seule.',
-      rolloverExplainConfigScope: "L'effectif et la structure d'équipe définis ici s'appliquent seulement à {new} -- la saison fermée ne change pas.",
+      rolloverExplainConfigScope: "L'effectif et la structure d'équipe définis ici s'appliquent seulement à {new} — la saison fermée ne change pas.",
       rolloverMoveEventsLabel: "{n} matchs à venir sont encore dans {old}. Les déplacer vers {new}? Les matchs laissés dans une saison fermée ne peuvent plus être gérés depuis le tableau de bord.",
       // Part 1 (playoff extension): same questions/copy as the
       // onboarding 'playoffs' step, editable here afterward.
       playoffsTitle: 'Y a-t-il des séries éliminatoires?',
-      playoffsSub: "Les séries consomment des créneaux de ta ligue -- l'horaire de la saison régulière est calculé en fonction de ce qui reste.",
+      playoffsSub: "Les séries consomment des créneaux de ta ligue — l'horaire de la saison régulière est calculé en fonction de ce qui reste.",
       playoffsEnabledLabel: 'Il y a des séries éliminatoires',
       formatLabel: 'Format des séries', formatSingleElim: 'Élimination simple', formatBestOfN: 'Série la meilleure de N', formatReserved: 'Créneaux réservés',
       bestOfLabel: 'Le meilleur de combien de matchs?',
@@ -5340,11 +5340,11 @@ async function handleLeagueSettingsPage(req, env, url) {
       // (active pre-checked, inactive unchecked but listed so a
       // returning player can be brought back deliberately).
       rolloverTitle: 'Importer les joueurs de la saison précédente?',
-      rolloverDesc: "Les joueurs actifs sont précochés. Un joueur non importé devient inactif -- il garde son historique et peut être réactivé plus tard.",
+      rolloverDesc: "Les joueurs actifs sont précochés. Un joueur non importé devient inactif — il garde son historique et peut être réactivé plus tard.",
       rolloverInactiveTag: 'Inactif',
       structureLabel: 'Comment sont organisées tes équipes?',
       structureTitle: 'Par défaut pour les nouvelles saisons',
-      structureDesc: "Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées -- seules les nouvelles saisons utiliseront ce changement.",
+      structureDesc: "Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées — seules les nouvelles saisons utiliseront ce changement.",
       structureFixedTitle: 'Équipes fixes', structureFixedDesc: 'La même équipe toute la saison, comme une ligue régulière.',
       structureWeeklyTitle: 'Sans équipes fixes', structureWeeklyDesc: 'Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.',
       structureHeadcountTitle: 'Sans équipes', structureHeadcountDesc: 'Juste la liste des présents. Vous formez les équipes sur place.',
@@ -5360,7 +5360,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       rosterLimitsTitle: 'Effectif de l\'équipe',
       rosterSubTeam: 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.',
       rosterSubPool: "Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l'ensemble du bassin.",
-      rosterSubHeadcount: "Tous les joueurs confirmés comptent dans ce total -- cette ligue n'a pas d'équipes.",
+      rosterSubHeadcount: "Tous les joueurs confirmés comptent dans ce total — cette ligue n'a pas d'équipes.",
       langExposure: 'Langue exposée aux joueurs',
       langExposureDesc: 'Détermine si la page publique et la page de présence de tes joueurs affichent un choix FR/EN, ou une seule langue fixe.',
       langBoth: 'Les deux (FR/EN)', langFrOnly: 'Français seulement', langEnOnly: 'Anglais seulement',
@@ -5377,7 +5377,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       advQuiet: 'Heures de silence', advQuietDesc: 'Aucun courriel automatique entre ces heures.',
       advQuietFrom: 'De (h)', advQuietTo: 'À (h)',
       autoDrawTitle: 'Tirage automatique des équipes',
-      autoDrawDesc: "Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.",
+      autoDrawDesc: "Forme les équipes automatiquement un certain nombre d'heures avant chaque match — désactivé par défaut, comme les autres automatismes.",
       autoDrawEnableLabel: 'Activer le tirage automatique',
       autoDrawEnableDesc: 'Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.',
       autoDrawHoursLabel: 'Heures avant le match',
@@ -5402,32 +5402,32 @@ async function handleLeagueSettingsPage(req, env, url) {
       navIdentity: 'Identity', navVenues: 'Venues', navTeams: 'Teams', navStructure: 'Structure',
       navLanguage: 'Language', navReminders: 'Reminders', navAutoDraw: 'Auto-draw', navAdmins: 'Co-admins', navDeactivate: 'Deactivate',
       identityTitle: 'League identity', lblLeagueName: 'League name',
-      lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed -- that guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
+      lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed — that guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
       lblColor: 'League colour', save: 'Save', saved: 'Saved!',
       lblTracksResults: 'Game results',
       lblTracksResultsDesc: "Each game's score, computed into a standings table (W-L-T).",
-      lblTracksResultsDescPickup: "Each game's score, kept as history -- teams change every week, so there's no standings table.",
+      lblTracksResultsDescPickup: "Each game's score, kept as history — teams change every week, so there's no standings table.",
       lblTracksPlayerStats: 'Player stats',
       lblTracksPlayerStatsDesc: 'Goals and assists per player, per game.',
       colorPresetRed: 'Red', colorPresetBlue: 'Blue', colorPresetTeal: 'Teal', colorPresetPurple: 'Purple',
       colorPresetOrange: 'Orange', colorPresetPink: 'Pink', colorPresetIndigo: 'Indigo', colorPresetGold: 'Gold',
       colorPresetHelp: 'Every colour is verified legible on both public page themes.',
       lblPublicPageEnabled: 'Public page',
-      publicPageEnabledHelp: "When this is off, no one can see your public page -- not even with the direct link.",
+      publicPageEnabledHelp: "When this is off, no one can see your public page — not even with the direct link.",
       lblPublicTheme: 'Public page theme', themeArene: 'Arène (dark, current)', themeClean: 'Épuré (white, minimal)',
       themeClassique: 'Classique (bold, league colours)', themeQuartier: 'Quartier (warm, rounded)',
       themeHelp: 'Four themes are available.',
       themePreview: 'Preview this theme (without saving)',
       lblOrganizerNote: "Organizer's note",
-      organizerNoteHelp: "A standing message shown on your public page -- not a weekly notice. Leave blank to show nothing.",
+      organizerNoteHelp: "A standing message shown on your public page — not a weekly notice. Leave blank to show nothing.",
       organizerNotePlaceholder: 'E.g.: Sunday mornings at Letendre since 2005, new players welcome.',
       venuesTitle: 'Venues', venuesDesc: 'Save your rinks or gyms once, then pick one when creating a game instead of retyping the address every time.',
       lblVenueName: 'Name', lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
       venueNamePh: 'E.g. Notre-Dame Arena', venueAddressPh: '123 Main St, City', venueMapLinkPh: 'https://maps.google.com/...',
       addVenue: 'Add venue', removeVenue: 'Remove', noVenuesYet: 'No venues saved yet.',
       viewOnMap: 'View on map',
-      teamsTitle: 'Default teams', teamsDesc: "Rename your teams and pick their colour. A change here updates the league's default team list -- republish the current season for it to show up everywhere (players, games, public page).",
-      teamsHeadcountNote: 'This league has no fixed teams -- nothing to name here.',
+      teamsTitle: 'Default teams', teamsDesc: "Rename your teams and pick their colour. A change here updates the league's default team list — republish the current season for it to show up everywhere (players, games, public page).",
+      teamsHeadcountNote: 'This league has no fixed teams — nothing to name here.',
       addTeam: 'Add a team', removeTeam: 'Remove', lblTeamName: 'Name', lblTeamColor: 'Colour',
       seasonTeamsTitle: "This season's teams",
       seasonTeamsDescPrefix: 'Add or remove a team for the “',
@@ -5442,9 +5442,9 @@ async function handleLeagueSettingsPage(req, env, url) {
       seasonStructureHelp: "By default, a new season uses your league's usual structure. Change it here just for this season.",
       seasonSaveBtn: 'Save season',
       seasonHistoryTitle: 'Past season',
-      seasonHistoryDesc: 'This season is closed. View only -- nothing here can be changed.',
+      seasonHistoryDesc: 'This season is closed. View only — nothing here can be changed.',
       seasonPickerLabel: 'View season',
-      seasonReadOnlyBanner: '🔒 Closed season -- read only.',
+      seasonReadOnlyBanner: '🔒 Closed season — read only.',
       newSeasonTitle: 'Start a new season',
       newSeasonStartBtn: 'Start a new season',
       newSeasonNameLabel: 'New season name',
@@ -5454,10 +5454,10 @@ async function handleLeagueSettingsPage(req, env, url) {
       rolloverConfirmBtn: 'Create the season',
       rolloverExplainNewCurrent: '{new} becomes your current season.',
       rolloverExplainOldClosed: '{old} closes and becomes a read-only, viewable season.',
-      rolloverExplainConfigScope: 'The roster size and team structure set here apply only to {new} -- the closed season does not change.',
+      rolloverExplainConfigScope: 'The roster size and team structure set here apply only to {new} — the closed season does not change.',
       rolloverMoveEventsLabel: "{n} upcoming games are still on {old}. Move them to {new}? Games left on a closed season can't be managed from your dashboard.",
       playoffsTitle: 'Are there playoffs?',
-      playoffsSub: "Playoffs consume slots from your league's total -- the regular-season schedule is calculated from what's left.",
+      playoffsSub: "Playoffs consume slots from your league's total — the regular-season schedule is calculated from what's left.",
       playoffsEnabledLabel: 'There are playoffs',
       formatLabel: 'Playoff format', formatSingleElim: 'Single elimination', formatBestOfN: 'Best-of-N series', formatReserved: 'Reserved slots',
       bestOfLabel: 'Best of how many games?',
@@ -5465,11 +5465,11 @@ async function handleLeagueSettingsPage(req, env, url) {
       thirdPlaceLabel: 'Third-place game?',
       reservedSlotsLabel: 'How many games do you need to reserve?',
       rolloverTitle: 'Import players from the previous season?',
-      rolloverDesc: "Active players are pre-checked. A player who isn't imported becomes inactive -- they keep their history and can be reactivated later.",
+      rolloverDesc: "Active players are pre-checked. A player who isn't imported becomes inactive — they keep their history and can be reactivated later.",
       rolloverInactiveTag: 'Inactive',
       structureLabel: 'How are your teams organized?',
       structureTitle: 'Default for new seasons',
-      structureDesc: "Change your league's default structure. Already-published seasons are never affected -- only new seasons will use this change.",
+      structureDesc: "Change your league's default structure. Already-published seasons are never affected — only new seasons will use this change.",
       structureFixedTitle: 'Fixed teams', structureFixedDesc: 'The same team all season, like a regular league.',
       structureWeeklyTitle: 'Pickup with teams', structureWeeklyDesc: 'Pickup, but split into teams each game — drawn automatically or set by you.',
       structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in. You sort out sides at the venue.",
@@ -5479,7 +5479,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       rosterLimitsTitle: 'Roster size',
       rosterSubTeam: 'These numbers apply to each team. Leave blank if you\'re not ready to decide.',
       rosterSubPool: 'Everyone who confirms goes into one pool and gets drawn into teams. These numbers cover the whole pool.',
-      rosterSubHeadcount: "Everyone who confirms counts toward this total -- this league has no teams.",
+      rosterSubHeadcount: "Everyone who confirms counts toward this total — this league has no teams.",
       langExposure: 'Language exposed to players',
       langExposureDesc: "Controls whether your players' public page and RSVP page show a FR/EN toggle, or a single fixed language.",
       langBoth: 'Both (FR/EN)', langFrOnly: 'French only', langEnOnly: 'English only',
@@ -5496,7 +5496,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       advQuiet: 'Quiet hours', advQuietDesc: 'No automatic email between these hours.',
       advQuietFrom: 'From (h)', advQuietTo: 'To (h)',
       autoDrawTitle: 'Automatic team draw',
-      autoDrawDesc: 'Automatically forms teams a set number of hours before each game -- off by default, like every other automation.',
+      autoDrawDesc: 'Automatically forms teams a set number of hours before each game — off by default, like every other automation.',
       autoDrawEnableLabel: 'Enable automatic draw',
       autoDrawEnableDesc: 'The manual "Draw teams" button always stays available regardless.',
       autoDrawHoursLabel: 'Hours before the game',
@@ -5592,7 +5592,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div class="nl-field">
       <label class="nl-label" data-i18n="lblSlug">Adresse publique</label>
       <div class="se-slug-display">${esc(url.origin)}/${esc(leagueSlug)}</div>
-      <p class="nl-help" data-i18n="slugHelp">L'adresse de ta ligue est fixée à la création et ne peut pas être changée -- ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.</p>
+      <p class="nl-help" data-i18n="slugHelp">L'adresse de ta ligue est fixée à la création et ne peut pas être changée — ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.</p>
     </div>
     <div class="nl-field">
       <label class="nl-label" data-i18n="lblColor">Couleur de la ligue</label>
@@ -5624,7 +5624,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div class="nl-field">
       <label class="nl-label" for="se_organizer_note" data-i18n="lblOrganizerNote">Mot de l'organisateur</label>
       <textarea class="nl-input" id="se_organizer_note" rows="3" maxlength="500" data-i18n-ph="organizerNotePlaceholder" placeholder="${esc((I18N_SETTINGS[lang] || I18N_SETTINGS.fr).organizerNotePlaceholder)}" style="height:auto;padding:10px 12px;resize:vertical">${esc(leagueRow.organizer_note || '')}</textarea>
-      <p class="nl-help" data-i18n="organizerNoteHelp">Un mot permanent affiché sur ta page publique -- pas un avis hebdomadaire. Laisse vide pour ne rien afficher.</p>
+      <p class="nl-help" data-i18n="organizerNoteHelp">Un mot permanent affiché sur ta page publique — pas un avis hebdomadaire. Laisse vide pour ne rien afficher.</p>
     </div>
     <!-- Stats tracking task (Part 1): the old single "Track stats?"
          switch replaced by two independent ones -- see the onboarding
@@ -5632,7 +5632,7 @@ async function handleLeagueSettingsPage(req, env, url) {
          (headcount) never gets the results switch at all -- no sides
          to attach a score to. -->
     ${teamStructure !== 'headcount' ? `<div class="nl-toggle">
-      <div><div class="nl-label" data-i18n="lblTracksResults">Résultats des matchs</div><div class="nl-help" data-i18n="${teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickup' : 'lblTracksResultsDesc'}">${teamStructure === 'weekly_draw' ? "Le score de chaque match, gardé comme historique -- les équipes changent chaque semaine, donc pas de classement." : 'Le score de chaque match, calculé en classement (V-D-N).'}</div></div>
+      <div><div class="nl-label" data-i18n="lblTracksResults">Résultats des matchs</div><div class="nl-help" data-i18n="${teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickup' : 'lblTracksResultsDesc'}">${teamStructure === 'weekly_draw' ? "Le score de chaque match, gardé comme historique — les équipes changent chaque semaine, donc pas de classement." : 'Le score de chaque match, calculé en classement (V-D-N).'}</div></div>
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_results ? 'true' : 'false'}" id="se_tracks_results" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
     </div>` : ''}
     <div class="nl-toggle">
@@ -5640,7 +5640,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_player_stats ? 'true' : 'false'}" id="se_tracks_player_stats" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
     </div>
     <div class="nl-toggle">
-      <div><div class="nl-label" data-i18n="lblPublicPageEnabled">Page publique</div><div class="nl-help" data-i18n="publicPageEnabledHelp">Quand c'est désactivé, personne ne peut voir ta page publique -- même pas avec le lien direct.</div></div>
+      <div><div class="nl-label" data-i18n="lblPublicPageEnabled">Page publique</div><div class="nl-help" data-i18n="publicPageEnabledHelp">Quand c'est désactivé, personne ne peut voir ta page publique — même pas avec le lien direct.</div></div>
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.public_page_enabled ? 'true' : 'false'}" id="se_public_page_switch" onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))"></button>
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="identity_save" data-i18n="save" onclick="submitIdentity()">Enregistrer</button></div>
@@ -5676,7 +5676,7 @@ async function handleLeagueSettingsPage(req, env, url) {
   ${!isHeadcount ? `
   <section class="nl-card nl-card--pad-lg" id="section-teams">
     <div class="h3" data-i18n="teamsTitle">Équipes par défaut</div>
-    <p class="nl-help" data-i18n="teamsDesc">Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue -- republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).</p>
+    <p class="nl-help" data-i18n="teamsDesc">Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue — republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).</p>
     <div id="teamsErr" class="nl-error" style="display:none"></div>
     <div id="teamsOk" class="nl-ok" style="display:none"></div>
     <div id="se_teams_list" style="margin-top:12px">${teamRowsHtml}</div>
@@ -5687,7 +5687,7 @@ async function handleLeagueSettingsPage(req, env, url) {
   </section>` : `
   <section class="nl-card nl-card--pad-lg" id="section-teams">
     <div class="h3" data-i18n="teamsTitle">Équipes par défaut</div>
-    <p class="nl-help" data-i18n="teamsHeadcountNote">Cette ligue n'a pas d'équipes fixes -- rien à nommer ici.</p>
+    <p class="nl-help" data-i18n="teamsHeadcountNote">Cette ligue n'a pas d'équipes fixes — rien à nommer ici.</p>
   </section>`}
 
   ${!isHeadcount && currentSeasonEntry ? `
@@ -5726,7 +5726,7 @@ async function handleLeagueSettingsPage(req, env, url) {
        fixed and default to weekly_draw for the next. -->
   <section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)" id="section-structure">
     <div class="h3" data-i18n="${isViewingClosedSeason ? 'seasonHistoryTitle' : 'seasonMgmtTitle'}">${isViewingClosedSeason ? 'Saison passée' : 'Cette saison'}</div>
-    <p class="nl-help" data-i18n="${isViewingClosedSeason ? 'seasonHistoryDesc' : 'seasonMgmtDesc'}">${isViewingClosedSeason ? 'Cette saison est fermée. Consultation seulement -- rien ici ne peut être modifié.' : 'Republie la saison actuelle pour la modifier. Pour en créer une nouvelle, utilise "Démarrer une nouvelle saison" ci-dessous.'}</p>
+    <p class="nl-help" data-i18n="${isViewingClosedSeason ? 'seasonHistoryDesc' : 'seasonMgmtDesc'}">${isViewingClosedSeason ? 'Cette saison est fermée. Consultation seulement — rien ici ne peut être modifié.' : 'Republie la saison actuelle pour la modifier. Pour en créer une nouvelle, utilise "Démarrer une nouvelle saison" ci-dessous.'}</p>
     <!-- E3 (season-model polish task): a season picker, ported from
          SMBHL's own real <select> season-history pattern (its file
          untouched) -- lets an admin view ANY past season for
@@ -5742,7 +5742,7 @@ async function handleLeagueSettingsPage(req, env, url) {
         ${(leagueData.seasons || []).map(s => `<option value="${esc(s.name)}"${viewedSeasonEntry && s.name === viewedSeasonEntry.name ? ' selected' : ''}>${esc(s.name)}${s.name === leagueData.current_season ? (' (' + (lang === 'en' ? 'current' : 'actuelle') + ')') : ''}</option>`).join('')}
       </select>
     </div>` : ''}
-    ${isViewingClosedSeason ? `<div class="nl-help" style="background:var(--surface-sunken);border-radius:var(--radius-sm);padding:var(--space-3);display:flex;align-items:center;gap:8px;" data-i18n="seasonReadOnlyBanner">🔒 Saison fermée -- lecture seule.</div>` : ''}
+    ${isViewingClosedSeason ? `<div class="nl-help" style="background:var(--surface-sunken);border-radius:var(--radius-sm);padding:var(--space-3);display:flex;align-items:center;gap:8px;" data-i18n="seasonReadOnlyBanner">🔒 Saison fermée — lecture seule.</div>` : ''}
     <div id="seasonMgmtErr" class="nl-error" style="display:none"></div>
     <div id="seasonMgmtOk" class="nl-ok" style="display:none"></div>
     <div class="nl-field" style="max-width:360px">
@@ -5779,7 +5779,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     </div>
     <div id="season_headcount_section" style="">
       <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
-      <p class="nl-help" id="season_roster_limits_help" data-i18n="${seasonStructureForDisplay === 'fixed' ? 'rosterSubTeam' : (seasonStructureForDisplay === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${seasonStructureForDisplay === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : seasonStructureForDisplay === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total -- cette ligue n\'a pas d\'équipes.'}</p>
+      <p class="nl-help" id="season_roster_limits_help" data-i18n="${seasonStructureForDisplay === 'fixed' ? 'rosterSubTeam' : (seasonStructureForDisplay === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${seasonStructureForDisplay === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : seasonStructureForDisplay === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total — cette ligue n\'a pas d\'équipes.'}</p>
       <div class="su-two">
         <div class="nl-field">
           <label class="nl-label" for="season_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
@@ -5807,7 +5807,7 @@ async function handleLeagueSettingsPage(req, env, url) {
 
   <section class="nl-card nl-card--pad-lg"${currentSeasonEntry ? '' : ' id="section-structure"'}>
     <div class="h3" data-i18n="structureTitle">Par défaut pour les nouvelles saisons</div>
-    <p class="nl-help" data-i18n="structureDesc">Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées -- seules les nouvelles saisons utiliseront ce changement.</p>
+    <p class="nl-help" data-i18n="structureDesc">Change la structure par défaut de ta ligue. Les saisons déjà publiées ne sont jamais affectées — seules les nouvelles saisons utiliseront ce changement.</p>
     <div id="structureErr" class="nl-error" style="display:none"></div>
     <div id="structureOk" class="nl-ok" style="display:none"></div>
     <div class="nl-field" style="margin-top:8px">
@@ -5832,7 +5832,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     </div>
     <div id="se_headcount_fields" style="">
       <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
-      <p class="nl-help" id="se_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : teamStructure === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total -- cette ligue n\'a pas d\'équipes.'}</p>
+      <p class="nl-help" id="se_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : teamStructure === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total — cette ligue n\'a pas d\'équipes.'}</p>
       <div class="su-two">
         <div class="nl-field">
           <label class="nl-label" for="se_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
@@ -5909,7 +5909,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       </div>
       <div id="new_season_headcount_section">
         <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rosterLimitsTitle">Effectif de l'équipe</div>
-        <p class="nl-help" id="new_season_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : teamStructure === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total -- cette ligue n\'a pas d\'équipes.'}</p>
+        <p class="nl-help" id="new_season_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : teamStructure === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total — cette ligue n\'a pas d\'équipes.'}</p>
         <div class="su-two">
           <div class="nl-field">
             <label class="nl-label" for="new_season_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
@@ -5950,7 +5950,7 @@ async function handleLeagueSettingsPage(req, env, url) {
         </label>
       </div>
       <div class="h3" style="font-size:15px;margin-top:16px" data-i18n="rolloverTitle">Importer les joueurs de la saison précédente?</div>
-      <p class="nl-help" data-i18n="rolloverDesc">Les joueurs actifs sont précochés. Un joueur non importé devient inactif -- il garde son historique et peut être réactivé plus tard.</p>
+      <p class="nl-help" data-i18n="rolloverDesc">Les joueurs actifs sont précochés. Un joueur non importé devient inactif — il garde son historique et peut être réactivé plus tard.</p>
       <div id="rollover_list" style="margin-top:12px;max-height:360px;overflow-y:auto;"></div>
       <div id="rolloverErr" class="nl-error" style="display:none;margin-top:8px;"></div>
       <div style="margin-top:8px;display:flex;gap:8px;">
@@ -5969,7 +5969,7 @@ async function handleLeagueSettingsPage(req, env, url) {
        generator's own gating. -->
   <section class="nl-card nl-card--pad-lg" id="section-playoffs">
     <div class="h3" data-i18n="playoffsTitle">Y a-t-il des séries éliminatoires?</div>
-    <p class="nl-help" data-i18n="playoffsSub">Les séries consomment des créneaux de ta ligue -- l'horaire de la saison régulière est calculé en fonction de ce qui reste.</p>
+    <p class="nl-help" data-i18n="playoffsSub">Les séries consomment des créneaux de ta ligue — l'horaire de la saison régulière est calculé en fonction de ce qui reste.</p>
     <div id="playoffsErr" class="nl-error" style="display:none"></div>
     <div id="playoffsOk" class="nl-ok" style="display:none"></div>
     <div class="nl-toggle" style="margin-top:8px">
@@ -6067,7 +6067,7 @@ async function handleLeagueSettingsPage(req, env, url) {
   ${teamStructure === 'weekly_draw' ? `
   <section class="nl-card nl-card--pad-lg" id="section-autodraw">
     <div class="h3" data-i18n="autoDrawTitle">Tirage automatique des équipes</div>
-    <p class="nl-help" data-i18n="autoDrawDesc">Forme les équipes automatiquement un certain nombre d'heures avant chaque match -- désactivé par défaut, comme les autres automatismes.</p>
+    <p class="nl-help" data-i18n="autoDrawDesc">Forme les équipes automatiquement un certain nombre d'heures avant chaque match — désactivé par défaut, comme les autres automatismes.</p>
     <div id="autoDrawErr" class="nl-error" style="display:none"></div>
     <div id="autoDrawOk" class="nl-ok" style="display:none"></div>
     <div class="nl-toggle" style="margin-top:8px">
@@ -7186,7 +7186,7 @@ async function handleLeagueRosterPage(req, env, url) {
   <div class="ro-bulk-overlay" id="ro_bulk_overlay">
     <div class="ro-bulk-card">
       <h2 data-i18n="bulkImportTitle">Importer des joueurs</h2>
-      <p class="nl-help" data-i18n="bulkImportHelp">Colle une liste copiée d'un tableur (Excel, Google Sheets) -- une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée.</p>
+      <p class="nl-help" data-i18n="bulkImportHelp">Colle une liste copiée d'un tableur (Excel, Google Sheets) — une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée.</p>
       <div id="bulkErr" class="nl-error" style="display:none"></div>
       <textarea id="ro_bulk_text" data-i18n-ph="bulkTextPh" placeholder="Marie Tremblay, marie@example.com, 514-555-0100&#10;Jean Bouchard, jean@example.com"></textarea>
       <div style="display:flex;gap:8px;">
@@ -7809,7 +7809,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       title: 'Horaire', createEvent: 'Créer un match',
       date: 'Date', startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
       venueOpt: 'Lieu (optionnel)', createBtn: 'Créer le match', cancel: 'Annuler',
-      venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun -- texte libre ci-dessous',
+      venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun — texte libre ci-dessous',
       // Events polish task (C3): a free-text venue no longer has NO
       // path to a map link (the old freeTextNoMapLink message this
       // replaced) -- it can carry its own one-off address/map link
@@ -7849,7 +7849,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       // "away" anywhere in the UI (see this task's own decision, noted
       // where matchupVs is built): in a shared gym the distinction
       // isn't meaningful, so only "Team A vs Team B" is shown.
-      matchupLabel: 'Qui joue?', matchupOptional: '(optionnel -- peut être précisé plus tard)',
+      matchupLabel: 'Qui joue?', matchupOptional: '(optionnel — peut être précisé plus tard)',
       matchupTeam1: 'Équipe 1', matchupTeam2: 'Équipe 2', matchupVsWord: 'contre',
       // Schedule-generation redesign task (Group D): assigns a real
       // round-robin matchup onto each of this league's own EXISTING
@@ -7863,17 +7863,17 @@ async function handleLeagueSchedulePage(req, env, url) {
       // playoffs together (playoff games take the LAST N slots
       // chronologically, N from the league's own playoff config).
       // Never creates an event, for either half.
-      matchupsGenHelp: "Assigne un affrontement à chacun de tes matchs déjà créés -- séries éliminatoires comprises, une seule prévisualisation pour tout l'horaire. Rien n'est écrasé avant que tu confirmes, et aucun match n'est jamais créé.",
+      matchupsGenHelp: "Assigne un affrontement à chacun de tes matchs déjà créés — séries éliminatoires comprises, une seule prévisualisation pour tout l'horaire. Rien n'est écrasé avant que tu confirmes, et aucun match n'est jamais créé.",
       matchupsRegenerateLabel: 'Tout régénérer (écrase les affrontements déjà assignés)',
       matchupsPreviewBtn: 'Prévisualiser', matchupsConfirmBtn: 'Assigner ces affrontements', matchupsBackBtn: 'Retour',
-      matchupsRoundLabel: 'Ronde {n} -- {date}',
-      matchupsAlreadyAssignedNote: 'Déjà assigné -- conservé',
+      matchupsRoundLabel: 'Ronde {n} — {date}',
+      matchupsAlreadyAssignedNote: 'Déjà assigné — conservé',
       matchupsByeNote: 'Repos : {team}',
       matchupsOverwriteConfirm: 'Ceci écrasera {count} match(s) qui ont déjà un affrontement assigné. Clique de nouveau pour confirmer.',
       matchupsResultSummary: '{updated} affrontement(s) assigné(s), {skipped} conservé(s).',
       matchupsNoEvents: "Cette ligue n'a pas encore de matchs. Crée d'abord tes créneaux de gym (Créer un match / Créer plusieurs matchs).",
       matchupsTooFewSlots: `Les séries de cette ligue ont besoin de {playoff} match(s), mais il n'y a que {total} match(s) au total. Crée d'autres matchs, ou réduis le format des séries dans les paramètres.`,
-      matchupsArithmeticSummary: '{total} matchs au total -- {playoff} pour les séries, {regular} pour la saison régulière.',
+      matchupsArithmeticSummary: '{total} matchs au total — {playoff} pour les séries, {regular} pour la saison régulière.',
       matchupsArithmeticRounds: '{full} ronde(s) complète(s) de saison régulière, plus une ronde partielle de {partial} match(s).',
       matchupsPlayoffsSectionTitle: 'Séries éliminatoires',
       playoffGenByeNote: 'Tête de série {seed} : repos au premier tour',
@@ -7894,7 +7894,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       title: 'Schedule', createEvent: 'Create an event',
       date: 'Date', startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
       venueOpt: 'Venue (optional)', createBtn: 'Create the event', cancel: 'Cancel',
-      venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None -- free text below',
+      venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None — free text below',
       lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
       venueAddressPh: '123 Main St, City', venueMapLinkPh: 'https://maps.google.com/...',
       viewOnMap: 'View on map',
@@ -7918,20 +7918,20 @@ async function handleLeagueSchedulePage(req, env, url) {
       deleteConfirmPlain: 'Delete this game?', deleteConfirmBtn: 'Delete permanently',
       bulkCreateResultSummary: '{created} event(s) created, {skipped} skipped (already existed).',
       crossMidnightWarning: "The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?",
-      matchupLabel: "Who's playing?", matchupOptional: '(optional -- can be set later)',
+      matchupLabel: "Who's playing?", matchupOptional: '(optional — can be set later)',
       matchupTeam1: 'Team 1', matchupTeam2: 'Team 2', matchupVsWord: 'vs',
       matchupsGenBtn: 'Assign matchups', matchupsGenTitle: 'Assign matchups',
-      matchupsGenHelp: "Assigns a matchup to each of your already-created games -- playoffs included, one preview for the whole schedule. Nothing is overwritten until you confirm, and no game is ever created.",
+      matchupsGenHelp: "Assigns a matchup to each of your already-created games — playoffs included, one preview for the whole schedule. Nothing is overwritten until you confirm, and no game is ever created.",
       matchupsRegenerateLabel: 'Regenerate everything (overwrites matchups already assigned)',
       matchupsPreviewBtn: 'Preview', matchupsConfirmBtn: 'Assign these matchups', matchupsBackBtn: 'Back',
-      matchupsRoundLabel: 'Round {n} -- {date}',
-      matchupsAlreadyAssignedNote: 'Already assigned -- kept',
+      matchupsRoundLabel: 'Round {n} — {date}',
+      matchupsAlreadyAssignedNote: 'Already assigned — kept',
       matchupsByeNote: 'Bye: {team}',
       matchupsOverwriteConfirm: 'This will overwrite {count} game(s) that already have a matchup assigned. Click again to confirm.',
       matchupsResultSummary: '{updated} matchup(s) assigned, {skipped} kept.',
       matchupsNoEvents: 'This league has no games yet. Create your schedule\'s gym slots first (Create an event / Create multiple events).',
       matchupsTooFewSlots: "This league's playoffs need {playoff} game(s), but there are only {total} game(s) in total. Create more events, or reduce the playoff format in Settings.",
-      matchupsArithmeticSummary: '{total} games total -- {playoff} for the playoffs, {regular} for the regular season.',
+      matchupsArithmeticSummary: '{total} games total — {playoff} for the playoffs, {regular} for the regular season.',
       matchupsArithmeticRounds: '{full} complete round(s) of the regular season, plus a partial round of {partial} game(s).',
       matchupsPlayoffsSectionTitle: 'Playoffs',
       playoffGenByeNote: 'Seed {seed}: bye in round 1',
@@ -8069,7 +8069,7 @@ async function handleLeagueSchedulePage(req, env, url) {
         <input class="nl-input" id="e_date" type="date" required>
       </div>
       ${showMatchupPicker ? `<div class="nl-field">
-        <label class="nl-label" for="e_home_team"><span data-i18n="matchupLabel">Qui joue?</span> <span class="nl-help" data-i18n="matchupOptional" style="font-weight:400">(optionnel -- peut être précisé plus tard)</span></label>
+        <label class="nl-label" for="e_home_team"><span data-i18n="matchupLabel">Qui joue?</span> <span class="nl-help" data-i18n="matchupOptional" style="font-weight:400">(optionnel — peut être précisé plus tard)</span></label>
         <div class="sc-two">
           <select class="nl-select" id="e_home_team" data-i18n-aria="matchupTeam1" aria-label="Équipe 1">
             <option value="" data-i18n="matchupTeam1">Équipe 1</option>
@@ -8099,7 +8099,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       ${venues.length ? `<div class="nl-field">
         <label class="nl-label" for="e_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
         <select class="nl-select" id="e_venue_select" onchange="onVenueSelectChange()">
-          <option value="" data-i18n="venueSelectNone">Aucun -- texte libre ci-dessous</option>
+          <option value="" data-i18n="venueSelectNone">Aucun — texte libre ci-dessous</option>
           ${venues.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('')}
         </select>
       </div>` : ''}
@@ -8159,7 +8159,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       ${venues.length ? `<div class="nl-field">
         <label class="nl-label" for="be_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
         <select class="nl-select" id="be_venue_select" onchange="onBulkVenueSelectChange()">
-          <option value="" data-i18n="venueSelectNone">Aucun -- texte libre ci-dessous</option>
+          <option value="" data-i18n="venueSelectNone">Aucun — texte libre ci-dessous</option>
           ${venues.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('')}
         </select>
       </div>` : ''}
@@ -8191,7 +8191,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     </aside>
     ${showMatchupsPanel ? `<aside class="sc-bulk-panel" id="sc_matchups_panel" data-i18n-aria="matchupsGenTitle" aria-label="Assigner les affrontements">
       <h2 data-i18n="matchupsGenTitle">Assigner les affrontements</h2>
-      <p class="nl-help" data-i18n="matchupsGenHelp">Assigne un affrontement à chacun de tes matchs déjà créés -- séries éliminatoires comprises, une seule prévisualisation pour tout l'horaire. Rien n'est écrasé avant que tu confirmes, et aucun match n'est jamais créé.</p>
+      <p class="nl-help" data-i18n="matchupsGenHelp">Assigne un affrontement à chacun de tes matchs déjà créés — séries éliminatoires comprises, une seule prévisualisation pour tout l'horaire. Rien n'est écrasé avant que tu confirmes, et aucun match n'est jamais créé.</p>
       <div id="matchupsGenErr" class="nl-error" style="display:none"></div>
       <div id="matchups_form_fields">
         <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
@@ -8433,9 +8433,9 @@ function playoffLabelClient(meta, dict) {
     return (dict.playoffWinnerOf || 'Winner {label}').split('{label}').join(shortRole(feeder.role, feeder.matchupIndexInRound));
   };
   if (meta.seedA && meta.seedB) {
-    base += ' -- ' + seed(meta.seedA) + ' ' + (dict.matchupVsWord || 'vs') + ' ' + seed(meta.seedB);
+    base += ' — ' + seed(meta.seedA) + ' ' + (dict.matchupVsWord || 'vs') + ' ' + seed(meta.seedB);
   } else if (meta.feederA || meta.feederB) {
-    base += ' -- ' + describeSide(meta.feederA) + ' ' + (dict.matchupVsWord || 'vs') + ' ' + describeSide(meta.feederB);
+    base += ' — ' + describeSide(meta.feederA) + ' ' + (dict.matchupVsWord || 'vs') + ' ' + describeSide(meta.feederB);
   }
   if (meta.gameNumber && meta.seriesLength > 1) {
     base += ' (' + (dict.playoffGameOfSeries || 'Game {g} of {n}').split('{g}').join(meta.gameNumber).split('{n}').join(meta.seriesLength) + ')';
@@ -8479,7 +8479,7 @@ function renderMatchupsPreview(container, data, dict) {
     var row = document.createElement('div');
     row.className = 'nl-help'; row.style.marginTop = '4px';
     var text = p.home + ' ' + (dict.matchupVsWord || 'vs') + ' ' + p.away;
-    if (p.alreadyAssigned && !p.willWrite) text += ' (' + (dict.matchupsAlreadyAssignedNote || 'Already assigned -- kept') + ')';
+    if (p.alreadyAssigned && !p.willWrite) text += ' (' + (dict.matchupsAlreadyAssignedNote || 'Already assigned — kept') + ')';
     row.textContent = text;
     container.appendChild(row);
   });
@@ -8499,8 +8499,8 @@ function renderMatchupsPreview(container, data, dict) {
       var row = document.createElement('div');
       row.className = 'nl-help'; row.style.marginTop = '4px';
       var text = p.meta ? playoffLabelClient(p.meta, dict) : (dict.playoffTbd || 'TBD');
-      text += ' -- ' + p.date;
-      if (p.alreadyAssigned && !p.willWrite) text += ' (' + (dict.matchupsAlreadyAssignedNote || 'Already assigned -- kept') + ')';
+      text += ' — ' + p.date;
+      if (p.alreadyAssigned && !p.willWrite) text += ' (' + (dict.matchupsAlreadyAssignedNote || 'Already assigned — kept') + ')';
       row.textContent = text;
       container.appendChild(row);
     });
@@ -8615,8 +8615,8 @@ async function confirmDeleteEvent(eventId) {
         var isFr = (window.__currentLang || 'fr') === 'fr';
         var n = data.rsvpCount;
         msgEl.textContent = isFr
-          ? ('Ce match a ' + n + (n === 1 ? ' réponse RSVP' : ' réponses RSVP') + ' -- elles seront perdues. Clique de nouveau pour confirmer.')
-          : ('This game has ' + n + (n === 1 ? ' RSVP' : ' RSVPs') + ' -- they will be lost. Click again to confirm.');
+          ? ('Ce match a ' + n + (n === 1 ? ' réponse RSVP' : ' réponses RSVP') + ' — elles seront perdues. Clique de nouveau pour confirmer.')
+          : ('This game has ' + n + (n === 1 ? ' RSVP' : ' RSVPs') + ' — they will be lost. Click again to confirm.');
         window.__deleteConfirmed = eventId;
         return;
       }
@@ -8867,7 +8867,7 @@ ${tabbar}`;
       editBtn: 'Modifier', saveBtn: 'Enregistrer', cancelEdit: 'Annuler',
       editDateLabel: 'Date', editDateNote: "La date ne peut pas encore être modifiée.",
       startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
-      venueOpt: 'Lieu (optionnel)', venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun -- texte libre ci-dessous',
+      venueOpt: 'Lieu (optionnel)', venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun — texte libre ci-dessous',
       lblVenueAddress: 'Adresse (optionnel)', lblVenueMapLink: 'Lien vers une carte (optionnel)',
       editSaved: 'Modifications enregistrées.',
       // Item 1 (admin-confirm-players polish task): distinguishing
@@ -8880,7 +8880,7 @@ ${tabbar}`;
       // every team's card for a >2-team fixed league until Part 2's
       // matchup data exists (or is set) for this specific event.
       noMatchupSetTitle: 'Aucun match déterminé',
-      noMatchupSetDesc: "Cette ligue a plus de deux équipes -- il faut savoir lesquelles jouent ce match avant d'afficher les alignements.",
+      noMatchupSetDesc: "Cette ligue a plus de deux équipes — il faut savoir lesquelles jouent ce match avant d'afficher les alignements.",
       // Part 3 (playoff extension): a playoff placeholder's own
       // version of the "no matchup set" state -- explicitly a playoff
       // game awaiting seeding, never confused with a misconfigured
@@ -8888,18 +8888,18 @@ ${tabbar}`;
       // stats tracking task -- resolvePlayoffSeeding) once the
       // regular season (or an earlier round) actually finishes; this
       // just means that hasn't happened yet.
-      playoffAwaitingSeedingTitle: 'Match de séries -- en attente des résultats',
-      playoffAwaitingSeedingDesc: "Les équipes seront connues une fois les résultats de la saison régulière (et des rondes précédentes) entrés -- calculé automatiquement, rien à faire ici.",
+      playoffAwaitingSeedingTitle: 'Match de séries — en attente des résultats',
+      playoffAwaitingSeedingDesc: "Les équipes seront connues une fois les résultats de la saison régulière (et des rondes précédentes) entrés — calculé automatiquement, rien à faire ici.",
       // Best-of-N task (Part 3): a series decided before this game's
       // own slot was needed -- marked cancelled rather than left
       // looking like an unplayed game forever.
       playoffSeriesDecidedTitle: 'Série déjà décidée',
-      playoffSeriesDecidedDesc: "Cette série a été remportée avant que ce match ne soit nécessaire -- il n'aura pas lieu.",
+      playoffSeriesDecidedDesc: "Cette série a été remportée avant que ce match ne soit nécessaire — il n'aura pas lieu.",
       // Part 2 (stats tracking task): score entry, ADMIN ONLY.
       scoreTitle: 'Résultat', scoreEnterBtn: 'Entrer le résultat', scoreEditBtn: 'Modifier le résultat',
       scoreSaveBtn: 'Enregistrer le résultat', scoreCancelBtn: 'Annuler', scoreSaved: 'Résultat enregistré.',
       scoreHomeGeneric: 'Domicile', scoreAwayGeneric: 'Visiteur',
-      scorePlayedLabel: 'Match joué', scoreNoTeamsYet: "Le tirage n'a pas encore eu lieu pour ce match -- entre le résultat une fois les équipes formées.",
+      scorePlayedLabel: 'Match joué', scoreNoTeamsYet: "Le tirage n'a pas encore eu lieu pour ce match — entre le résultat une fois les équipes formées.",
       // Part 3 (stats tracking task): goals/assists per CONFIRMED
       // player, or goals-against for a goalie -- win/loss/tie is
       // DERIVED from the event's own score, never asked for twice.
@@ -8910,7 +8910,7 @@ ${tabbar}`;
       // Stats correctness task (2a): the goalie's own goals-against
       // field is read-only once derived from the recorded score --
       // this tooltip explains why it can't be typed into.
-      goalsAgainstDerivedTitle: "Calculé automatiquement à partir du résultat du match -- le nombre de buts de l'équipe adverse.",
+      goalsAgainstDerivedTitle: "Calculé automatiquement à partir du résultat du match — le nombre de buts de l'équipe adverse.",
       // 2b: a running tally of goals ENTERED for each team against its
       // own recorded score, updated live as the admin types -- a
       // mismatch warns (never blocks, since some goals genuinely go
@@ -8940,25 +8940,25 @@ ${tabbar}`;
       editBtn: 'Edit', saveBtn: 'Save', cancelEdit: 'Cancel',
       editDateLabel: 'Date', editDateNote: "The date can't be changed yet.",
       startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
-      venueOpt: 'Venue (optional)', venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None -- free text below',
+      venueOpt: 'Venue (optional)', venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None — free text below',
       lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
       editSaved: 'Changes saved.',
       goalieBadge: 'G', goalieTitle: 'Goalie', canAlsoGoalieTitle: 'Can also play goalie',
       noMatchupSetTitle: 'No matchup set',
-      noMatchupSetDesc: "This league has more than two teams -- who's playing needs to be known before rosters can be shown.",
-      playoffAwaitingSeedingTitle: 'Playoff game -- awaiting results',
-      playoffAwaitingSeedingDesc: "Teams will be known once regular-season (and earlier-round) results are entered -- computed automatically, nothing to do here.",
+      noMatchupSetDesc: "This league has more than two teams — who's playing needs to be known before rosters can be shown.",
+      playoffAwaitingSeedingTitle: 'Playoff game — awaiting results',
+      playoffAwaitingSeedingDesc: "Teams will be known once regular-season (and earlier-round) results are entered — computed automatically, nothing to do here.",
       playoffSeriesDecidedTitle: 'Series already decided',
-      playoffSeriesDecidedDesc: "This series was won before this game's own slot was needed -- it won't be played.",
+      playoffSeriesDecidedDesc: "This series was won before this game's own slot was needed — it won't be played.",
       scoreTitle: 'Result', scoreEnterBtn: 'Enter the result', scoreEditBtn: 'Edit the result',
       scoreSaveBtn: 'Save result', scoreCancelBtn: 'Cancel', scoreSaved: 'Result saved.',
       scoreHomeGeneric: 'Home', scoreAwayGeneric: 'Away',
-      scorePlayedLabel: 'Game played', scoreNoTeamsYet: "The draw hasn't happened for this game yet -- enter the result once teams are formed.",
+      scorePlayedLabel: 'Game played', scoreNoTeamsYet: "The draw hasn't happened for this game yet — enter the result once teams are formed.",
       playerStatsTitle: 'Player stats', playerStatsSaveBtn: 'Save stats', playerStatsSaved: 'Stats saved.',
       playerStatsNoConfirmed: 'No players confirmed for this game yet.',
       colGoals: 'Goals', colAssists: 'Assists', colGoalie: 'Goalie', colGoalsAgainst: 'Goals against',
       goalieNeedsResults: 'Turn on game results for this league to enter goalie stats.',
-      goalsAgainstDerivedTitle: "Calculated automatically from the recorded result -- the opposing team's own score.",
+      goalsAgainstDerivedTitle: "Calculated automatically from the recorded result — the opposing team's own score.",
       psTallyLine: '{team}: {sum} of {target} goal(s) attributed',
       ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     }
@@ -9255,7 +9255,7 @@ ${tabbar}`;
     ${venues.length ? `<div class="nl-field">
       <label class="nl-label" for="ev_edit_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
       <select class="nl-select" id="ev_edit_venue_select" onchange="onEditVenueSelectChange()">
-        <option value="" data-i18n="venueSelectNone">Aucun -- texte libre ci-dessous</option>
+        <option value="" data-i18n="venueSelectNone">Aucun — texte libre ci-dessous</option>
         ${venues.map(v => `<option value="${esc(v.id)}"${v.id === ev.venue_id ? ' selected' : ''}>${esc(v.name)}</option>`).join('')}
       </select>
     </div>` : ''}
@@ -9293,7 +9293,7 @@ ${tabbar}`;
     <div class="h3" data-i18n="scoreTitle">Résultat</div>
     <div id="scoreErr" class="nl-error" style="display:none"></div>
     <div id="scoreOk" class="nl-ok" style="display:none"></div>
-    ${ev.result_entered_at ? `<p class="nl-help" style="font-weight:600;font-size:16px" id="score_display">${esc(scoreSides.home)} ${ev.home_score} -- ${ev.away_score} ${esc(scoreSides.away)}</p>` : `<p class="nl-help" id="score_display" data-i18n="scoreNoTeamsYet" style="${scoreSides.generic ? '' : 'display:none'}">${scoreSides.generic ? esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreNoTeamsYet) : ''}</p>`}
+    ${ev.result_entered_at ? `<p class="nl-help" style="font-weight:600;font-size:16px" id="score_display">${esc(scoreSides.home)} ${ev.home_score} — ${ev.away_score} ${esc(scoreSides.away)}</p>` : `<p class="nl-help" id="score_display" data-i18n="scoreNoTeamsYet" style="${scoreSides.generic ? '' : 'display:none'}">${scoreSides.generic ? esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreNoTeamsYet) : ''}</p>`}
     <div id="score_form" style="display:none;margin-top:8px;">
       <div class="sc-two">
         <div class="nl-field">
@@ -13262,7 +13262,7 @@ function superAdminPage(isAuthed = false) {
   const flagLabelsJson = JSON.stringify(Object.fromEntries(CAPABILITY_FLAGS.map(f => [f.key, f.label])));
   return page('Super-admin', `
   <h1>Super-admin</h1>
-  <p class="state">Liste de toutes les ligues -- palier et indicateurs de capacité. / List of every league -- plan tier and capability flags.</p>
+  <p class="state">Liste de toutes les ligues — palier et indicateurs de capacité. / List of every league — plan tier and capability flags.</p>
   ${renderKeyGate(isAuthed)}
   <div id="sa-main"${isAuthed ? '' : ' style="display:none"'}>
     <div id="sa-err" class="state"></div>
@@ -20190,7 +20190,7 @@ async function financesPage(env = null, isAuthed = false) {
     .tbl-inp:focus { outline:none; border-color:var(--ink); }
     /* Finance tab regression fix: the due/paid amount inputs below use
        step="10" so the native up/down spinner arrows move by whole
-       dollars again, not step="any"/no step at all -- but a typed
+       dollars again, not step="any"/no step at all — but a typed
        non-round amount (e.g. 12.50) is still a completely valid,
        intentional value here (custom dues, partial payments), so the
        browser's own default :invalid styling (a visible glow/outline
@@ -25118,7 +25118,7 @@ async function emailsPage(env = null, isAuthed = false) {
       const d = (res && res.drain) || { due: 0, sent: 0, failed: 0 };
       let msg;
       if (d.due === 0) {
-        msg = isEn ? "Nothing was pending -- the queue is already empty." : "Rien n’était en attente -- la file est déjà vide.";
+        msg = isEn ? "Nothing was pending — the queue is already empty." : "Rien n’était en attente — la file est déjà vide.";
       } else if (d.failed > 0) {
         msg = isEn ? (d.sent + " sent, " + d.failed + " failed.") : (d.sent + " envoyé(s), " + d.failed + " échec(s).");
       } else {

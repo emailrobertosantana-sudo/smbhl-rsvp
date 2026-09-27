@@ -342,7 +342,7 @@ describe('Part 1 (live-testing task): consolidated settings page', () => {
       expect(html).toMatch(/id="se_headcount_fields" style=""/);
     });
 
-    it('every pre-existing league setting (SMBHL untouched) -- confirms the settings page never touches SMBHL data', async () => {
+    it('every pre-existing league setting (SMBHL untouched) — confirms the settings page never touches SMBHL data', async () => {
       const before = await env.DB.prepare("SELECT team_structure, color FROM leagues WHERE id = 'smbhl'").first();
       // No settings route was ever called for SMBHL in this test file
       // (every SMBHL attempt above returns NO_LEAGUE_FOUND/blocked) --
@@ -486,7 +486,7 @@ describe('B1: settings roster-size wording matches onboarding, in both cards, fo
     const html = await settingsHtmlFor({ teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12 });
     const occurrences = html.split('data-i18n="rosterSubHeadcount"').length - 1;
     expect(occurrences).toBe(3);
-    expect(html).toContain("Tous les joueurs confirmés comptent dans ce total -- cette ligue n'a pas d'équipes.");
+    expect(html).toContain("Tous les joueurs confirmés comptent dans ce total — cette ligue n'a pas d'équipes.");
   });
 
   it('English: the labels and every structure\'s help text match onboarding\'s own EN wording exactly', async () => {
@@ -500,7 +500,7 @@ describe('B1: settings roster-size wording matches onboarding, in both cards, fo
     expect(dict.en.lblMaxPlayers).toBe('Maximum total players');
     expect(dict.en.rosterSubTeam).toBe("These numbers apply to each team. Leave blank if you're not ready to decide.");
     expect(dict.en.rosterSubPool).toBe('Everyone who confirms goes into one pool and gets drawn into teams. These numbers cover the whole pool.');
-    expect(dict.en.rosterSubHeadcount).toBe("Everyone who confirms counts toward this total -- this league has no teams.");
+    expect(dict.en.rosterSubHeadcount).toBe("Everyone who confirms counts toward this total — this league has no teams.");
   });
 
   it('the client-side structure-radio click handler recomputes the SAME 3-way help key, in all three cards\' own scripts', async () => {

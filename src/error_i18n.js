@@ -136,7 +136,7 @@ export const ERROR_I18N = {
   NO_TEAMS_TO_EDIT: { fr: "Cette ligue n'a pas de noms d'équipe à modifier.", en: 'This league has no team names to edit.' },
   SEASON_NOT_FOUND: { fr: 'Aucune saison publiée avec ce nom.', en: 'No published season with that name.' },
   // Schedule-generation redesign task (Group D).
-  MATCHUPS_NO_EVENTS: { fr: "Cette ligue n'a pas encore de matchs pour assigner des affrontements -- crée d'abord tes créneaux de gym (Créer un match / Créer plusieurs matchs).", en: "This league has no events yet to assign matchups to -- create your schedule's gym slots first (Create a game / Create multiple games)." },
+  MATCHUPS_NO_EVENTS: { fr: "Cette ligue n'a pas encore de matchs pour assigner des affrontements — crée d'abord tes créneaux de gym (Créer un match / Créer plusieurs matchs).", en: "This league has no events yet to assign matchups to — create your schedule's gym slots first (Create a game / Create multiple games)." },
   MATCHUPS_OVERWRITE_NEEDS_CONFIRM: { fr: 'Ceci écrasera des matchs qui ont déjà un affrontement assigné. Confirme pour continuer.', en: 'This will overwrite games that already have a matchup assigned. Confirm to continue.' },
   // Scheduling correction task (Part 1): ONE POOL OF SLOTS -- refuses
   // outright, explaining the shortfall, rather than inventing a slot

@@ -127,11 +127,11 @@ describe('Part 2: signup wizard, step-by-step', () => {
     const cookie = extractCookie(signupRes);
 
     const htmlFr = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
-    expect(htmlFr).toContain("Devient permanente à la création de ta ligue -- ça garantit que les liens que tu partages continuent toujours de fonctionner.");
+    expect(htmlFr).toContain("Devient permanente à la création de ta ligue — ça garantit que les liens que tu partages continuent toujours de fonctionner.");
     expect(htmlFr).not.toContain('Tu peux la changer');
 
     const htmlEn = await (await SELF.fetch('http://example.com/signup?step=2&lang=en', { headers: { cookie } })).text();
-    expect(htmlEn).toContain("Becomes permanent once your league is created -- that guarantees the links you share always keep working.");
+    expect(htmlEn).toContain("Becomes permanent once your league is created — that guarantees the links you share always keep working.");
     expect(htmlEn).not.toContain('You can change it');
 
     // Live preview: su_league_name's own input listener still writes

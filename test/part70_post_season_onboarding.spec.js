@@ -177,7 +177,7 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
   // weekly_draw states the pool-then-draw model explicitly; headcount
   // gets its own accurate variant (no team draw exists for it at all);
   // fixed is genuinely per-team and stays as it was.
-  it('A3: roster step wording is genuinely different per team structure -- pool/draw for weekly_draw, no-teams for headcount, per-team for fixed', async () => {
+  it('A3: roster step wording is genuinely different per team structure — pool/draw for weekly_draw, no-teams for headcount, per-team for fixed', async () => {
     const { cookie: cookieFixed, csrfToken: csrfFixed } = await signup('ob.a3.fixed@example.com', '203.0.185.020');
     await createLeague(cookieFixed, csrfFixed, { name: 'A3 Fixed League', teamNames: ['A', 'B'] });
     await publishSeason(cookieFixed, csrfFixed, { season_name: 'S1' });
@@ -198,7 +198,7 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     await publishSeason(cookieHc, csrfHc, { season_name: 'S1' });
     const hcStep1 = await getOnboarding(cookieHc, 1);
     expect(hcStep1).toContain('data-i18n="rosterSubHeadcount"');
-    expect(hcStep1).toContain("Tous les joueurs confirmés comptent dans ce total -- cette ligue n'a pas d'équipes.");
+    expect(hcStep1).toContain("Tous les joueurs confirmés comptent dans ce total — cette ligue n'a pas d'équipes.");
     // Never claims a team draw for headcount, which has no teams at all
     // (the embedded __I18N dict always carries every key regardless of
     // which is shown -- what matters is which one the visible element
@@ -241,7 +241,7 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(step1).toContain('id="ob_min_goalies" type="number" min="0" value="2"');
   });
 
-  it('headcount structure: only 3 steps -- team names step is skipped entirely', async () => {
+  it('headcount structure: only 3 steps — team names step is skipped entirely', async () => {
     const { cookie, csrfToken } = await signup('ob.headcount@example.com', '203.0.185.005');
     await createLeague(cookie, csrfToken, { name: 'Onboarding Headcount League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 16 });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
@@ -295,7 +295,7 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(season.config.minSkaters).toBe(10);
   });
 
-  it('the roster republish is SKIPPED once the season already has real games -- standings are never reset', async () => {
+  it('the roster republish is SKIPPED once the season already has real games — standings are never reset', async () => {
     const { cookie, csrfToken } = await signup('ob.safetyguard@example.com', '203.0.185.007');
     const league = await createLeague(cookie, csrfToken, { name: 'Safety Guard League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });

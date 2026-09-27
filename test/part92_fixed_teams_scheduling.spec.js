@@ -90,7 +90,7 @@ describe('Part 1 (fixed-teams investigation follow-up): the event page shows onl
     await applyRealSchema(env);
   });
 
-  it('a 4-team fixed league: no team cards render for an event with no known matchup -- a "no matchup set" state instead, in both languages', async () => {
+  it('a 4-team fixed league: no team cards render for an event with no known matchup — a "no matchup set" state instead, in both languages', async () => {
     const { cookie, csrfToken } = await signup('p1.fourteam@example.com', '203.0.197.001');
     await createLeague(cookie, csrfToken, { name: 'Four Team League', teamNames: ['Rouge', 'Bleu', 'Vert', 'Jaune'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
@@ -113,10 +113,10 @@ describe('Part 1 (fixed-teams investigation follow-up): the event page shows onl
     expect(m).toBeTruthy();
     const dict = JSON.parse(m[1]);
     expect(dict.en.noMatchupSetTitle).toBe('No matchup set');
-    expect(dict.en.noMatchupSetDesc).toBe("This league has more than two teams -- who's playing needs to be known before rosters can be shown.");
+    expect(dict.en.noMatchupSetDesc).toBe("This league has more than two teams — who's playing needs to be known before rosters can be shown.");
   });
 
-  it('a 2-team fixed league: both teams still render, completely unchanged -- no matchup data is needed when both teams always play', async () => {
+  it('a 2-team fixed league: both teams still render, completely unchanged — no matchup data is needed when both teams always play', async () => {
     const { cookie, csrfToken } = await signup('p1.twoteam@example.com', '203.0.197.002');
     await createLeague(cookie, csrfToken, { name: 'Two Team League', teamNames: ['Rouge', 'Bleu'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
@@ -140,7 +140,7 @@ describe('Part 1 (fixed-teams investigation follow-up): the event page shows onl
     expect(html).toContain('data-i18n="noMatchupSetTitle"');
   });
 
-  it('a weekly_draw league with 4 teams is completely unaffected -- its own pool/draw cards render exactly as before', async () => {
+  it('a weekly_draw league with 4 teams is completely unaffected — its own pool/draw cards render exactly as before', async () => {
     const { cookie, csrfToken } = await signup('p1.weeklydraw@example.com', '203.0.197.004');
     await createLeague(cookie, csrfToken, { name: 'Weekly Draw Four League', teamStructure: 'weekly_draw', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
@@ -152,7 +152,7 @@ describe('Part 1 (fixed-teams investigation follow-up): the event page shows onl
     expect(html).toContain('data-i18n="poolTitle"');
   });
 
-  it('a headcount league is completely unaffected -- its own single pool card renders exactly as before', async () => {
+  it('a headcount league is completely unaffected — its own single pool card renders exactly as before', async () => {
     const { cookie, csrfToken } = await signup('p1.headcount@example.com', '203.0.197.005');
     await createLeague(cookie, csrfToken, { name: 'Headcount League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12, tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1', min_players: 8, max_players: 12 });
@@ -213,7 +213,7 @@ describe('Part 2 (fixed-teams scheduling task): events get a real matchup', () =
     expect(onlyOne.json.errorKey).toBe('MATCHUP_TEAMS_REQUIRED');
   });
 
-  it('weekly_draw and headcount leagues are completely unaffected -- home_team/away_team in the request body is silently ignored, never stored', async () => {
+  it('weekly_draw and headcount leagues are completely unaffected — home_team/away_team in the request body is silently ignored, never stored', async () => {
     const { cookie: wdCookie, csrfToken: wdCsrf } = await signup('p2.weeklydraw@example.com', '203.0.198.003');
     await createLeague(wdCookie, wdCsrf, { name: 'WD Matchup Ignore League', teamStructure: 'weekly_draw', teamNames: ['A', 'B', 'C'], tracksStats: true });
     await publishSeason(wdCookie, wdCsrf, { season_name: 'S1' });
@@ -529,7 +529,7 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     expect(gamesInLastRound).toBe(1); // partial -- the round's other game has no event yet
   });
 
-  it('fewer events than one full round only uses that round\'s first pairings -- never invents a slot for the rest', async () => {
+  it('fewer events than one full round only uses that round\'s first pairings — never invents a slot for the rest', async () => {
     const { cookie, csrfToken } = await signup('p3.fewer@example.com', '203.0.199.105');
     await createLeague(cookie, csrfToken, { name: 'Fewer League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
@@ -540,7 +540,7 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     expect(json.regularPlan[0].round).toBe(1);
   });
 
-  it('an odd team count\'s bye is a NOTE, never an event -- no extra event is required or consumed for it', async () => {
+  it('an odd team count\'s bye is a NOTE, never an event — no extra event is required or consumed for it', async () => {
     const { cookie, csrfToken } = await signup('p3.byenote@example.com', '203.0.199.106');
     await createLeague(cookie, csrfToken, { name: 'Bye Note League', teamNames: ['A', 'B', 'C'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
@@ -653,7 +653,7 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     expect(res.json.errorKey).toBe('MATCHUPS_NO_EVENTS');
   });
 
-  it('rejects for weekly_draw and headcount leagues -- only offered for fixed teams', async () => {
+  it('rejects for weekly_draw and headcount leagues — only offered for fixed teams', async () => {
     const { cookie: wdCookie, csrfToken: wdCsrf } = await signup('p3.wdreject@example.com', '203.0.199.111');
     await createLeague(wdCookie, wdCsrf, { name: 'WD Reject League', teamStructure: 'weekly_draw', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(wdCookie, wdCsrf, { season_name: 'S1' });
@@ -746,7 +746,7 @@ describe('Part 4: small fixes', () => {
     expect(html).toMatch(/<a href="\/league\/settings#section-new-season"[^>]*>[^<]*<\/a>/);
   });
 
-  it('4c: no French-style space before the colon in English -- "Current season:" and "Tracks stats:" both correctly punctuated per language', async () => {
+  it('4c: no French-style space before the colon in English — "Current season:" and "Tracks stats:" both correctly punctuated per language', async () => {
     const { cookie, csrfToken } = await signup('p4c.colonspacing@example.com', '203.0.200.003');
     await createLeague(cookie, csrfToken, { name: '4c League', teamNames: ['A', 'B'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });

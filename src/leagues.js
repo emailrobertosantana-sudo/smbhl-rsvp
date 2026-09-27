@@ -1479,7 +1479,7 @@ export async function handleLeagueEventDelete(req, env) {
   if (rsvpCount > 0 && body.confirm !== true) {
     return Response.json({
       ok: false,
-      error: `This event has ${rsvpCount} RSVP(s) -- deleting it will lose them. Confirm to proceed.`,
+      error: `This event has ${rsvpCount} RSVP(s) — deleting it will lose them. Confirm to proceed.`,
       errorKey: 'EVENT_HAS_RSVPS',
       rsvpCount
     }, { status: 409 });
@@ -2206,7 +2206,7 @@ async function handleSeasonAssignmentRequest(req, env, { write }) {
 
   const events = await loadSeasonEvents(env, leagueId, season);
   if (!events.length) {
-    return Response.json({ ok: false, error: "This league has no events yet to assign matchups to -- create your schedule's gym slots first (Create a game / Create multiple games).", errorKey: 'MATCHUPS_NO_EVENTS' }, { status: 409 });
+    return Response.json({ ok: false, error: "This league has no events yet to assign matchups to — create your schedule's gym slots first (Create a game / Create multiple games).", errorKey: 'MATCHUPS_NO_EVENTS' }, { status: 409 });
   }
   const planResult = buildSeasonAssignmentPlan(events, teams, playoffConfig, mode);
   if (planResult.error) return Response.json(planResult.error, { status: 409 });
@@ -2591,8 +2591,8 @@ export function playoffRoleLabel(meta, lang) {
   else if (meta.role === 'bracket') base = (en ? 'Playoff round 1, game ' : 'Ronde 1 des séries, match ') + meta.matchupIndexInRound;
   else if (meta.role === 'reserved') base = (en ? 'Playoff game ' : 'Match de séries ') + meta.matchupIndexInRound;
   else base = en ? 'Playoff game' : 'Match de séries';
-  if (meta.seedA && meta.seedB) base += ` -- ${seed(meta.seedA)} ${vsWord} ${seed(meta.seedB)}`;
-  else if (meta.feederA || meta.feederB) base += ` -- ${describeSide(meta.feederA)} ${vsWord} ${describeSide(meta.feederB)}`;
+  if (meta.seedA && meta.seedB) base += ` — ${seed(meta.seedA)} ${vsWord} ${seed(meta.seedB)}`;
+  else if (meta.feederA || meta.feederB) base += ` — ${describeSide(meta.feederA)} ${vsWord} ${describeSide(meta.feederB)}`;
   if (meta.gameNumber && meta.seriesLength > 1) base += ` (${en ? `Game ${meta.gameNumber} of ${meta.seriesLength}` : `Match ${meta.gameNumber} de ${meta.seriesLength}`})`;
   return base;
 }
@@ -3531,7 +3531,7 @@ export async function handleLeagueUpdateIdentity(req, env, url) {
     const structure = (structRow && structRow.team_structure) || 'fixed';
     if (typeof body.tracksResults === 'boolean') {
       if (body.tracksResults && structure === 'headcount') {
-        return Response.json({ ok: false, error: 'Game results need two sides to attach a score to -- not offered for a no-teams league.', errorKey: 'RESULTS_REQUIRE_TEAMS' }, { status: 409 });
+        return Response.json({ ok: false, error: 'Game results need two sides to attach a score to — not offered for a no-teams league.', errorKey: 'RESULTS_REQUIRE_TEAMS' }, { status: 409 });
       }
       updates.push('tracks_results = ?'); params.push(body.tracksResults ? 1 : 0);
     }
@@ -3803,7 +3803,7 @@ export async function handleLeagueUpdateStructure(req, env, url) {
       let existingNames = [];
       try { existingNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
       if (!Array.isArray(existingNames) || existingNames.filter(Boolean).length < 2) {
-        return Response.json({ ok: false, error: 'This league has no team names on file yet -- set them in the Teams section first.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
+        return Response.json({ ok: false, error: 'This league has no team names on file yet — set them in the Teams section first.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
       }
     }
     newStructure = val;
@@ -4069,7 +4069,7 @@ async function resolveScoreEventSides(env, leagueId, teamStructure, ev, body) {
       // resolver, so it has to actually be there once a score exists.
       return { value: { homeTeam: teamNames[0], awayTeam: teamNames[1], persist: true } };
     }
-    return { error: { ok: false, error: 'No matchup is set for this event yet -- set one before entering a score.', errorKey: 'NO_MATCHUP_SET' } };
+    return { error: { ok: false, error: 'No matchup is set for this event yet — set one before entering a score.', errorKey: 'NO_MATCHUP_SET' } };
   }
   if (teamStructure === 'weekly_draw') {
     if (ev.home_team && ev.away_team) {
@@ -4079,11 +4079,11 @@ async function resolveScoreEventSides(env, leagueId, teamStructure, ev, body) {
       `SELECT DISTINCT team FROM rsvp WHERE event_id = ? AND status = 'in' AND team IS NOT NULL ORDER BY team`
     ).bind(ev.id).all()).results || [];
     if (drawn.length !== 2) {
-      return { error: { ok: false, error: `This event has ${drawn.length} team(s) drawn -- a score needs exactly two.`, errorKey: 'DRAW_NOT_TWO_TEAMS' } };
+      return { error: { ok: false, error: `This event has ${drawn.length} team(s) drawn — a score needs exactly two.`, errorKey: 'DRAW_NOT_TWO_TEAMS' } };
     }
     return { value: { homeTeam: drawn[0].team, awayTeam: drawn[1].team, persist: true } };
   }
-  return { error: { ok: false, error: 'Game results need two sides to attach a score to -- not offered for a no-teams league.', errorKey: 'RESULTS_REQUIRE_TEAMS' } };
+  return { error: { ok: false, error: 'Game results need two sides to attach a score to — not offered for a no-teams league.', errorKey: 'RESULTS_REQUIRE_TEAMS' } };
 }
 
 export async function handleLeagueEventScore(req, env) {

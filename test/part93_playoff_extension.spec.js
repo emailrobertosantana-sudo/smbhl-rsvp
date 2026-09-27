@@ -109,15 +109,15 @@ describe('Playoff extension, Part 2: the slot arithmetic (computePlayoffSlots)',
     expect(r8.hasBye).toBe(false); expect(r8.playoffSlots).toBe(8 - 1);
   });
 
-  it('third-place game: +1 slot, but only for >=4 teams -- structurally meaningless below that (no two real semifinal losers exist)', () => {
-    expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 2, thirdPlace: true }).playoffSlots).toBe(1); // unchanged -- guarded off
-    expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 3, thirdPlace: true }).playoffSlots).toBe(2); // unchanged -- guarded off, no bye slot either
+  it('third-place game: +1 slot, but only for >=4 teams — structurally meaningless below that (no two real semifinal losers exist)', () => {
+    expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 2, thirdPlace: true }).playoffSlots).toBe(1); // unchanged — guarded off
+    expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 3, thirdPlace: true }).playoffSlots).toBe(2); // unchanged — guarded off, no bye slot either
     expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 4, thirdPlace: true }).playoffSlots).toBe(4); // 3 + 1
     expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 5, thirdPlace: true }).playoffSlots).toBe(5); // 4 + 1 (third place), no bye slot
     expect(computePlayoffSlots({ format: 'single_elimination', numTeams: 8, thirdPlace: true }).playoffSlots).toBe(8); // 7 + 1
   });
 
-  it('best_of_n: multiplies real games (base + third place) by the series length -- a bye never costs a slot, so there is nothing flat left to keep un-multiplied', () => {
+  it('best_of_n: multiplies real games (base + third place) by the series length — a bye never costs a slot, so there is nothing flat left to keep un-multiplied', () => {
     // 4 teams, best of 3, no third place: (4-1)*3 = 9, no bye.
     expect(computePlayoffSlots({ format: 'best_of_n', numTeams: 4, thirdPlace: false, bestOf: 3 }).playoffSlots).toBe(9);
     // Same, with third place: (3+1)*3 = 12.
@@ -171,9 +171,9 @@ describe('Playoff extension, Part 2/3: buildPlayoffPlaceholders matches computeP
 
   it('playoffRoleLabel matches the task\'s own examples exactly, both languages, for a round-1 (real seed) matchup', () => {
     expect(playoffRoleLabel({ role: 'semifinal', matchupIndexInRound: 1, seedA: 1, seedB: 4, seriesLength: 1 }, 'en'))
-      .toBe('Semi-final 1 -- seed 1 vs seed 4');
+      .toBe('Semi-final 1 — seed 1 vs seed 4');
     expect(playoffRoleLabel({ role: 'semifinal', matchupIndexInRound: 1, seedA: 1, seedB: 4, seriesLength: 1 }, 'fr'))
-      .toBe('Demi-finale 1 -- tête de série 1 contre tête de série 4');
+      .toBe('Demi-finale 1 — tête de série 1 contre tête de série 4');
     expect(playoffRoleLabel({ role: 'final', seriesLength: 1 }, 'en')).toBe('Final');
     expect(playoffRoleLabel({ role: 'final', seriesLength: 1 }, 'fr')).toBe('Finale');
     expect(playoffRoleLabel({ role: 'third_place', seriesLength: 1 }, 'en')).toBe('Third-place game');
@@ -189,14 +189,14 @@ describe('Playoff extension, Part 2/3: buildPlayoffPlaceholders matches computeP
   // round-1 seed -- the two can even mix on the same matchup.
   it('playoffRoleLabel: a later round with two real feeder matchups reads "Winner SF1 vs Winner SF2", never a seed number', () => {
     expect(playoffRoleLabel({ role: 'final', feederA: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 1 }, feederB: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 2 }, seriesLength: 1 }, 'en'))
-      .toBe('Final -- Winner SF1 vs Winner SF2');
+      .toBe('Final — Winner SF1 vs Winner SF2');
     expect(playoffRoleLabel({ role: 'final', feederA: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 1 }, feederB: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 2 }, seriesLength: 1 }, 'fr'))
-      .toBe('Finale -- Gagnant DF1 contre Gagnant DF2');
+      .toBe('Finale — Gagnant DF1 contre Gagnant DF2');
   });
 
   it('playoffRoleLabel: a later round can mix a real bye seed on one side with an unresolved matchup on the other', () => {
     expect(playoffRoleLabel({ role: 'semifinal', matchupIndexInRound: 1, feederA: { kind: 'bye', seed: 1 }, feederB: { kind: 'matchup', role: 'quarterfinal', matchupIndexInRound: 1 }, seriesLength: 1 }, 'en'))
-      .toBe('Semi-final 1 -- seed 1 vs Winner QF1');
+      .toBe('Semi-final 1 — seed 1 vs Winner QF1');
   });
 
   it('buildPlayoffPlaceholders: round 1 keeps real seedA/seedB; every later round gets feederA/feederB instead, never both', () => {
@@ -208,14 +208,14 @@ describe('Playoff extension, Part 2/3: buildPlayoffPlaceholders matches computeP
     expect(later.every(m => !m.seedA && !m.seedB && m.feederA && m.feederB)).toBe(true);
   });
 
-  it('buildPlayoffPlaceholders no longer produces a bye placeholder at all -- resolvePlayoffByeSeeds reports it purely informationally instead', () => {
+  it('buildPlayoffPlaceholders no longer produces a bye placeholder at all — resolvePlayoffByeSeeds reports it purely informationally instead', () => {
     const groups = buildPlayoffPlaceholders({ format: 'single_elimination', numTeams: 5, thirdPlace: false });
     expect(groups.flat().some(m => m.role === 'bye')).toBe(false);
     expect(resolvePlayoffByeSeeds(5).length).toBeGreaterThan(0);
     expect(resolvePlayoffByeSeeds(4)).toEqual([]); // even count -- no bye at all
   });
 
-  it('buildPlayoffPlaceholders never puts more than one game on the same group -- no more staggering several simultaneous games onto one invented date', () => {
+  it('buildPlayoffPlaceholders never puts more than one game on the same group — no more staggering several simultaneous games onto one invented date', () => {
     const groups = buildPlayoffPlaceholders({ format: 'single_elimination', numTeams: 8, thirdPlace: false });
     expect(groups.every(g => g.length === 1)).toBe(true);
   });
@@ -237,7 +237,7 @@ describe('Playoff extension, Part 1: onboarding + Settings (fixed-teams only)', 
     expect(step3).toMatch(/aria-valuenow="6" aria-valuemax="8"|aria-valuemax="8" aria-valuenow="6"/);
   });
 
-  it('weekly_draw and headcount onboarding never show a playoffs step -- their own flow totals (6) are unaffected', async () => {
+  it('weekly_draw and headcount onboarding never show a playoffs step — their own flow totals (6) are unaffected', async () => {
     const { cookie: wdCookie, csrfToken: wdCsrf } = await signup('p1.wdstep@example.com', '203.0.201.002');
     await createLeague(wdCookie, wdCsrf, { name: 'WD Step League', teamStructure: 'weekly_draw', teamNames: ['A', 'B', 'C'], tracksStats: true });
     await publishSeason(wdCookie, wdCsrf, { season_name: 'S1' });
@@ -289,7 +289,7 @@ describe('Playoff extension, Part 1: onboarding + Settings (fixed-teams only)', 
     expect(res.json.errorKey).toBe('INVALID_PLAYOFF_TEAMS');
   });
 
-  it('rejects for weekly_draw and headcount leagues -- playoffs are fixed-teams only', async () => {
+  it('rejects for weekly_draw and headcount leagues — playoffs are fixed-teams only', async () => {
     const { cookie: wdCookie, csrfToken: wdCsrf } = await signup('p1.wdreject@example.com', '203.0.201.006');
     await createLeague(wdCookie, wdCsrf, { name: 'WD Reject League', teamStructure: 'weekly_draw', teamNames: ['A', 'B'], tracksStats: true });
     const wdRes = await updatePlayoffs(wdCookie, wdCsrf, { playoffs_enabled: true, playoff_format: 'single_elimination', playoff_teams: 2 });
@@ -386,7 +386,7 @@ describe('Playoff extension, Part 2/3: one pool of slots, end to end', () => {
     expect(json.playoffPlan.length).toBe(0);
   });
 
-  it('too few slots for the configured playoffs alone: refuses outright, explaining the shortfall -- never invents a slot for either half', async () => {
+  it('too few slots for the configured playoffs alone: refuses outright, explaining the shortfall — never invents a slot for either half', async () => {
     const { cookie, csrfToken } = await signup('p1.tooshort@example.com', '203.0.201.103');
     const league = await createLeague(cookie, csrfToken, { name: 'Too Short League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
@@ -430,7 +430,7 @@ describe('Playoff extension, Part 2/3: one pool of slots, end to end', () => {
     expect(playoffCount).toBe(3); // still exactly 3 -- reclassified, not accumulated
   });
 
-  it('a playoff placeholder\'s event detail page reads as "awaiting seeding", not a misconfigured regular-season game -- in both languages', async () => {
+  it('a playoff placeholder\'s event detail page reads as "awaiting seeding", not a misconfigured regular-season game — in both languages', async () => {
     const { cookie, csrfToken } = await signup('p3.placeholder@example.com', '203.0.201.105');
     await createLeague(cookie, csrfToken, { name: 'Placeholder League', teamNames: ['Rouge', 'Bleu', 'Vert', 'Jaune'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
@@ -446,12 +446,12 @@ describe('Playoff extension, Part 2/3: one pool of slots, end to end', () => {
     const html = await eventDetailHtml(cookie, playoffEvent.id);
     expect(html).toContain('data-i18n="playoffAwaitingSeedingTitle"');
     expect(html).not.toContain('data-i18n="noMatchupSetTitle"'); // the REGULAR-season message never shows for a playoff game
-    expect((html.match(/class="[^"]*\bev-team\b[^"]*"/g) || []).length).toBe(0); // no team roster cards -- nothing to show yet
+    expect((html.match(/class="[^"]*\bev-team\b[^"]*"/g) || []).length).toBe(0); // no team roster cards — nothing to show yet
 
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.en.playoffAwaitingSeedingTitle).toBe('Playoff game -- awaiting results');
-    expect(dict.fr.playoffAwaitingSeedingTitle).toBe('Match de séries -- en attente des résultats');
+    expect(dict.en.playoffAwaitingSeedingTitle).toBe('Playoff game — awaiting results');
+    expect(dict.fr.playoffAwaitingSeedingTitle).toBe('Match de séries — en attente des résultats');
   });
 
   it('the final\'s own placeholder reads "Winner SF1 vs Winner SF2" before either semifinal is decided', async () => {
@@ -476,7 +476,7 @@ describe('Playoff extension, Part 2/3: one pool of slots, end to end', () => {
     expect(html).not.toMatch(/tête de série \d/); // never a stale seed number beyond round one
   });
 
-  it('byes produce no event at all -- an odd team count\'s bye seeds are informational only', async () => {
+  it('byes produce no event at all — an odd team count\'s bye seeds are informational only', async () => {
     const { cookie, csrfToken } = await signup('p3.byenoevent@example.com', '203.0.201.107');
     await createLeague(cookie, csrfToken, { name: 'Bye No Event League', teamNames: ['A', 'B', 'C', 'D', 'E'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
