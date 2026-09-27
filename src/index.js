@@ -11363,7 +11363,14 @@ async function eventWeekStatus(env, leagueId, ev, cfg) {
 
 const WAVE_SIZE = 5;
 const WAVE_GAP_MIN = 60;
-const RUSH_HOURS = 12;
+// Inside RUSH_HOURS of the game, sub calls are no longer metered: every
+// eligible sub in the pool is called at once (subject to the daily send
+// budget and the per-sub invite limit), and a teammate-reported absence
+// calls subs right away instead of holding an hour first. Was 12: a
+// Friday cancellation before a Sunday game waited through hourly waves
+// of five for most of a day. Outside it, waves of WAVE_SIZE every
+// WAVE_GAP_MIN minutes still pace the week.
+const RUSH_HOURS = 48;
 const CUTOFF_HOURS = 2;
 
 function hoursOut(ev) {
