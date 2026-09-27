@@ -1784,7 +1784,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
   </div>
 
   <script>
-  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
   const $ = i => document.getElementById(i);
   const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
@@ -2100,7 +2100,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
       const pal = teamPalette[tKey] || {};
       return {
         name: tKey,
-        name_fr: d.name_fr || (pal.label ? pal.label.replace(/^[^\w\s]+\s*/, '') : tKey),
+        name_fr: d.name_fr || (pal.label ? pal.label.replace(/^[^\\w\\s]+\\s*/, '') : tKey),
         colour: d.colour || pal.border || '#64748b',
         aliases: Array.isArray(d.aliases) ? d.aliases : []
       };
@@ -2370,7 +2370,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
       let prefix = '🏒 ';
       if (oldPal.label) {
         const parts = oldPal.label.split(' ');
-        if (parts.length > 1 && /^[^\w\s]/.test(parts[0])) {
+        if (parts.length > 1 && /^[^\\w\\s]/.test(parts[0])) {
           prefix = parts[0] + ' ';
         }
       }
@@ -2591,7 +2591,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
   function addCustomDatePrompt() {
     const datePrompt = currentLang === 'en' ? "Date in YYYY-MM-DD format (e.g. 2027-02-14):" : "Date au format AAAA-MM-JJ (ex: 2027-02-14) :";
     const dateStr = prompt(datePrompt);
-    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
+    if (!dateStr || !/^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr.trim())) {
       if (dateStr) alert(currentLang === 'en' ? "Invalid format. Use YYYY-MM-DD." : "Format invalide. Utilisez AAAA-MM-JJ.");
       return;
     }

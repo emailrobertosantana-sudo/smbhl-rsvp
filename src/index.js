@@ -308,7 +308,7 @@ function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = 
 // this can read it. Pages that call one of those routes spread
 // window.__csrfHeader() into their fetch's headers.
 window.__csrfHeader = function() {
-  var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  var m = document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);
   return m ? { 'X-CSRF-Token': decodeURIComponent(m[1]) } : {};
 };
 // Part 1 (overnight follow-up task): a server error response includes
@@ -15299,7 +15299,7 @@ window.addEventListener('admin_lang_changed', e => {
   applyLanguage(e.detail.lang);
 });
 
-let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '${isAuthed && env?.ADMIN_KEY ? env.ADMIN_KEY : ''}';
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '${isAuthed && env?.ADMIN_KEY ? env.ADMIN_KEY : ''}';
 if (K) { try { localStorage.setItem('adminkey', K); } catch (_) {} }
 const $ = i => document.getElementById(i);
 const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -15354,7 +15354,7 @@ function renderContacts(d) {
   $('lbl-roster-count').textContent = t('confirmedPlayersDesc').replace('{n}', rosterList.length);
   $('sub-skater-desc').textContent = t('subSkatersAvail').replace('{n}', skaterList.length).replace('{s}', skaterList.length > 1 ? 's' : '');
   $('sub-goalie-desc').textContent = t('subGoaliesAvail').replace('{n}', goalieList.length).replace('{s}', goalieList.length > 1 ? 's' : '');
-  $('lbl-archive-count').textContent = t('archivedDesc').replace('{n}', archiveList.length).replace(/\{s\}/g, archiveList.length > 1 ? 's' : '');
+  $('lbl-archive-count').textContent = t('archivedDesc').replace('{n}', archiveList.length).replace(/\\{s\\}/g, archiveList.length > 1 ? 's' : '');
 
   const rowRoster = (p) => {
     const isBackup = p.is_backup_goalie === 1;
@@ -15505,10 +15505,10 @@ function applyFilter() {
 function wire() {
   document.querySelectorAll('[data-em]').forEach(i => {
     i.addEventListener('change', async () => {
-      let val = i.value.trim().toLowerCase().replace(/,/g, '.').replace(/\s+/g, '');
+      let val = i.value.trim().toLowerCase().replace(/,/g, '.').replace(/\\s+/g, '');
       i.value = val;
       const pid = i.dataset.em;
-      if (val && !/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(val)) {
+      if (val && !/^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$/.test(val)) {
         i.classList.add('invalid');
         $('msg').textContent = t('invalidEmailMsg');
         $('msg').style.color = 'var(--red, #ef4444)';
@@ -15685,7 +15685,7 @@ $('key').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click
 
 async function addNew(role) {
   const name = $('nname').value.trim();
-  let email = $('nmail').value.trim().toLowerCase().replace(/,/g, '.').replace(/\s+/g, '');
+  let email = $('nmail').value.trim().toLowerCase().replace(/,/g, '.').replace(/\\s+/g, '');
   $('nmail').value = email;
   let phone = $('nphone').value.trim();
   $('nphone').value = phone;
@@ -15695,7 +15695,7 @@ async function addNew(role) {
     $('nmsg').style.color = 'var(--red, #ef4444)';
     return;
   }
-  if (email && !/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(email)) {
+  if (email && !/^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$/.test(email)) {
     $('nmsg').textContent = t('invalidEmailMsg');
     $('nmsg').style.color = 'var(--red, #ef4444)';
     $('nmail').classList.add('invalid');
@@ -18804,7 +18804,7 @@ async function seasonRecapPage(env = null, isAuthed = false) {
   </div>
 
 <script>
-let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
 const $ = i => document.getElementById(i);
 const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
@@ -21244,7 +21244,7 @@ window.addEventListener('admin_lang_changed', e => {
   applyLanguage(e.detail.lang);
 });
 
-let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
 const $ = i => document.getElementById(i);
 const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
@@ -21978,7 +21978,7 @@ async function schedulePage(env = null, isAuthed = false) {
     applyLanguage(e.detail.lang);
   });
 
-  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
   const $ = i => document.getElementById(i);
   const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   let scheduleData = null;
@@ -23624,7 +23624,7 @@ async function emailsPage(env = null, isAuthed = false) {
   </div>
 
   <script>
-  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
   const $ = i => document.getElementById(i);
   const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   let emailsData = null;
@@ -25641,7 +25641,7 @@ async function teamsPage(env = null, isAuthed = false) {
     applyLanguage(e.detail.lang);
   });
 
-  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+  let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
   const $ = i => document.getElementById(i);
   const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   let teamsData = null;

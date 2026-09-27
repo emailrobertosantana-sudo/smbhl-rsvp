@@ -1376,7 +1376,7 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
 // The server never embeds the admin key — it's resolved client-side the same
 // way every other admin page does (URL param, then localStorage, then the
 // admin_key cookie the server sets once you're authenticated).
-let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
 if (K) { try { localStorage.setItem('adminkey', K); } catch (_) {} }
 if (window.history && window.history.replaceState) {
   const u = new URL(location);
@@ -1946,7 +1946,7 @@ function recalc() {
         const warnEl = document.getElementById('pwarn_' + gIdx + '_' + side + '_' + pIdx);
         if (!p.absent) {
           if (!p.id) {
-            const parts = (p.name || '').trim().split(/\s+/).filter(Boolean);
+            const parts = (p.name || '').trim().split(/\\s+/).filter(Boolean);
             if (parts.length < 2) {
               warnings.push(dict.warnIncompletePlayer(teamName, gIdx + 1, p.name || (currentLang === 'en' ? 'unknown' : 'inconnu')));
               allBalanced = false;
@@ -1968,7 +1968,7 @@ function recalc() {
       const goalie = g[side + '_goalie'];
       const gWarnEl = document.getElementById('gwarn_' + gIdx + '_' + side);
       if (goalie && goalie.name && !goalie.id) {
-        const parts = (goalie.name || '').trim().split(/\s+/).filter(Boolean);
+        const parts = (goalie.name || '').trim().split(/\\s+/).filter(Boolean);
         if (parts.length < 2) {
           warnings.push(dict.warnIncompleteGoalie(teamName, gIdx + 1, goalie.name));
           allBalanced = false;
@@ -2343,7 +2343,7 @@ export function renderReviewIndex(reviews = [], backups = [], showStatsTabs = tr
 // The server never embeds the admin key — it's resolved client-side the same
 // way every other admin page does (URL param, then localStorage, then the
 // admin_key cookie the server sets once you're authenticated).
-let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
+let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
 if (K) { try { localStorage.setItem('adminkey', K); } catch (_) {} }
 if (window.history && window.history.replaceState) {
   const u = new URL(location);
