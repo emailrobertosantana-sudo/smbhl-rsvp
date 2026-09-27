@@ -11159,6 +11159,26 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
         }
       }
 
+      // Invite limit (sub-call rework, Part 4), enforced here at send time
+      // so no trigger -- a cancellation, a shortfall, a late-added sub, a
+      // reminder -- can ever deliver more: at most SUB_INVITES_PER_EVENT
+      // automatic invites per sub per event (the first invite and one
+      // follow-up), plus at most ONE manual extra an admin sends on
+      // purpose (payload.manual_extra, sendExtraSubInvite).
+      if (m.kind === 'sub_call' && m.player_id) {
+        const prior = await env.DB.prepare(
+          `SELECT SUM(CASE WHEN json_extract(payload, '$.manual_extra') = 1 THEN 0 ELSE 1 END) AS auto,
+                  SUM(CASE WHEN json_extract(payload, '$.manual_extra') = 1 THEN 1 ELSE 0 END) AS extra
+             FROM outbox WHERE event_id = ? AND player_id = ? AND kind = 'sub_call' AND sent_at IS NOT NULL`
+        ).bind(m.event_id, m.player_id).first();
+        const limitReason = payload.manual_extra
+          ? ((prior && prior.extra > 0) ? 'manual extra invite already sent for this event' : null)
+          : ((prior && prior.auto >= SUB_INVITES_PER_EVENT) ? `invite limit reached (${SUB_INVITES_PER_EVENT} per sub per event)` : null);
+        if (limitReason) {
+          await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?').bind(limitReason, m.id).run();
+          continue;
+        }
+      }
       if (m.kind === 'sub_call' && hoursOut(ev) < CUTOFF_HOURS) {
         await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
           .bind('too close to game time', m.id).run();
@@ -11359,6 +11379,57 @@ async function eventWeekStatus(env, leagueId, ev, cfg) {
   }
 
   return { confirmed: counts.in, out: counts.out, noResponse: counts.pending, short };
+}
+
+// A sub gets at most this many AUTOMATIC invites per event: the first
+// invite and one follow-up. The only way a third goes out is an admin's
+// deliberate manual extra (sendExtraSubInvite). Enforced in drain().
+const SUB_INVITES_PER_EVENT = 2;
+
+// Sends one additional invite to one sub for one event -- the ONLY way
+// past SUB_INVITES_PER_EVENT, and only once per sub per event. Shared:
+// SMBHL's admin exposes it (/admin/subs/extra-invite); any league admin
+// route can call the same function. Returns { ok, code, status? }.
+async function sendExtraSubInvite(env, ev, playerId) {
+  if (!ev || ev.state !== 'open') return { ok: false, code: 'event_not_open' };
+  if (hoursOut(ev) < CUTOFF_HOURS) return { ok: false, code: 'too_close' };
+  const c = await getContact(env.DB, playerId);
+  if (!c) return { ok: false, code: 'unknown_player' };
+  const isSub = c.is_sub === 1 || c.role === 'sub_skater' || c.role === 'sub_goalie';
+  if (!isSub) return { ok: false, code: 'not_a_sub' };
+  if (c.opted_out) return { ok: false, code: 'opted_out' };
+  if (!c.email) return { ok: false, code: 'no_email' };
+  const placed = await env.DB.prepare('SELECT 1 FROM rsvp WHERE event_id = ? AND player_id = ?').bind(ev.id, playerId).first();
+  if (placed) return { ok: false, code: 'already_on_team' };
+  const existing = await env.DB.prepare(
+    `SELECT 1 FROM outbox WHERE event_id = ? AND player_id = ? AND kind = 'sub_call'
+        AND json_extract(payload, '$.manual_extra') = 1 AND (sent_at IS NOT NULL OR cancelled = 0)`
+  ).bind(ev.id, playerId).first();
+  if (existing) return { ok: false, code: 'extra_already_used' };
+  const need = (c.is_goalie === 1 || c.role === 'sub_goalie') ? 'goalie' : 'skater';
+  const lastInvite = await env.DB.prepare(
+    `SELECT team FROM outbox WHERE event_id = ? AND player_id = ? AND kind = 'sub_call' AND team IS NOT NULL ORDER BY id DESC LIMIT 1`
+  ).bind(ev.id, playerId).first();
+  const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
+  // The invite names a team: the one this sub was last invited for, else
+  // the team with open spots for their position, else the first team.
+  let team = lastInvite ? lastInvite.team : null;
+  if (!team) {
+    const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+    const teams = getTeamNames(cfg);
+    for (const t of teams) if (await openSpots(env.DB, ev.id, t, need, cfg) > 0) { team = t; break; }
+    team = team || teams[0] || null;
+  }
+  await enqueue(env, {
+    kind: 'sub_call', event_id: ev.id, player_id: playerId, team,
+    dedup_key: `extra:${ev.id}:${playerId}`, payload: { need, manual_extra: true },
+    league_id: leagueId, skipQuietHours: true // a deliberate admin action, sent now
+  });
+  await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id);
+  const row = await env.DB.prepare(
+    `SELECT * FROM outbox WHERE event_id = ? AND player_id = ? AND dedup_key = ? ORDER BY id DESC LIMIT 1`
+  ).bind(ev.id, playerId, `extra:${ev.id}:${playerId}`).first();
+  return { ok: true, code: 'queued', status: row ? outboxRowStatus(row) : 'pending' };
 }
 
 const WAVE_SIZE = 5;
@@ -14242,6 +14313,20 @@ const I18N_SUBS = {
     needed: 'manquant',
     full: 'complet',
     callWaves: 'LANCER LES VAGUES',
+    extraInviteBtn: 'Envoyer une invitation de plus',
+    extraInviteConfirm: "Envoyer une invitation supplémentaire à {name} pour ce match? C'est la seule façon d'envoyer une 3e invitation, et c'est possible une seule fois.",
+    extraInviteSentTag: '3e invitation envoyée (manuelle)',
+    extraInviteQueuedTag: '3e invitation en attente (manuelle)',
+    extraInviteErr_extra_already_used: "L'invitation supplémentaire a déjà été envoyée pour ce match.",
+    extraInviteErr_already_on_team: 'Ce remplaçant est déjà inscrit à ce match.',
+    extraInviteErr_too_close: "Trop près de l'heure du match pour inviter.",
+    extraInviteErr_event_not_open: 'Ce match est fermé.',
+    extraInviteErr_event_not_found: 'Match introuvable.',
+    extraInviteErr_opted_out: 'Ce joueur ne reçoit plus de courriels.',
+    extraInviteErr_no_email: 'Aucun courriel au dossier pour ce joueur.',
+    extraInviteErr_not_a_sub: "Ce joueur n'est pas un remplaçant.",
+    extraInviteErr_unknown_player: 'Joueur inconnu.',
+    extraInviteErr_unknown: "L'invitation n'a pas pu être envoyée.",
     callingWaves: '...',
     invitedSubsTitle: 'Substituts sollicités pour ce match',
     noSubsInvited: 'Aucun substitut sollicité pour ce match.',
@@ -14303,6 +14388,20 @@ const I18N_SUBS = {
     needed: 'needed',
     full: 'full',
     callWaves: 'LAUNCH WAVES',
+    extraInviteBtn: 'Send one more invite',
+    extraInviteConfirm: 'Send {name} one extra invite for this game? This is the only way a 3rd invite goes out, and it can be used once.',
+    extraInviteSentTag: '3rd invite sent (manual)',
+    extraInviteQueuedTag: '3rd invite queued (manual)',
+    extraInviteErr_extra_already_used: 'The extra invite was already sent for this game.',
+    extraInviteErr_already_on_team: 'This sub is already signed up for this game.',
+    extraInviteErr_too_close: 'Too close to game time to invite.',
+    extraInviteErr_event_not_open: 'This game is closed.',
+    extraInviteErr_event_not_found: 'Game not found.',
+    extraInviteErr_opted_out: 'This player no longer receives emails.',
+    extraInviteErr_no_email: 'No email on file for this player.',
+    extraInviteErr_not_a_sub: 'This player is not a sub.',
+    extraInviteErr_unknown_player: 'Unknown player.',
+    extraInviteErr_unknown: 'The invite could not be sent.',
     callingWaves: '...',
     invitedSubsTitle: 'Subs Invited & Response Status',
     noSubsInvited: 'No subs invited for this game.',
@@ -14501,6 +14600,10 @@ function renderSubsUI() {
       } else if (s.statusCode === 'sent') {
         statusHtml = '<span class="pend" style="font-weight:700">' + esc(t('statusAwaiting')) + '</span>' +
           (s.isReminderSent ? '<div class="by" style="color:var(--orange)">' + esc(t('statusReminded')) + '</div>' : '<div class="by">' + esc(t('statusNoAnswer')) + '</div>');
+        // Sub-call rework, Part 4: the only way a third invite goes out.
+        if (s.extraInvite === 'sent') statusHtml += '<div class="by">' + esc(t('extraInviteSentTag')) + '</div>';
+        else if (s.extraInvite === 'queued') statusHtml += '<div class="by">' + esc(t('extraInviteQueuedTag')) + '</div>';
+        else statusHtml += '<div style="margin-top:4px"><button class="mini" data-extra-invite="' + esc(s.player_id) + '" data-extra-name="' + esc(s.name) + '">' + esc(t('extraInviteBtn')) + '</button></div>';
       } else if (s.statusCode === 'failed') {
         statusHtml = '<span class="out" style="font-weight:700">' + esc(t('statusFailed')) + '</span><div class="by" style="color:var(--red)">' + esc(s.statusDetail || t('statusFailedDetail')) + '</div>';
       } else if (s.statusCode === 'queued') {
@@ -14539,6 +14642,23 @@ function renderSubsUI() {
     }
     $('pooltable').innerHTML = prows;
   }
+
+  document.querySelectorAll('[data-extra-invite]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm(t('extraInviteConfirm').replace('{name}', b.dataset.extraName))) return;
+    b.disabled = true;
+    try {
+      const res = await fetch('/admin/subs/extra-invite', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-admin': K },
+        body: JSON.stringify({ event_id: currentEventId, player_id: b.dataset.extraInvite })
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!out.ok) { alert(t('extraInviteErr_' + (out.code || 'unknown')) || t('extraInviteErr_unknown')); b.disabled = false; return; }
+      load(currentEventId);
+    } catch (e) {
+      alert(e.message);
+      b.disabled = false;
+    }
+  }));
 
   document.querySelectorAll('[data-call-team]').forEach(b => b.addEventListener('click', async () => {
     b.disabled = true;
@@ -14742,9 +14862,19 @@ async function subsData(env, url) {
     let isCancelled = false;
     let isQueued = false;
     let errorMsg = null;
+    // Sub-call rework, Part 4: automatic invites delivered so far (limit
+    // SUB_INVITES_PER_EVENT) and the state of the one manual extra.
+    let autoInvitesSent = 0;
+    let extraInvite = 'none';
 
     for (const o of outs) {
       const pl = JSON.parse(o.payload || '{}');
+      if (pl.manual_extra) {
+        if (o.sent_at) extraInvite = 'sent';
+        else if (!o.cancelled && extraInvite !== 'sent') extraInvite = 'queued';
+      } else if (o.sent_at) {
+        autoInvitesSent++;
+      }
       if (pl.need) need = pl.need;
       if (o.team) teamTarget = o.team;
       if (pl.reminder && o.sent_at) isReminderSent = true;
@@ -14835,6 +14965,8 @@ async function subsData(env, url) {
       preferred_team: contact.preferred_team || null,
       isReminderSent,
       errorMsg,
+      autoInvitesSent,
+      extraInvite,
       ppg: st ? st.ppg : null,
       gp: st ? st.gp : null
     });
@@ -26864,6 +26996,16 @@ async function handleFetch(req, env, ctx) {
         const auth = checkAdminAuth(req, env);
         if (auth !== 'ok') return adminAuthResponse(auth);
         return await reassignSub(req, env);
+      }
+      // Sub-call rework, Part 4: the admin's deliberate one-extra invite.
+      if (url.pathname === '/admin/subs/extra-invite' && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const { event_id, player_id } = await req.json().catch(() => ({}));
+        const ev = event_id ? await getEvent(env.DB, event_id) : null;
+        if (!ev) return Response.json({ ok: false, code: 'event_not_found' }, { status: 404 });
+        const result = await sendExtraSubInvite(env, ev, String(player_id || ''));
+        return Response.json(result, { status: result.ok ? 200 : 409 });
       }
       if (url.pathname === '/admin/subs/call' && req.method === 'POST') {
         const auth = checkAdminAuth(req, env);
