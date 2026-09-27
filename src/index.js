@@ -19735,6 +19735,16 @@ async function handleSeasonRecapSend(req, env) {
 
 /* ---------- finances & dues tracker ---------- */
 
+// Regular or sub, from the contact record -- never from which team someone
+// played for. data.json's season "team" is null for anyone a published
+// scoresheet ever marked as a sub for a game (updateLeagueDataWithReview),
+// including a regular who filled in for another team once; finance used to
+// read that null as "sub" and charge per game. null = no contact record.
+function contactIsSub(c) {
+  if (!c) return null;
+  return c.is_sub === 1 || c.role === 'sub_skater' || c.role === 'sub_goalie' || c.role === 'sub';
+}
+
 async function handleFinancesData(req, env, url) {
   const seasonParam = url.searchParams.get('s') || url.searchParams.get('season');
   let rawData = null;
@@ -19836,7 +19846,9 @@ async function handleFinancesData(req, env, url) {
       const c = contactMap.get(p.id);
       const isGoalie = !!gData || (sData && sData.pos === 'G') || (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
       const team = sData?.team || gData?.team || null;
-      const isSub = (c && c.is_sub === 1) || !team || (sData && sData.team === null);
+      // The contact decides; data.json's season team only when there is no contact.
+      const fromContact = contactIsSub(c);
+      const isSub = fromContact !== null ? fromContact : (!team || (sData && sData.team === null));
       let gamesPlayed = 0;
       const rsvpGp = nightsToGames(p.id, (isSub ? playedGpMap : subGpMap).get(p.id));
       if (c && c.role === 'sub_goalie') {
@@ -19934,14 +19946,16 @@ async function handleFinancesData(req, env, url) {
       processedPlayerIds.add(pid);
       const c = contactMap.get(pid);
       const isGoalie = c ? (c.is_goalie === 1 || c.role === 'sub_goalie') : false;
+      // A regular with a dues row who has not played yet is still a regular.
+      const isSub = contactIsSub(c) !== false;
       playerEntries.push({
         player_id: pid,
         name: c?.name || pid,
         team: c?.preferred_team || null,
-        role: isGoalie ? 'sub_goalie' : 'sub_skater',
+        role: isSub ? (isGoalie ? 'sub_goalie' : 'sub_skater') : (isGoalie ? 'roster_goalie' : 'roster_skater'),
         is_goalie: isGoalie,
-        is_sub: true,
-        games_played: nightsToGames(pid, playedGpMap.get(pid))
+        is_sub: isSub,
+        games_played: isSub ? nightsToGames(pid, playedGpMap.get(pid)) : null
       });
     }
   }
