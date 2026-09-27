@@ -147,3 +147,39 @@ describe('League product: the same limit', () => {
     expect(league.id).toBeTruthy();
   });
 });
+
+describe('League product: the manual third, from a league admin', () => {
+  function extractCookie(res) { return (res.headers.get('set-cookie') || '').split(';')[0]; }
+  function extractCsrf(res) { const c = res.headers.getSetCookie().find(x => x.startsWith('csrf_token=')); return c ? c.split(';')[0].split('=')[1] : ''; }
+  async function admin(tag) {
+    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.233.${tag}` }, body: JSON.stringify({ email: `p106.x${tag}@example.com`, password: 'a-strong-password-1' }) });
+    const cookie = extractCookie(s), csrf = extractCsrf(s);
+    const post = (p, b, withCsrf = true) => SELF.fetch('http://example.com' + p, { method: 'POST', headers: { cookie, 'content-type': 'application/json', ...(withCsrf ? { 'x-csrf-token': csrf } : {}) }, body: JSON.stringify(b) });
+    await post('/leagues/create', { name: `P106 X League ${tag}`, teamNames: ['Otters', 'Falcons'], tracksStats: true });
+    await post('/league/season/publish', { season_name: 'S1', goalies_per_team: 0, skaters_per_team: 1, min_skaters: 1 });
+    for (const team of ['Otters', 'Falcons']) {
+      const c = (await (await post('/league/contacts', { name: `X${tag} ${team}`, email: `p106.x${tag}.${team}@example.com`, role: 'roster' })).json()).contact;
+      await env.DB.prepare(`UPDATE contacts SET preferred_team = ? WHERE player_id = ?`).bind(team, c.player_id).run();
+    }
+    const sub = (await (await post('/league/contacts', { name: `X${tag} Sub`, email: `p106.x${tag}.sub@example.com`, role: 'sub_skater' })).json()).contact;
+    const date = new Date(Date.now() + 5 * 24 * 3600000).toISOString().slice(0, 10);
+    const eventId = (await (await post('/league/events', { date, start_time: '20:00' })).json()).event.id;
+    return { post, sub, eventId };
+  }
+
+  it('sends one extra invite, refuses a second, and refuses without CSRF or from another league', async () => {
+    const a = await admin(1);
+    const b = await admin(2);
+    const noCsrf = await a.post('/league/subs/extra-invite', { event_id: a.eventId, player_id: a.sub.player_id }, false);
+    expect(noCsrf.status).toBe(403);
+    const otherLeague = await b.post('/league/subs/extra-invite', { event_id: a.eventId, player_id: a.sub.player_id });
+    expect(otherLeague.status).toBe(404);
+
+    const first = await withResend(async () => (await a.post('/league/subs/extra-invite', { event_id: a.eventId, player_id: a.sub.player_id })).json());
+    expect(first.result).toMatchObject({ ok: true, status: 'sent' });
+    expect(first.sent.map(m => m.to[0])).toEqual([`p106.x1.sub@example.com`]);
+    const second = await a.post('/league/subs/extra-invite', { event_id: a.eventId, player_id: a.sub.player_id });
+    expect(second.status).toBe(409);
+    expect((await second.json()).code).toBe('extra_already_used');
+  });
+});

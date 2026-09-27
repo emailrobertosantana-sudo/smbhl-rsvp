@@ -27022,6 +27022,27 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueMatchupsPreview(req, env);
       if (url.pathname === '/league/season/matchups-confirm' && req.method === 'POST')
         return await handleLeagueMatchupsConfirm(req, env);
+      // Sub-call rework, Part 4: the same deliberate one-extra invite as
+      // SMBHL's /admin/subs/extra-invite, for a league admin (session +
+      // CSRF + league access), limited to that league's own game and sub.
+      if (url.pathname === '/league/subs/extra-invite' && req.method === 'POST') {
+        const session = await checkUserSession(req, env);
+        if (!session) return leagueAccessResponse('unauthenticated');
+        if (!(await checkCsrfToken(req, env, session))) {
+          return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+        }
+        const leagueId = await resolveSessionLeagueId(req, env, url);
+        if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+        const access = await checkLeagueAccess(req, env, leagueId);
+        if (access !== 'ok') return leagueAccessResponse(access);
+        const { event_id, player_id } = await req.json().catch(() => ({}));
+        const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(String(event_id || ''), leagueId).first();
+        if (!ev) return Response.json({ ok: false, code: 'event_not_found' }, { status: 404 });
+        const inLeague = await env.DB.prepare('SELECT 1 FROM contacts WHERE player_id = ? AND league_id = ?').bind(String(player_id || ''), leagueId).first();
+        if (!inLeague) return Response.json({ ok: false, code: 'unknown_player' }, { status: 404 });
+        const result = await sendExtraSubInvite(env, ev, String(player_id));
+        return Response.json(result, { status: result.ok ? 200 : 409 });
+      }
       if (url.pathname === '/league/events' && req.method === 'POST')
         return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueEventCreate(req, env));
       if (url.pathname === '/league/events/bulk' && req.method === 'POST')
