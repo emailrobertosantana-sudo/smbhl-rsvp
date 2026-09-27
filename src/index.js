@@ -11405,6 +11405,48 @@ function hoursOut(ev) {
 // pool via poolCondition/role matching, same as before this task).
 // Only handleLeagueInviteSubs (the league product's own sub/goalie
 // invite button) passes true.
+// Order subs are invited in: by RESPONSIVENESS, never skill (points per
+// game says nothing about whether someone answers an email). Shared by
+// SMBHL and the league product -- callSubs() is the one place a sub pool
+// is ordered.
+//   1. answered their most recent invite (asked_streak = 0) and played
+//      this season
+//   2. has answered before (answered_ever), but not lately, or hasn't
+//      played this season
+//   3. never answered, few invites so far (asked_streak < 3)
+//   4. never answered, many invites (asked_streak >= 3)
+// then fewest unanswered invites, then longest since last asked, then
+// name. Dormant subs (10 unanswered invites in a row) stay out of the
+// pool entirely, as before -- "last" means never auto-invited.
+//
+// What it replaced: SMBHL ordered by answered_ever, then last_played
+// DESC -- a TEXT season name ('Winter 2016' sorted above 'Fall 2026') --
+// then last_asked; asked_streak was unused. The league product had its
+// own copy ordered by answered_ever, name only.
+//
+// "Played this season" = last_played mentions the event's season (SMBHL's
+// season-import bookkeeping) OR the sub was 'in' for an event of that
+// season (works for every league, which never set last_played).
+const SUB_POOL_FEW_INVITES = 3;
+const SUB_POOL_ORDER_BY = `
+  CASE
+    WHEN c.answered_ever = 1 AND c.asked_streak = 0
+         AND (instr(COALESCE(c.last_played, ''), ?) > 0
+              OR EXISTS (SELECT 1 FROM rsvp r2 JOIN events e2 ON e2.id = r2.event_id
+                          WHERE r2.player_id = c.player_id AND r2.status = 'in' AND e2.season = ?)) THEN 1
+    WHEN c.answered_ever = 1 THEN 2
+    WHEN c.asked_streak < ${SUB_POOL_FEW_INVITES} THEN 3
+    ELSE 4
+  END,
+  c.asked_streak ASC,
+  CASE WHEN c.last_asked IS NULL THEN 0 ELSE 1 END,
+  c.last_asked ASC,
+  c.name`;
+function subPoolOrderBinds(ev) {
+  const season = (ev && ev.season) || '(no season)'; // no season: nobody counts as "played this season"
+  return [season, season];
+}
+
 async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false, requireActive = false) {
   const poolCondition = usesIndependentGoalieAxis
     ? (need === 'goalie' ? `c.role = 'sub_skater' AND c.is_goalie = 1` : `c.role = 'sub_skater' AND c.is_goalie != 1`)
@@ -11421,13 +11463,8 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
               WHERE event_id = ? AND kind = 'sub_call' AND player_id IS NOT NULL
                 AND cancelled = 0
                 AND dedup_key NOT LIKE 'remind:%')
-      ORDER BY c.answered_ever DESC,
-               CASE WHEN c.last_played IS NULL THEN 1 ELSE 0 END,
-               c.last_played DESC,
-               CASE WHEN c.last_asked IS NULL THEN 0 ELSE 1 END,
-               c.last_asked ASC,
-               c.name`
-  ).bind(...poolBinds, leagueId, ev.id, ev.id, ev.id).all()).results || [];
+      ORDER BY ${SUB_POOL_ORDER_BY}`
+  ).bind(...poolBinds, leagueId, ev.id, ev.id, ev.id, ...subPoolOrderBinds(ev)).all()).results || [];
 
   if (!pool.length) return 0;
   const hrs = hoursOut(ev);
@@ -17274,40 +17311,24 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
   // writes and reads role='sub_goalie' directly, so its own call sites
   // keep the exact original role-only filter, unconditionally.
   const usesIndependentGoalieAxis = leagueId !== SMBHL_LEAGUE_ID && sportHasGoalie(cfg.sportType);
-  const poolCondition = usesIndependentGoalieAxis
-    ? (need === 'goalie' ? `role = 'sub_skater' AND is_goalie = 1` : `role = 'sub_skater' AND is_goalie != 1`)
-    : `role = ?`;
-  const poolBinds = usesIndependentGoalieAxis ? [] : [need === 'goalie' ? 'sub_goalie' : 'sub_skater'];
-  const pool = (await env.DB.prepare(
-    `SELECT player_id FROM contacts
-      WHERE ${poolCondition} AND league_id = ? AND opted_out = 0 AND dormant = 0 AND email IS NOT NULL
-        AND player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)
-        AND player_id NOT IN (SELECT player_id FROM availability WHERE event_id = ?)
-      ORDER BY answered_ever DESC, name`
-  ).bind(...poolBinds, leagueId, ev.id, ev.id).all()).results || [];
-
-  if (!pool.length) return { invited: 0, reason: 'no-eligible-subs' };
-
-  for (const p of pool) {
-    await enqueue(env, {
-      kind: 'sub_call', event_id: ev.id, player_id: p.player_id, team,
-      dedup_key: `call:${ev.id}:${need}:${p.player_id}`,
-      payload: { need }, delayMin: 0, league_id: leagueId,
-      // Part 16: this is a live shortage just created by a real
-      // person's own action, not a scheduled/routine send -- see
-      // enqueue's own comment for why quiet hours shouldn't silently
-      // delay it for hours despite delayMin: 0 already asking for
-      // "now".
-      skipQuietHours: true
-    });
-  }
+  // Sub-call rework: this used to be its own copy of the pool query
+  // (ordered by answered_ever, name only, and -- unlike callSubs --
+  // never excluding subs already invited for this event, so every later
+  // OUT re-invited the whole pool once the 10-minute window passed). It
+  // now uses the one shared callSubs(): same responsiveness ordering,
+  // same already-invited exclusion (the two-invite limit), same urgency-
+  // based wave timing, same eligibility (active, not opted out, not
+  // dormant). skipQuietHours: a real person's action just created this
+  // shortage (see enqueue's own comment).
+  const invited = await callSubs(env, ev, team, need, 0, leagueId, usesIndependentGoalieAxis, true, true);
+  if (!invited) return { invited: 0, reason: 'no-eligible-subs' };
   // Sends right away — scoped to THIS event only (filterEventId), so a
   // player's own RSVP action never has the side effect of also flushing
   // unrelated pending mail (SMBHL's or another league's) that happened to
   // be due at the same moment.
   await drain(env, 40, ev.id);
 
-  return { invited: pool.length, reason: 'invited' };
+  return { invited, reason: 'invited' };
 }
 
 /* ============================================================
