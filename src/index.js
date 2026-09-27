@@ -10019,11 +10019,13 @@ async function enqueue(env, { kind, event_id, player_id = null, team = null,
         WHERE dedup_key = ? AND sent_at IS NULL AND cancelled = 0`
     ).bind(dedup_key).run();
   }
+  // quiet_exempt (migrate-053): remembered so drain() does not hold at send
+  // time what the caller deliberately sent straight away.
   await env.DB.prepare(
-    `INSERT INTO outbox (kind,event_id,player_id,team,dedup_key,payload,send_after,created_at,league_id)
-     VALUES (?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO outbox (kind,event_id,player_id,team,dedup_key,payload,send_after,created_at,league_id,quiet_exempt)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
   ).bind(kind, event_id, player_id, team, dedup_key,
-         JSON.stringify(payload), after, now.toISOString(), league_id).run();
+         JSON.stringify(payload), after, now.toISOString(), league_id, skipQuietHours ? 1 : 0).run();
 }
 
 async function cancelPending(env, dedup_key) {
@@ -11065,7 +11067,26 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
     }
     return dataJsonCache;
   };
+  // Quiet hours at SEND time too, in the row's league's local time: a row
+  // laid out before a settings change, a retry, or anything else that
+  // comes due inside the window waits for its end (quiet_exempt rows --
+  // real-time actions, simple-model league mail -- are sent as queued).
+  const quietUntilCache = new Map();
+  const quietUntil = async leagueId => {
+    const key = leagueId && leagueId !== SMBHL_LEAGUE_ID ? leagueId : SMBHL_LEAGUE_ID;
+    if (!quietUntilCache.has(key)) quietUntilCache.set(key, (await afterQuiet(env, new Date(now), key === SMBHL_LEAGUE_ID ? null : key)).toISOString());
+    return quietUntilCache.get(key);
+  };
   for (const m of due) {
+    if (!m.quiet_exempt) {
+      const until = await quietUntil(m.league_id);
+      if (until > now) {
+        await env.DB.prepare(
+          'UPDATE outbox SET send_after = ?, next_attempt_at = CASE WHEN next_attempt_at IS NULL THEN NULL ELSE ? END WHERE id = ?'
+        ).bind(until, until, m.id).run();
+        continue;
+      }
+    }
     try {
       const payload = JSON.parse(m.payload || '{}');
       // Pre-rendered mail (enqueuePrerenderedMail): the league product's

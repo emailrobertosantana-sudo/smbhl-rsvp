@@ -112,15 +112,28 @@ const QUIET_FROM = 23, QUIET_TO = 7;
 // settingsLeagueId: a league on the advanced model holds its mail for ITS
 // OWN quiet hours. Every other caller passes nothing and reads SMBHL's
 // settings, exactly as before.
+//
+// Quiet hours are LOCAL time (America/Toronto, localParts), from
+// quiet_hours_start up to quiet_hours_end. A window may wrap midnight
+// (23 -> 7, the default) or not (0 -> 6); start == end means none.
+// Until the week-4 investigation this only understood a wrapping window:
+// for 0 -> 6 its "allowed" test (hour >= 6 && hour < 0) could never be
+// true, so after 24 half-hour steps it returned the time 12 hours later,
+// wherever that fell -- production's week-4 sub calls were all pushed
+// exactly 12 h, several of them to 01:30-05:30 Montreal.
+export function inQuietHours(hour, from, to) {
+  if (from === to) return false;
+  return from < to ? (hour >= from && hour < to) : (hour >= from || hour < to);
+}
 export async function afterQuiet(env, d, settingsLeagueId = null) {
   const settings = await getEmailSettings(env.DB, settingsLeagueId);
   if (!settings.quiet_hours_enabled) return new Date(d);
   const from = Number.isFinite(settings.quiet_hours_start) ? settings.quiet_hours_start : QUIET_FROM;
   const to = Number.isFinite(settings.quiet_hours_end) ? settings.quiet_hours_end : QUIET_TO;
   let t = new Date(d);
-  for (let i = 0; i < 24; i++) {
-    const p = localParts(t);
-    if (p.hour >= to && p.hour < from) return t;
+  // At most 24 h of quiet: step in half hours until outside the window.
+  for (let i = 0; i < 49; i++) {
+    if (!inQuietHours(localParts(t).hour, from, to)) return t;
     t = new Date(t.getTime() + 30 * 60000);
   }
   return t;
