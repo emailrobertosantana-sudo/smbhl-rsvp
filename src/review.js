@@ -1804,27 +1804,27 @@ function addPlayerRow(gIdx, side) {
       '<div class="player-name-cell">' +
         '<span id="plabel_' + gIdx + '_' + side + '_' + pIdx + '" class="player-name-label" style="font-weight:600;">' + dict.newPlayerDefault + '</span>' +
         '<span id="pbadge_' + gIdx + '_' + side + '_' + pIdx + '" class="badge-new">' + dict.newBadge + '</span>' +
-        '<button type="button" class="btn-edit" onclick="toggleEditPlayer(' + gIdx + ', \'' + side + '\', ' + pIdx + ')">✏️</button>' +
+        '<button type="button" class="btn-edit" onclick="toggleEditPlayer(' + gIdx + ', \\'' + side + '\\', ' + pIdx + ')">✏️</button>' +
       '</div>' +
       '<div id="pedit_' + gIdx + '_' + side + '_' + pIdx + '" class="player-edit-row" style="display:flex;">' +
-        '<select onchange="onPlayerSelectChange(this, ' + gIdx + ', \'' + side + '\', ' + pIdx + ')">' +
+        '<select onchange="onPlayerSelectChange(this, ' + gIdx + ', \\'' + side + '\\', ' + pIdx + ')">' +
           '<option value="__NEW__" class="opt-new-player" selected>' + dict.newPlayerOption + '</option>' +
           '<optgroup label="' + dict.optgrpPlayers + '" class="optgrp-players">' + optionsHtml + '</optgroup>' +
         '</select>' +
-        '<input type="text" id="pname_' + gIdx + '_' + side + '_' + pIdx + '" value="" placeholder="' + dict.namePlaceholder + '" style="display:inline-block;" oninput="onPlayerNameInput(this, ' + gIdx + ', \'' + side + '\', ' + pIdx + ')">' +
+        '<input type="text" id="pname_' + gIdx + '_' + side + '_' + pIdx + '" value="" placeholder="' + dict.namePlaceholder + '" style="display:inline-block;" oninput="onPlayerNameInput(this, ' + gIdx + ', \\'' + side + '\\', ' + pIdx + ')">' +
       '</div>' +
       '<div id="pwarn_' + gIdx + '_' + side + '_' + pIdx + '" class="player-warn-msg"></div>' +
     '</td>' +
-    '<td style="text-align:center;"><input type="checkbox" checked onchange="toggleAbsent(this, ' + gIdx + ', \'' + side + '\', ' + pIdx + ')"></td>' +
+    '<td style="text-align:center;"><input type="checkbox" checked onchange="toggleAbsent(this, ' + gIdx + ', \\'' + side + '\\', ' + pIdx + ')"></td>' +
     '<td style="text-align:center;"><div class="counter">' +
-      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \'' + side + '\', ' + pIdx + ', \'goals\', -1)">–</button>' +
+      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \\'' + side + '\\', ' + pIdx + ', \\'goals\\', -1)">–</button>' +
       '<input type="number" class="counter-input" value="0" min="0" oninput="recalc()">' +
-      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \'' + side + '\', ' + pIdx + ', \'goals\', 1)">+</button>' +
+      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \\'' + side + '\\', ' + pIdx + ', \\'goals\\', 1)">+</button>' +
     '</div></td>' +
     '<td style="text-align:center;"><div class="counter">' +
-      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \'' + side + '\', ' + pIdx + ', \'assists\', -1)">–</button>' +
+      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \\'' + side + '\\', ' + pIdx + ', \\'assists\\', -1)">–</button>' +
       '<input type="number" class="counter-input" value="0" min="0" oninput="recalc()">' +
-      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \'' + side + '\', ' + pIdx + ', \'assists\', 1)">+</button>' +
+      '<button type="button" class="btn-step" onclick="stepVal(' + gIdx + ', \\'' + side + '\\', ' + pIdx + ', \\'assists\\', 1)">+</button>' +
     '</div></td>';
 
   document.getElementById('tbody_' + gIdx + '_' + side).appendChild(row);
@@ -2083,13 +2083,9 @@ async function publishReview() {
       let msg = dict.alertPublishSuccess;
       if (be.status === 'deferred') {
         const when = new Date(be.until).toLocaleString(currentLang === 'en' ? 'en-CA' : 'fr-CA', { timeZone: 'America/Toronto', dateStyle: 'medium', timeStyle: 'short' });
-        msg += '
-
-' + dict.backupEmailDeferred.replace('{date}', when);
+        msg += String.fromCharCode(10, 10) + dict.backupEmailDeferred.replace('{date}', when);
       } else if (be.status === 'failed') {
-        msg += '
-
-' + dict.backupEmailFailed.replace('{error}', be.error || '');
+        msg += String.fromCharCode(10, 10) + dict.backupEmailFailed.replace('{error}', be.error || '');
       }
       alert(msg);
       window.location.reload();
