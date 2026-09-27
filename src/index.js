@@ -11233,15 +11233,8 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
                   const pData = dj.players.find(p => p.id === m.player_id);
                   gamesPlayed = Number(pData?.seasons?.[ev.season]?.gp || 0);
                 }
-                const subGpRow = await env.DB.prepare(
-                  `SELECT count(*) as count
-                     FROM rsvp r JOIN events e ON e.id = r.event_id
-                    WHERE e.season = ? AND r.player_id = ? AND r.status = 'in'
-                      AND (e.state = 'done' OR (e.week IS NOT NULL AND ? IS NOT NULL AND e.week < ?))
-                      AND e.id != ?`
-                ).bind(ev.season, m.player_id, ev.week, ev.week, ev.id).first();
-                const gpFromRsvp = (Number(subGpRow?.count || 0)) * 2;
-                gamesPlayed = Math.max(gamesPlayed, gpFromRsvp);
+                // Games on published scoresheets only (data.json season
+                // stats, in games) -- same rule as the finance page.
 
                 const priceSub = Number(pricing?.price_sub_player ?? 5);
                 totalDue = gamesPlayed * priceSub;
@@ -19788,44 +19781,24 @@ async function handleFinancesData(req, env, url) {
   const duesRows = (await env.DB.prepare('SELECT * FROM player_dues WHERE season = ?').bind(season).all()).results || [];
   const duesMap = new Map(duesRows.map(r => [r.player_id, r]));
 
-  // 3. Sub games played in this season from completed RSVP events
-  const subGpRows = (await env.DB.prepare(
-    `SELECT r.player_id, count(*) as gp
+  // 3. Games a sub is charged for: ONLY games confirmed by a PUBLISHED
+  // scoresheet -- the season stats in data.json (gp counts games, not
+  // nights), never nights they were merely marked "in". A sub marked in
+  // by a teammate who then did not play (Elliot Locas, week 3) is not
+  // charged. A converted regular's earlier games are in the same stats.
+  //
+  // A night played but not yet published cannot be charged until its
+  // sheet is in: the game is 'locked' after it starts and only becomes
+  // 'done' when its scoresheet is published. Those nights are counted
+  // here (awaiting_sheet_nights) so the page can say so instead of
+  // silently showing nothing.
+  const awaitingRows = (await env.DB.prepare(
+    `SELECT r.player_id, count(*) AS n
        FROM rsvp r JOIN events e ON e.id = r.event_id
-      WHERE e.season = ? AND r.role = 'sub' AND r.status = 'in' AND e.state = 'done' AND r.player_id IS NOT NULL
+      WHERE e.season = ? AND e.state = 'locked' AND r.status = 'in' AND r.player_id IS NOT NULL
       GROUP BY r.player_id`
   ).bind(season).all()).results || [];
-  const subGpMap = new Map(subGpRows.map(r => [r.player_id, r.gp]));
-
-  // Every game each player actually played this season (status 'in' on a
-  // completed event -- cancelled events never reach 'done'), WHATEVER
-  // their rsvp role was at the time. A player who is a SUB now is charged
-  // the sub rate for all of these: a regular who converts to sub mid-
-  // season pays per game for the games they already played as a regular
-  // (their rsvp rows from then say 'roster', which the sub count above
-  // never sees), with anything they already paid toward the season fee
-  // credited below. For someone who was always a sub this is the same
-  // count as subGpMap, so their dues don't change.
-  const playedGpRows = (await env.DB.prepare(
-    `SELECT r.player_id, count(*) as gp
-       FROM rsvp r JOIN events e ON e.id = r.event_id
-      WHERE e.season = ? AND r.status = 'in' AND e.state = 'done' AND r.player_id IS NOT NULL
-      GROUP BY r.player_id`
-  ).bind(season).all()).results || [];
-  const playedGpMap = new Map(playedGpRows.map(r => [r.player_id, r.gp]));
-
-  // The counts above are EVENTS (one event = one night); dues are per
-  // GAME. SMBHL plays gamesPerNight games a night (2 unless the season
-  // sets its own -- season_config.js). A sub whose dues row recorded a
-  // payment before this rule (migrate-052.sql, settled_nights) keeps
-  // those nights at one game each: they're settled. Later nights count
-  // in full.
-  const nightGames = gamesPerNight(getSeasonConfig(d, season), SMBHL_LEAGUE_ID);
-  const nightsToGames = (pid, nights) => {
-    const n = Number(nights || 0);
-    const settled = Math.min(n, Number(duesMap.get(pid)?.settled_nights || 0));
-    return settled + (n - settled) * nightGames;
-  };
+  const awaitingMap = new Map(awaitingRows.map(r => [r.player_id, r.n]));
 
   // 4. Contacts
   const contactsList = (await env.DB.prepare(
@@ -19847,22 +19820,21 @@ async function handleFinancesData(req, env, url) {
       // The contact decides; data.json's season team only when there is no contact.
       const fromContact = contactIsSub(c);
       const isSub = fromContact !== null ? fromContact : (!team || (sData && sData.team === null));
+      // Published-scoresheet games only (see step 3).
       let gamesPlayed = 0;
-      const rsvpGp = nightsToGames(p.id, (isSub ? playedGpMap : subGpMap).get(p.id));
       if (c && c.role === 'sub_goalie') {
-        gamesPlayed = Math.max(gData?.gp ?? sData?.gp ?? 0, rsvpGp);
+        gamesPlayed = gData?.gp ?? sData?.gp ?? 0;
       } else if (isGoalie && gData && sData && sData.gp === gData.gp && (sData.g || 0) === 0 && (sData.a || 0) === 0) {
         gamesPlayed = gData.gp;
       } else {
-        const gpFromData = (sData?.gp ?? 0) + (gData?.gp ?? 0);
-        gamesPlayed = Math.max(gpFromData, rsvpGp);
+        gamesPlayed = (sData?.gp ?? 0) + (gData?.gp ?? 0);
       }
 
-      // If a player is a sub or dropped regular with team: null:
-      // Only include them if they played games or have recorded dues/payments
+      // A sub is listed if they have a confirmed game, a dues row, or a
+      // night awaiting its scoresheet.
       if (isSub) {
         const hasDuesRecord = duesMap.has(p.id);
-        if (gamesPlayed === 0 && !hasDuesRecord) {
+        if (gamesPlayed === 0 && !hasDuesRecord && !awaitingMap.get(p.id)) {
           continue;
         }
         processedPlayerIds.add(p.id);
@@ -19904,8 +19876,9 @@ async function handleFinancesData(req, env, url) {
       const c = contactMap.get(rr.player_id);
       const isSub = (c && c.is_sub === 1) || rr.is_sub === 1;
       const isGoalie = c ? (c.is_goalie === 1 || c.role === 'sub_goalie') : rr.is_goalie === 1;
-      const gp = nightsToGames(rr.player_id, (isSub ? playedGpMap : subGpMap).get(rr.player_id));
-      if (isSub && gp === 0 && !duesMap.has(rr.player_id)) {
+      // Not in data.json: no published game yet.
+      const gp = 0;
+      if (isSub && !duesMap.has(rr.player_id) && !awaitingMap.get(rr.player_id)) {
         continue;
       }
       processedPlayerIds.add(rr.player_id);
@@ -19921,11 +19894,11 @@ async function handleFinancesData(req, env, url) {
     }
   }
 
-  // Gather any other subs with completed games or custom dues
-  for (const [pid, gp] of subGpMap.entries()) {
-    if (!processedPlayerIds.has(pid) && gp > 0) {
+  // Any other sub with a night awaiting its scoresheet (no published game yet).
+  for (const [pid] of awaitingMap.entries()) {
+    const c = contactMap.get(pid);
+    if (!processedPlayerIds.has(pid) && contactIsSub(c) !== false) {
       processedPlayerIds.add(pid);
-      const c = contactMap.get(pid);
       const isGoalie = c ? (c.is_goalie === 1 || c.role === 'sub_goalie') : false;
       playerEntries.push({
         player_id: pid,
@@ -19934,7 +19907,7 @@ async function handleFinancesData(req, env, url) {
         role: isGoalie ? 'sub_goalie' : 'sub_skater',
         is_goalie: isGoalie,
         is_sub: true,
-        games_played: nightsToGames(pid, gp)
+        games_played: 0
       });
     }
   }
@@ -19953,7 +19926,7 @@ async function handleFinancesData(req, env, url) {
         role: isSub ? (isGoalie ? 'sub_goalie' : 'sub_skater') : (isGoalie ? 'roster_goalie' : 'roster_skater'),
         is_goalie: isGoalie,
         is_sub: isSub,
-        games_played: isSub ? nightsToGames(pid, playedGpMap.get(pid)) : null
+        games_played: isSub ? 0 : null
       });
     }
   }
@@ -19961,7 +19934,7 @@ async function handleFinancesData(req, env, url) {
   // 7. Calculate dues for each player
   const players = playerEntries.map(p => {
     const dues = duesMap.get(p.player_id) || {};
-    const gamesPlayed = p.games_played != null ? p.games_played : nightsToGames(p.player_id, subGpMap.get(p.player_id));
+    const gamesPlayed = p.games_played != null ? p.games_played : 0;
 
     let basePrice = 0;
     if (!p.is_sub) {
@@ -19999,6 +19972,9 @@ async function handleFinancesData(req, env, url) {
       is_goalie: p.is_goalie,
       is_sub: p.is_sub,
       games_played: gamesPlayed,
+      // Nights marked "in" on a game played but not yet published: not
+      // charged until the scoresheet is in (step 3).
+      awaiting_sheet_nights: awaitingMap.get(p.player_id) || 0,
       base_price: basePrice,
       custom_due: customDue,
       total_due: totalDue,
@@ -20463,6 +20439,7 @@ async function financesPage(env = null, isAuthed = false) {
       roleSubGoalie: 'Sub Gardien',
       roleSubPlayer: 'Sub Joueur',
       customDueTitle: 'Montant personnalisé (différent du tarif calculé)',
+      awaitingSheet: '{n} soir(s) en attente de la feuille de match : pas encore facturé(s)',
       standardDueTitle: 'Tarif standard calculé',
       promptNewSeason: 'Nom de la nouvelle saison (ex: Winter 2027, Spring 2027) :',
       errDescRequired: 'Veuillez entrer une description.',
@@ -20556,6 +20533,7 @@ async function financesPage(env = null, isAuthed = false) {
       roleSubGoalie: 'Sub Goalie',
       roleSubPlayer: 'Sub Player',
       customDueTitle: 'Custom amount (overriding standard rate)',
+      awaitingSheet: '{n} night(s) awaiting the scoresheet: not charged yet',
       standardDueTitle: 'Standard calculated fee',
       promptNewSeason: 'New season name (e.g. Winter 2027, Spring 2027):',
       errDescRequired: 'Please enter a description.',
@@ -20761,7 +20739,9 @@ async function financesPage(env = null, isAuthed = false) {
       const roleHtml = '<span style="color:' + roleColor + '; font-weight:600;">' + esc(roleLabel) + '</span>';
 
       const gpVal = p.games_played ?? 0;
-      const gpDisplay = '<span class="by" style="font-weight:700; color:' + (p.is_sub ? 'var(--blue)' : 'var(--ink)') + ';">' + gpVal + '</span>';
+      const awaitingNote = p.is_sub && p.awaiting_sheet_nights > 0 ? t('awaitingSheet').replace('{n}', p.awaiting_sheet_nights) : '';
+      const gpDisplay = '<span class="by" style="font-weight:700; color:' + (p.is_sub ? 'var(--blue)' : 'var(--ink)') + ';">' + gpVal + '</span>' +
+        (awaitingNote ? ' <span class="awaiting-sheet" title="' + esc(awaitingNote) + '" style="color:var(--orange); font-size:12px; white-space:nowrap;">⏳ ' + esc(awaitingNote) + '</span>' : '');
       
       const dueVal = p.total_due;
       const isCustom = p.custom_due !== null && p.custom_due !== undefined;
@@ -23312,15 +23292,8 @@ async function handleSendSampleInvites(req, env) {
           }
         } catch (_) {}
       }
-      const subGpRow = await env.DB.prepare(
-        `SELECT count(*) as count
-           FROM rsvp r JOIN events e ON e.id = r.event_id
-          WHERE e.season = ? AND r.player_id = ? AND r.status = 'in'
-            AND (e.state = 'done' OR (e.week IS NOT NULL AND ? IS NOT NULL AND e.week < ?))
-            AND e.id != ?`
-      ).bind(ev.season, subId, ev.week, ev.week, ev.id).first();
-      const gpFromRsvp = (Number(subGpRow?.count || 0)) * 2;
-      gamesPlayed = Math.max(gamesPlayed, gpFromRsvp);
+      // Games on published scoresheets only (data.json season stats, in
+      // games) -- same rule as the finance page.
       const priceSub = Number(pricing?.price_sub_player ?? 5);
       totalDue = gamesPlayed * priceSub;
     }

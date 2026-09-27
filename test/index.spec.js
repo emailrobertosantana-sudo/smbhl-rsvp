@@ -4747,6 +4747,15 @@ describe("SMBHL Worker", () => {
 					// 1. Sub skater who owes money (played Week 1, unpaid)
 					await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, role, is_sub, token_salt) VALUES ('P_SUB_OWES', 'Armando Sub', 'armando_sub@test.com', 'sub', 1, 'salt_armando')").run();
 					await env.DB.prepare("INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at) VALUES ('ev-sub-w1', 'P_SUB_OWES', 'White', 'in', 'sub', 'sheet', ?)").bind(now).run();
+
+					// Sub dues count only games on published scoresheets (data.json
+					// season stats, in games): this sub's week of two games is published.
+					{
+						const dj = JSON.parse((await env.SHEETS_KV.get('data_json')) || '{"seasons":[],"players":[]}');
+						dj.players = (dj.players || []).filter(p => p.id !== 'P_SUB_OWES');
+						dj.players.push({ id: 'P_SUB_OWES', name: 'Armando Sub', seasons: { [season]: { team: null, gp: 2, g: 0, a: 0, pts: 0 } } });
+						await env.SHEETS_KV.put('data_json', JSON.stringify(dj));
+					}
 					await env.DB.prepare("INSERT INTO outbox (kind, event_id, player_id, team, dedup_key, payload, send_after, created_at) VALUES ('invite', 'ev-sub-w2', 'P_SUB_OWES', NULL, 'invite:sub_owes', '{\"is_sub\":true}', ?, ?)").bind(now, now).run();
 
 					// 2. Sub skater who paid (played Week 1, paid $10)
@@ -4813,6 +4822,15 @@ describe("SMBHL Worker", () => {
 					// Sub player who played Week 2
 					await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, role, is_sub, token_salt) VALUES ('P0036', 'Armando Tempestilli', 'armando@test.com', 'sub', 1, 'salt_armando')").run();
 					await env.DB.prepare("INSERT OR REPLACE INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at) VALUES ('2026-09-20', 'P0036', 'White', 'in', 'sub', 'sheet', ?)").bind(now).run();
+
+					// Sub dues count only games on published scoresheets (data.json
+					// season stats, in games): this sub's week of two games is published.
+					{
+						const dj = JSON.parse((await env.SHEETS_KV.get('data_json')) || '{"seasons":[],"players":[]}');
+						dj.players = (dj.players || []).filter(p => p.id !== 'P0036');
+						dj.players.push({ id: 'P0036', name: 'Armando Tempestilli', seasons: { [season]: { team: null, gp: 2, g: 0, a: 0, pts: 0 } } });
+						await env.SHEETS_KV.put('data_json', JSON.stringify(dj));
+					}
 
 					const req = new Request("http://example.com/api/send-sample-invites", {
 						method: "POST",

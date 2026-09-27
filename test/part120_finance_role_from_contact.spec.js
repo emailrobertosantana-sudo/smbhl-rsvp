@@ -38,7 +38,8 @@ beforeAll(async () => {
   // data.json exactly as production has it: a published scoresheet nulled
   // both regulars' season team (and logged their games under "with").
   await env.SHEETS_KV.put('data_json', JSON.stringify({ current_season: SEASON, seasons: [{ name: SEASON, standings: [], fixtures: [] }], players: [
-    { id: 'P0050', name: 'Carlo Russo', seasons: { [SEASON]: { team: null, pos: 'D', gp: 6, g: 3, a: 4, pts: 7, with: { White: { gp: 2, g: 1, a: 1, pts: 2 } } } } },
+    // Carlo as repaired in production (B1): White, his Red game under with.
+    { id: 'P0050', name: 'Carlo Russo', seasons: { [SEASON]: { team: 'White', pos: 'D', gp: 6, g: 3, a: 4, pts: 7, with: { Red: { gp: 1, g: 0, a: 0, pts: 0 } } } } },
     { id: 'P0291', name: 'Brandon Cummings', seasons: { [SEASON]: { team: null, pos: 'F', gp: 2, g: 1, a: 0, pts: 1, with: { Red: { gp: 2, g: 1, a: 0, pts: 1 } } } } },
     { id: 'P0301', name: 'Elliot Locas', seasons: { [SEASON]: { team: null, pos: null, gp: 2, g: 5, a: 0, pts: 5, with: { Black: { gp: 2, g: 5, a: 0, pts: 5 } } } } }
   ] }));
@@ -64,7 +65,7 @@ beforeAll(async () => {
 describe('Regular or sub comes from the contact record', () => {
   it('a regular who filled in for another team is labelled a regular and owes the season fee (Carlo)', async () => {
     const row = await finance();
-    expect(row('P0050')).toMatchObject({ is_sub: false, role: 'roster_skater', total_due: 170, amount_paid: 170, outstanding: 0, credit: 0, status: 'paid' });
+    expect(row('P0050')).toMatchObject({ is_sub: false, role: 'roster_skater', team: 'White', total_due: 170, amount_paid: 170, outstanding: 0, credit: 0, status: 'paid' });
   });
 
   it("the same for a regular whose due an admin set by hand (Brandon): a regular, and the admin's amount stands", async () => {
@@ -72,9 +73,9 @@ describe('Regular or sub comes from the contact record', () => {
     expect(row('P0291')).toMatchObject({ is_sub: false, role: 'roster_skater', total_due: 170, amount_paid: 170, status: 'paid' });
   });
 
-  it('a real sub is still charged per game: two nights = four games x $5 (Elliot)', async () => {
+  it('a real sub is still charged per game -- only games on published sheets: 2 games x $5 (Elliot; the week-3 night he was marked in is not on the sheets)', async () => {
     const row = await finance();
-    expect(row('P0301')).toMatchObject({ is_sub: true, role: 'sub_skater', games_played: 4, total_due: 20, amount_paid: 0, outstanding: 20 });
+    expect(row('P0301')).toMatchObject({ is_sub: true, role: 'sub_skater', games_played: 2, total_due: 10, amount_paid: 0, outstanding: 10 });
   });
 
   it('a regular known only from a dues row is a regular owing the season fee', async () => {

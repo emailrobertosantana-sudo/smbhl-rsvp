@@ -51,10 +51,19 @@ beforeAll(async () => {
   await env.DB.prepare(`INSERT INTO events (id, date, season, week, state, start_time, league_id) VALUES (?, ?, ?, 6, 'cancelled', '20:30', 'smbhl')`).bind(CANCELLED, CANCELLED, SEASON).run();
   await env.DB.prepare(`INSERT INTO events (id, date, season, week, state, start_time, league_id) VALUES (?, ?, ?, 7, 'open', '20:30', 'smbhl')`).bind(OPEN, OPEN, SEASON).run();
   await env.DB.prepare(`INSERT INTO season_pricing (season, price_player, price_goalie, price_sub_player, price_sub_goalie, etransfer_phone, updated_at) VALUES (?, 170, 85, 5, 3, '', ?)`).bind(SEASON, new Date().toISOString()).run();
-  // In the league's records (data.json) but, like Yannick, with no current-season stats.
+  // Charged games come ONLY from published scoresheets (the season stats in
+  // data.json, counted in games) -- sub dues task B2. The published stats
+  // match the nights played below at two games a night; the cancelled and
+  // upcoming nights were never published, so they are not in them.
+  const fall = (team, gp) => ({ 'Winter 2026': { team: 'Red', gp: 10 }, [SEASON]: { team, gp, g: 0, a: 0, pts: 0 } });
   await env.SHEETS_KV.put('data_json', JSON.stringify({
     current_season: SEASON, seasons: [{ name: SEASON, standings: [], fixtures: [] }],
-    players: ['CONV3', 'CONVPAID', 'CONVG', 'ALWAYSSUB'].map(id => ({ id, name: id, seasons: { 'Winter 2026': { team: 'Red', gp: 10 } } }))
+    players: [
+      { id: 'CONV3', name: 'CONV3', seasons: fall('Red', 6) },
+      { id: 'CONVPAID', name: 'CONVPAID', seasons: fall('Red', 10) },
+      { id: 'CONVG', name: 'CONVG', seasons: { 'Winter 2026': { team: 'Red', gp: 10 } }, gseasons: { [SEASON]: { team: 'Red', gp: 4, ga: 0, w: 0, l: 0, t: 0, so: 0 } } },
+      { id: 'ALWAYSSUB', name: 'ALWAYSSUB', seasons: fall(null, 4) }
+    ]
   }));
 
   // A: regular, no contacts row (SMBHL seeds roster rsvp from data.json), 3 games + a cancelled one + an upcoming one.

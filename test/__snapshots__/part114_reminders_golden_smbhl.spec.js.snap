@@ -4961,7 +4961,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
           "to": "r0025@example.com",
         },
         {
-          "h": "5af257df944cceb5",
+          "h": "6cc6301aefc681f6",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "s0001@example.com",
         },
