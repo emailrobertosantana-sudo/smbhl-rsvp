@@ -11135,7 +11135,11 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       }
 
       let to, name = '', link = '', playerTeam = m.team;
-      if (m.kind === 'summary' || m.kind === 'season_recap_prompt') {
+      // Admin mail: any row with no player (the 'created' notice, the
+      // summary, the season-recap prompt -- and any future admin kind) goes
+      // to the admin. It used to be a list of two kinds, so 'created' fell
+      // through to the player lookup and failed as "contact gone".
+      if (m.kind === 'summary' || m.kind === 'season_recap_prompt' || !m.player_id) {
         to = (payload && payload.to) || (env.ADMIN_EMAIL || ADMIN_EMAIL);
         name = 'Roberto';
         payload.base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';

@@ -6,7 +6,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     "alerts": [
       {
         "key": "alert:1_email(s)_failed_permanently_in_the_last_24_hours",
-        "value": "2026-11-07T16:45:00.000Z",
+        "value": "2026-11-10T23:05:00.000Z",
       },
       {
         "key": "alert:1_message(s)_stuck_in_the_outbox_over_an_hour",
@@ -31,10 +31,6 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       {
         "key": "alert:4_email(s)_failed_permanently_in_the_last_24_hours",
         "value": "2026-11-15T13:35:00.000Z",
-      },
-      {
-        "key": "alert:5_email(s)_failed_permanently_in_the_last_24_hours",
-        "value": "2026-11-15T18:05:00.000Z",
       },
     ],
     "contacts": [
@@ -390,7 +386,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       },
       {
         "day": "2026-11-10",
-        "sent": 39,
+        "sent": 40,
         "sub_calls": 7,
       },
       {
@@ -510,13 +506,13 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     "outbox": [
       {
         "attempts": 1,
-        "cancelled": 1,
+        "cancelled": 0,
         "created_at": "2026-11-07T16:45:00.000Z",
         "dedup_key": "created:smbhl:2026-11-15",
         "defer_reason": null,
-        "error": "contact gone",
+        "error": null,
         "event_id": "smbhl:2026-11-15",
-        "failed_at": "2026-11-07T16:45:00.000Z",
+        "failed_at": null,
         "id": 1,
         "kind": "created",
         "league_id": "smbhl",
@@ -524,7 +520,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         "payload": "{"text":"Semaine 6 — Sunday November 15 2026 10:30 — Aréna Golden\\n33 joueurs au dossier.\\n\\nLiens d'équipe (à partager sur WhatsApp) :\\n\\nRed (Rouge):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Red&t=35d5e6e20315e0910724d5204dfe61e0\\n\\nBlue (Bleu):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Blue&t=f7bf336d6abf8f46d63f42b77ffef89b\\n\\nWhite (Blanc):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=White&t=227396ad6816bf5532a9872f46557948\\n\\nBlack (Noir):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Black&t=e60c2caa6e42ff1bad2895beec531c23\\n"}",
         "player_id": null,
         "send_after": "2026-11-07T16:45:00.000Z",
-        "sent_at": null,
+        "sent_at": "2026-11-07T16:45:00.000Z",
         "team": null,
       },
       {
@@ -4177,13 +4173,13 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       },
       {
         "attempts": 1,
-        "cancelled": 1,
+        "cancelled": 0,
         "created_at": "2026-11-15T18:05:00.000Z",
         "dedup_key": "created:smbhl:2026-11-22",
         "defer_reason": null,
-        "error": "contact gone",
+        "error": null,
         "event_id": "smbhl:2026-11-22",
-        "failed_at": "2026-11-15T18:05:00.000Z",
+        "failed_at": null,
         "id": 194,
         "kind": "created",
         "league_id": "smbhl",
@@ -4191,7 +4187,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         "payload": "{"text":"Semaine 7 — Sunday November 22 2026 10:30 — Aréna Golden\\n33 joueurs au dossier.\\n\\nLiens d'équipe (à partager sur WhatsApp) :\\n\\nRed (Rouge):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Red&t=35d5e6e20315e0910724d5204dfe61e0\\n\\nBlue (Bleu):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Blue&t=f7bf336d6abf8f46d63f42b77ffef89b\\n\\nWhite (Blanc):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=White&t=227396ad6816bf5532a9872f46557948\\n\\nBlack (Noir):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Black&t=e60c2caa6e42ff1bad2895beec531c23\\n"}",
         "player_id": null,
         "send_after": "2026-11-15T18:05:00.000Z",
-        "sent_at": null,
+        "sent_at": "2026-11-15T18:05:00.000Z",
         "team": null,
       },
       {
@@ -4698,19 +4694,19 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-07T16:45:00Z",
       "log": [
-        "cron: created smbhl:2026-11-15 week 6 (33 players) | outbox due=1 sent=0 failed=1 | ALERT: 1 email(s) failed permanently in the last 24 hours",
+        "cron: created smbhl:2026-11-15 week 6 (33 players) | outbox due=1 sent=1 failed=0",
       ],
       "outbox": [
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
       ],
       "sent": [
         {
-          "h": "a58172fb3417c365",
-          "subject": "SMBHL — le système a manqué quelque chose",
+          "h": "ab59d1c27a3abf58",
+          "subject": "Semaine 6 créée / week 6 is up",
           "to": "admin@smbhl.test",
         },
       ],
@@ -4724,7 +4720,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
       ],
       "sent": [],
@@ -4738,7 +4734,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
       ],
       "sent": [],
@@ -4752,7 +4748,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
       ],
       "sent": [],
@@ -4766,7 +4762,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "invite",
@@ -5000,6 +4996,11 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
           "subject": "Noir cherche un gardien / Black needs a goalie",
           "to": "sg002@example.com",
         },
+        {
+          "h": "a58172fb3417c365",
+          "subject": "SMBHL — le système a manqué quelque chose",
+          "to": "admin@smbhl.test",
+        },
       ],
     },
     {
@@ -5011,7 +5012,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "invite",
@@ -5106,7 +5107,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "invite",
@@ -5291,7 +5292,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "invite",
@@ -5481,7 +5482,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "invite",
@@ -5571,7 +5572,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "friday_board",
@@ -5686,7 +5687,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "friday_board",
@@ -5801,7 +5802,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "friday_board",
@@ -5860,7 +5861,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "friday_board",
@@ -5935,7 +5936,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "friday_board",
@@ -6245,7 +6246,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "friday_board",
@@ -6435,7 +6436,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 1,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "friday_board",
@@ -6564,7 +6565,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T18:05:00Z",
       "log": [
-        "cron: lock smbhl:2026-11-15 | created smbhl:2026-11-22 week 7 (33 players) | outbox due=3 sent=0 failed=3 | ALERT: 2 message(s) stuck in the outbox over an hour; 5 email(s) failed permanently in the last 24 hours",
+        "cron: lock smbhl:2026-11-15 | created smbhl:2026-11-22 week 7 (33 players) | outbox due=3 sent=1 failed=2 | ALERT: 2 message(s) stuck in the outbox over an hour; 4 email(s) failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -6585,7 +6586,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 2,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "friday_board",
@@ -6660,8 +6661,8 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "1b2e0ea3e1a6bc6f",
-          "subject": "SMBHL — le système a manqué quelque chose",
+          "h": "2d19e34f4163dbee",
+          "subject": "Semaine 7 créée / week 7 is up",
           "to": "admin@smbhl.test",
         },
       ],
@@ -6669,7 +6670,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T19:00:00Z",
       "log": [
-        "cron: season_recap_prompt smbhl:2026-11-22 | outbox due=1 sent=1 failed=0 | ALERT: 2 message(s) stuck in the outbox over an hour; 5 email(s) failed permanently in the last 24 hours",
+        "cron: season_recap_prompt smbhl:2026-11-22 | outbox due=1 sent=1 failed=0 | ALERT: 2 message(s) stuck in the outbox over an hour; 4 email(s) failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -6690,7 +6691,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         {
           "kind": "created",
           "n": 2,
-          "state": "cancelled",
+          "state": "sent",
         },
         {
           "kind": "friday_board",
