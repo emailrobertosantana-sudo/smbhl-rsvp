@@ -2584,6 +2584,132 @@ applyLanguage(currentLang);
 </html>`;
 }
 
+// ---------------------------------------------------------------------
+// ONE OPEN DRAFT PER WEEK: every way sheets arrive (the scoresheet email,
+// the admin upload, "add a sheet" on a review) goes through here.
+//
+// Why: two uploads for the same week used to produce two drafts. Each
+// request looked for an open draft FIRST, then spent a minute or more on
+// Gemini, and only then inserted its row -- two uploads overlapping (Fall
+// 2026 week 3: one started 16:33:35, the other 16:34:11, the first row was
+// written 16:34:51) both found nothing and both inserted. The lookup also
+// matched any draft of the season, not the week.
+//
+// Now the sheets are parsed first, so the week is known; then the draft
+// for that season+week is found or created (created by one conditional
+// INSERT that only succeeds while no such draft exists), and the new
+// sheets are merged in by a compare-and-swap UPDATE that only applies if
+// the row is still a draft and unchanged since it was read -- otherwise it
+// re-reads and retries, so concurrent uploads accumulate instead of
+// overwriting each other. A published or discarded review is never matched
+// or updated: a later upload for that week starts a new draft.
+//
+// DUPLICATE TEAM SHEETS: a newly received sheet for a team that already
+// has one in the draft REPLACES it (its photo is deleted too): the latest
+// upload is taken as the correction. A sheet whose team could not be read
+// never replaces anything. Within one upload, the later file wins.
+//
+// items: [{ buf, mime, sheet }] -- sheet is the parsed result, or null if
+// parsing failed (the photo is still kept for the admin to see).
+// targetReviewId: merge into exactly this review (the "add a sheet"
+// button) instead of looking one up; refused if it is not a draft.
+const MERGE_ATTEMPTS = 6;
+function newImageKey(reviewId) {
+  return `img:${reviewId}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+}
+export function mergeSheets(existingKeys, existingSheets, incoming, cfg) {
+  const keys = existingKeys.slice();
+  const sheets = existingSheets.slice();
+  const replacedKeys = [];
+  for (const { key, sheet } of incoming) {
+    keys.push(key);
+    if (!sheet) continue;
+    const team = normalizeTeam(sheet.team, cfg);
+    if (team) {
+      for (let i = sheets.length - 1; i >= 0; i--) {
+        if (normalizeTeam(sheets[i].team, cfg) !== team) continue;
+        const [old] = sheets.splice(i, 1);
+        if (old && old.image_key) {
+          const k = keys.indexOf(old.image_key);
+          if (k >= 0) { keys.splice(k, 1); replacedKeys.push(old.image_key); }
+        }
+      }
+    }
+    sheets.push({ ...sheet, image_key: key });
+  }
+  return { keys, sheets, replacedKeys };
+}
+
+export async function addSheetsToDraft(env, { season, week, eventId, cfg, leagueData, items, targetReviewId = null }) {
+  const s0 = (leagueData.seasons || []).find(x => x.name === season) || leagueData.seasons?.[0];
+  const contacts = (await env.DB.prepare('SELECT player_id, name, is_sub, role, is_goalie FROM contacts').all()).results || [];
+  const candidatePlayers = [...contacts, ...(leagueData.players || []).map(p => ({ player_id: p.id, name: p.name }))];
+
+  for (let attempt = 0; attempt < MERGE_ATTEMPTS; attempt++) {
+    let draft;
+    if (targetReviewId) {
+      draft = await env.DB.prepare('SELECT * FROM sheet_reviews WHERE id = ?').bind(targetReviewId).first();
+      if (!draft) return { ok: false, status: 404, error: 'Review not found' };
+      if (draft.status !== 'draft') return { ok: false, status: 409, error: `This review is ${draft.status}; only a draft accepts more sheets.` };
+    } else {
+      draft = await env.DB.prepare(
+        `SELECT * FROM sheet_reviews WHERE season = ? AND week = ? AND status = 'draft' ORDER BY created_at ASC LIMIT 1`
+      ).bind(season, week).first();
+      if (!draft) {
+        const id = 'rev_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+        const created = await env.DB.prepare(
+          `INSERT INTO sheet_reviews (id, event_id, season, week, created_at, status, images_json, extracted_json, validated_json)
+           SELECT ?, ?, ?, ?, ?, 'draft', '[]', '[]', '[]'
+            WHERE NOT EXISTS (SELECT 1 FROM sheet_reviews WHERE season = ? AND week = ? AND status = 'draft')`
+        ).bind(id, eventId || `${season}-${week}`, season, week, new Date().toISOString(), season, week).run();
+        // Someone else created it in the meantime: go round and merge into theirs.
+        if (!(created.meta && created.meta.changes)) continue;
+        draft = await env.DB.prepare('SELECT * FROM sheet_reviews WHERE id = ?').bind(id).first();
+      }
+    }
+
+    const incoming = [];
+    for (const it of items) {
+      const key = newImageKey(draft.id);
+      await env.SHEETS_KV.put(key, it.buf, { expirationTtl: 172800 }); // 48h safety TTL
+      incoming.push({ key, sheet: it.sheet });
+    }
+    const { keys, sheets, replacedKeys } = mergeSheets(JSON.parse(draft.images_json || '[]'), JSON.parse(draft.extracted_json || '[]'), incoming, cfg);
+    const draftWeek = draft.week != null ? draft.week : week;
+    const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(draftWeek));
+    const games = consolidateSheetsIntoGames(sheets, fixtures, candidatePlayers, { config: cfg });
+
+    const res = await env.DB.prepare(
+      `UPDATE sheet_reviews SET images_json = ?, extracted_json = ?, validated_json = ?
+        WHERE id = ? AND status = 'draft' AND images_json IS ? AND extracted_json IS ?`
+    ).bind(JSON.stringify(keys), JSON.stringify(sheets), JSON.stringify(games), draft.id, draft.images_json, draft.extracted_json).run();
+    if (!(res.meta && res.meta.changes)) {
+      // Changed (or published/discarded) under us: drop this attempt's copies and retry.
+      for (const it of incoming) { try { await env.SHEETS_KV.delete(it.key); } catch (_) {} }
+      continue;
+    }
+    for (const k of replacedKeys) { try { await env.SHEETS_KV.delete(k); } catch (_) {} }
+    const teamNames = getTeamNames(cfg);
+    const receivedTeams = [...new Set(sheets.map(x => normalizeTeam(x.team, cfg)).filter(Boolean))];
+    return {
+      ok: true, reviewId: draft.id, week: draftWeek, games, sheets, imageKeys: keys, replaced: replacedKeys.length,
+      teamNames, receivedTeams, missingTeams: teamNames.filter(t => !receivedTeams.includes(t))
+    };
+  }
+  return { ok: false, status: 409, error: 'The draft kept changing while these sheets were being added; please upload again.' };
+}
+
+async function parseItems(env, files) {
+  const items = [];
+  for (const f of files) {
+    let sheet = null;
+    try { sheet = await parseSheetWithGemini(env.GEMINI_API_KEY, f.buf, f.mime); }
+    catch (err) { console.error('Error parsing sheet with Gemini:', err); }
+    items.push({ buf: f.buf, mime: f.mime, sheet });
+  }
+  return items;
+}
+
 export async function cleanupOldReviews(env) {
   try {
     const twoDaysAgo = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
@@ -2636,73 +2762,12 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
       return;
     }
 
-    // Check if an existing open draft exists for this season/week
-    const existingReview = await env.DB.prepare(
-      `SELECT * FROM sheet_reviews WHERE season = ? AND status = 'draft' ORDER BY created_at DESC LIMIT 1`
-    ).bind(season).first();
-
-    const reviewId = existingReview ? existingReview.id : ('rev_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7));
-    const allImageKeys = existingReview ? JSON.parse(existingReview.images_json || '[]') : [];
-    const allParsedSheets = existingReview ? JSON.parse(existingReview.extracted_json || '[]') : [];
-
-    for (let i = 0; i < imageAttachments.length; i++) {
-      const att = imageAttachments[i];
-      const key = `img:${reviewId}:${allImageKeys.length}`;
-      await env.SHEETS_KV.put(key, att.content, {
-        expirationTtl: 172800 // 48h safety TTL
-      });
-      allImageKeys.push(key);
-
-      try {
-        const sheet = await parseSheetWithGemini(env.GEMINI_API_KEY, att.content, att.mimeType || 'image/jpeg');
-        allParsedSheets.push(sheet);
-      } catch (err) {
-        console.error(`Error parsing sheet with Gemini:`, err);
-      }
-    }
-
-    const week = allParsedSheets.find(s => s.week)?.week || existingReview?.week || defaultWeek;
-
-    const teamNames = getTeamNames(cfg);
-    const s0 = (leagueData.seasons || []).find(s => s.name === season) || leagueData.seasons?.[0];
-    const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(week));
-
-    const contacts = (await env.DB.prepare('SELECT player_id, name, is_sub, role, is_goalie FROM contacts').all()).results || [];
-    const candidatePlayers = [
-      ...contacts,
-      ...(leagueData.players || []).map(p => ({ player_id: p.id, name: p.name }))
-    ];
-
-    const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers, { config: cfg });
-    const now = new Date().toISOString();
-
-    const receivedTeams = [...new Set(allParsedSheets.map(s => normalizeTeam(s.team, cfg)).filter(Boolean))];
-    const missingTeams = teamNames.filter(t => !receivedTeams.includes(t));
-
-    if (existingReview) {
-      await env.DB.prepare(
-        `UPDATE sheet_reviews SET images_json = ?, extracted_json = ?, validated_json = ? WHERE id = ?`
-      ).bind(
-        JSON.stringify(allImageKeys),
-        JSON.stringify(allParsedSheets),
-        JSON.stringify(games),
-        reviewId
-      ).run();
-    } else {
-      await env.DB.prepare(
-        `INSERT INTO sheet_reviews (id, event_id, season, week, created_at, status, images_json, extracted_json, validated_json)
-         VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?)`
-      ).bind(
-        reviewId,
-        curEvent?.id || `${season}-${week}`,
-        season,
-        week,
-        now,
-        JSON.stringify(allImageKeys),
-        JSON.stringify(allParsedSheets),
-        JSON.stringify(games)
-      ).run();
-    }
+    // Parse first, then add to (or create) this week's one open draft.
+    const items = await parseItems(env, imageAttachments.map(att => ({ buf: att.content, mime: att.mimeType || 'image/jpeg' })));
+    const week = items.find(x => x.sheet && x.sheet.week)?.sheet.week || defaultWeek;
+    const merged = await addSheetsToDraft(env, { season, week, eventId: curEvent?.id, cfg, leagueData, items });
+    if (!merged.ok) throw new Error(merged.error);
+    const { reviewId, games, teamNames, receivedTeams, missingTeams } = merged;
 
     const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
     // Scoped to this one review only (see admin_auth.js's checkReviewAuth) —
@@ -2799,70 +2864,17 @@ export async function handleReviewUpload(req, env) {
       return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
     }
 
-    // Check existing draft
-    const existingReview = await env.DB.prepare(
-      `SELECT * FROM sheet_reviews WHERE season = ? AND status = 'draft' ORDER BY created_at DESC LIMIT 1`
-    ).bind(season).first();
-
-    const reviewId = existingReview ? existingReview.id : ('rev_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7));
-    const allImageKeys = existingReview ? JSON.parse(existingReview.images_json || '[]') : [];
-    const allParsedSheets = existingReview ? JSON.parse(existingReview.extracted_json || '[]') : [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    const received = [];
+    for (const file of files) {
       if (!file || typeof file.arrayBuffer !== 'function' || file.size === 0) continue;
-      const buf = await file.arrayBuffer();
-      const mime = file.type || 'image/jpeg';
-      const key = `img:${reviewId}:${allImageKeys.length}`;
-      await env.SHEETS_KV.put(key, buf, { expirationTtl: 172800 });
-      allImageKeys.push(key);
-
-      try {
-        const sheet = await parseSheetWithGemini(env.GEMINI_API_KEY, buf, mime);
-        allParsedSheets.push(sheet);
-      } catch (err) {
-        console.error('Error parsing uploaded file with Gemini:', err);
-      }
+      received.push({ buf: await file.arrayBuffer(), mime: file.type || 'image/jpeg' });
     }
-
-    const week = allParsedSheets.find(s => s.week)?.week || existingReview?.week || defaultWeek;
-
-    const s0 = (leagueData.seasons || []).find(s => s.name === season) || leagueData.seasons?.[0];
-    const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(week));
-
-    const contacts = (await env.DB.prepare('SELECT player_id, name, is_sub, role, is_goalie FROM contacts').all()).results || [];
-    const candidatePlayers = [
-      ...contacts,
-      ...(leagueData.players || []).map(p => ({ player_id: p.id, name: p.name }))
-    ];
-
-    const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers, { config: cfg });
-    const now = new Date().toISOString();
-
-    if (existingReview) {
-      await env.DB.prepare(
-        `UPDATE sheet_reviews SET images_json = ?, extracted_json = ?, validated_json = ? WHERE id = ?`
-      ).bind(
-        JSON.stringify(allImageKeys),
-        JSON.stringify(allParsedSheets),
-        JSON.stringify(games),
-        reviewId
-      ).run();
-    } else {
-      await env.DB.prepare(
-        `INSERT INTO sheet_reviews (id, event_id, season, week, created_at, status, images_json, extracted_json, validated_json)
-         VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?)`
-      ).bind(
-        reviewId,
-        curEvent?.id || `${season}-${week}`,
-        season,
-        week,
-        now,
-        JSON.stringify(allImageKeys),
-        JSON.stringify(allParsedSheets),
-        JSON.stringify(games)
-      ).run();
-    }
+    // Parse first, then add to (or create) this week's one open draft.
+    const items = await parseItems(env, received);
+    const week = items.find(x => x.sheet && x.sheet.week)?.sheet.week || defaultWeek;
+    const merged = await addSheetsToDraft(env, { season, week, eventId: curEvent?.id, cfg, leagueData, items });
+    if (!merged.ok) return new Response(merged.error, { status: merged.status || 500 });
+    const reviewId = merged.reviewId;
 
     return Response.redirect(`${new URL(req.url).origin}/admin/review?id=${encodeURIComponent(reviewId)}`, 303);
   } catch (err) {
@@ -2956,45 +2968,18 @@ export async function handleReviewAddSheet(req, env, preParsedFormData = null) {
       return Response.json({ ok: false, error: STATS_DISABLED_MSG }, { status: 404 });
     }
 
-    const allImageKeys = JSON.parse(review.images_json || '[]');
-    const allParsedSheets = JSON.parse(review.extracted_json || '[]');
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (!file || typeof file.arrayBuffer !== 'function' || file.size === 0) continue;
-      const buf = await file.arrayBuffer();
-      const mime = file.type || 'image/jpeg';
-      const key = `img:${reviewId}:${allImageKeys.length}`;
-      await env.SHEETS_KV.put(key, buf, { expirationTtl: 172800 });
-      allImageKeys.push(key);
-
-      try {
-        const sheet = await parseSheetWithGemini(env.GEMINI_API_KEY, buf, mime);
-        allParsedSheets.push(sheet);
-      } catch (err) {
-        console.error('Error parsing added sheet with Gemini:', err);
-      }
+    // Only a draft accepts more sheets (checked again at write time).
+    if (review.status !== 'draft') {
+      return new Response(`This review is ${review.status}; only a draft accepts more sheets.`, { status: 409 });
     }
-
-    const s0 = (leagueData.seasons || []).find(s => s.name === review.season) || leagueData.seasons?.[0];
-    const fixtures = (s0?.fixtures || []).filter(f => f.week === Number(review.week));
-
-    const contacts = (await env.DB.prepare('SELECT player_id, name, is_sub, role, is_goalie FROM contacts').all()).results || [];
-    const candidatePlayers = [
-      ...contacts,
-      ...(leagueData.players || []).map(p => ({ player_id: p.id, name: p.name }))
-    ];
-
-    const games = consolidateSheetsIntoGames(allParsedSheets, fixtures, candidatePlayers, { config: cfg });
-
-    await env.DB.prepare(
-      `UPDATE sheet_reviews SET images_json = ?, extracted_json = ?, validated_json = ? WHERE id = ?`
-    ).bind(
-      JSON.stringify(allImageKeys),
-      JSON.stringify(allParsedSheets),
-      JSON.stringify(games),
-      reviewId
-    ).run();
+    const received = [];
+    for (const file of files) {
+      if (!file || typeof file.arrayBuffer !== 'function' || file.size === 0) continue;
+      received.push({ buf: await file.arrayBuffer(), mime: file.type || 'image/jpeg' });
+    }
+    const items = await parseItems(env, received);
+    const merged = await addSheetsToDraft(env, { season: review.season, week: review.week, eventId: review.event_id, cfg, leagueData, items, targetReviewId: reviewId });
+    if (!merged.ok) return new Response(merged.error, { status: merged.status || 500 });
 
     // Carry the scoped review token forward through the redirect, if this
     // request was authenticated with one (the scoresheet-email link flow) —
