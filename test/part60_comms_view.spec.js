@@ -74,7 +74,7 @@ describe('Part 2 (live-testing task, batch 3): Comms view -- email activity and 
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.activity).toEqual([]);
-    expect(body.stats).toEqual({ sent: 0, failed: 0, skipped: 0, pending: 0, retrying: 0 });
+    expect(body.stats).toEqual({ sent: 0, failed: 0, skipped: 0, pending: 0, retrying: 0, deferred: 0 });
 
     const pageHtml = await (await SELF.fetch('http://example.com/league/comms', { headers: { cookie } })).text();
     expect(pageHtml).toContain('id="comms-activity"');

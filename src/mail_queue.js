@@ -108,6 +108,8 @@ export function classifySendError(err) {
 //   failed    failed_at set, cancelled 1, error set (permanent; also
 //             cancelled so every existing "pending = sent_at IS NULL AND
 //             cancelled = 0" query already excludes it)
+//   deferred  sent_at NULL, cancelled 0, defer_reason set (daily cap:
+//             waits for the next UTC day's budget; see DAILY SEND CAP)
 //   skipped   cancelled 1, failed_at NULL (deliberate: opted out, no
 //             longer confirmed, superseded by a newer message, ...)
 // last_error keeps the most recent failure text even after a later
@@ -120,12 +122,13 @@ export function outboxRowStatus(row) {
   if (row.failed_at) return 'failed';
   if (row.cancelled) return 'skipped';
   if (row.error) return 'retrying';
+  if (row.defer_reason) return 'deferred'; // waiting for tomorrow's send budget (daily cap)
   return 'pending';
 }
 
 export async function recordSendSuccess(db, id, now = new Date()) {
   await db.prepare(
-    `UPDATE outbox SET sent_at = ?, error = NULL, next_attempt_at = NULL, attempts = attempts + 1 WHERE id = ?`
+    `UPDATE outbox SET sent_at = ?, error = NULL, next_attempt_at = NULL, defer_reason = NULL, attempts = attempts + 1 WHERE id = ?`
   ).bind(now.toISOString(), id).run();
 }
 
@@ -146,4 +149,86 @@ export async function recordSendFailure(db, row, err, now = new Date()) {
     `UPDATE outbox SET error = ?, last_error = ?, attempts = ?, next_attempt_at = ? WHERE id = ?`
   ).bind(message, message, attempts, new Date(now.getTime() + waitMin * 60000).toISOString(), row.id).run();
   return 'retrying';
+}
+
+// ---------------------------------------------------------------------
+// DAILY SEND CAP (sub-call rework, Part 1)
+// ---------------------------------------------------------------------
+// The Resend plan allows a fixed number of emails per calendar day
+// (UTC). The number is configuration -- MAIL_DAILY_CAP in wrangler.jsonc
+// vars -- never a constant here, so a plan upgrade is a config change.
+// Not set / not a positive number: no cap is enforced (and every drain
+// logs a warning).
+//
+// Who gets the budget:
+//   - everything that is NOT a sub call (gameday mail, reminders,
+//     logistics, team assignments, admin alerts, the dead-man check)
+//     always sends, and is processed before sub calls in every pass;
+//   - sub calls get only what is left after reserving room for the
+//     roster mail still to come today (rosterReserve, computed by the
+//     caller), and are DEFERRED to the next UTC day -- queued, never
+//     dropped -- once it is gone.
+//
+// Counting: sendMail() adds one to mail_daily_count(day) after every
+// send Resend accepts, whatever the path (outbox, alerts, broadcasts,
+// sign-up mail). It is stored in D1, so a Worker restart loses nothing.
+// If Resend itself refuses for quota (it counts every sender on the
+// account), recordResendQuotaExhausted() marks the day full so nothing
+// else is attempted until the next UTC day.
+export const ADMIN_ALERT_RESERVE = 3;
+
+export function dailyCapFromEnv(env) {
+  const n = Number(env && env.MAIL_DAILY_CAP);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+export function utcDay(now = new Date()) {
+  return now.toISOString().slice(0, 10);
+}
+
+export function nextUtcMidnight(now = new Date()) {
+  const d = new Date(now);
+  d.setUTCHours(24, 0, 0, 0);
+  return d;
+}
+
+export function isResendQuotaError(err) {
+  const msg = String(err && err.message || err || '');
+  return /^resend 429/.test(msg) && /quota/i.test(msg);
+}
+
+export async function countSentMail(db, { subCall = false } = {}, now = new Date()) {
+  await db.prepare(
+    `INSERT INTO mail_daily_count (day, sent, sub_calls) VALUES (?, 1, ?)
+     ON CONFLICT(day) DO UPDATE SET sent = sent + 1, sub_calls = sub_calls + excluded.sub_calls`
+  ).bind(utcDay(now), subCall ? 1 : 0).run();
+}
+
+export async function recordResendQuotaExhausted(db, cap, now = new Date()) {
+  if (!cap) return;
+  await db.prepare(
+    `INSERT INTO mail_daily_count (day, sent, sub_calls) VALUES (?, ?, 0)
+     ON CONFLICT(day) DO UPDATE SET sent = MAX(sent, excluded.sent)`
+  ).bind(utcDay(now), cap).run();
+}
+
+export async function readDailyCount(db, now = new Date()) {
+  const row = await db.prepare('SELECT sent, sub_calls FROM mail_daily_count WHERE day = ?').bind(utcDay(now)).first();
+  return { sent: row ? row.sent : 0, subCalls: row ? row.sub_calls : 0 };
+}
+
+// How many sub calls may still go out today.
+//   allowance = cap - sentToday - max(0, reserve - rosterSentToday)
+// where rosterSentToday = everything sent today that was not a sub call.
+export function subCallAllowance({ cap, sentToday, subCallsToday, reserve }) {
+  if (!cap) return Infinity;
+  const rosterSentToday = Math.max(0, sentToday - subCallsToday);
+  const reserveLeft = Math.max(0, reserve - rosterSentToday);
+  return Math.max(0, cap - sentToday - reserveLeft);
+}
+
+export async function deferToNextDay(db, id, reason, now = new Date()) {
+  await db.prepare(
+    `UPDATE outbox SET next_attempt_at = ?, defer_reason = ? WHERE id = ?`
+  ).bind(nextUtcMidnight(now).toISOString(), reason, id).run();
 }

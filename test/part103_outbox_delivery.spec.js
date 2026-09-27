@@ -85,6 +85,10 @@ beforeAll(async () => {
   env.RESEND_API_KEY = 'test-part103-resend';
   env.AUTH_SECRET = 'test-part103-auth';
   env.ADMIN_KEY = ADMIN_KEY;
+  // This file is about the per-invocation budget and delivery states. It
+  // sends 150+ emails and seeds ~160 rostered players, so the daily cap
+  // (covered by part107) would defer its sub calls; it is switched off here.
+  env.MAIL_DAILY_CAP = "";
   await applyRealSchema(env);
   await env.SHEETS_KV.put('data_json', JSON.stringify(SITE_DATA));
   const start = new Date(Date.now() + 30 * 3600000);

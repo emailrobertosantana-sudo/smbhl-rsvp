@@ -7,7 +7,11 @@
     "enabled": true
   },
   "vars": {
-    "PUBLIC_URL": "https://rsvp.smbhl.com"
+    "PUBLIC_URL": "https://rsvp.smbhl.com",
+    // Emails per calendar day (UTC) the Resend plan allows -- sub calls
+    // defer to the next day once roster mail has what it needs (see
+    // src/mail_queue.js, DAILY SEND CAP). Change here if the plan changes.
+    "MAIL_DAILY_CAP": "100"
   },
   "triggers": {
     "crons": ["*/5 * * * *"]
@@ -39,7 +43,10 @@
         // runSchedule(), without depending on DEMO_ENV's unrelated
         // meaning (a future real-production league-product deployment
         // would set this without DEMO_ENV).
-        "LEAGUE_PRODUCT": "true"
+        "LEAGUE_PRODUCT": "true",
+        // Same meaning as the top-level MAIL_DAILY_CAP (this env block's
+        // vars replace, not merge with, the top-level ones).
+        "MAIL_DAILY_CAP": "100"
       },
       "d1_databases": [
         {

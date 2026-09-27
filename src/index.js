@@ -7,7 +7,7 @@ import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateT
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
-import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure } from './mail_queue.js';
+import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE } from './mail_queue.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
@@ -4464,7 +4464,7 @@ async function handleLeagueCommsData(req, env, url) {
   // its own `error` column.
   const outboxRows = (await env.DB.prepare(
     `SELECT o.kind, o.event_id, o.player_id, c.name AS player_name, o.sent_at, o.cancelled, o.error, o.created_at, e.date AS event_date,
-            o.attempts, o.failed_at, o.next_attempt_at
+            o.attempts, o.failed_at, o.next_attempt_at, o.defer_reason
        FROM outbox o
        LEFT JOIN contacts c ON c.player_id = o.player_id
        LEFT JOIN events e ON e.id = o.event_id
@@ -4570,13 +4570,15 @@ async function handleLeagueCommsData(req, env, url) {
   }
   activity.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
 
-  const stats = { sent: 0, failed: 0, skipped: 0, pending: 0, retrying: 0 };
+  const stats = { sent: 0, failed: 0, skipped: 0, pending: 0, retrying: 0, deferred: 0 };
   for (const a of activity) {
     if (stats[a.status] !== undefined) stats[a.status]++;
   }
   // The headline Failed count includes rows still retrying: both are
   // mail that has not arrived, and both need an admin's attention.
   stats.failed += stats.retrying;
+  // Deferred (daily cap) mail is still coming: part of the pending count.
+  stats.pending += stats.deferred;
 
   // Live-testing task (batch 4), Part 4: broadcast targeting options.
   // Team-name targeting is only ever offered for 'fixed' leagues --
@@ -4809,7 +4811,7 @@ async function handleLeagueCommsPage(req, env, url) {
       activityTitle: 'Activité récente',
       colType: 'Type', colRecipient: 'Destinataire', colEvent: 'Match', colStatus: 'Statut', colWhen: 'Quand', colReason: 'Raison',
       emptyState: "Aucune activité pour l'instant -- les envois apparaîtront ici.",
-      statusSent: 'Envoyé', statusFailed: 'Échec', statusRetrying: 'Échec, nouvel essai prévu', statusSkipped: 'Ignoré', statusPending: 'En attente',
+      statusSent: 'Envoyé', statusFailed: 'Échec', statusRetrying: 'Échec, nouvel essai prévu', statusDeferred: 'Reporté à demain (plafond quotidien)', statusSkipped: 'Ignoré', statusPending: 'En attente',
       // E3 (Comms polish task): a 0-recipient automated send used to
       // show the same green "Envoyé" status as a real send -- reads as
       // a success even though nobody received anything. Distinct
@@ -4848,7 +4850,7 @@ async function handleLeagueCommsPage(req, env, url) {
       activityTitle: 'Recent activity',
       colType: 'Type', colRecipient: 'Recipient', colEvent: 'Game', colStatus: 'Status', colWhen: 'When', colReason: 'Reason',
       emptyState: 'No activity yet -- sends will appear here.',
-      statusSent: 'Sent', statusFailed: 'Failed', statusRetrying: 'Failed, retry scheduled', statusSkipped: 'Skipped', statusPending: 'Pending',
+      statusSent: 'Sent', statusFailed: 'Failed', statusRetrying: 'Failed, retry scheduled', statusDeferred: 'Deferred to tomorrow (daily cap)', statusSkipped: 'Skipped', statusPending: 'Pending',
       statusNoRecipients: 'No one to notify', noRecipientsReason: 'No one was eligible for this automated send.',
       recipientCountLabel: '{n} recipient(s)',
       btnDrain: '⚡ Send now', drainConfirm: 'Trigger immediate delivery of pending emails for this league?',
@@ -4937,7 +4939,7 @@ function fmtWhen(iso) {
 // E3 (Comms polish task): no_recipients gets the same neutral grey as
 // skipped -- not green (that would read as a real success), not red
 // (nothing failed, there was just nobody to send to).
-const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', retrying: '#c4153a', skipped: '#55585f', pending: '#b45309', no_recipients: '#55585f' };
+const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', retrying: '#c4153a', deferred: '#b45309', skipped: '#55585f', pending: '#b45309', no_recipients: '#55585f' };
 // E1 (Comms polish task): the same labels the Active automations card
 // uses (d.cad72/cad24/cad12), so Type never drifts from that card's
 // own wording. Built from the current dict each render, not module-
@@ -4978,7 +4980,7 @@ function renderActivity(activity) {
   var d = window.__pageDict();
   var el = document.getElementById('comms-activity');
   if (!activity.length) { el.innerHTML = '<p class="nl-help">' + d.emptyState + '</p>'; return; }
-  var statusKey = { sent: 'statusSent', failed: 'statusFailed', retrying: 'statusRetrying', skipped: 'statusSkipped', pending: 'statusPending', no_recipients: 'statusNoRecipients' };
+  var statusKey = { sent: 'statusSent', failed: 'statusFailed', retrying: 'statusRetrying', deferred: 'statusDeferred', skipped: 'statusSkipped', pending: 'statusPending', no_recipients: 'statusNoRecipients' };
   var rows = activity.map(function(a) {
     // E2: recipient count is a bare number from the server now --
     // formatted here, current language only (never both at once).
@@ -9796,7 +9798,20 @@ function extractEmailAddress(fromValue) {
 // under that season's own identity. Omitting it falls back to
 // defaultMailIdentity(env) -- SMBHL's own deployment unchanged, any other
 // deployment gets ITS OWN product identity, never SMBHL's.
-async function sendMail(env, to, subject, text, html = null, attachments = null, leagueCfg = null) {
+// Every email this app sends goes through here, so this is where the
+// daily count (src/mail_queue.js, DAILY SEND CAP) is kept: one per send
+// Resend accepts, whatever the path. opts.subCall tags sub calls, whose
+// share of the day is what the cap limits.
+async function sendMail(env, to, subject, text, html = null, attachments = null, leagueCfg = null, opts = {}) {
+  await sendMailViaResend(env, to, subject, text, html, attachments, leagueCfg);
+  if (env.DB) {
+    try { await countSentMail(env.DB, { subCall: !!opts.subCall }); }
+    catch (e) { console.error(`[sendMail] daily count not updated: ${e.message}`); }
+  }
+  return true;
+}
+
+async function sendMailViaResend(env, to, subject, text, html = null, attachments = null, leagueCfg = null) {
   if (!env.RESEND_API_KEY) throw new Error('RESEND_API_KEY not set');
   const check = sanitizeAndValidateEmail(to);
   if (!check.valid) throw new Error(`invalid email format: "${to}"`);
@@ -10918,11 +10933,25 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
   if (filterEventId) { conditions.push('event_id = ?'); params.push(filterEventId); }
   if (filterLeagueId) { conditions.push('league_id = ?'); params.push(filterLeagueId); }
   params.push(batch);
+  // Roster and admin mail first, sub calls after (daily cap, below): in
+  // a pass that cannot send everything, the discretionary volume waits.
   const due = (await env.DB.prepare(
-    `SELECT * FROM outbox WHERE ${conditions.join(' AND ')} ORDER BY id LIMIT ?`
+    `SELECT * FROM outbox WHERE ${conditions.join(' AND ')} ORDER BY CASE WHEN kind = 'sub_call' THEN 1 ELSE 0 END, id LIMIT ?`
   ).bind(...params).all()).results || [];
 
-  let sent = 0, failed = 0, retrying = 0;
+  let sent = 0, failed = 0, retrying = 0, deferred = 0;
+  // Daily send cap (src/mail_queue.js, DAILY SEND CAP): read once per
+  // drain, only if a sub call is due, then kept current locally.
+  const dailyCap = dailyCapFromEnv(env);
+  if (!dailyCap && due.some(r => r.kind === 'sub_call')) console.warn('[drain] MAIL_DAILY_CAP not configured: no daily send cap enforced');
+  let daily = null;
+  const loadDaily = async () => {
+    if (!daily) {
+      const c = await readDailyCount(env.DB);
+      daily = { sent: c.sent, subCalls: c.subCalls, reserve: await rosterReserveToday(env) };
+    }
+    return daily;
+  };
   let siteDataPromise = null;
   const loadSiteData = () => (siteDataPromise ||= fetchSiteDataJson(env).catch(() => null));
   const highlightsCache = new Map();
@@ -10949,6 +10978,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
         const pm = payload.prerendered;
         if (!budget.take()) break;
         await sendMail(env, pm.to, pm.subject, pm.text, pm.html, null, pm.identity || null);
+        if (daily) daily.sent++;
         await recordSendSuccess(env.DB, m.id);
         sent++;
         continue;
@@ -11186,10 +11216,22 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       }
       const msg = body(m.kind, { ev, name, team: playerTeam || m.team, link, payload, leagueCfg });
       if (!msg) throw new Error('unknown kind ' + m.kind);
+      // Sub calls only get what today's budget has left after reserving
+      // room for roster mail; otherwise they wait for tomorrow -- queued,
+      // never dropped. Everything else always sends.
+      if (m.kind === 'sub_call' && dailyCap) {
+        const dc = await loadDaily();
+        if (subCallAllowance({ cap: dailyCap, sentToday: dc.sent, subCallsToday: dc.subCalls, reserve: dc.reserve }) <= 0) {
+          await deferToNextDay(env.DB, m.id, 'daily_cap');
+          deferred++;
+          continue;
+        }
+      }
       // Over this invocation's cap: stop here. This row and every one
       // after it stay queued, untouched, for the next pass.
       if (!budget.take()) break;
-      await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg);
+      await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg, { subCall: m.kind === 'sub_call' });
+      if (daily) { daily.sent++; if (m.kind === 'sub_call') daily.subCalls++; }
       // Resend accepted it: it is sent, whatever happens next. (The
       // sub-call bookkeeping below used to run BEFORE this, so a failure
       // there retried -- and re-sent -- a message already delivered.)
@@ -11204,6 +11246,17 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
         } catch (e) { console.error(`[drain] sub_call bookkeeping failed for ${m.player_id}: ${e.message}`); }
       }
     } catch (e) {
+      // Resend refused for its own daily quota (it counts every sender on
+      // the account, which our count cannot see): the day is full. Not a
+      // failure of this message -- it waits for the next UTC day, and the
+      // day is marked full so nothing else is attempted until then.
+      if (isResendQuotaError(e)) {
+        await recordResendQuotaExhausted(env.DB, dailyCap);
+        if (daily && dailyCap) daily.sent = Math.max(daily.sent, dailyCap);
+        await deferToNextDay(env.DB, m.id, 'resend_quota');
+        deferred++;
+        continue;
+      }
       // Transient -> retried later with backoff; permanent (bad address,
       // rejected recipient, ...) or out of attempts -> failed, visible
       // in Comms, never retried. Never sent_at + error on one row.
@@ -11218,7 +11271,33 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       if (isSubrequestLimitError(e)) { budget.halt(); break; }
     }
   }
-  return { due: due.length, sent, failed, retrying };
+  return { due: due.length, sent, failed, retrying, deferred };
+}
+
+// Room kept in today's send budget for roster mail still to come
+// (sub-call rework, Part 1): every open game in the next 6 days can
+// still send each of its rostered players (not marked out) one email
+// today -- the jobs run up to 5 days before the game, at most one a day
+// -- plus ADMIN_ALERT_RESERVE for admin alerts. The roster mail already
+// sent today is subtracted from this by subCallAllowance().
+const ROSTER_RESERVE_HORIZON_HOURS = 144;
+async function rosterReserveToday(env, now = new Date()) {
+  const evs = (await env.DB.prepare(`SELECT id, date, start_time, league_id FROM events WHERE state = 'open'`).all()).results || [];
+  let reserve = ADMIN_ALERT_RESERVE;
+  for (const ev of evs) {
+    const st = eventStart(ev);
+    if (!st) continue;
+    const h = (st - now) / 3600000;
+    if (h <= 0 || h > ROSTER_RESERVE_HORIZON_HOURS) continue;
+    const row = await env.DB.prepare(
+      `SELECT count(*) n FROM contacts c
+        WHERE c.league_id = ? AND c.role = 'roster' AND c.opted_out = 0 AND c.email IS NOT NULL
+          AND COALESCE(c.is_active, 1) = 1
+          AND c.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND status = 'out' AND player_id IS NOT NULL)`
+    ).bind(ev.league_id || SMBHL_LEAGUE_ID, ev.id).first();
+    reserve += row ? row.n : 0;
+  }
+  return reserve;
 }
 
 /* ---------- shortage ---------- */
@@ -23295,7 +23374,7 @@ async function handleEmailsData(req, env, url) {
     const failureWindow = new Date(Date.now() - 30 * 24 * 3600000).toISOString();
     const outbox = ((await env.DB.prepare(
       `SELECT o.id, o.kind, o.event_id, o.player_id, o.team, o.dedup_key, o.payload, o.send_after, o.sent_at, o.cancelled, o.error, o.created_at,
-              o.attempts, o.next_attempt_at, o.failed_at, o.last_error,
+              o.attempts, o.next_attempt_at, o.failed_at, o.last_error, o.defer_reason,
               c.name AS player_name, c.email AS player_email,
               e.date AS event_date, e.week AS event_week
          FROM outbox o
@@ -23343,6 +23422,8 @@ async function handleEmailsData(req, env, url) {
         retrying: counts.retrying || 0,
         pending: counts.pending || 0
       },
+      // Sub-call rework, Part 1: today's send count against the daily cap.
+      daily: { cap: dailyCapFromEnv(env), ...(await readDailyCount(env.DB)) },
       open_events: openEvents,
       initial_league_message: initialLeagueMessage
     });
@@ -23831,6 +23912,7 @@ async function emailsPage(env = null, isAuthed = false) {
           <div class="lbl" data-i18n="statFailed">En erreur</div>
         </div>
       </div>
+      <p id="daily-count" style="margin:8px 0 0; font-size:13px; color:#475569;"></p>
 
       <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
         <label style="font-size:12px; font-weight:700; color:var(--soft); text-transform:uppercase;" data-i18n="lblFilter">Filtrer :</label>
@@ -24020,6 +24102,10 @@ async function emailsPage(env = null, isAuthed = false) {
       badgeCancelled: "Annulé",
       badgeError: "Erreur",
       badgeRetrying: "🔁 Nouvel essai ({n}/{max})",
+      badgeDeferred: "⏸ Reporté (plafond quotidien)",
+      badgeDeferredQuota: "⏸ Reporté (quota Resend)",
+      dailyCount: "Envois aujourd'hui (UTC) : {sent} / {cap}, dont {sub} appels aux remplaçants",
+      dailyCapUnset: "Plafond d'envois quotidien non configuré (MAIL_DAILY_CAP).",
       badgePending: "⏳ En attente",
       actionPreview: "👁️ Aperçu",
       actionCancel: "Annuler",
@@ -24121,6 +24207,10 @@ async function emailsPage(env = null, isAuthed = false) {
       badgeCancelled: "Cancelled",
       badgeError: "Error",
       badgeRetrying: "🔁 Retrying ({n}/{max})",
+      badgeDeferred: "⏸ Deferred (daily cap)",
+      badgeDeferredQuota: "⏸ Deferred (Resend quota)",
+      dailyCount: "Sent today (UTC): {sent} / {cap}, including {sub} sub calls",
+      dailyCapUnset: "Daily send cap not configured (MAIL_DAILY_CAP).",
       badgePending: "⏳ Pending",
       actionPreview: "👁️ Preview",
       actionCancel: "Cancel",
@@ -24632,13 +24722,17 @@ async function emailsPage(env = null, isAuthed = false) {
     $('cnt-sent').textContent = stats.sent || 0;
     $('cnt-cancelled').textContent = stats.cancelled || 0;
     $('cnt-failed').textContent = stats.failed || 0;
+    const daily = emailsData.daily || {};
+    $('daily-count').textContent = daily.cap
+      ? dict.dailyCount.replace('{sent}', daily.sent || 0).replace('{cap}', daily.cap).replace('{sub}', daily.subCalls || 0)
+      : dict.dailyCapUnset;
 
     const outbox = emailsData.outbox || [];
     const filtered = outbox.filter(o => {
       if (currentFilter === 'all') return true;
       // status comes from the server (src/mail_queue.js outboxRowStatus):
       // sent | failed (permanent) | retrying | skipped | pending.
-      if (currentFilter === 'pending') return o.status === 'pending' || o.status === 'retrying';
+      if (currentFilter === 'pending') return o.status === 'pending' || o.status === 'retrying' || o.status === 'deferred';
       if (currentFilter === 'sent') return o.status === 'sent';
       if (currentFilter === 'cancelled') return o.status === 'skipped';
       if (currentFilter === 'failed') return o.status === 'failed' || o.status === 'retrying';
@@ -24656,6 +24750,7 @@ async function emailsPage(env = null, isAuthed = false) {
       if (o.status === 'sent') badge = '<span class="badge badge-sent">' + esc(dict.badgeSent) + '</span>';
       else if (o.status === 'failed') badge = '<span class="badge badge-error" title="' + esc(o.error || '') + '">' + esc(dict.badgeError) + '</span>';
       else if (o.status === 'retrying') badge = '<span class="badge badge-error" title="' + esc(o.error || '') + '">' + esc(dict.badgeRetrying.replace('{n}', o.attempts || 1).replace('{max}', 5)) + '</span>';
+      else if (o.status === 'deferred') badge = '<span class="badge badge-pending" title="' + esc(fmtLocalTime(o.next_attempt_at)) + '">' + esc(o.defer_reason === 'resend_quota' ? dict.badgeDeferredQuota : dict.badgeDeferred) + '</span>';
       else if (o.status === 'skipped') badge = '<span class="badge badge-cancelled">' + esc(dict.badgeCancelled) + '</span>';
       else badge = '<span class="badge badge-pending">' + esc(dict.badgePending) + '</span>';
 
@@ -24673,7 +24768,7 @@ async function emailsPage(env = null, isAuthed = false) {
         (o.player_email ? '<div style="font-size:11px; color:var(--soft); font-family:monospace;">' + esc(o.player_email) + '</div>' : '');
 
       const sendAfterFmt = fmtLocalTime(o.send_after);
-      const canCancel = o.status === 'pending' || o.status === 'retrying';
+      const canCancel = o.status === 'pending' || o.status === 'retrying' || o.status === 'deferred';
 
       h += '<tr>' +
         '<td><b>#' + o.id + '</b></td>' +
@@ -24728,6 +24823,9 @@ async function emailsPage(env = null, isAuthed = false) {
     else if (o.status === 'retrying') statusText = isEn
       ? ('🔁 Failed, retry scheduled ' + fmtLocalTime(o.next_attempt_at, true) + ' (attempt ' + (o.attempts || 1) + ' of 5): ' + esc(o.error || ''))
       : ('🔁 Échec, nouvel essai prévu ' + fmtLocalTime(o.next_attempt_at, true) + ' (essai ' + (o.attempts || 1) + ' sur 5) : ' + esc(o.error || ''));
+    else if (o.status === 'deferred') statusText = isEn
+      ? ('⏸ Deferred to ' + fmtLocalTime(o.next_attempt_at, true) + (o.defer_reason === 'resend_quota' ? ': Resend refused, daily quota reached' : ": today's send budget is used up"))
+      : ('⏸ Reporté au ' + fmtLocalTime(o.next_attempt_at, true) + (o.defer_reason === 'resend_quota' ? ' : Resend a refusé, quota quotidien atteint' : " : le budget d'envois du jour est épuisé"));
     else if (o.status === 'skipped') statusText = isEn ? '🚫 Cancelled' : '🚫 Annulé';
 
     let parsedPayload = null;
