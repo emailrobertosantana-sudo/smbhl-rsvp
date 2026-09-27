@@ -4163,8 +4163,11 @@ describe("SMBHL Worker", () => {
 			await env.SHEETS_KV.put("data_json", JSON.stringify(sampleData));
 
 			let nextEventTriggered = false;
+			// Publish asks for the next event WITHOUT forcing (it respects the 8-day guard).
+			let forced = null;
 			const mockEnsureNext = async (e, force) => {
-				if (force) nextEventTriggered = true;
+				nextEventTriggered = true;
+				forced = !!force;
 			};
 
 			const req = new Request("http://example.com/admin/review/publish", {
@@ -4187,8 +4190,9 @@ describe("SMBHL Worker", () => {
 			const evUpdated = await env.DB.prepare("SELECT state FROM events WHERE id = ?").bind(evId).first();
 			expect(evUpdated.state).toBe("done");
 
-			// Verify ensureNextEventFunc was called with force=true
+			// Verify ensureNextEventFunc was called, unforced
 			expect(nextEventTriggered).toBe(true);
+			expect(forced).toBe(false);
 		});
 
 

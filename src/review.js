@@ -3563,9 +3563,12 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
     console.error('Error marking event done after review publish:', evErr);
   }
 
+  // Not forced: respect the 8-day guard like every other caller. Forcing it
+  // skipped both guards, so publishing week 3 (with week 4 already created
+  // by the cron when week 3 kicked off) created week 5 two weeks early.
   if (typeof ensureNextEventFunc === 'function') {
     try {
-      await ensureNextEventFunc(env, true);
+      await ensureNextEventFunc(env);
     } catch (nextErr) {
       console.error('Error auto-creating next event after review publish:', nextErr);
     }
