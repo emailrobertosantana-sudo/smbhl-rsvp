@@ -53,7 +53,11 @@ beforeAll(async () => {
 describe('SMBHL: a team below its minimum calls subs the moment the game exists', () => {
   let eventId;
 
-  it('creating the game calls subs for the short team only -- nobody has cancelled', async () => {
+  // Sub-call alignment task: a game short at creation calls subs WITH the
+  // roster's invite, not before it (shortfallCallsHeld). This used to assert
+  // the calls at creation; it now asserts they wait, then go to the short
+  // team only once the invite has gone.
+  it('creating the game holds the sub calls until the roster invite; then the short team only is called -- nobody has cancelled', async () => {
     // Red: 1 goalie + 3 skaters (below the configured 4). Blue: 1 goalie + 4 skaters (at 4:
     // not short under the configured minimum, though it would be under the default 5).
     const roster = [['G108R', 'Red', true], ['A108R', 'Red'], ['B108R', 'Red'], ['C108R', 'Red'],
@@ -70,10 +74,15 @@ describe('SMBHL: a team below its minimum calls subs the moment the game exists'
       players: roster.map(([id, team]) => ({ id, name: id, seasons: { [season]: { team } } }))
     }));
 
-    const { sent } = await withResend(() => runSchedule(env));
+    const created = await withResend(() => runSchedule(env));
     const ev = await env.DB.prepare(`SELECT * FROM events WHERE season = ?`).bind(season).first();
     expect(ev).toBeTruthy();
     eventId = ev.id;
+    expect(await subCallRows(eventId)).toEqual([]);
+    expect(created.sent.filter(to => /^s108/.test(to))).toEqual([]);
+    // The roster invite goes out (its step ran); the next pass calls subs.
+    await env.DB.prepare(`INSERT INTO jobs (event_id, job, ran_at) VALUES (?, 'invite', ?)`).bind(eventId, new Date().toISOString()).run();
+    const { sent } = await withResend(() => runSchedule(env));
     expect((await env.DB.prepare(`SELECT count(*) n FROM rsvp WHERE event_id = ? AND status = 'out'`).bind(eventId).first()).n).toBe(0);
     const calls = await subCallRows(eventId);
     expect(calls.length).toBe(3);

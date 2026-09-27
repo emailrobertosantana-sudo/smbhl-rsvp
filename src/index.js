@@ -6,7 +6,7 @@ import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmail
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
-import { REMINDER_WINDOW_THRESHOLD_HOURS, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
+import { REMINDER_WINDOW_THRESHOLD_HOURS, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
@@ -11627,10 +11627,31 @@ async function availableForTeam(env, ev, team, cfg, isHeadcount) {
   return { goalies, skaters };
 }
 
+// SMBHL: a game found short when it is created no longer calls subs on
+// the spot -- the calls wait for the roster's own invite (the 'invite'
+// step of the reminder cadence, src/reminders.js: invite_hours before the
+// game once invite_hour_of_day is reached -- Tuesday 18:00 for a Sunday
+// morning game with the default 120 h / 18 h), so subs never hear about a
+// game before the regulars do. In each pass the invite step runs before
+// this check, so both go out in the SAME pass. Never held:
+//   - inside RUSH_HOURS (48 h) of the game -- urgency wins;
+//   - once an admin pressed "send sub calls now" (job 'subcalls_released');
+//   - the league product (it has no roster invite step to wait for).
+// Cancellation-triggered calls (a player going out) use callSubs directly,
+// not this function, and are not held.
+async function shortfallCallsHeld(env, ev) {
+  if ((ev.league_id || SMBHL_LEAGUE_ID) !== SMBHL_LEAGUE_ID) return false;
+  if (hoursOut(ev) <= RUSH_HOURS) return false;
+  if (await jobDone(env.DB, ev.id, 'invite')) return false;
+  if (await jobDone(env.DB, ev.id, 'subcalls_released')) return false;
+  return true;
+}
+
 async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
   if (!ev || ev.state !== 'open') return 0;
   const hrs = hoursOut(ev);
   if (hrs < CUTOFF_HOURS || hrs > SHORTFALL_HORIZON_HOURS) return 0;
+  if (await shortfallCallsHeld(env, ev)) return 0;
   const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
   const cfg = await eventSeasonConfig(env, ev);
   const structure = cfg.teamStructure || 'fixed';
@@ -14335,6 +14356,8 @@ const I18N_SUBS = {
     needed: 'manquant',
     full: 'complet',
     callWaves: 'LANCER LES VAGUES',
+    subCallsHeldNote: "Appels aux remplaçants en attente : ils partiront avec l'invitation aux joueurs réguliers.",
+    sendSubCallsNow: 'ENVOYER LES APPELS MAINTENANT',
     extraInviteBtn: 'Envoyer une invitation de plus',
     extraInviteConfirm: "Envoyer une invitation supplémentaire à {name} pour ce match? C'est la seule façon d'envoyer une 3e invitation, et c'est possible une seule fois.",
     extraInviteSentTag: '3e invitation envoyée (manuelle)',
@@ -14414,6 +14437,8 @@ const I18N_SUBS = {
     needed: 'needed',
     full: 'full',
     callWaves: 'LAUNCH WAVES',
+    subCallsHeldNote: "Sub calls on hold: they go out with the regulars' invite.",
+    sendSubCallsNow: 'SEND SUB CALLS NOW',
     extraInviteBtn: 'Send one more invite',
     extraInviteConfirm: 'Send {name} one extra invite for this game? This is the only way a 3rd invite goes out, and it can be used once.',
     extraInviteSentTag: '3rd invite sent (manual)',
@@ -14587,7 +14612,24 @@ function renderSubsUI() {
       '<div style="font-size:12px;color:var(--soft);margin-top:2px">' + s.skaters + ' ' + esc(t('skatersLabel')) + ', ' + s.goalies + 'G</div>' + btn + '</li>';
   }
   shHtml += '</ul>';
+  if (d.subCallsHeld) {
+    shHtml += '<p style="font-size:13px;color:var(--soft);margin:8px 0 4px">' + esc(t('subCallsHeldNote')) + '</p>' +
+      '<button class="mini in" id="releaseSubCalls">' + esc(t('sendSubCallsNow')) + '</button>';
+  }
   $('shortcard').innerHTML = shHtml;
+  const rel = $('releaseSubCalls');
+  if (rel) rel.addEventListener('click', async () => {
+    rel.disabled = true;
+    rel.textContent = t('callingWaves');
+    try {
+      await api('/admin/subs/release', { method: 'POST', body: JSON.stringify({ event_id: currentEventId }) });
+      load(currentEventId);
+    } catch (e) {
+      alert(e.message);
+      rel.disabled = false;
+      rel.textContent = t('sendSubCallsNow');
+    }
+  });
 
   if (!d.subs || !d.subs.length) {
     $('substable').innerHTML = '<tr><td style="padding:12px 0;color:var(--soft)">' + esc(t('noSubsInvited')) + '</td></tr>';
@@ -15078,7 +15120,8 @@ async function subsData(env, url) {
     stats,
     shortages,
     subs: finalSubs,
-    remaining
+    remaining,
+    subCallsHeld: ev.state === 'open' && await shortfallCallsHeld(env, ev)
   });
 }
 
@@ -27079,6 +27122,19 @@ async function handleFetch(req, env, ctx) {
         if (!ev) return Response.json({ ok: false, code: 'event_not_found' }, { status: 404 });
         const result = await sendExtraSubInvite(env, ev, String(player_id || ''));
         return Response.json(result, { status: result.ok ? 200 : 409 });
+      }
+      // "Send sub calls now": releases this game's held shortfall calls
+      // (shortfallCallsHeld) before the roster invite, and sends them.
+      if (url.pathname === '/admin/subs/release' && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const { event_id } = await req.json().catch(() => ({}));
+        const ev = await getEvent(env.DB, event_id);
+        if (!ev) return new Response('no event', { status: 404 });
+        if (ev.state !== 'open') return Response.json({ ok: false, error: 'event not open' }, { status: 409 });
+        await markJob(env.DB, ev.id, 'subcalls_released');
+        const queued = await callSubsForShortfall(env, ev, { drainNow: true });
+        return Response.json({ ok: true, queued });
       }
       if (url.pathname === '/admin/subs/call' && req.method === 'POST') {
         const auth = checkAdminAuth(req, env);

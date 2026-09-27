@@ -37,6 +37,9 @@ async function smbhlGame(prefix, season, hoursOut) {
   const { date, time } = eastern(hoursOut);
   const eventId = `${prefix}:${date}`;
   await env.DB.prepare(`INSERT INTO events (id, date, season, week, state, start_time, league_id) VALUES (?, ?, ?, 3, 'open', ?, 'smbhl')`).bind(eventId, date, season, time).run();
+  // The roster invite has gone: shortfall calls are no longer held for it
+  // (sub-call alignment task) -- these tests are about the threshold.
+  await env.DB.prepare(`INSERT INTO jobs (event_id, job, ran_at) VALUES (?, 'invite', ?)`).bind(eventId, new Date().toISOString()).run();
   for (const [team, skaters] of [['Red', 6], ['Blue', 7]]) {
     const ids = [`${prefix}${team}G`, ...Array.from({ length: skaters }, (_, i) => `${prefix}${team}${i}`)];
     for (const [i, pid] of ids.entries()) {

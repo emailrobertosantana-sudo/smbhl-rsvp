@@ -42,6 +42,9 @@ beforeAll(async () => {
   }
   for (let i = 1; i <= 7; i++) await contact(`S${i}`, 'sub_skater');
   await contact('SDORM', 'sub_skater', { dormant: 1 });
+  // The roster invite has gone, so shortfall calls are not held for it
+  // (sub-call alignment task) -- these tests are about waves and quiet hours.
+  await env.DB.prepare(`INSERT INTO jobs (event_id, job, ran_at) VALUES (?, 'invite', '2026-11-10T12:00:00.000Z')`).bind(EV).run();
 });
 afterAll(() => { globalThis.fetch = originalFetch; vi.restoreAllMocks(); vi.useRealTimers(); });
 
