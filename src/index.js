@@ -10721,7 +10721,7 @@ We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}
 
     case 'sub_call': {
       const g = payload.need === 'goalie';
-      const again = payload.reminder ? ' (rappel / reminder)' : '';
+      const again = payload.reminder ? ' (rappel)' : '';
 
       const subjFr = `${tFR(team)} cherche ${g ? 'un gardien' : 'un joueur'}${again}`;
       const subjEn = `${team} needs ${g ? 'a goalie' : 'a skater'}${payload.reminder ? ' (reminder)' : ''}`;
@@ -10776,17 +10776,15 @@ Want off the sub list? Just reply to this email.`;
       // which block(s) render, via the one shared assembler every
       // bilingual email in this app now goes through (design_system.js).
       // 'both' (SMBHL's only possible value, by construction -- see
-      // this function's own top comment) is byte-for-byte the same
-      // stacked FR-then-EN shape as before this task -- bothSubject:
-      // subjFr preserves this case's own historical FR-only subject
-      // even in 'both' mode, unlike most other bilingual templates.
+      // this function's own top comment) is the stacked FR-then-EN shape.
+      // The subject is "FR / EN" like every other bilingual SMBHL email
+      // (it used to keep a French-only subject in 'both' mode).
       // sign is appended once, after assembly, regardless of mode --
       // it's this app's plain-text signature line, not per-language
       // content.
       const assembled = assembleBilingualEmail(languageMode, {
         fr: { subject: subjFr, text: textFr, html: htmlFr },
         en: { subject: subjEn, text: textEn, html: htmlEn },
-        bothSubject: subjFr,
         // This case's own original separators -- distinct from what
         // the assembler defaults to for every other bilingual template
         // (28px/#e3e3e0 html hr, '---' text).

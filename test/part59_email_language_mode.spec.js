@@ -143,7 +143,8 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
       });
       expect(mail.html).toContain('Disponible');
       expect(mail.html).toContain('Available?');
-      expect(mail.subject).not.toContain('/');
+      // Decided (sub-call bilingual fix): "FR / EN", like every other bilingual SMBHL email.
+      expect(mail.subject).toBe('Rouge cherche un gardien / Red needs a goalie');
     });
   });
 
