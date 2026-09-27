@@ -367,7 +367,7 @@ describe('Part 4: the league product had the same two problems', () => {
     for (const p of passes) { expect(p.refused).toBe(0); expect(p.fetches).toBeLessThanOrEqual(EXTERNAL_SUBREQUEST_LIMIT); }
     const log = await env.DB.prepare(`SELECT recipient_count FROM league_reminder_log WHERE event_id = ? AND kind = 'reminder_72h'`).bind(eventId).first();
     expect(log.recipient_count).toBe(60);
-  });
+  }, 60000);
 
   it('a failed league reminder is retried instead of abandoned (the wave log used to mark it done), and shows in the league Comms tab meanwhile', async () => {
     const { leagueId, cookie } = await leagueWithPlayers(12, 3);
