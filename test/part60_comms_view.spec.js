@@ -74,7 +74,7 @@ describe('Part 2 (live-testing task, batch 3): Comms view -- email activity and 
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.activity).toEqual([]);
-    expect(body.stats).toEqual({ sent: 0, failed: 0, skipped: 0, pending: 0 });
+    expect(body.stats).toEqual({ sent: 0, failed: 0, skipped: 0, pending: 0, retrying: 0 });
 
     const pageHtml = await (await SELF.fetch('http://example.com/league/comms', { headers: { cookie } })).text();
     expect(pageHtml).toContain('id="comms-activity"');
@@ -172,13 +172,17 @@ describe('Part 2 (live-testing task, batch 3): Comms view -- email activity and 
       }), { failFor: 'willfail@example.com' }
     );
 
+    // Outbox QA batch: reminders are queued through the outbox now, so
+    // a rejected send is recorded on its own outbox row as a permanent
+    // failure (failed_at) -- the same row the Comms tab reads.
     const failureRow = await env.DB.prepare(
-      'SELECT * FROM league_mail_failure_log WHERE league_id = ?'
+      'SELECT * FROM outbox WHERE league_id = ? AND failed_at IS NOT NULL'
     ).bind(league.id).first();
     expect(failureRow).toBeTruthy();
     expect(failureRow.kind).toBe('reminder_72h');
     expect(failureRow.player_id).toBe(contact.player_id);
     expect(failureRow.error).toContain('422');
+    expect(failureRow.sent_at).toBeNull();
 
     const { body } = await commsData(cookie);
     expect(body.stats.failed).toBe(1);

@@ -7,6 +7,7 @@ import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateT
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS } from './reminder_scheduling.js';
+import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure } from './mail_queue.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
@@ -4462,7 +4463,8 @@ async function handleLeagueCommsData(req, env, url) {
   // sub-call invites (outbox) -- already-honest failure tracking via
   // its own `error` column.
   const outboxRows = (await env.DB.prepare(
-    `SELECT o.kind, o.event_id, o.player_id, c.name AS player_name, o.sent_at, o.cancelled, o.error, o.created_at, e.date AS event_date
+    `SELECT o.kind, o.event_id, o.player_id, c.name AS player_name, o.sent_at, o.cancelled, o.error, o.created_at, e.date AS event_date,
+            o.attempts, o.failed_at, o.next_attempt_at
        FROM outbox o
        LEFT JOIN contacts c ON c.player_id = o.player_id
        LEFT JOIN events e ON e.id = o.event_id
@@ -4501,16 +4503,31 @@ async function handleLeagueCommsData(req, env, url) {
   ).bind(leagueId, ACTIVITY_LIMIT).all()).results || [];
 
   const activity = [];
+  // Outbox QA batch: status from the shared state model
+  // (src/mail_queue.js). 'retrying' is its own status -- it used to show
+  // as failed until a later success, then flipped to sent with the old
+  // error still attached; a permanent failure used to show as skipped.
   for (const o of outboxRows) {
+    const status = outboxRowStatus(o);
     activity.push({
       kind: o.kind, eventId: o.event_id, eventDate: o.event_date,
       recipient: o.player_name || o.player_id || null,
-      status: o.cancelled ? 'skipped' : o.error ? 'failed' : o.sent_at ? 'sent' : 'pending',
-      reason: o.error || null,
-      at: o.sent_at || o.created_at
+      status,
+      reason: (status === 'failed' || status === 'retrying' || status === 'skipped') ? (o.error || null) : null,
+      attempts: o.attempts || 0,
+      at: o.failed_at || o.sent_at || o.created_at
     });
   }
+  // Reminder waves are now queued per recipient through the outbox
+  // (sendLeagueReminderKind), so those recipients already appear above
+  // with their real status. A wave summary row is kept only when it has
+  // no outbox rows of its own: a wave with nobody to notify, or one
+  // sent before this change.
+  const queuedWaves = new Set(((await env.DB.prepare(
+    `SELECT DISTINCT event_id, kind FROM outbox WHERE league_id = ? AND kind IN ('reminder_72h', 'reminder_24h', 'logistics_12h')`
+  ).bind(leagueId).all()).results || []).map(r => r.event_id + '|' + r.kind));
   for (const r of reminderRows) {
+    if (queuedWaves.has(r.event_id + '|' + r.kind)) continue;
     // E2 (Comms polish task): recipient count used to be rendered in
     // both languages at once ("N destinataire(s) / recipient(s)") --
     // sent as a bare number now, the client formats it in the current
@@ -4553,10 +4570,13 @@ async function handleLeagueCommsData(req, env, url) {
   }
   activity.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
 
-  const stats = { sent: 0, failed: 0, skipped: 0, pending: 0 };
+  const stats = { sent: 0, failed: 0, skipped: 0, pending: 0, retrying: 0 };
   for (const a of activity) {
     if (stats[a.status] !== undefined) stats[a.status]++;
   }
+  // The headline Failed count includes rows still retrying: both are
+  // mail that has not arrived, and both need an admin's attention.
+  stats.failed += stats.retrying;
 
   // Live-testing task (batch 4), Part 4: broadcast targeting options.
   // Team-name targeting is only ever offered for 'fixed' leagues --
@@ -4789,7 +4809,7 @@ async function handleLeagueCommsPage(req, env, url) {
       activityTitle: 'Activité récente',
       colType: 'Type', colRecipient: 'Destinataire', colEvent: 'Match', colStatus: 'Statut', colWhen: 'Quand', colReason: 'Raison',
       emptyState: "Aucune activité pour l'instant -- les envois apparaîtront ici.",
-      statusSent: 'Envoyé', statusFailed: 'Échec', statusSkipped: 'Ignoré', statusPending: 'En attente',
+      statusSent: 'Envoyé', statusFailed: 'Échec', statusRetrying: 'Échec, nouvel essai prévu', statusSkipped: 'Ignoré', statusPending: 'En attente',
       // E3 (Comms polish task): a 0-recipient automated send used to
       // show the same green "Envoyé" status as a real send -- reads as
       // a success even though nobody received anything. Distinct
@@ -4828,7 +4848,7 @@ async function handleLeagueCommsPage(req, env, url) {
       activityTitle: 'Recent activity',
       colType: 'Type', colRecipient: 'Recipient', colEvent: 'Game', colStatus: 'Status', colWhen: 'When', colReason: 'Reason',
       emptyState: 'No activity yet -- sends will appear here.',
-      statusSent: 'Sent', statusFailed: 'Failed', statusSkipped: 'Skipped', statusPending: 'Pending',
+      statusSent: 'Sent', statusFailed: 'Failed', statusRetrying: 'Failed, retry scheduled', statusSkipped: 'Skipped', statusPending: 'Pending',
       statusNoRecipients: 'No one to notify', noRecipientsReason: 'No one was eligible for this automated send.',
       recipientCountLabel: '{n} recipient(s)',
       btnDrain: '⚡ Send now', drainConfirm: 'Trigger immediate delivery of pending emails for this league?',
@@ -4917,7 +4937,7 @@ function fmtWhen(iso) {
 // E3 (Comms polish task): no_recipients gets the same neutral grey as
 // skipped -- not green (that would read as a real success), not red
 // (nothing failed, there was just nobody to send to).
-const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', skipped: '#55585f', pending: '#b45309', no_recipients: '#55585f' };
+const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', retrying: '#c4153a', skipped: '#55585f', pending: '#b45309', no_recipients: '#55585f' };
 // E1 (Comms polish task): the same labels the Active automations card
 // uses (d.cad72/cad24/cad12), so Type never drifts from that card's
 // own wording. Built from the current dict each render, not module-
@@ -4958,7 +4978,7 @@ function renderActivity(activity) {
   var d = window.__pageDict();
   var el = document.getElementById('comms-activity');
   if (!activity.length) { el.innerHTML = '<p class="nl-help">' + d.emptyState + '</p>'; return; }
-  var statusKey = { sent: 'statusSent', failed: 'statusFailed', skipped: 'statusSkipped', pending: 'statusPending', no_recipients: 'statusNoRecipients' };
+  var statusKey = { sent: 'statusSent', failed: 'statusFailed', retrying: 'statusRetrying', skipped: 'statusSkipped', pending: 'statusPending', no_recipients: 'statusNoRecipients' };
   var rows = activity.map(function(a) {
     // E2: recipient count is a bare number from the server now --
     // formatted here, current language only (never both at once).
@@ -9653,12 +9673,23 @@ function renderTeam(rows, counts, team, teamNames = TEAMS) {
 
 /* ---------- match & schedule helpers ---------- */
 
-async function getTeamFixtures(env, ev, team) {
+// Fetches the public site's data.json, the fixtures' source of truth.
+async function fetchSiteDataJson(env) {
+  const r = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
+// loadSiteData: optional memoized loader. drain() passes one so a whole
+// batch shares a single data.json fetch -- this used to fetch once PER
+// RECIPIENT, doubling every team email's subrequest cost and pushing
+// SMBHL's cron past Cloudflare's per-invocation limit (see
+// src/mail_queue.js).
+async function getTeamFixtures(env, ev, team, loadSiteData = null) {
   if (!team || !ev) return null;
   try {
-    const r = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
-    if (!r.ok) return null;
-    const d = await r.json();
+    const d = loadSiteData ? await loadSiteData() : await fetchSiteDataJson(env);
+    if (!d || !d.seasons) return null;
     const season = d.seasons.find(s => s && s.name === ev.season);
     if (!season || !season.fixtures) return null;
 
@@ -10870,18 +10901,30 @@ async function runHoldCall(env, m) {
 // composable list so every existing call site (no filter at all, or
 // filterEventId alone) produces the exact same SQL as before --
 // filterLeagueId is purely additive.
-async function drain(env, limit = 40, filterEventId = null, filterLeagueId = null) {
+// Sends due outbox rows, at most `budget.remaining` of them (see
+// src/mail_queue.js for why the per-invocation cap is 45 and how
+// sent / retrying / failed / skipped are represented). Anything over
+// the cap stays queued for the next pass -- never dropped. Pass the
+// SAME budget to every drain() in one invocation (the league cron
+// drains once per league); a lone call gets a fresh full budget.
+// `limit` still caps the batch for callers that want a smaller one.
+async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = null, filterLeagueId = null, budget = null) {
+  budget = budget || createSendBudget();
+  const batch = Math.min(limit, budget.remaining);
+  if (batch <= 0) return { due: 0, sent: 0, failed: 0, retrying: 0 };
   const now = new Date().toISOString();
-  const conditions = ['sent_at IS NULL', 'cancelled = 0', 'send_after <= ?'];
-  const params = [now];
+  const conditions = [OUTBOX_DUE_WHERE];
+  const params = [now, now];
   if (filterEventId) { conditions.push('event_id = ?'); params.push(filterEventId); }
   if (filterLeagueId) { conditions.push('league_id = ?'); params.push(filterLeagueId); }
-  params.push(limit);
+  params.push(batch);
   const due = (await env.DB.prepare(
     `SELECT * FROM outbox WHERE ${conditions.join(' AND ')} ORDER BY id LIMIT ?`
   ).bind(...params).all()).results || [];
 
-  let sent = 0, failed = 0;
+  let sent = 0, failed = 0, retrying = 0;
+  let siteDataPromise = null;
+  const loadSiteData = () => (siteDataPromise ||= fetchSiteDataJson(env).catch(() => null));
   const highlightsCache = new Map();
   const pricingCache = new Map();
   let dataJsonCache = null;
@@ -10898,8 +10941,19 @@ async function drain(env, limit = 40, filterEventId = null, filterLeagueId = nul
   };
   for (const m of due) {
     try {
-      let ev = await getEvent(env.DB, m.event_id);
       const payload = JSON.parse(m.payload || '{}');
+      // Pre-rendered mail (enqueuePrerenderedMail): the league product's
+      // reminder waves and team-assigned follow-ups are rendered when
+      // queued and sent exactly as stored.
+      if (payload.prerendered) {
+        const pm = payload.prerendered;
+        if (!budget.take()) break;
+        await sendMail(env, pm.to, pm.subject, pm.text, pm.html, null, pm.identity || null);
+        await recordSendSuccess(env.DB, m.id);
+        sent++;
+        continue;
+      }
+      let ev = await getEvent(env.DB, m.event_id);
       if (!ev && (m.kind === 'season_recap' || m.kind === 'season_recap_prompt')) {
         ev = {
           id: m.event_id,
@@ -10930,8 +10984,7 @@ async function drain(env, limit = 40, filterEventId = null, filterLeagueId = nul
       }
       if (m.kind === 'holdcall') {
         await runHoldCall(env, m);
-        await env.DB.prepare('UPDATE outbox SET sent_at=? WHERE id=?')
-          .bind(new Date().toISOString(), m.id).run();
+        await recordSendSuccess(env.DB, m.id);
         sent++; continue;
       }
 
@@ -11057,7 +11110,7 @@ async function drain(env, limit = 40, filterEventId = null, filterLeagueId = nul
           }
 
           if (playerTeam) {
-            const matches = await getTeamFixtures(env, ev, playerTeam);
+            const matches = await getTeamFixtures(env, ev, playerTeam, loadSiteData);
             payload.fixtureText = formatFixtureText(matches, playerTeam, c.is_goalie === 1);
             if (m.kind === 'invite' || m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
               const salt = await teamSalt(env.DB, ev.season, playerTeam);
@@ -11113,26 +11166,39 @@ async function drain(env, limit = 40, filterEventId = null, filterLeagueId = nul
       }
       const msg = body(m.kind, { ev, name, team: playerTeam || m.team, link, payload, leagueCfg });
       if (!msg) throw new Error('unknown kind ' + m.kind);
+      // Over this invocation's cap: stop here. This row and every one
+      // after it stay queued, untouched, for the next pass.
+      if (!budget.take()) break;
       await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg);
-      if (m.kind === 'sub_call') {
-        await env.DB.prepare(
-          `UPDATE contacts SET asked_streak = asked_streak + 1, last_asked = ?,
-             dormant = CASE WHEN asked_streak + 1 >= 10 THEN 1 ELSE dormant END
-            WHERE player_id = ?`).bind(new Date().toISOString(), m.player_id).run();
-      }
-      await env.DB.prepare('UPDATE outbox SET sent_at=? WHERE id=?')
-        .bind(new Date().toISOString(), m.id).run();
+      // Resend accepted it: it is sent, whatever happens next. (The
+      // sub-call bookkeeping below used to run BEFORE this, so a failure
+      // there retried -- and re-sent -- a message already delivered.)
+      await recordSendSuccess(env.DB, m.id);
       sent++;
+      if (m.kind === 'sub_call') {
+        try {
+          await env.DB.prepare(
+            `UPDATE contacts SET asked_streak = asked_streak + 1, last_asked = ?,
+               dormant = CASE WHEN asked_streak + 1 >= 10 THEN 1 ELSE dormant END
+              WHERE player_id = ?`).bind(new Date().toISOString(), m.player_id).run();
+        } catch (e) { console.error(`[drain] sub_call bookkeeping failed for ${m.player_id}: ${e.message}`); }
+      }
     } catch (e) {
+      // Transient -> retried later with backoff; permanent (bad address,
+      // rejected recipient, ...) or out of attempts -> failed, visible
+      // in Comms, never retried. Never sent_at + error on one row.
+      // failed = every send that did not go out on this pass (what a
+      // person reading a drain result needs to see); retrying = the
+      // subset that will be tried again.
+      const state = await recordSendFailure(env.DB, m, e);
       failed++;
-      const errStr = String(e.message).slice(0, 300);
-      const isPermanent = errStr.includes('422') || errStr.includes('validation_error') ||
-        errStr.includes('invalid email format') || errStr.includes('no email on file');
-      await env.DB.prepare('UPDATE outbox SET error=?, cancelled = CASE WHEN ? THEN 1 ELSE cancelled END WHERE id=?')
-        .bind(errStr, isPermanent ? 1 : 0, m.id).run();
+      if (state === 'retrying') retrying++;
+      // The platform refused a subrequest: every later send in this
+      // invocation would fail the same way. Stop; the rest stay queued.
+      if (isSubrequestLimitError(e)) { budget.halt(); break; }
     }
   }
-  return { due: due.length, sent, failed };
+  return { due: due.length, sent, failed, retrying };
 }
 
 /* ---------- shortage ---------- */
@@ -11715,18 +11781,39 @@ async function deadMan(env) {
   ).bind(new Date(now.getTime() - 3600000).toISOString()).first()) || { n: 0 };
   if (stuck.n > 0) problems.push(`${stuck.n} message(s) stuck in the outbox over an hour`);
 
+  // Outbox QA batch: a permanent send failure (bad address, rejected
+  // recipient, or retries exhausted) is now its own state -- tell the
+  // admin instead of leaving it for someone to stumble on.
+  const failedRecently = (await env.DB.prepare(
+    `SELECT count(*) n FROM outbox WHERE failed_at IS NOT NULL AND failed_at >= ?`
+  ).bind(new Date(now.getTime() - 24 * 3600000).toISOString()).first()) || { n: 0 };
+  if (failedRecently.n > 0) problems.push(`${failedRecently.n} email(s) failed permanently in the last 24 hours`);
+
+  // One combined email per pass (a single subrequest, whatever the
+  // number of problems -- see src/mail_queue.js's reserved budget), and
+  // a problem is only marked "alerted" once that email actually went
+  // out. It used to be marked first, so an alert whose send failed was
+  // never retried: the alert itself failed silently.
+  const fresh = [];
   for (const p of problems) {
     const key = 'alert:' + p.replace(/\s+/g, '_').slice(0, 80);
     const seen = await env.DB.prepare('SELECT 1 FROM settings WHERE key=?').bind(key).first();
-    if (seen) continue;
-    await env.DB.prepare('INSERT INTO settings (key,value) VALUES (?,?)')
-      .bind(key, now.toISOString()).run();
+    if (!seen) fresh.push({ p, key });
+  }
+  if (fresh.length) {
+    const list = fresh.map(f => `- ${f.p}`).join('\n');
     try {
       await sendMail(env, env.ADMIN_EMAIL || ADMIN_EMAIL, 'SMBHL — le système a manqué quelque chose',
-        `Quelque chose ne s'est pas exécuté :\n\n${p}\n\n` +
-        `Something did not run:\n\n${p}\n\n` +
-        `Check: /admin/outbox and the jobs table.`);
-    } catch (e) {}
+        `Quelque chose ne s'est pas exécuté :\n\n${list}\n\n` +
+        `Something did not run:\n\n${list}\n\n` +
+        `Check: the Comms tab (Failed filter) and the jobs table.`);
+      for (const f of fresh) {
+        await env.DB.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)')
+          .bind(f.key, now.toISOString()).run();
+      }
+    } catch (e) {
+      console.error(`[deadMan] admin alert failed, will retry next pass: ${e.message}`);
+    }
   }
   return problems;
 }
@@ -17566,29 +17653,54 @@ async function maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, 
   ).bind(playerId, leagueRow.id).first();
   if (!contact) return;
 
+  // Outbox QA batch: queued through the outbox instead of sent inline,
+  // so it shares the per-invocation send cap and gets the outbox's
+  // retry policy and failure visibility (src/mail_queue.js). The caller
+  // drains afterwards (a request drains straight away; the cron's
+  // per-league drain picks up a draw it ran). Logged at queue time: the
+  // outbox now owns delivery, including retries, so the log's "already
+  // handled" gate can no longer strand a failed send.
   try {
     const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
     const dayLabel = reminderDayLabel(ev.date, forcedLang || 'fr');
     const firstName = (contact.name || '').split(' ')[0] || contact.name;
     const { optOutLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
     const mail = renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team, optOutLink, forcedLang });
-    await sendMail(env, contact.email, mail.subject, mail.text, mail.html, null, cfg.league);
+    await enqueuePrerenderedMail(env, {
+      kind: 'team_assigned', leagueId: leagueRow.id, eventId: ev.id, playerId, team,
+      dedupKey: `team_assigned:${ev.id}:${playerId}`, to: contact.email, mail, identity: cfg.league
+    });
     await env.DB.prepare(
       `INSERT INTO league_team_assigned_email_log (event_id, player_id, sent_at) VALUES (?, ?, ?)
        ON CONFLICT(event_id, player_id) DO NOTHING`
     ).bind(ev.id, playerId, new Date().toISOString()).run();
   } catch (err) {
-    console.error(`[team-assigned-followup] failed to send to ${playerId}: ${err.message}`);
-    // Live-testing task (batch 3), Part 2: see sendLeagueReminderKind's
-    // own identical comment -- same gap, same fix. Not inserted into
-    // league_team_assigned_email_log itself: that table's PRIMARY KEY
-    // is this function's own "already sent" dedup gate (line above),
-    // and a failed attempt must stay retryable on the next shortage/
-    // draw event, unlike a real success.
+    // Could not even be queued (e.g. rendering failed): not logged as
+    // handled, so the next draw/assignment tries again, and recorded
+    // where the league's Comms tab shows it.
+    console.error(`[team-assigned-followup] could not queue for ${playerId}: ${err.message}`);
     await env.DB.prepare(
       `INSERT INTO league_mail_failure_log (league_id, event_id, player_id, kind, error, failed_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).bind(leagueRow.id, ev.id, playerId, 'team_assigned', String(err.message || err), new Date().toISOString()).run();
   }
+}
+
+// Queues a fully rendered email (subject/text/html already built) for
+// drain() to send exactly as stored. League-product mail uses this: it
+// is rendered from league data drain() doesn't otherwise load, and a
+// queued copy keeps the exact content an admin can inspect in Comms.
+// Not held for quiet hours: every caller sends at a moment it chose
+// (a reminder window the cron just reached, or an admin's action).
+async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId = null, team = null, dedupKey = null, to, mail, identity = null }) {
+  await enqueue(env, {
+    kind, event_id: eventId, player_id: playerId, team, dedup_key: dedupKey, league_id: leagueId, skipQuietHours: true,
+    payload: {
+      prerendered: {
+        to, subject: mail.subject, text: mail.text, html: mail.html || null,
+        identity: identity ? { fromEmail: identity.fromEmail || null, replyToEmail: identity.replyToEmail || null } : null
+      }
+    }
+  });
 }
 
 // Sends one reminder wave for one event: real recipients (never a
@@ -17617,7 +17729,7 @@ async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil) {
     // eligible/failed breakdown Bug 2 added for the manual trigger) is
     // needed here; this keeps runLeagueReminders' own summing logic
     // unchanged.
-    results[kind] = (await sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog: true })).sent;
+    results[kind] = (await sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog: true })).queued;
   }
   return results;
 }
@@ -17633,14 +17745,28 @@ async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil) {
 // 0, sent === 0), which used to be indistinguishable and, combined
 // with Bug 1's from-address rejection, made every league's reminders
 // silently fail while the admin saw a success-shaped message.
-async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false } = {}) {
+async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false, drainNow = false, budget = null } = {}) {
   const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
   const recipients = kind === 'logistics_12h'
     ? await getConfirmedPlayers(env, leagueRow.id, ev.id)
     : await getNonResponders(env, leagueRow.id, ev.id, ev.season);
 
-  let sent = 0;
-  let failed = 0;
+  // Outbox QA batch: each recipient's email is QUEUED (outbox,
+  // pre-rendered), not sent inline. Inline sending had two faults, the
+  // same pair SMBHL's drain had: a large wave (every recipient of every
+  // due event in every league, all in one cron invocation) could
+  // exceed Cloudflare's per-invocation subrequest limit, and a failed
+  // send was abandoned -- league_reminder_log was written anyway, and
+  // that log is the "already sent" gate, so the wave never retried.
+  // Now the wave is logged once queued, and the outbox owns delivery:
+  // capped per invocation, transient failures retried, permanent ones
+  // shown as failed in Comms (src/mail_queue.js).
+  //
+  // drainNow: the manual "send now" button drains straight away so its
+  // response can report what actually went out; the cron drains once
+  // per league after all its waves, sharing one budget (runLeagueReminders).
+  let queued = 0;
+  let failedToQueue = 0;
   for (const contact of recipients) {
     try {
       const dayLabel = reminderDayLabel(ev.date, forcedLang || 'fr');
@@ -17649,16 +17775,17 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
       const mail = kind === 'logistics_12h'
         ? renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: contact.rsvp_team, optOutLink, forcedLang })
         : renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang });
-      await sendMail(env, contact.email, mail.subject, mail.text, mail.html, null, cfg.league);
-      sent++;
+      await enqueuePrerenderedMail(env, {
+        kind, leagueId: leagueRow.id, eventId: ev.id, playerId: contact.player_id, team: contact.rsvp_team || null,
+        dedupKey: `${writeLog ? 'lrem' : 'lrem-manual'}:${ev.id}:${kind}:${contact.player_id}`,
+        to: contact.email, mail, identity: cfg.league
+      });
+      queued++;
     } catch (err) {
-      failed++;
-      console.error(`[league-reminders] failed to send ${kind} to ${contact.player_id}: ${err.message}`);
-      // Live-testing task (batch 3), Part 2: previously console.error
-      // only -- a failed reminder left literally no trace a league
-      // admin could ever discover. league_reminder_log itself can't
-      // record this (its PRIMARY KEY doubles as the "already sent,
-      // don't resend" dedup gate -- see migrate-040.sql's own comment).
+      // Could not even be rendered/queued: recorded where the league's
+      // Comms tab shows it (league_mail_failure_log, migrate-040.sql).
+      failedToQueue++;
+      console.error(`[league-reminders] could not queue ${kind} for ${contact.player_id}: ${err.message}`);
       await env.DB.prepare(
         `INSERT INTO league_mail_failure_log (league_id, event_id, player_id, kind, error, failed_at) VALUES (?, ?, ?, ?, ?, ?)`
       ).bind(leagueRow.id, ev.id, contact.player_id, kind, String(err.message || err), new Date().toISOString()).run();
@@ -17668,9 +17795,13 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
     await env.DB.prepare(
       `INSERT INTO league_reminder_log (event_id, kind, league_id, sent_at, recipient_count) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(event_id, kind) DO NOTHING`
-    ).bind(ev.id, kind, leagueRow.id, new Date().toISOString(), sent).run();
+    ).bind(ev.id, kind, leagueRow.id, new Date().toISOString(), queued).run();
   }
-  return { sent, eligible: recipients.length, failed };
+  if (drainNow) {
+    const d = await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id, leagueRow.id, budget);
+    return { sent: d.sent, eligible: recipients.length, failed: failedToQueue + d.failed, queued };
+  }
+  return { sent: 0, eligible: recipients.length, failed: failedToQueue, queued };
 }
 
 // The cron entry point (scheduled(), below the export default). Scans
@@ -17684,7 +17815,7 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
 // the threshold and sends it late, rather than silently skipping it
 // forever -- league_reminder_log is what prevents a duplicate send,
 // not a narrow time window.
-async function runLeagueReminders(env) {
+async function runLeagueReminders(env, budget = createSendBudget()) {
   const log = [];
   const leagues = (await env.DB.prepare(
     `SELECT * FROM leagues WHERE id != ? AND deactivated_at IS NULL`
@@ -17744,22 +17875,15 @@ async function runLeagueReminders(env) {
       }
     }
 
-    // Live-testing task (batch 4), Part 3: cron-level safety net for
-    // this league's own outbox rows (sub-call invites -- the only
-    // league-product path that uses outbox at all). Both call sites
-    // that enqueue into it already drain synchronously in the same
-    // request (maybeInviteSubsForShortage, handleLeagueInviteSubs), so
-    // this is normally a cheap SELECT that finds nothing -- but if
-    // that request crashed or timed out after enqueue() and before its
-    // own drain() call, the message previously had no fallback at all
-    // (this cron never touched outbox, and there was no manual
-    // fallback either, per the prior investigation this task is
-    // closing). This cron (every 15 minutes) and the new manual
-    // "drain now" button (handleLeagueCommsDrain) are now the two
-    // safety nets, matching SMBHL's own cron+manual pair.
-    const safetyDrain = await drain(env, 40, null, leagueRow.id);
-    if (safetyDrain.sent > 0 || safetyDrain.failed > 0) {
-      log.push(`${leagueRow.id} safety-drain sent=${safetyDrain.sent} failed=${safetyDrain.failed}`);
+    // Delivers this league's outbox: the reminder waves and team-
+    // assigned follow-ups queued above (outbox QA batch), plus sub-call
+    // invites and retries. Every league shares ONE budget for the whole
+    // invocation (src/mail_queue.js): once it is spent, the remaining
+    // leagues' mail simply waits for the next pass (every 15 minutes on
+    // demo) -- queued, never dropped.
+    const leagueDrain = await drain(env, MAIL_SENDS_PER_INVOCATION, null, leagueRow.id, budget);
+    if (leagueDrain.sent > 0 || leagueDrain.failed > 0) {
+      log.push(`${leagueRow.id} drain sent=${leagueDrain.sent} failed=${leagueDrain.failed} retrying=${leagueDrain.retrying}`);
     }
   }
   return log;
@@ -17794,7 +17918,7 @@ async function handleLeagueSendReminderNow(req, env, url) {
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
-  const { sent, eligible, failed } = await sendLeagueReminderKind(env, leagueRow, cfg, ev, 'reminder_72h', { writeLog: false });
+  const { sent, eligible, failed } = await sendLeagueReminderKind(env, leagueRow, cfg, ev, 'reminder_72h', { writeLog: false, drainNow: true });
   // Bug 2 fix (live-testing): eligible/failed let the client tell
   // "genuinely nothing to send" (eligible === 0) apart from "there were
   // real recipients but every send failed" (eligible > 0, sent === 0)
@@ -17874,6 +17998,8 @@ async function handleLeagueAssignEventTeam(req, env, url) {
   const leagueRowForFollowup = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
   if (leagueRowForFollowup) {
     await maybeSendTeamAssignedFollowup(env, leagueRowForFollowup, cfg, ev, playerId, team);
+    // The follow-up is queued (outbox); deliver it now, as before.
+    await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id, leagueId);
   }
 
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, team });
@@ -17980,6 +18106,8 @@ async function handleLeagueRandomAssignEventTeams(req, env, url) {
   if (!result.ok) {
     return Response.json(result, { status: 400 });
   }
+  // Any late-draw follow-ups were queued (outbox); deliver them now.
+  await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id, leagueId);
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, assigned: result.assigned });
 }
 
@@ -22999,24 +23127,38 @@ async function handleSendSampleInvites(req, env) {
 async function handleEmailsData(req, env, url) {
   try {
     const settings = await getEmailSettings(env.DB);
-    const outbox = (await env.DB.prepare(
+    // Outbox QA batch: the newest 150 rows PLUS every failed or retrying
+    // row from the last 30 days, however old -- a failure used to scroll
+    // out of this list as soon as 150 newer messages were queued. Each
+    // row carries its derived status (src/mail_queue.js outboxRowStatus),
+    // so the page never re-derives it from raw columns.
+    const failureWindow = new Date(Date.now() - 30 * 24 * 3600000).toISOString();
+    const outbox = ((await env.DB.prepare(
       `SELECT o.id, o.kind, o.event_id, o.player_id, o.team, o.dedup_key, o.payload, o.send_after, o.sent_at, o.cancelled, o.error, o.created_at,
+              o.attempts, o.next_attempt_at, o.failed_at, o.last_error,
               c.name AS player_name, c.email AS player_email,
               e.date AS event_date, e.week AS event_week
          FROM outbox o
          LEFT JOIN contacts c ON c.player_id = o.player_id
          LEFT JOIN events e ON e.id = o.event_id
-        ORDER BY o.id DESC LIMIT 150`
-    ).all()).results || [];
+        WHERE o.id IN (SELECT id FROM outbox ORDER BY id DESC LIMIT 150)
+           OR (o.created_at >= ? AND (o.failed_at IS NOT NULL OR (o.error IS NOT NULL AND o.sent_at IS NULL AND o.cancelled = 0)))
+        ORDER BY o.id DESC LIMIT 500`
+    ).bind(failureWindow).all()).results || []).map(o => ({ ...o, status: outboxRowStatus(o) }));
 
+    // failed = permanent failures + rows still retrying (both need an
+    // admin's eyes); retrying is also reported on its own. A row that
+    // failed and was later delivered counts as sent, and only as sent.
     const counts = (await env.DB.prepare(
       `SELECT count(*) as total,
               sum(case when sent_at is not null then 1 else 0 end) as sent,
-              sum(case when cancelled = 1 then 1 else 0 end) as cancelled,
-              sum(case when error is not null and cancelled = 0 and sent_at is null then 1 else 0 end) as failed,
+              sum(case when cancelled = 1 and failed_at is null and sent_at is null then 1 else 0 end) as cancelled,
+              sum(case when failed_at is not null then 1 else 0 end) as failed_permanent,
+              sum(case when error is not null and cancelled = 0 and sent_at is null then 1 else 0 end) as retrying,
               sum(case when sent_at is null and cancelled = 0 then 1 else 0 end) as pending
          FROM outbox`
-    ).first()) || { total: 0, sent: 0, cancelled: 0, failed: 0, pending: 0 };
+    ).first()) || { total: 0, sent: 0, cancelled: 0, failed_permanent: 0, retrying: 0, pending: 0 };
+    counts.failed = (counts.failed_permanent || 0) + (counts.retrying || 0);
 
     const openEvents = (await env.DB.prepare(
       `SELECT id, season, week, date, venue FROM events WHERE state = 'open' ORDER BY week`
@@ -23038,6 +23180,7 @@ async function handleEmailsData(req, env, url) {
         sent: counts.sent || 0,
         cancelled: counts.cancelled || 0,
         failed: counts.failed || 0,
+        retrying: counts.retrying || 0,
         pending: counts.pending || 0
       },
       open_events: openEvents,
@@ -23716,6 +23859,7 @@ async function emailsPage(env = null, isAuthed = false) {
       badgeSent: "✓ Envoyé",
       badgeCancelled: "Annulé",
       badgeError: "Erreur",
+      badgeRetrying: "🔁 Nouvel essai ({n}/{max})",
       badgePending: "⏳ En attente",
       actionPreview: "👁️ Aperçu",
       actionCancel: "Annuler",
@@ -23816,6 +23960,7 @@ async function emailsPage(env = null, isAuthed = false) {
       badgeSent: "✓ Sent",
       badgeCancelled: "Cancelled",
       badgeError: "Error",
+      badgeRetrying: "🔁 Retrying ({n}/{max})",
       badgePending: "⏳ Pending",
       actionPreview: "👁️ Preview",
       actionCancel: "Cancel",
@@ -24331,10 +24476,12 @@ async function emailsPage(env = null, isAuthed = false) {
     const outbox = emailsData.outbox || [];
     const filtered = outbox.filter(o => {
       if (currentFilter === 'all') return true;
-      if (currentFilter === 'pending') return !o.sent_at && !o.cancelled;
-      if (currentFilter === 'sent') return !!o.sent_at;
-      if (currentFilter === 'cancelled') return !!o.cancelled;
-      if (currentFilter === 'failed') return !o.sent_at && !o.cancelled && !!o.error;
+      // status comes from the server (src/mail_queue.js outboxRowStatus):
+      // sent | failed (permanent) | retrying | skipped | pending.
+      if (currentFilter === 'pending') return o.status === 'pending' || o.status === 'retrying';
+      if (currentFilter === 'sent') return o.status === 'sent';
+      if (currentFilter === 'cancelled') return o.status === 'skipped';
+      if (currentFilter === 'failed') return o.status === 'failed' || o.status === 'retrying';
       return true;
     });
 
@@ -24346,9 +24493,10 @@ async function emailsPage(env = null, isAuthed = false) {
     let h = '';
     filtered.forEach(o => {
       let badge = '';
-      if (o.sent_at) badge = '<span class="badge badge-sent">' + esc(dict.badgeSent) + '</span>';
-      else if (o.cancelled) badge = '<span class="badge badge-cancelled">' + esc(dict.badgeCancelled) + '</span>';
-      else if (o.error) badge = '<span class="badge badge-error" title="' + esc(o.error) + '">' + esc(dict.badgeError) + '</span>';
+      if (o.status === 'sent') badge = '<span class="badge badge-sent">' + esc(dict.badgeSent) + '</span>';
+      else if (o.status === 'failed') badge = '<span class="badge badge-error" title="' + esc(o.error || '') + '">' + esc(dict.badgeError) + '</span>';
+      else if (o.status === 'retrying') badge = '<span class="badge badge-error" title="' + esc(o.error || '') + '">' + esc(dict.badgeRetrying.replace('{n}', o.attempts || 1).replace('{max}', 5)) + '</span>';
+      else if (o.status === 'skipped') badge = '<span class="badge badge-cancelled">' + esc(dict.badgeCancelled) + '</span>';
       else badge = '<span class="badge badge-pending">' + esc(dict.badgePending) + '</span>';
 
       const ki = kinds[o.kind] || { label: o.kind, badgeClass: 'badge-pending', desc: (currentLang === 'en' ? 'System notice' : 'Avis système') };
@@ -24365,7 +24513,7 @@ async function emailsPage(env = null, isAuthed = false) {
         (o.player_email ? '<div style="font-size:11px; color:var(--soft); font-family:monospace;">' + esc(o.player_email) + '</div>' : '');
 
       const sendAfterFmt = fmtLocalTime(o.send_after);
-      const canCancel = !o.sent_at && !o.cancelled;
+      const canCancel = o.status === 'pending' || o.status === 'retrying';
 
       h += '<tr>' +
         '<td><b>#' + o.id + '</b></td>' +
@@ -24415,9 +24563,12 @@ async function emailsPage(env = null, isAuthed = false) {
     const kinds = KIND_INFO[currentLang] || KIND_INFO.fr;
     const ki = kinds[o.kind] || { label: o.kind, badgeClass: 'badge-pending', desc: (isEn ? 'Message' : 'Message') };
     let statusText = isEn ? '⏳ Pending delivery' : '⏳ En attente d\u2019envoi';
-    if (o.sent_at) statusText = isEn ? ('✅ Sent (' + fmtLocalTime(o.sent_at, true) + ' local)') : ('✅ Envoyé (' + fmtLocalTime(o.sent_at, true) + ' locale)');
-    else if (o.cancelled) statusText = isEn ? '🚫 Cancelled' : '🚫 Annulé';
-    else if (o.error) statusText = isEn ? ('❌ Failed: ' + esc(o.error)) : ('❌ Échec : ' + esc(o.error));
+    if (o.status === 'sent') statusText = isEn ? ('✅ Sent (' + fmtLocalTime(o.sent_at, true) + ' local)') : ('✅ Envoyé (' + fmtLocalTime(o.sent_at, true) + ' locale)');
+    else if (o.status === 'failed') statusText = isEn ? ('❌ Failed, not retried: ' + esc(o.error || '')) : ('❌ Échec, sans nouvel essai : ' + esc(o.error || ''));
+    else if (o.status === 'retrying') statusText = isEn
+      ? ('🔁 Failed, retry scheduled ' + fmtLocalTime(o.next_attempt_at, true) + ' (attempt ' + (o.attempts || 1) + ' of 5): ' + esc(o.error || ''))
+      : ('🔁 Échec, nouvel essai prévu ' + fmtLocalTime(o.next_attempt_at, true) + ' (essai ' + (o.attempts || 1) + ' sur 5) : ' + esc(o.error || ''));
+    else if (o.status === 'skipped') statusText = isEn ? '🚫 Cancelled' : '🚫 Annulé';
 
     let parsedPayload = null;
     try {

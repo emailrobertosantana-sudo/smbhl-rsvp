@@ -160,6 +160,11 @@ describe('Part P: POST /league/events/invite-subs', () => {
     };
     try {
       env.RESEND_API_KEY = 're_test_key_invite_subs';
+      // The invite-subs request above already tried this send (with no
+      // API key configured yet) and it failed, so the row is now
+      // retrying with a backoff (src/mail_queue.js). Make it due, as
+      // the next cron pass after the backoff would.
+      await env.DB.prepare('UPDATE outbox SET next_attempt_at = NULL WHERE sent_at IS NULL AND cancelled = 0').run();
       await drain(env);
     } finally {
       globalThis.fetch = originalFetch;
