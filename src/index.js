@@ -16765,7 +16765,8 @@ async function peopleAction(req, env) {
       `UPDATE contacts
           SET role = CASE WHEN is_goalie = 1 THEN 'sub_goalie' ELSE 'sub_skater' END,
               is_sub = 1,
-              preferred_team = NULL
+              preferred_team = NULL,
+              previous_role = 'roster'
         WHERE role = 'roster'`
     ).run();
     return Response.json({ ok: true, reset_count: res.meta?.changes || 0 });
@@ -16844,12 +16845,27 @@ async function peopleAction(req, env) {
     }
     const p = (d.players || []).find(x => x.id === id);
     if (!p) return new Response('not in league records', { status: 404 });
+    // A regular converting to sub: record it (previous_role = 'roster').
+    // SMBHL seeds a game's roster rsvp rows from data.json, so a regular
+    // can have played without ever having a contacts row -- "was a
+    // regular" is therefore also read from this season's roster rsvp rows
+    // and data.json's current-season team, not only an existing contact.
+    // (Finance charges a sub every game they played this season at the
+    // sub rate, whatever their role then -- handleFinancesData.)
+    const existing = await env.DB.prepare('SELECT role, previous_role FROM contacts WHERE player_id = ?').bind(id).first();
+    const currentSeason = d.current_season || null;
+    const playedAsRoster = currentSeason ? await env.DB.prepare(
+      `SELECT 1 FROM rsvp r JOIN events e ON e.id = r.event_id WHERE r.player_id = ? AND r.role = 'roster' AND e.season = ? LIMIT 1`
+    ).bind(id, currentSeason).first() : null;
+    const wasRoster = (existing && existing.role === 'roster') || !!playedAsRoster
+      || !!(currentSeason && p.seasons && p.seasons[currentSeason] && p.seasons[currentSeason].team);
+    const previousRole = wasRoster ? 'roster' : (existing ? existing.previous_role : null);
     const salt = crypto.randomUUID().replace(/-/g, '');
     await env.DB.prepare(
-      `INSERT INTO contacts (player_id,name,email,phone,is_sub,role,token_salt,is_goalie)
-       VALUES (?,?,NULL,NULL,1,?,?,?)
-       ON CONFLICT(player_id) DO UPDATE SET role=excluded.role, is_sub=1, is_goalie=excluded.is_goalie`
-    ).bind(id, p.name, b.role, salt, b.role === 'sub_goalie' ? 1 : 0).run();
+      `INSERT INTO contacts (player_id,name,email,phone,is_sub,role,token_salt,is_goalie,previous_role)
+       VALUES (?,?,NULL,NULL,1,?,?,?,?)
+       ON CONFLICT(player_id) DO UPDATE SET role=excluded.role, is_sub=1, is_goalie=excluded.is_goalie, previous_role=excluded.previous_role`
+    ).bind(id, p.name, b.role, salt, b.role === 'sub_goalie' ? 1 : 0, previousRole).run();
     try { await callSubsForShortfallAfterSubAdded(env, SMBHL_LEAGUE_ID); }
     catch (e) { console.error(`[shortfall] check after added sub failed: ${e.message}`); }
     return Response.json({ ok: true });
@@ -20106,6 +20122,23 @@ async function handleFinancesData(req, env, url) {
   ).bind(season).all()).results || [];
   const subGpMap = new Map(subGpRows.map(r => [r.player_id, r.gp]));
 
+  // Every game each player actually played this season (status 'in' on a
+  // completed event -- cancelled events never reach 'done'), WHATEVER
+  // their rsvp role was at the time. A player who is a SUB now is charged
+  // the sub rate for all of these: a regular who converts to sub mid-
+  // season pays per game for the games they already played as a regular
+  // (their rsvp rows from then say 'roster', which the sub count above
+  // never sees), with anything they already paid toward the season fee
+  // credited below. For someone who was always a sub this is the same
+  // count as subGpMap, so their dues don't change.
+  const playedGpRows = (await env.DB.prepare(
+    `SELECT r.player_id, count(*) as gp
+       FROM rsvp r JOIN events e ON e.id = r.event_id
+      WHERE e.season = ? AND r.status = 'in' AND e.state = 'done' AND r.player_id IS NOT NULL
+      GROUP BY r.player_id`
+  ).bind(season).all()).results || [];
+  const playedGpMap = new Map(playedGpRows.map(r => [r.player_id, r.gp]));
+
   // 4. Contacts
   const contactsList = (await env.DB.prepare(
     'SELECT player_id, name, email, role, is_goalie, is_sub, preferred_team FROM contacts'
@@ -20125,14 +20158,14 @@ async function handleFinancesData(req, env, url) {
       const team = sData?.team || gData?.team || null;
       const isSub = (c && c.is_sub === 1) || !team || (sData && sData.team === null);
       let gamesPlayed = 0;
+      const rsvpGp = (isSub ? playedGpMap : subGpMap).get(p.id) || 0;
       if (c && c.role === 'sub_goalie') {
-        gamesPlayed = gData?.gp ?? sData?.gp ?? subGpMap.get(p.id) ?? 0;
+        gamesPlayed = Math.max(gData?.gp ?? sData?.gp ?? 0, rsvpGp);
       } else if (isGoalie && gData && sData && sData.gp === gData.gp && (sData.g || 0) === 0 && (sData.a || 0) === 0) {
         gamesPlayed = gData.gp;
       } else {
         const gpFromData = (sData?.gp ?? 0) + (gData?.gp ?? 0);
-        const gpFromRsvp = subGpMap.get(p.id) || 0;
-        gamesPlayed = Math.max(gpFromData, gpFromRsvp);
+        gamesPlayed = Math.max(gpFromData, rsvpGp);
       }
 
       // If a player is a sub or dropped regular with team: null:
@@ -20181,7 +20214,7 @@ async function handleFinancesData(req, env, url) {
       const c = contactMap.get(rr.player_id);
       const isSub = (c && c.is_sub === 1) || rr.is_sub === 1;
       const isGoalie = c ? (c.is_goalie === 1 || c.role === 'sub_goalie') : rr.is_goalie === 1;
-      const gp = subGpMap.get(rr.player_id) || 0;
+      const gp = (isSub ? playedGpMap : subGpMap).get(rr.player_id) || 0;
       if (isSub && gp === 0 && !duesMap.has(rr.player_id)) {
         continue;
       }
@@ -20228,7 +20261,7 @@ async function handleFinancesData(req, env, url) {
         role: isGoalie ? 'sub_goalie' : 'sub_skater',
         is_goalie: isGoalie,
         is_sub: true,
-        games_played: subGpMap.get(pid) || 0
+        games_played: playedGpMap.get(pid) || 0
       });
     }
   }
@@ -20252,6 +20285,9 @@ async function handleFinancesData(req, env, url) {
     const totalDue = customDue !== null ? Math.max(0, customDue) : basePrice;
     const amountPaid = Number(dues.amount_paid || 0);
     const outstanding = totalDue - amountPaid;
+    // Paid more than is due (e.g. paid the 170 season fee, then became a
+    // sub owing 5 x 5 = 25): a credit, reported as such -- never shown as 0.
+    const credit = Math.max(0, amountPaid - totalDue);
     const notes = dues.notes || '';
 
     let status = 'unpaid';
@@ -20276,6 +20312,7 @@ async function handleFinancesData(req, env, url) {
       total_due: totalDue,
       amount_paid: amountPaid,
       outstanding,
+      credit,
       status,
       notes
     };
@@ -20310,6 +20347,8 @@ async function handleFinancesData(req, env, url) {
     totalDue,
     totalPaid,
     totalOutstanding: players.reduce((sum, p) => sum + Math.max(0, p.outstanding), 0),
+    // Owed back to players (credits), kept separate so it can't hide inside totalOutstanding.
+    totalCredit: players.reduce((sum, p) => sum + (p.credit || 0), 0),
     totalCosts: costSummary.totalCosts,
     netBalance: totalPaid - costSummary.totalCosts,
     netProjected: totalDue - costSummary.totalCosts,
@@ -21043,10 +21082,12 @@ async function financesPage(env = null, isAuthed = false) {
       else statusBadge = '<span class="pill status-unpaid">' + esc(t('statusUnpaid')) + '</span>';
 
       let outDisplay = '';
-      if (p.outstanding <= 0 && p.total_due > 0) {
-        outDisplay = '<b style="color:var(--green)">' + fmtMoney(0) + '</b>';
-      } else if (p.outstanding < 0) {
+      // A credit first: this used to fall into the "0" branch whenever
+      // anything was due, so paid-170-owes-25 showed "0 $", not "+145 $ credit".
+      if (p.outstanding < 0) {
         outDisplay = '<b style="color:var(--blue)">+' + fmtMoney(Math.abs(p.outstanding)) + esc(t('creditSuffix')) + '</b>';
+      } else if (p.outstanding === 0 && p.total_due > 0) {
+        outDisplay = '<b style="color:var(--green)">' + fmtMoney(0) + '</b>';
       } else if (p.outstanding > 0) {
         outDisplay = '<b style="color:var(--red)">' + fmtMoney(p.outstanding) + '</b>';
       } else {

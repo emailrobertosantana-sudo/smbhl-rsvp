@@ -383,12 +383,12 @@ describe('Season Hub - 1-Click Publishing & Database Sync', () => {
             run: async () => {
               if (sql.includes('INSERT INTO events')) {
                 dbEvents.push({ id: args[0], season: args[1], week: args[2] });
-              } else if (sql.includes("role = 'roster'")) {
+              } else if (/SET role = 'roster'/.test(sql)) {
                 const c = dbContacts.find(x => x.player_id === args[2]);
                 if (c) { c.role = 'roster'; c.preferred_team = args[0]; c.is_sub = 0; }
-              } else if (sql.includes("role = 'sub'")) {
+              } else if (/SET role = 'sub'/.test(sql)) {
                 const c = dbContacts.find(x => x.player_id === args[0]);
-                if (c) { c.role = 'sub'; c.is_sub = 1; }
+                if (c) { c.role = 'sub'; c.is_sub = 1; if (sql.includes("previous_role = 'roster'")) c.previous_role = 'roster'; }
               } else if (sql.includes('INSERT INTO rsvp')) {
                 dbRsvp.push({ event_id: args[0], player_id: args[1], team: args[2] });
               } else if (sql.includes('INSERT INTO settings')) {
@@ -465,6 +465,7 @@ describe('Season Hub - 1-Click Publishing & Database Sync', () => {
     const p5 = dbContacts.find(x => x.player_id === 'P5');
     expect(p5.role).toBe('sub');
     expect(p5.is_sub).toBe(1);
+    expect(p5.previous_role).toBe('roster');
 
     // Check data_json in KV
     const updatedData = JSON.parse(mockKv.store['data_json']);

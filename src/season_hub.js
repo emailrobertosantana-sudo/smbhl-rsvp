@@ -850,7 +850,8 @@ export async function publishSeasonToProduction(env, { seasonName, startDate, ro
       await db.prepare(`
         UPDATE contacts
         SET role = 'sub',
-            is_sub = 1
+            is_sub = 1,
+            previous_role = 'roster'
         WHERE player_id = ?
       `).bind(c.player_id).run();
     }
