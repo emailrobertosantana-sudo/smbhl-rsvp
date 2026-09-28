@@ -803,6 +803,32 @@ export function generateScheduleMatrix({
  * 1-Click Season Publishing Engine
  * Commits changes atomically to D1 SQLite and KV data.json
  */
+// SMBHL's data.json keeps players as an ARRAY of { id, ... } (an older
+// object-keyed shape, { P0001: {...} }, is still accepted). Looking a
+// player up as dataJson.players[id] on the real array found nobody, so the
+// draft screens had no history for anyone.
+export function dataPlayer(dataJson, id) {
+  const players = dataJson && dataJson.players;
+  if (!players || !id) return null;
+  return Array.isArray(players) ? (players.find(p => p && p.id === id) || null) : (players[id] || null);
+}
+
+// A player's most recent seasons, newest first, in the league's own season
+// order (data.json seasons: newest first, each with an `order`). The
+// player's own seasons object is keyed by name in no useful order -- on
+// the real document, alphabetical ("Fall 2023", "Fall 2024", ...,
+// "Winter 2024") -- so its last keys were not its latest seasons.
+export function recentPlayerSeasons(dataJson, pData, n) {
+  if (!pData || !pData.seasons) return [];
+  const list = Array.isArray(dataJson.seasons) ? dataJson.seasons : Object.values(dataJson.seasons || {});
+  const rank = new Map(list.filter(x => x && x.name).map((x, i) => [x.name, Number.isFinite(Number(x.order)) ? Number(x.order) : -i]));
+  return Object.keys(pData.seasons)
+    .filter(name => pData.seasons[name])
+    .sort((a, b) => (rank.has(b) ? rank.get(b) : -Infinity) - (rank.has(a) ? rank.get(a) : -Infinity))
+    .slice(0, n)
+    .map(name => pData.seasons[name]);
+}
+
 export async function publishSeasonToProduction(env, { seasonName, startDate, rosters, fixtures, events, fees = {}, rosterConfig = {} }) {
   if (!seasonName || !rosters || !fixtures || !events) {
     throw new Error('Missing required season publication parameters');
@@ -887,9 +913,20 @@ export async function publishSeasonToProduction(env, { seasonName, startDate, ro
 
   if (!dataJson.seasons) dataJson.seasons = {};
   if (!dataJson.players) dataJson.players = {};
+  // SMBHL's real data.json keeps seasons and players as ARRAYS, newest
+  // season first (seasons[0] is what the scoresheet review publishes into,
+  // and what highlights read as current), players as { id, ... }. This
+  // code was written against an object-keyed shape ({ '0': season },
+  // { P0001: player }) and, on the real document, put the new season LAST
+  // and recorded no player's team. Both shapes are handled.
+  const seasonsIsArray = Array.isArray(dataJson.seasons);
+  const firstSeason = seasonsIsArray ? dataJson.seasons[0] : dataJson.seasons['0'];
+  const findPlayer = id => Array.isArray(dataJson.players)
+    ? dataJson.players.find(p => p && p.id === id)
+    : dataJson.players[id];
 
-  // Find highest season key
-  const keys = Object.keys(dataJson.seasons).map(k => parseInt(k, 10)).filter(n => !isNaN(n));
+  // Find highest season key (object-keyed shape only)
+  const keys = seasonsIsArray ? [] : Object.keys(dataJson.seasons).map(k => parseInt(k, 10)).filter(n => !isNaN(n));
   const newSeasonIndex = keys.length > 0 ? (Math.max(...keys) + 1).toString() : '42';
 
   const rosterTeams = Object.keys(rosters).length > 0 ? Object.keys(rosters) : TEAM_COLORS;
@@ -937,7 +974,7 @@ export async function publishSeasonToProduction(env, { seasonName, startDate, ro
 
   const newSeasonObj = {
     name: seasonName,
-    order: (dataJson.seasons['0']?.order || 0) + 1,
+    order: (firstSeason?.order || 0) + 1,
     standings: configTeams.map(t => ({
       team: t.name,
       gp: 0,
@@ -966,17 +1003,20 @@ export async function publishSeasonToProduction(env, { seasonName, startDate, ro
     if (s && s.current) s.current = false;
   }
 
-  // Place new season at index '0' (as SMBHL convention places newest at '0') or newSeasonIndex
-  dataJson.seasons[newSeasonIndex] = newSeasonObj;
+  // Newest first (SMBHL's convention: seasons[0] is the current season).
+  // The object-keyed shape keeps its old placement.
+  if (seasonsIsArray) dataJson.seasons.unshift(newSeasonObj);
+  else dataJson.seasons[newSeasonIndex] = newSeasonObj;
   dataJson.current_season = seasonName;
   dataJson.updated = new Date().toISOString().slice(0, 10);
 
   // Update players in data.json
   for (const [team, players] of Object.entries(rosters)) {
     for (const p of players) {
-      if (dataJson.players[p.playerId]) {
-        if (!dataJson.players[p.playerId].seasons) dataJson.players[p.playerId].seasons = {};
-        dataJson.players[p.playerId].seasons[seasonName] = {
+      const player = findPlayer(p.playerId);
+      if (player) {
+        if (!player.seasons) player.seasons = {};
+        player.seasons[seasonName] = {
           team,
           pos: p.pos || 'F',
           gp: 0,
@@ -1099,17 +1139,11 @@ export async function handleSeasonData(req, env, url) {
 
   // Calculate metrics for each contact
   const candidatePlayers = contacts.map(c => {
-    const pData = dataJson.players ? dataJson.players[c.player_id] : null;
+    const pData = dataPlayer(dataJson, c.player_id);
     const career = pData ? (pData.career || {}) : {};
     
-    // Find stats in 2 recent active seasons
-    const recentSeasons = [];
-    if (pData && pData.seasons) {
-      const sNames = Object.keys(pData.seasons).slice(-3);
-      for (const sn of sNames) {
-        if (pData.seasons[sn]) recentSeasons.push(pData.seasons[sn]);
-      }
-    }
+    // Stats from the player's 3 most recent seasons
+    const recentSeasons = recentPlayerSeasons(dataJson, pData, 3);
 
     const metrics = computePlayerMetrics({
       ...c,
@@ -1226,15 +1260,9 @@ export async function handleSeasonAutoDraft(req, env) {
     : contacts.filter(c => c.role === 'roster');
 
   const allMetrics = selectedContacts.map(c => {
-    const pData = dataJson.players ? dataJson.players[c.player_id] : null;
+    const pData = dataPlayer(dataJson, c.player_id);
     const career = pData ? (pData.career || {}) : {};
-    const recentSeasons = [];
-    if (pData && pData.seasons) {
-      const sNames = Object.keys(pData.seasons).slice(-3);
-      for (const sn of sNames) {
-        if (pData.seasons[sn]) recentSeasons.push(pData.seasons[sn]);
-      }
-    }
+    const recentSeasons = recentPlayerSeasons(dataJson, pData, 3);
     return computePlayerMetrics({
       ...c,
       pos: c.position,
