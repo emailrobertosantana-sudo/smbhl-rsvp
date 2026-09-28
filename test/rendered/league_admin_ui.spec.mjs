@@ -206,6 +206,28 @@ describe('Schedule', () => {
   // Follow-up batch, item 3e: the Assign matchups panel sits below the
   // whole event list; opening it now scrolls it into view, like the
   // create panels.
+  // Item 4: what a real time picker sends for 10:30 in the morning is
+  // what gets stored -- the browser's 24-hour value, no conversion.
+  it('bulk create: 10:30 AM typed in the picker is sent and stored as 10:30', async () => {
+    const { page, errors, close } = await open('/league/schedule');
+    await page.click('.sc-top [onclick="openBulkPanel()"]');
+    await page.fill('#be_start_date', '2099-09-06');
+    await page.fill('#be_occurrences', '2');
+    await page.click('#be_start'); await page.keyboard.type('1030A');
+    await page.click('#be_end'); await page.keyboard.type('1130A');
+    const answered = page.waitForResponse(r => r.url().endsWith('/league/events/bulk'));
+    await page.click('#be_submit');
+    const res = await answered;
+    const body = JSON.parse(res.request().postData());
+    expect([body.start_time, body.end_time]).toEqual(['10:30', '11:30']);
+    expect(res.status()).toBe(200);
+    await page.waitForLoadState('load');
+    const rows = (await h.db.prepare("SELECT start_time, end_time FROM events WHERE league_id = ? AND date IN ('2099-09-06', '2099-09-13')").bind(league.league.id).all()).results;
+    expect(rows.map(r => r.start_time + '-' + r.end_time)).toEqual(['10:30-11:30', '10:30-11:30']);
+    expect(errors).toEqual([]);
+    await close();
+  }, 120000);
+
   it('Assign matchups opens its panel IN VIEW, even below a long list', async () => {
     for (let i = 0; i < 16; i++) {
       const d = new Date(Date.UTC(2099, 1, 1 + i * 7)).toISOString().slice(0, 10);
