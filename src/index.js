@@ -65,7 +65,8 @@ import {
   tracksStats,
   getTeamColour,
   sportHasGoalie,
-  gamesPerNight
+  gamesPerNight,
+  SMBHL_SHORTFALL_MIN_SKATERS
 } from './season_config.js';
 import { checkSchemaOnce, formatSchemaDriftMessage } from './schema_guard.js';
 
@@ -12356,16 +12357,16 @@ async function eventWeekStatus(env, leagueId, ev, cfg) {
 // moment it exists.
 const SHORTFALL_HORIZON_HOURS = 192;
 
-// Skater minimum the shortfall trigger uses for SMBHL when its season
-// has no configured minSkaters (Fall 2026's season object has no config
-// at all). The question here is "can this team field a game", and SMBHL
-// wants 7 skaters for that. Only this trigger uses it: the 36-hour check,
-// the admin board and the public team page keep minSkaters (default 5),
-// the cancellation path keeps filling to skatersPerTeam (default 8), and
-// goaliesPerTeam stays 1. A season with its own minSkaters uses that. The
-// league product keeps DEFAULT_SEASON_CONFIG's 5 for leagues with none.
-const SMBHL_SHORTFALL_MIN_SKATERS = 7;
+// Skater minimum the shortfall trigger uses. The question here is "can
+// this team field a game": a season's own shortfallMinSkaters when it
+// sets one (SMBHL's config: 7, season_config.js SMBHL_SEASON_CONFIG);
+// SMBHL with no season config: SMBHL_SHORTFALL_MIN_SKATERS (7); otherwise
+// the season's minSkaters (a league with none: DEFAULT_SEASON_CONFIG's 5).
+// Only this trigger uses it: the 36-hour check, the admin board and the
+// public team page keep minSkaters (default 5), the cancellation path
+// keeps filling to skatersPerTeam (default 8), and goaliesPerTeam stays 1.
 function shortfallMinSkaters(cfg, leagueId) {
+  if (cfg.shortfallMinSkaters) return cfg.shortfallMinSkaters;
   if (leagueId === SMBHL_LEAGUE_ID && !cfg.minSkatersConfigured) return SMBHL_SHORTFALL_MIN_SKATERS;
   return cfg.minSkaters || 0;
 }
@@ -28904,6 +28905,8 @@ export {
   remindSubs,
   maybeInviteSubsForShortage,
   gameTeamNames,
+  // SMBHL season config (part151): which skater count the shortfall call uses.
+  shortfallMinSkaters,
   healthHost,
   sendLeagueReminderWave,
   sendLeagueReminderKind,

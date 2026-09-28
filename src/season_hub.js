@@ -17,7 +17,8 @@ import {
   getTeamNames,
   getTeamNameFr,
   getTeamColour,
-  generateRoundRobinRounds
+  generateRoundRobinRounds,
+  smbhlSeasonConfig
 } from './season_config.js';
 import { SMBHL_LEAGUE_ID, makeEventId } from './league_ids.js';
 
@@ -915,12 +916,23 @@ export async function publishSeasonToProduction(env, { seasonName, startDate, ro
       : { name, name_fr: name, colour: '#64748b', aliases: [] };
   });
 
+  // SMBHL's full season config (season_config.js SMBHL_SEASON_CONFIG --
+  // what the code does for a season with none), with what the launch form
+  // set on top. It used to write only these five fields, so a launched
+  // season read as "minSkaters configured" and the shortfall sub call
+  // dropped from SMBHL's 7 skaters to 5.
+  const smbhl = smbhlSeasonConfig();
+  const goaliesPerTeam = Number(rosterConfig.goaliesPerTeam) || smbhl.goaliesPerTeam;
   const seasonConfig = {
+    ...smbhl,
     teams: configTeams,
-    goaliesPerTeam: Number(rosterConfig.goaliesPerTeam) || DEFAULT_SEASON_CONFIG.goaliesPerTeam,
-    skatersPerTeam: Number(rosterConfig.skatersPerTeam) || DEFAULT_SEASON_CONFIG.skatersPerTeam,
-    minSkaters: Number(rosterConfig.minSkaters) || DEFAULT_SEASON_CONFIG.minSkaters,
-    playoffFormat: rosterConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat
+    goaliesPerTeam,
+    maxGoalies: Number(rosterConfig.maxGoalies) || goaliesPerTeam, // unset: the goalie count, as normalizeSeasonConfig resolves it
+    skatersPerTeam: Number(rosterConfig.skatersPerTeam) || smbhl.skatersPerTeam,
+    minSkaters: Number(rosterConfig.minSkaters) || smbhl.minSkaters,
+    shortfallMinSkaters: Number(rosterConfig.shortfallMinSkaters) || smbhl.shortfallMinSkaters,
+    gamesPerNight: Number(rosterConfig.gamesPerNight) || smbhl.gamesPerNight,
+    playoffFormat: rosterConfig.playoffFormat || smbhl.playoffFormat
   };
 
   const newSeasonObj = {

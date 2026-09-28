@@ -17,6 +17,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import worker from '../src/index.js';
+import { smbhlSeasonConfig } from '../src/season_config.js';
 
 const SEASON = 'Fall 2026';
 const EV = 'smbhl:2026-11-15';
@@ -25,6 +26,31 @@ const TEAMS = { Red: [1, 8], Blue: [1, 8], White: [1, 6], Black: [0, 8] }; // [g
 const sha = async s => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
 
 let sent = [];
+let seasonDoc = null;
+
+// The database exactly as beforeAll left it, so a second run of the week
+// starts from the same state (storage is shared by the tests of a file).
+// sqlite_sequence too: outbox ids are part of the record.
+let seeded = null;
+async function userTables() {
+  return (await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '_cf_%' AND name NOT LIKE 'd1_%' AND (name NOT LIKE 'sqlite_%' OR name = 'sqlite_sequence')`).all()).results.map(r => r.name);
+}
+async function saveSeeded() {
+  seeded = [];
+  for (const t of await userTables()) seeded.push({ t, rows: (await env.DB.prepare(`SELECT * FROM "${t}"`).all()).results });
+}
+async function restoreSeeded() {
+  // One transaction, foreign keys checked at its end.
+  const stmts = [env.DB.prepare('PRAGMA defer_foreign_keys = on')];
+  for (const t of await userTables()) stmts.push(env.DB.prepare(`DELETE FROM "${t}"`));
+  for (const { t, rows } of seeded) {
+    for (const r of rows) {
+      const cols = Object.keys(r);
+      stmts.push(env.DB.prepare(`INSERT INTO "${t}" (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).bind(...cols.map(c => r[c])));
+    }
+  }
+  await env.DB.batch(stmts);
+}
 let originalFetch;
 const logs = [];
 let logSpy;
@@ -114,13 +140,15 @@ beforeAll(async () => {
   await add('SG002', 'Sub Goalie 2', 'sg002@example.com', 'sub_goalie', { goalie: true, streak: 9 }); // one invite from dormant
   await add('SD001', 'Dormant Sub', 'sd001@example.com', 'sub_skater', { dormant: 1, streak: 12 });
   await add('SO001', 'Opted-out Sub', 'so001@example.com', 'sub_skater', { optedOut: 1 });
-  await env.SHEETS_KV.put('data_json', JSON.stringify({ current_season: SEASON, seasons: [{ name: SEASON, fixtures, standings: [] }], players }));
+  seasonDoc = { current_season: SEASON, seasons: [{ name: SEASON, fixtures, standings: [] }], players };
+  await env.SHEETS_KV.put('data_json', JSON.stringify(seasonDoc));
   // Team links are signed with a per-team salt created at random on first use: fixed here so the record is repeatable.
   for (const team of Object.keys(TEAMS)) await env.DB.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`).bind(`teamsalt:${SEASON}:${team}`, `golden-salt-${team}`).run();
 
   // Last week's game, already played: S0001 subbed and played.
   await env.DB.prepare(`INSERT INTO events (id, season, week, date, venue, state, start_time, end_time, league_id) VALUES ('smbhl:2026-11-08', ?, 5, 'Sunday November 8 2026', 'Aréna Golden', 'done', '10:30', '12:30', 'smbhl')`).bind(SEASON).run();
   await env.DB.prepare(`INSERT INTO rsvp (event_id, player_id, team, status, role, updated_at, league_id) VALUES ('smbhl:2026-11-08', 'S0001', 'Red', 'in', 'sub', '2026-11-08T14:00:00.000Z', 'smbhl')`).run();
+  await saveSeeded();
 });
 
 afterAll(() => {
@@ -130,8 +158,8 @@ afterAll(() => {
   vi.useRealTimers();
 });
 
-describe("SMBHL's cron over one game week, recorded before the migration", () => {
-  it('reproduces the recorded passes exactly', async () => {
+// Drives the whole week and returns what the record holds.
+async function runWeek() {
     const passes = [];
     // Sat 11:00 (8 days + 30 min out): nothing yet.
     passes.push(await pass('2026-11-07T15:00:00Z'));
@@ -179,6 +207,25 @@ describe("SMBHL's cron over one game week, recorded before the migration", () =>
       dailyCount: (await env.DB.prepare(`SELECT * FROM mail_daily_count ORDER BY day`).all()).results,
       alerts: (await env.DB.prepare(`SELECT key, value FROM settings WHERE key LIKE 'alert:%' ORDER BY key`).all()).results
     };
-    expect({ passes, final }).toMatchSnapshot();
+    return { passes, final };
+}
+
+let recorded = null;
+describe("SMBHL's cron over one game week, recorded before the migration", () => {
+  it('reproduces the recorded passes exactly', async () => {
+    recorded = await runWeek();
+    expect(recorded).toMatchSnapshot();
+  }, 60000);
+
+  // SMBHL's season config (src/season_config.js SMBHL_SEASON_CONFIG) is
+  // what the code does for a season with none: with it in data.json the
+  // same week comes out exactly the same, from the same seeded state.
+  it('reproduces exactly the same passes with SMBHL\'s season config in data.json', async () => {
+    expect(recorded).not.toBeNull();
+    await restoreSeeded();
+    vi.setSystemTime(new Date('2026-11-01T12:00:00Z'));
+    const withConfig = { ...seasonDoc, seasons: seasonDoc.seasons.map(x => ({ ...x, config: smbhlSeasonConfig() })) };
+    await env.SHEETS_KV.put('data_json', JSON.stringify(withConfig));
+    expect(await runWeek()).toEqual(recorded);
   }, 60000);
 });

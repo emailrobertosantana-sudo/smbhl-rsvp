@@ -163,6 +163,11 @@ export function normalizeSeasonConfig(rawConfig) {
     // rather than DEFAULT_SEASON_CONFIG. SMBHL's shortfall trigger uses its
     // own fallback when it didn't (index.js, SMBHL_SHORTFALL_MIN_SKATERS).
     minSkatersConfigured: Number(rawConfig.minSkaters) > 0,
+    // The skater count below which a game is short for the shortfall sub
+    // call only (index.js shortfallMinSkaters), when a season sets one
+    // apart from minSkaters -- SMBHL's does (SMBHL_SEASON_CONFIG). Absent
+    // for every other league: the trigger uses minSkaters, as before.
+    ...(Number(rawConfig.shortfallMinSkaters) > 0 ? { shortfallMinSkaters: Number(rawConfig.shortfallMinSkaters) } : {}),
     gamesPerNight: Number(rawConfig.gamesPerNight) > 0 ? Number(rawConfig.gamesPerNight) : DEFAULT_GAMES_PER_NIGHT,
     gamesPerNightConfigured: Number(rawConfig.gamesPerNight) > 0,
     playoffFormat: rawConfig.playoffFormat || DEFAULT_SEASON_CONFIG.playoffFormat,
@@ -362,6 +367,54 @@ export function getSeasonConfig(seasonOrData, targetSeasonName = null, leagueTea
 // is pinned (review.spec.js), for the same reason.
 export const DEFAULT_GAMES_PER_NIGHT = 1;
 export const SMBHL_GAMES_PER_NIGHT = 2;
+// Skater minimum SMBHL's shortfall sub call uses when its season has no
+// config of its own (index.js shortfallMinSkaters): "can this team field
+// a game" means 7 skaters for SMBHL. Everything else -- the 36-hour check,
+// the admin board, the public team page -- keeps minSkaters (5).
+export const SMBHL_SHORTFALL_MIN_SKATERS = 7;
+
+// SMBHL's season config: exactly what the code does for an SMBHL season
+// that has none (DEFAULT_SEASON_CONFIG, plus SMBHL's two games a night
+// and its 7-skater shortfall minimum). A season carrying it behaves the
+// same as one without it -- the SMBHL golden record replays unchanged
+// with it in data.json (test/part114_reminders_golden_smbhl.spec.js).
+// The season hub writes it on every season it launches; addSmbhlSeasonConfig
+// adds it to an existing season (scripts/smbhl_season_config.js).
+// Its league block is SMBHL's own identity, written out, so that no
+// league-level branding can ever stand in for it.
+export const SMBHL_SEASON_CONFIG = Object.freeze({
+  teams: DEFAULT_SEASON_CONFIG.teams.map(t => ({ ...t, aliases: [...t.aliases] })),
+  goaliesPerTeam: DEFAULT_SEASON_CONFIG.goaliesPerTeam,
+  maxGoalies: DEFAULT_SEASON_CONFIG.maxGoalies,
+  skatersPerTeam: DEFAULT_SEASON_CONFIG.skatersPerTeam,
+  minSkaters: DEFAULT_SEASON_CONFIG.minSkaters,
+  shortfallMinSkaters: SMBHL_SHORTFALL_MIN_SKATERS,
+  gamesPerNight: SMBHL_GAMES_PER_NIGHT,
+  playoffFormat: DEFAULT_SEASON_CONFIG.playoffFormat,
+  tracksStats: DEFAULT_SEASON_CONFIG.tracksStats,
+  teamStructure: DEFAULT_SEASON_CONFIG.teamStructure,
+  sportType: DEFAULT_SEASON_CONFIG.sportType,
+  league: { ...DEFAULT_SEASON_CONFIG.league }
+});
+// A fresh, mutable copy (data.json is edited in place by its writers).
+export function smbhlSeasonConfig() {
+  return JSON.parse(JSON.stringify(SMBHL_SEASON_CONFIG));
+}
+
+// Adds SMBHL_SEASON_CONFIG to one season of SMBHL's data.json (the
+// current one when no name is given). Returns { data, changed, reason }:
+// the data unchanged when that season already carries a config (it is
+// never overwritten) or does not exist.
+export function addSmbhlSeasonConfig(data, seasonName = null) {
+  const out = JSON.parse(JSON.stringify(data));
+  const list = Array.isArray(out.seasons) ? out.seasons : Object.values(out.seasons || {});
+  const name = seasonName || out.current_season;
+  const season = list.find(x => x && x.name === name);
+  if (!season) return { data: out, changed: false, reason: `no season named ${JSON.stringify(name)}` };
+  if (season.config) return { data: out, changed: false, reason: `${name} already has a config` };
+  season.config = smbhlSeasonConfig();
+  return { data: out, changed: true, reason: `config added to ${name}` };
+}
 export function gamesPerNight(cfg, leagueId) {
   if (cfg && cfg.gamesPerNightConfigured) return cfg.gamesPerNight;
   if (leagueId === SMBHL_LEAGUE_ID) return SMBHL_GAMES_PER_NIGHT;
