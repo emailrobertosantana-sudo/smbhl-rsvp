@@ -2,7 +2,8 @@ import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
-import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
+import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
+import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart, eventHasStarted } from './league_ids.js';
@@ -285,6 +286,7 @@ function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = 
   const titleFr = titles ? titles.fr : title;
   return `<!DOCTYPE html><html lang="fr-CA"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+${CLIENT_ERROR_REPORTER}
 <title>${esc(titleFr)} — ${esc(league.name)}</title>${titles ? `<meta name="nl-titles" data-title-fr="${esc(titles.fr)} — ${esc(league.name)}" data-title-en="${esc(titles.en)} — ${esc(league.name)}">` : ''}
 <meta name="description" content="Plateforme de présence et gestion d’équipe de la ligue de hockey balle ${esc(league.name)} (${esc(league.tagline)}).">
 <meta name="rating" content="general">
@@ -1794,6 +1796,8 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // real state (no players yet, team names still the generic
       // default, roster limits never set), not a one-time flag, so it
       // naturally disappears once each is genuinely addressed.
+      healthTitle: "Quelque chose n'a pas fonctionné", healthTold: "L'équipe Notre Ligue a été avertie.",
+      healthCronLate: 'Les envois automatiques sont en retard.',
       nextStepsTitle: 'Prochaines étapes', nsCreateSchedule: "Créer l'horaire", nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif", nsReminders: 'Choisir tes rappels', nsStats: 'Choisir les statistiques', nsPlayoffs: 'Configurer les séries'
       // Live-testing task (batch 5), Part 7: coAdmins/invite*/
       // deactivate*/hardDelete* used to live here too -- moved to
@@ -1813,6 +1817,8 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsPerGameCount: 'team names available',
       noFixedTeamsDesc: "This league has no fixed teams — it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
+      healthTitle: "Something didn't work", healthTold: 'The Notre Ligue team has been notified.',
+      healthCronLate: 'Automatic sends are running late.',
       nextStepsTitle: 'Next steps', nsCreateSchedule: 'Create the schedule', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size', nsReminders: 'Choose your reminders', nsStats: 'Choose what to track', nsPlayoffs: 'Set up playoffs'
     });
     if (needsSeason) {
@@ -2302,8 +2308,24 @@ async function handleDashboardPage(req, env, url) {
       </div>
     </section>` : '';
 
+    // Failure alerting (src/health.js): this league's open problems, and
+    // the cron having gone quiet (checked here, on request -- the cron
+    // cannot report its own death; this also tells the operator).
+    const healthAlerts = await openAlertsForLeague(env, leagueRow.id);
+    const cronHealth = await checkCronOnRequest(env, healthHost(env));
+    const healthHtml = healthAlerts.length || cronHealth.stale ? `
+    <section class="nl-card nl-card--pad-lg" id="dash_health" style="border-color:var(--danger,#b3122e)">
+      <div class="h3" data-i18n="healthTitle">Quelque chose n'a pas fonctionné</div>
+      <ul style="margin:8px 0 0;padding-left:20px;">
+        ${cronHealth.stale ? '<li data-i18n="healthCronLate">Les envois automatiques sont en retard.</li>' : ''}
+        ${healthAlerts.map(a => `<li data-date-fr="${esc(a.fr)}" data-date-en="${esc(a.en)}">${esc(a.fr)}</li>`).join('')}
+      </ul>
+      <p class="nl-help" style="margin:8px 0 0;" data-i18n="healthTold">L'équipe Notre Ligue a été avertie.</p>
+    </section>` : '';
+
     bodyHtml = `${dashStyles()}${header}
 <main class="dash-main">
+  ${healthHtml}
   <div class="dash-top">
     <div>
       <h1>${esc(leagueRow.name)}</h1>
@@ -12795,6 +12817,9 @@ async function deadMan(env) {
   }
   if (fresh.length) {
     const list = fresh.map(f => `- ${f.p}`).join('\n');
+    // Also by webhook (src/health.js): this email is about mail not going
+    // out, and may not go out itself.
+    await postWebhook(env, 'SMBHL — le système a manqué quelque chose / something did not run', list);
     try {
       await sendMail(env, env.ADMIN_EMAIL || ADMIN_EMAIL, 'SMBHL — le système a manqué quelque chose',
         `Quelque chose ne s'est pas exécuté :\n\n${list}\n\n` +
@@ -27331,6 +27356,99 @@ installEmailPreviewHost({
   leagueBroadcastRecipients, renderLeagueBroadcastEmail
 });
 
+/* ---------- failure alerting (src/health.js) ---------- */
+
+// What src/health.js needs from this file to tell people.
+function healthHost(env) {
+  return {
+    sendMail, leagueAdminEmails, renderAdminAlert: (leagueRow, alerts) => renderLeagueHealthAlert(env, leagueRow, alerts),
+    opsEmail: env.OPS_ALERT_EMAIL || env.ADMIN_EMAIL || ADMIN_EMAIL,
+    publicUrl: env.PUBLIC_URL || ''
+  };
+}
+
+// A league admin's alert email: what went wrong in their league, in the
+// league's language(s), and that the operator knows too.
+function renderLeagueHealthAlert(env, leagueRow, alerts) {
+  const barColor = leagueFillColor(leagueRow.color || '#b3122e');
+  const link = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/dashboard`;
+  const content = lang => {
+    const intro = lang === 'fr' ? 'Notre Ligue a détecté un problème dans ta ligue :' : 'Notre Ligue found a problem in your league:';
+    const told = lang === 'fr' ? "L'équipe Notre Ligue a aussi été avertie." : 'The Notre Ligue team has been notified too.';
+    const items = alerts.map(a => a[lang]);
+    return {
+      subject: lang === 'fr' ? `${leagueRow.name} — quelque chose n'a pas fonctionné` : `${leagueRow.name} — something didn't work`,
+      text: `${intro}\n\n${items.map(i => `- ${i}`).join('\n')}\n\n${told}\n${link}`,
+      html: `<p style="margin:0 0 12px;font-size:16px;line-height:25px;">${esc(intro)}</p>
+    <ul style="margin:0 0 16px;padding-left:20px;font-size:16px;line-height:25px;">${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
+    <p style="margin:0 0 24px;font-size:14px;line-height:22px;color:#5b616e;">${esc(told)}</p>
+    ${nlEmailButton(link, lang === 'fr' ? 'Ouvrir le tableau de bord' : 'Open the dashboard', barColor)}`
+    };
+  };
+  const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr: content('fr'), en: content('en') });
+  return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
+}
+
+// Every cron pass, both products: heartbeat in, the reminder pass, the
+// health pass, heartbeat out (and the external heartbeat ping). A pass
+// that throws is recorded and alerted on, not just logged.
+async function runCronPass(env) {
+  const failures = [];
+  let passOk = true, passError = null;
+  try { await recordHeartbeat(env, 'start'); } catch (e) { console.error(`[health] heartbeat start: ${e.message}`); }
+  try {
+    const { product, log, failures: f } = await runReminderPass(env);
+    failures.push(...(f || []));
+    if (product === 'leagues') console.log('league-reminders cron:', log.join(' | ') || '(nothing due)');
+    else console.log('cron:', log.join(' | '));
+  } catch (e) {
+    passOk = false; passError = e && e.message || String(e);
+    failures.push({ leagueId: null, message: String(passError).slice(0, 300) });
+    console.error(`[cron] pass failed: ${passError}`);
+  }
+  // HEALTH_ALERTS='off' only for the recorded-behaviour (golden) tests,
+  // which prove the reminder pass alone is unchanged. Never set on a
+  // deployment.
+  if (env.HEALTH_ALERTS !== 'off') {
+    try {
+      const { log } = await runHealthPass(env, healthHost(env), { failures });
+      if (log.length) console.log('health:', log.join(' | '));
+    } catch (e) { console.error(`[health] pass failed: ${e.message}`); }
+  }
+  try { await recordHeartbeat(env, 'end', { ok: passOk, error: passError }); } catch (e) { console.error(`[health] heartbeat end: ${e.message}`); }
+  await pingHeartbeatUrl(env, passOk);
+}
+
+// GET /health/status: for an external uptime monitor (and a person). 200 when the
+// cron is running and every open problem has reached the operator; 503
+// otherwise -- so a monitor polling it alerts even when this Worker's own
+// alerts cannot get out (email down, cap spent, no webhook, cron dead).
+// The details list needs the admin key.
+async function handleHealth(req, env) {
+  const now = new Date();
+  const cron = await checkCronOnRequest(env, healthHost(env), now);
+  const rows = await settingsWithPrefix(env.DB, 'health:alert:');
+  const open = rows.map(r => { try { return JSON.parse(r.value); } catch (_) { return null; } }).filter(a => a && !a.resolved_at);
+  const untold = open.filter(a => !a.ops_notified_at && now.getTime() - Date.parse(a.first_seen) > 30 * 60000);
+  const capReached = open.some(a => a.key.startsWith('mail_cap:'));
+  const reasons = [
+    cron.stale && 'cron_stale',
+    cron.last_error && 'cron_last_pass_failed',
+    untold.length && 'alerts_not_delivered',
+    capReached && 'mail_cap_reached'
+  ].filter(Boolean);
+  const body = {
+    ok: reasons.length === 0, product: cron.product, reasons,
+    cron: { last_ok_at: cron.last_ok_at, age_minutes: cron.age_minutes, stale: cron.stale },
+    open_alerts: open.length
+  };
+  if (env.ADMIN_KEY && req.headers.get('x-admin') === env.ADMIN_KEY) {
+    body.alerts = open.map(a => ({ scope: a.scope, key: a.key, fr: a.fr, en: a.en, first_seen: a.first_seen, ops_notified_at: a.ops_notified_at, admin_notified_at: a.admin_notified_at }));
+    body.cron.last_error = cron.last_error;
+  }
+  return Response.json(body, { status: body.ok ? 200 : 503, headers: { 'cache-control': 'no-store' } });
+}
+
 export default {
   // Both products' reminder passes go through the one shared module
   // (src/reminders.js, runReminderPass). env.LEAGUE_PRODUCT is set only in
@@ -27338,9 +27456,7 @@ export default {
   // SMBHL's pass and the demo deployment runs the leagues' -- as before.
   // Log lines are unchanged.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runReminderPass(env).then(({ product, log }) => product === 'leagues'
-      ? console.log('league-reminders cron:', log.join(' | ') || '(nothing due)')
-      : console.log('cron:', log.join(' | '))));
+    ctx.waitUntil(runCronPass(env));
     if (env.LEAGUE_PRODUCT === 'true') return;
     ctx.waitUntil(cleanupOldReviews(env));
   },
@@ -27376,6 +27492,17 @@ async function handleFetch(req, env, ctx) {
           console.error('[schema-guard]', message);
           return new Response(message, { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
         }
+      }
+      // Failure alerting (src/health.js): the status an uptime monitor
+      // polls, and the pages' own script-error reports. (/health itself
+      // stays the plain liveness 'ok' it always was.)
+      if (url.pathname === '/health/status' && (req.method === 'GET' || req.method === 'HEAD'))
+        return headAware(req, await handleHealth(req, env));
+      if (url.pathname === '/health/client-error' && req.method === 'POST') {
+        const text = (await req.text()).slice(0, 2000);
+        let body = null; try { body = JSON.parse(text); } catch (_) {}
+        if (body) await recordClientError(env, body);
+        return new Response(null, { status: 204 });
       }
       if (env.DEMO_ENV === 'true' && url.pathname === '/robots.txt' && req.method === 'GET') {
         return new Response('User-agent: *\nDisallow: /\n', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
@@ -28397,6 +28524,9 @@ export {
   // call runLeagueReminders() (and the smaller pieces it's built from)
   // directly instead.
   runLeagueReminders,
+  // Failure alerting: the whole cron pass (heartbeat, reminders, health).
+  runCronPass,
+  healthHost,
   sendLeagueReminderWave,
   sendLeagueReminderKind,
   getNonResponders,

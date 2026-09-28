@@ -58,6 +58,9 @@ beforeAll(async () => {
   env.PUBLIC_URL = 'https://golden.example';
   env.MAIL_DAILY_CAP = '60';
   env.LEAGUE_PRODUCT = 'true';
+  // The recorded passes are the reminder pass alone; the health pass
+  // (src/health.js, added after the record) is tested on its own.
+  env.HEALTH_ALERTS = 'off';
   await applyRealSchema(env);
   await env.DB.prepare(`DELETE FROM contacts`).run(); // migrate-002.sql's real SMBHL sub goalies
 

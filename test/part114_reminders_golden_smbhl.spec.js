@@ -53,6 +53,9 @@ beforeAll(async () => {
   env.ADMIN_EMAIL = 'admin@smbhl.test';
   env.MAIL_DAILY_CAP = '40';
   delete env.LEAGUE_PRODUCT;
+  // The recorded passes are the reminder pass alone; the health pass
+  // (src/health.js, added after the record) is tested on its own.
+  env.HEALTH_ALERTS = 'off';
   await applyRealSchema(env);
   // migrate-002.sql seeds three real sub goalies; keep real addresses out of the snapshot.
   await env.DB.prepare(`DELETE FROM contacts`).run();

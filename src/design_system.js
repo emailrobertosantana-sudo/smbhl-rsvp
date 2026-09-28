@@ -558,6 +558,13 @@ const NL_FAVICON_DATA_URI = 'data:image/svg+xml,' + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="5" fill="#ffd23f"/></svg>'
 );
 
+// Reports a page's own script errors to POST /health/client-error
+// (src/health.js), so a page whose JavaScript is dead is found by the
+// operator, not by an admin days later. First in <head>, so it is running
+// before any page script that might fail; same-origin errors only (a
+// browser extension's are not ours); at most 3 reports a page.
+export const CLIENT_ERROR_REPORTER = `<script>(function(){var n=0;if(!window.addEventListener)return;window.addEventListener('error',function(e){try{if(n>=3)return;if(e.filename&&e.filename.indexOf(location.origin)!==0)return;n++;var b=JSON.stringify({path:location.pathname,msg:String(e.message||'').slice(0,300),src:String(e.filename||'').slice(0,200),line:e.lineno||0});if(navigator.sendBeacon){navigator.sendBeacon('/health/client-error',new Blob([b],{type:'application/json'}));}else{fetch('/health/client-error',{method:'POST',headers:{'content-type':'application/json'},body:b,keepalive:true});}}catch(x){}});})();</script>`;
+
 // titles: optional { fr, en } -- the tab title in both languages, so the
 // page's FR/EN toggle can switch it too (applyLanguage reads them from the
 // nl-titles meta); `title` alone stays one language.
@@ -566,6 +573,7 @@ export function nlDocument({ title, titles = null, description = '', bodyHtml, l
   const titlesMeta = titles ? `<meta name="nl-titles" data-title-fr="${nlEmailEsc(titles.fr)}" data-title-en="${nlEmailEsc(titles.en)}">` : '';
   return `<!DOCTYPE html><html lang="${lang === 'en' ? 'en-CA' : 'fr-CA'}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+${CLIENT_ERROR_REPORTER}
 <title>${nlEmailEsc(shown)}</title>${titlesMeta}
 ${description ? `<meta name="description" content="${nlEmailEsc(description)}">` : ''}
 <link rel="icon" href="${NL_FAVICON_DATA_URI}" type="image/svg+xml">

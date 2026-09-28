@@ -64,7 +64,10 @@ describe('The fork is gone: one reminder module', () => {
     for (const def of ['async function runSchedule(', 'async function runLeagueReminders(', 'async function sendLeagueReminderWave(', 'async function afterQuiet(', 'async function getEmailSettings(']) {
       expect(indexSource.includes(def)).toBe(false);
     }
-    expect(indexSource).toContain('ctx.waitUntil(runReminderPass(env)');
+    // The cron pass (runCronPass, which adds the heartbeat and the health
+    // pass around it) still runs the reminders through runReminderPass.
+    expect(indexSource).toContain('ctx.waitUntil(runCronPass(env))');
+    expect(indexSource).toContain('await runReminderPass(env);');
   });
 
   it('SMBHL is always on the advanced model -- a flag row cannot turn it off, and the super-admin refuses to', async () => {

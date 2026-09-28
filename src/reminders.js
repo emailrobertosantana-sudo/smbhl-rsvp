@@ -106,7 +106,7 @@ export function advancedStepHours(settings, kind) {
   const h = Number(settings[ADVANCED_LEAGUE_STEPS[kind].hours]);
   return Number.isFinite(h) && h > 0 ? h : REMINDER_WINDOW_THRESHOLD_HOURS[kind];
 }
-function advancedStepHourOfDay(settings, kind) {
+export function advancedStepHourOfDay(settings, kind) {
   const key = ADVANCED_LEAGUE_STEPS[kind].hourOfDay;
   if (!key) return null;
   const v = settings[key];
@@ -612,14 +612,37 @@ export async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil
 // the threshold and sends it late, rather than silently skipping it
 // forever -- league_reminder_log is what prevents a duplicate send,
 // not a narrow time window.
-export async function runLeagueReminders(env, budget = createSendBudget()) {
-  const { getLeagueSeasonConfig, randomAssignEventTeams, callSubsForShortfall, drain } = reminderHost();
+// failures: filled with { leagueId, message } for a league whose pass threw
+// -- that league is skipped for this pass and the others still run (one
+// bad league used to stop every league after it). src/health.js alerts on
+// them.
+export async function runLeagueReminders(env, budget = createSendBudget(), failures = []) {
   const log = [];
   const leagues = (await env.DB.prepare(
     `SELECT * FROM leagues WHERE id != ? AND deactivated_at IS NULL`
   ).bind(SMBHL_LEAGUE_ID).all()).results || [];
 
   for (const leagueRow of leagues) {
+    try {
+      await runOneLeague(env, leagueRow, budget, log);
+    } catch (e) {
+      failures.push({ leagueId: leagueRow.id, message: String(e && e.message || e).slice(0, 300) });
+      log.push(`${leagueRow.id} FAILED: ${e && e.message}`);
+    }
+  }
+  // Mail that belongs to no league (sign-up and password emails, deferred
+  // when Resend's daily quota ran out) -- the per-league drains above never
+  // pick it up. SMBHL's own cron drains everything, so it's covered there.
+  const { drain } = reminderHost();
+  const systemDrain = await drain(env, MAIL_SENDS_PER_INVOCATION, null, 'system', budget);
+  if (systemDrain.sent > 0 || systemDrain.failed > 0) log.push(`system drain sent=${systemDrain.sent} failed=${systemDrain.failed}`);
+  return log;
+}
+
+// One league's pass (the body of runLeagueReminders' loop, unchanged).
+async function runOneLeague(env, leagueRow, budget, log) {
+  const { getLeagueSeasonConfig, randomAssignEventTeams, callSubsForShortfall, drain } = reminderHost();
+  {
     // Which cadence model this league is on (the advanced_reminders flag).
     const advancedSettings = (await usesAdvancedReminders(env, leagueRow.id)) ? await getEmailSettings(env.DB, leagueRow.id) : null;
     const horizon = advancedSettings
@@ -699,12 +722,6 @@ export async function runLeagueReminders(env, budget = createSendBudget()) {
       log.push(`${leagueRow.id} drain sent=${leagueDrain.sent} failed=${leagueDrain.failed} retrying=${leagueDrain.retrying}`);
     }
   }
-  // Mail that belongs to no league (sign-up and password emails, deferred
-  // when Resend's daily quota ran out) -- the per-league drains above never
-  // pick it up. SMBHL's own cron drains everything, so it's covered there.
-  const systemDrain = await drain(env, MAIL_SENDS_PER_INVOCATION, null, 'system', budget);
-  if (systemDrain.sent > 0 || systemDrain.failed > 0) log.push(`system drain sent=${systemDrain.sent} failed=${systemDrain.failed}`);
-  return log;
 }
 
 /* ---------- the cron's one entry point ---------- */
@@ -717,7 +734,8 @@ export async function runLeagueReminders(env, budget = createSendBudget()) {
 // league's model from its advanced_reminders flag.
 export async function runReminderPass(env) {
   if (env.LEAGUE_PRODUCT === 'true') {
-    return { product: 'leagues', log: await runLeagueReminders(env) };
+    const failures = [];
+    return { product: 'leagues', log: await runLeagueReminders(env, createSendBudget(), failures), failures };
   }
-  return { product: 'smbhl', log: await runSchedule(env) };
+  return { product: 'smbhl', log: await runSchedule(env), failures: [] };
 }
