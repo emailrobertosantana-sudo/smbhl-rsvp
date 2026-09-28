@@ -246,3 +246,32 @@ describe('Schedule', () => {
     await close();
   }, 120000);
 });
+
+describe('Event page result', () => {
+  // Follow-up batch, item 5: the form is closed until its button opens it
+  // (never both at once), and the result reads as one scoreline --
+  // Otters [5] — [3] Bears, Save beside it -- at desktop and phone width.
+  for (const width of [1200, 400]) {
+    it(`the result form swaps with its button, and is one line at ${width}px`, async () => {
+      const past = await h.db.prepare("SELECT id FROM events WHERE league_id = ? AND date = '2020-01-05'").bind(league.league.id).first();
+      const { page, errors, close } = await open('/league/events/detail?e=' + encodeURIComponent(past.id));
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.isVisible('#score_form')).toBe(false);
+      expect(await page.isVisible('#score_toggle_wrap button')).toBe(true);
+      await page.click('#score_toggle_wrap button');
+      expect(await page.isVisible('#score_form')).toBe(true);
+      expect(await page.isVisible('#score_toggle_wrap button')).toBe(false);
+      const mid = sel => page.$eval(sel, el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; });
+      const home = await mid('#score_home');
+      for (const sel of ['#score_home_label', '#score_away', '#score_away_label']) expect(Math.abs((await mid(sel)) - home)).toBeLessThan(6);
+      if (width >= 1200) expect(Math.abs((await mid('[data-i18n="scoreSaveBtn"]')) - home)).toBeLessThan(6);
+      const w = await page.$eval('#score_home', el => el.getBoundingClientRect().width);
+      expect(w).toBeLessThan(90);
+      await page.click('[data-i18n="scoreCancelBtn"]');
+      expect(await page.isVisible('#score_form')).toBe(false);
+      expect(await page.isVisible('#score_toggle_wrap button')).toBe(true);
+      expect(errors).toEqual([]);
+      await close();
+    }, 120000);
+  }
+});

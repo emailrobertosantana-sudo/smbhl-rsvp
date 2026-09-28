@@ -102,6 +102,7 @@ export const ERROR_I18N = {
   // English.
   ADMIN_RSVP_FIELDS_REQUIRED: { fr: 'Des champs requis sont manquants.', en: 'event_id, player_id, and status (in|out) are required.' },
   EVENT_NOT_FOUND: { fr: 'Match introuvable.', en: 'Event not found.' },
+  GAME_NOT_STARTED: { fr: "Ce match n'a pas encore commencé. Le résultat et les statistiques s'entrent une fois le match commencé.", en: "This game hasn't started yet. The result and stats can be entered once it has." },
   EVENT_LOCKED: { fr: "Ce match n'accepte plus de changements.", en: 'This event is locked.' },
   PLAYER_NOT_FOUND: { fr: 'Joueur introuvable.', en: 'Player not found.' },
   PLAYER_ID_REQUIRED: { fr: "L'identifiant du joueur est requis.", en: 'player_id is required.' },

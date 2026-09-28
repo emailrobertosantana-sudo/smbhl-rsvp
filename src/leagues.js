@@ -19,7 +19,7 @@
 import { checkUserSession, checkCsrfToken, hashPassword, sessionResponseHeaders } from './auth.js';
 import { isMailDeferred } from './mail_queue.js';
 import { sanitizeAndValidateEmail } from './validation.js';
-import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS } from './league_ids.js';
+import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS, eventHasStarted } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie, generateRoundRobinRounds } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
@@ -4158,6 +4158,11 @@ export async function handleLeagueEventScore(req, env) {
   if (ev.state === 'cancelled') {
     return Response.json({ ok: false, error: 'This game was cancelled and cannot be scored.', errorKey: 'EVENT_CANCELLED' }, { status: 409 });
   }
+  // Result and stats are for a game that has started (the event page
+  // hides both before then -- same helper, so they agree).
+  if (!eventHasStarted(ev)) {
+    return Response.json({ ok: false, error: "This game hasn't started yet.", errorKey: 'GAME_NOT_STARTED' }, { status: 409 });
+  }
 
   const leagueRow = await env.DB.prepare('SELECT team_structure, tracks_results FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow.tracks_results) {
@@ -4275,6 +4280,9 @@ export async function handleLeaguePlayerStatsUpsert(req, env) {
   }
   const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
   if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  if (!eventHasStarted(ev)) {
+    return Response.json({ ok: false, error: "This game hasn't started yet.", errorKey: 'GAME_NOT_STARTED' }, { status: 409 });
+  }
 
   const leagueRow = await env.DB.prepare('SELECT tracks_player_stats, tracks_results FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow.tracks_player_stats) {

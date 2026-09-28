@@ -195,6 +195,18 @@ export function localParts(d = new Date()) {
 // local date/time America/Toronto would report; falls back to a fixed
 // -05:00 offset if neither guess round-trips (should not happen for a
 // real date, kept only as a last resort rather than returning null).
+// Has this game started? Its real start instant when it has a start
+// time; otherwise its date (a game with no time counts as started from
+// the start of its day, league time). The event page shows Result and
+// Player stats only then, and the score / player-stats routes refuse a
+// game that hasn't -- the two must never disagree.
+export function eventHasStarted(ev, now = Date.now()) {
+  const st = eventStart(ev);
+  if (st) return st.getTime() <= now;
+  const dateStr = ev.date && /^\d{4}-\d{2}-\d{2}$/.test(ev.date) ? ev.date : eventDateFromId(ev.id);
+  return dateStr <= localParts(new Date(now)).date;
+}
+
 export function eventStart(ev) {
   if (!ev.start_time) return null;
   // ev.id is the literal date for every one of SMBHL's existing events

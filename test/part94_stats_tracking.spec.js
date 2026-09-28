@@ -268,7 +268,7 @@ describe('Stats tracking, Part 2: score entry', () => {
     await createLeague(cookie, csrfToken, { name: 'Fixed 2 Score League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
 
     const entered = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 4, away_score: 2 });
     expect(entered.status).toBe(200);
@@ -292,7 +292,7 @@ describe('Stats tracking, Part 2: score entry', () => {
     await createLeague(cookie, csrfToken, { name: 'No Matchup Score League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
 
     const res = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 1, away_score: 0 });
     expect(res.status).toBe(409);
@@ -304,7 +304,7 @@ describe('Stats tracking, Part 2: score entry', () => {
     await createLeague(cookie, csrfToken, { name: 'Pickup Score League', teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const p1 = await (await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Player One', role: 'roster' })
@@ -330,7 +330,7 @@ describe('Stats tracking, Part 2: score entry', () => {
     const { cookie, csrfToken } = await signup('p2.headcount@example.com', '203.0.203.004');
     const league = await createLeague(cookie, csrfToken, { name: 'Headcount Score League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12, tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1', min_players: 8, max_players: 12 });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
 
     const normal = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 1, away_score: 0 });
     expect(normal.status).toBe(409);
@@ -350,7 +350,7 @@ describe('Stats tracking, Part 2: score entry', () => {
     const { cookie, csrfToken } = await signup('p2.notracking@example.com', '203.0.203.005');
     await createLeague(cookie, csrfToken, { name: 'No Tracking Score League', teamNames: ['A', 'B'], tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const res = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 1, away_score: 0 });
     expect(res.status).toBe(409);
     expect(res.json.errorKey).toBe('RESULTS_NOT_TRACKED');
@@ -361,7 +361,7 @@ describe('Stats tracking, Part 2: score entry', () => {
     await createLeague(cookie, csrfToken, { name: 'Invalid Score League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const res1 = await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: -1, away_score: 0 });
     expect(res1.status).toBe(400);
     expect(res1.json.errorKey).toBe('INVALID_SCORE');
@@ -374,7 +374,7 @@ describe('Stats tracking, Part 2: score entry', () => {
     await createLeague(cookie, csrfToken, { name: 'UI Score League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
 
     const before = await eventDetailHtml(cookie, ev.id);
     expect(before).toContain('id="score_section"');
@@ -390,7 +390,7 @@ describe('Stats tracking, Part 2: score entry', () => {
     const { cookie, csrfToken } = await signup('p2.uiabsent@example.com', '203.0.203.008');
     await createLeague(cookie, csrfToken, { name: 'UI Absent League', teamNames: ['A', 'B'], tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const html = await eventDetailHtml(cookie, ev.id);
     expect(html).not.toContain('id="score_section"');
   });
@@ -412,7 +412,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     await createLeague(cookie, csrfToken, { name: 'Confirmed League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const confirmed = await addContact(cookie, csrfToken, { name: 'Confirmed Player', role: 'roster' });
     const notConfirmed = await addContact(cookie, csrfToken, { name: 'Not Confirmed Player', role: 'roster' });
     await setRsvp(cookie, csrfToken, ev.id, confirmed.player_id, 'in');
@@ -434,7 +434,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     await createLeague(cookie, csrfToken, { name: 'UI List League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const confirmed = await addContact(cookie, csrfToken, { name: 'Shows Up Player', role: 'roster' });
     const notConfirmed = await addContact(cookie, csrfToken, { name: 'Hidden Player', role: 'roster' });
     await setRsvp(cookie, csrfToken, ev.id, confirmed.player_id, 'in');
@@ -450,7 +450,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     await createLeague(cookie, csrfToken, { name: 'Goalie Off League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true }); // results left off
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const goalie = await addContact(cookie, csrfToken, { name: 'Goalie Player', role: 'roster' });
     await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
 
@@ -471,7 +471,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     await createLeague(cookie, csrfToken, { name: 'Derive League', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 5, away_score: 2 }); // Rouge (home) wins
 
     // Not stored anywhere as an enum -- deriveGoalieRecord computes it
@@ -494,8 +494,8 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     await createLeague(cookie, csrfToken, { name: 'Both Roles League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev1 = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
-    const ev2 = await createEvent(cookie, csrfToken, { date: '2099-01-12', season: 'S1' });
+    const ev1 = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
+    const ev2 = await createEvent(cookie, csrfToken, { date: '2020-01-12', season: 'S1' });
     const player = await addContact(cookie, csrfToken, { name: 'Two Way Player', role: 'roster' });
     await setRsvp(cookie, csrfToken, ev1.id, player.player_id, 'in');
     await setRsvp(cookie, csrfToken, ev2.id, player.player_id, 'in');
@@ -514,7 +514,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     const { cookie, csrfToken } = await signup('p3.notracking@example.com', '203.0.204.006');
     await createLeague(cookie, csrfToken, { name: 'No Player Stats League', teamNames: ['A', 'B'], tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const player = await addContact(cookie, csrfToken, { name: 'Test Player', role: 'roster' });
     await setRsvp(cookie, csrfToken, ev.id, player.player_id, 'in');
     const res = await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: player.player_id, role: 'skater', goals: 1, assists: 0 }] });
@@ -527,7 +527,7 @@ describe('Stats tracking, Part 3: player stats entry', () => {
     await createLeague(cookie, csrfToken, { name: 'Edit Stats League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const player = await addContact(cookie, csrfToken, { name: 'Test Player', role: 'roster' });
     await setRsvp(cookie, csrfToken, ev.id, player.player_id, 'in');
 
@@ -559,7 +559,7 @@ describe('Stats tracking, Part 4: standings and leaderboards', () => {
 
     const games = [[5, 2], [4, 1], [1, 4], [2, 2]]; // Rouge: W, W, L, T
     for (let i = 0; i < games.length; i++) {
-      const ev = await createEvent(cookie, csrfToken, { date: `2099-02-0${i + 1}`, season: 'S1' });
+      const ev = await createEvent(cookie, csrfToken, { date: `2020-02-0${i + 1}`, season: 'S1' });
       await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: games[i][0], away_score: games[i][1] });
     }
 
@@ -604,8 +604,8 @@ describe('Stats tracking, Part 4: standings and leaderboards', () => {
     const league = await createLeague(cookie, csrfToken, { name: 'Top Scorers Pickup League', teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev1 = await createEvent(cookie, csrfToken, { date: '2099-03-01', season: 'S1' });
-    const ev2 = await createEvent(cookie, csrfToken, { date: '2099-03-08', season: 'S1' });
+    const ev1 = await createEvent(cookie, csrfToken, { date: '2020-03-01', season: 'S1' });
+    const ev2 = await createEvent(cookie, csrfToken, { date: '2020-03-08', season: 'S1' });
     const top = await addContact(cookie, csrfToken, { name: 'Top Scorer Player', role: 'roster' });
     const low = await addContact(cookie, csrfToken, { name: 'Low Scorer Player', role: 'roster' });
     await setRsvp(cookie, csrfToken, ev1.id, top.player_id, 'in');
@@ -626,8 +626,8 @@ describe('Stats tracking, Part 4: standings and leaderboards', () => {
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const goalie = await addContact(cookie, csrfToken, { name: 'Team Goalie Player', role: 'roster', team: 'Rouge' });
-    const ev1 = await createEvent(cookie, csrfToken, { date: '2099-04-01', season: 'S1' });
-    const ev2 = await createEvent(cookie, csrfToken, { date: '2099-04-08', season: 'S1' });
+    const ev1 = await createEvent(cookie, csrfToken, { date: '2020-04-01', season: 'S1' });
+    const ev2 = await createEvent(cookie, csrfToken, { date: '2020-04-08', season: 'S1' });
     await setRsvp(cookie, csrfToken, ev1.id, goalie.player_id, 'in');
     await setRsvp(cookie, csrfToken, ev2.id, goalie.player_id, 'in');
 
@@ -766,7 +766,7 @@ describe('Stats tracking, Part 5: playoff seeding resolver', () => {
     // games + 3 playoff games = 9 events), then ONE confirm assigns
     // both halves together (playoffs take the last 3 chronologically).
     // Neither half is ever created by this action.
-    const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 9 });
+    const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2020-01-05', occurrences: 9 });
     expect(bulk.json.createdCount).toBe(9);
     const assign = await matchupsConfirm(cookie, csrfToken, {});
     expect(assign.json.updatedCount).toBe(9);
@@ -857,7 +857,7 @@ describe('Stats correctness task, Part 2a: goalie goals-against is derived, not 
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const goalie = await addContact(cookie, csrfToken, { name: 'Rouge Goalie Player', role: 'roster', team: 'Rouge' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
 
     // The live-observed bug: Red 14 -- Black 5, and the form still let
@@ -878,7 +878,7 @@ describe('Stats correctness task, Part 2a: goalie goals-against is derived, not 
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const goalie = await addContact(cookie, csrfToken, { name: 'Bleu Goalie Player', role: 'roster', team: 'Bleu' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
     await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 0 }] }); // pre-score manual entry, still allowed
 
@@ -901,7 +901,7 @@ describe('Stats correctness task, Part 2a: goalie goals-against is derived, not 
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const goalie = await addContact(cookie, csrfToken, { name: 'Tooltip Goalie Player', role: 'roster', team: 'Rouge' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
     await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 0 }] });
     await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 3, away_score: 1 });
@@ -926,7 +926,7 @@ describe('Stats correctness task, Part 2b: goals-vs-score running tally, warns o
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const p1 = await addContact(cookie, csrfToken, { name: 'Tally Player One', role: 'roster', team: 'Rouge' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     await setRsvp(cookie, csrfToken, ev.id, p1.player_id, 'in');
 
     let html = await eventDetailHtml(cookie, ev.id);
@@ -949,7 +949,7 @@ describe('Stats correctness task, Part 2b: goals-vs-score running tally, warns o
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const p1 = await addContact(cookie, csrfToken, { name: 'Logic Player One', role: 'roster', team: 'Rouge' });
     const p2 = await addContact(cookie, csrfToken, { name: 'Logic Player Two', role: 'roster', team: 'Rouge' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     await setRsvp(cookie, csrfToken, ev.id, p1.player_id, 'in');
     await setRsvp(cookie, csrfToken, ev.id, p2.player_id, 'in');
     await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 14, away_score: 5 });
@@ -994,7 +994,7 @@ describe('Stats correctness task, Part 2b: goals-vs-score running tally, warns o
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const goalie = await addContact(cookie, csrfToken, { name: 'Excl Goalie Player', role: 'roster', team: 'Rouge' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
     await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 14, away_score: 5 });
     await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 0 }] });

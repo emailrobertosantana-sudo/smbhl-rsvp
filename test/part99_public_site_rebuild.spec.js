@@ -167,7 +167,7 @@ describe('Public site rebuild, Goalies section', () => {
     await updateTracking(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const goalie = await addContact(cookie, csrfToken, { name: 'Public Goalie Player', role: 'roster', team: 'Rouge' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     await setRsvp(cookie, csrfToken, ev.id, goalie.player_id, 'in');
     await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 5, away_score: 2 });
     await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: goalie.player_id, role: 'goalie', goals_against: 0 }] });
@@ -204,7 +204,7 @@ describe('Public site rebuild, Leaders section', () => {
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const top = await addContact(cookie, csrfToken, { name: 'Leader Top Player', role: 'roster', team: 'Rouge' });
     const low = await addContact(cookie, csrfToken, { name: 'Leader Low Player', role: 'roster', team: 'Rouge' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     await setRsvp(cookie, csrfToken, ev.id, top.player_id, 'in');
     await setRsvp(cookie, csrfToken, ev.id, low.player_id, 'in');
     await postPlayerStats(cookie, csrfToken, {
@@ -254,7 +254,7 @@ describe('Public site rebuild, Players section shows EVERY player, not just a to
     const league = await createLeague(cookie, csrfToken, { name: 'Full Players League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const players = [];
     for (let i = 0; i < 12; i++) {
       const p = await addContact(cookie, csrfToken, { name: `Roster Player Number ${i}`, role: 'roster' });
@@ -283,7 +283,7 @@ describe('Public site rebuild, Players section shows EVERY player, not just a to
     const league = await createLeague(cookie, csrfToken, { name: 'Arene Players League', teamNames: ['A', 'B'], tracksStats: false });
     await updateTracking(cookie, csrfToken, { tracksPlayerStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
     const scorer = await addContact(cookie, csrfToken, { name: 'Arene Scorer Player', role: 'roster' });
     await setRsvp(cookie, csrfToken, ev.id, scorer.player_id, 'in');
     await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: scorer.player_id, role: 'skater', goals: 4, assists: 1 }] });
@@ -466,7 +466,7 @@ describe('Public site rebuild, responsive layout and all 4 themes', () => {
     await updateTracking(fullCookie, fullCsrf, { tracksResults: true, tracksPlayerStats: true });
     await publishSeason(fullCookie, fullCsrf, { season_name: 'S1' });
     const p = await addContact(fullCookie, fullCsrf, { name: 'Populated Player', role: 'roster', team: 'Rouge' });
-    const ev = await createEvent(fullCookie, fullCsrf, { date: '2099-01-05', season: 'S1' });
+    const ev = await createEvent(fullCookie, fullCsrf, { date: '2020-01-05', season: 'S1' });
     await setRsvp(fullCookie, fullCsrf, ev.id, p.player_id, 'in');
     await submitScore(fullCookie, fullCsrf, { event_id: ev.id, home_score: 4, away_score: 1 });
     await postPlayerStats(fullCookie, fullCsrf, { event_id: ev.id, entries: [{ player_id: p.player_id, role: 'goalie', goals_against: 0 }] });

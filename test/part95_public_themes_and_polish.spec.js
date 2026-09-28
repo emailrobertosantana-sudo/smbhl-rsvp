@@ -229,7 +229,7 @@ describe('Public-page themes, Part 2: Classique and Quartier', () => {
         const league = await createLeague(cookie, csrfToken, { name: `${themeName} Full League`, teamNames: ['Rouge', 'Bleu'], tracksStats: false });
         await updateIdentity(cookie, csrfToken, { tracksResults: true, tracksPlayerStats: true, publicTheme: themeName, organizerNote: 'A standing note.' });
         await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-        const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+        const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
         await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 4, away_score: 1 });
         const player = await addContact(cookie, csrfToken, { name: 'Full League Player', role: 'roster' });
         await setRsvp(cookie, csrfToken, ev.id, player.player_id, 'in');
@@ -266,7 +266,7 @@ describe('Public-page themes, Part 2: Classique and Quartier', () => {
         const league = await createLeague(cookie, csrfToken, { name: `${themeName} Results Only League`, teamNames: ['A', 'B'], tracksStats: false });
         await updateIdentity(cookie, csrfToken, { tracksResults: true, publicTheme: themeName });
         await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-        const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+        const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
         await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 2, away_score: 0 });
 
         const html = await publicPageHtml(league.id);
@@ -279,7 +279,7 @@ describe('Public-page themes, Part 2: Classique and Quartier', () => {
         const league = await createLeague(cookie, csrfToken, { name: `${themeName} Stats Only League`, teamNames: ['A', 'B'], tracksStats: false });
         await updateIdentity(cookie, csrfToken, { tracksPlayerStats: true, publicTheme: themeName });
         await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-        const ev = await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1' });
+        const ev = await createEvent(cookie, csrfToken, { date: '2020-01-05', season: 'S1' });
         const player = await addContact(cookie, csrfToken, { name: 'Stats Only Player', role: 'roster' });
         await setRsvp(cookie, csrfToken, ev.id, player.player_id, 'in');
         await postPlayerStats(cookie, csrfToken, { event_id: ev.id, entries: [{ player_id: player.player_id, role: 'skater', goals: 1, assists: 0 }] });
@@ -336,7 +336,7 @@ describe('Best-of-N series tracking, Part 3', () => {
     // ordinary events first, then assigned together in ONE confirm
     // (playoffs take the last bestOf events chronologically). Neither
     // half is ever created by this action.
-    const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 1 + bestOf });
+    const bulk = await bulkCreateEvents(cookie, csrfToken, { startDate: '2020-01-05', occurrences: 1 + bestOf });
     const regularEvent = bulk.json.results[0].event;
     const confirm = await matchupsConfirm(cookie, csrfToken, {});
     expect(confirm.status).toBe(200);
@@ -414,7 +414,7 @@ describe('Best-of-N series tracking, Part 3', () => {
     // assigned together in ONE confirm (playoffs take the last 9
     // chronologically). Neither half is ever created by this action.
     const leagueId = (await env.DB.prepare('SELECT id FROM leagues WHERE name = ?').bind('Bracket Series League').first()).id;
-    await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-05', occurrences: 15 });
+    await bulkCreateEvents(cookie, csrfToken, { startDate: '2020-01-05', occurrences: 15 });
     const confirm = await matchupsConfirm(cookie, csrfToken, {});
     expect(confirm.status).toBe(200);
     const regularEvents = (await env.DB.prepare(

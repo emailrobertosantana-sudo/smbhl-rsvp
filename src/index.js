@@ -5,7 +5,7 @@ import { ERROR_I18N } from './error_i18n.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
-import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart } from './league_ids.js';
+import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart, eventHasStarted } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
@@ -9293,6 +9293,9 @@ ${tabbar}`;
   // score yet) keeps the field a manual, editable input -- the same
   // path this had before the score existed.
   const scoreRecordedForDerivation = !!(ev.result_entered_at && ev.home_score != null && ev.away_score != null && ev.home_team && ev.away_team);
+  // Result and player stats are for a game that has started: hidden until
+  // then (and the routes refuse it) -- eventHasStarted, league_ids.js.
+  const gameStarted = eventHasStarted(ev);
 
   const I18N_DETAIL = {
     fr: {
@@ -9677,6 +9680,15 @@ ${tabbar}`;
   .ev-nums span:not(.stat) { font-size: 13px; color: var(--ink-muted); }
   .ev-ppl { display: flex; flex-direction: column; }
   .ev-p { display: flex; align-items: center; justify-content: space-between; min-height: 44px; border-top: 1px solid var(--line); font-size: 15px; gap: 8px; flex-wrap: wrap; padding: 6px 0; }
+  /* The result as a scoreline -- Blue [5] — [3] White, Save beside it. */
+  .ev-scoreline { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+  .ev-scoreline[hidden], #score_toggle_wrap[hidden] { display: none; }
+  .ev-score-pair { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .ev-score-pair .nl-label { margin: 0; max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ev-score-pair .nl-input { width: 4em; text-align: center; padding-left: 4px; padding-right: 4px; }
+  .ev-score-dash { color: var(--ink-3, var(--soft)); }
+  .ev-scoreline-actions { display: flex; gap: 8px; }
+  .ev-result-stats { border-top: 1px solid var(--line); margin-top: var(--space-4); padding-top: var(--space-4); }
   @media (max-width: 900px) { .ev-teams { grid-template-columns: 1fr; } }
 </style>${header}
 <main class="dash-main ev-main">
@@ -9769,30 +9781,30 @@ ${tabbar}`;
   <!-- Item 5: before the game an admin works the RSVP list (players, then
        who is confirmed but not yet on a team); the result and player stats
        are for after it, so they come last. -->
-  ${scoreSides ? `<section class="nl-card nl-card--pad-lg" id="score_section">
+  ${gameStarted && (scoreSides || leagueRow.tracks_player_stats) ? `<section class="nl-card nl-card--pad-lg" id="result_card">` : ''}
+  ${gameStarted && scoreSides ? `<div id="score_section">
     <div class="h3" data-i18n="scoreTitle">Résultat</div>
     <div id="scoreErr" class="nl-error" style="display:none"></div>
     <div id="scoreOk" class="nl-ok" style="display:none"></div>
     ${ev.result_entered_at ? `<p class="nl-help" style="font-weight:600;font-size:16px" id="score_display">${esc(scoreSides.home)} ${ev.home_score} — ${ev.away_score} ${esc(scoreSides.away)}</p>` : `<p class="nl-help" id="score_display" data-i18n="scoreNoTeamsYet" style="${scoreSides.generic ? '' : 'display:none'}">${scoreSides.generic ? esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreNoTeamsYet) : ''}</p>`}
-    <div id="score_form" style="display:none;margin-top:8px;">
-      <div class="sc-two">
-        <div class="nl-field">
-          <label class="nl-label" for="score_home" id="score_home_label">${esc(scoreSides.generic ? (I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreHomeGeneric : scoreSides.home)}</label>
-          <input class="nl-input" id="score_home" type="number" min="0" value="${ev.home_score != null ? esc(String(ev.home_score)) : ''}">
-        </div>
-        <div class="nl-field">
-          <label class="nl-label" for="score_away" id="score_away_label">${esc(scoreSides.generic ? (I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreAwayGeneric : scoreSides.away)}</label>
-          <input class="nl-input" id="score_away" type="number" min="0" value="${ev.away_score != null ? esc(String(ev.away_score)) : ''}">
-        </div>
-      </div>
-      <div style="margin-top:8px;display:flex;gap:8px;">
+    <!-- One or the other, never both: the form (closed by default) or the
+         button that opens it (toggleScoreForm swaps them). -->
+    <div id="score_form" class="ev-scoreline" hidden style="margin-top:8px;">
+      <span class="ev-score-pair">
+        <label class="nl-label" for="score_home" id="score_home_label">${esc(scoreSides.generic ? (I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreHomeGeneric : scoreSides.home)}</label>
+        <input class="nl-input" id="score_home" type="number" min="0" inputmode="numeric" value="${ev.home_score != null ? esc(String(ev.home_score)) : ''}">
+        <span class="ev-score-dash" aria-hidden="true">—</span>
+        <input class="nl-input" id="score_away" type="number" min="0" inputmode="numeric" value="${ev.away_score != null ? esc(String(ev.away_score)) : ''}">
+        <label class="nl-label" for="score_away" id="score_away_label">${esc(scoreSides.generic ? (I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreAwayGeneric : scoreSides.away)}</label>
+      </span>
+      <span class="ev-scoreline-actions">
         <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="scoreSaveBtn" onclick="submitScore()">Enregistrer le résultat</button>
         <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="scoreCancelBtn" onclick="toggleScoreForm(false)">Annuler</button>
-      </div>
+      </span>
     </div>
     <div style="margin-top:8px" id="score_toggle_wrap"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="${ev.result_entered_at ? 'scoreEditBtn' : 'scoreEnterBtn'}" onclick="toggleScoreForm(true)">${ev.result_entered_at ? esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreEditBtn) : esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).scoreEnterBtn)}</button></div>
-  </section>` : ''}
-  ${leagueRow.tracks_player_stats ? `<section class="nl-card nl-card--pad-lg" id="player_stats_section">
+  </div>` : ''}
+  ${gameStarted && leagueRow.tracks_player_stats ? `<div id="player_stats_section"${scoreSides ? ' class="ev-result-stats"' : ''}>
     <div class="h3" data-i18n="playerStatsTitle">Statistiques des joueurs</div>
     <div id="playerStatsErr" class="nl-error" style="display:none"></div>
     <div id="playerStatsOk" class="nl-ok" style="display:none"></div>
@@ -9827,7 +9839,8 @@ ${tabbar}`;
     </div>` : ''}
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="playerStatsSaveBtn" onclick="submitPlayerStats()">Enregistrer les statistiques</button></div>
     `}
-  </section>` : ''}
+  </div>` : ''}
+  ${gameStarted && (scoreSides || leagueRow.tracks_player_stats) ? '</section>' : ''}
 </main>
 ${tabbar}`;
 
@@ -9958,7 +9971,10 @@ async function randomAssignTeams(btn) {
 // (scoresheets get misread).
 function toggleScoreForm(show) {
   var form = document.getElementById('score_form');
-  if (form) form.style.display = show ? '' : 'none';
+  var btn = document.getElementById('score_toggle_wrap');
+  if (form) form.hidden = !show;
+  if (btn) btn.hidden = !!show;
+  if (show) { var first = document.getElementById('score_home'); if (first) first.focus(); }
 }
 async function submitScore() {
   var err = document.getElementById('scoreErr'); var ok = document.getElementById('scoreOk');

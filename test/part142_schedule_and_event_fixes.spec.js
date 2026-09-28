@@ -120,3 +120,50 @@ describe('4. Bulk-created games keep the time the form sent', () => {
     expect(rows.map(r => `${r.start_time}-${r.end_time}`)).toEqual(['10:30-11:30', '22:30-23:30', '10:30-11:30', '10:30-11:30']);
   });
 });
+
+describe('5. Result and player stats: only once the game has started, the form closed until asked for, one scoreline', () => {
+  const setup = async (email, date, start_time) => {
+    const s = await signup(email);
+    await post(s, '/leagues/create', { name: `P142 ${email}`, teamNames: ['Blue', 'White'], tracksStats: true });
+    await post(s, '/league/settings/identity', { tracksResults: true, tracksPlayerStats: true });
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    const ev = (await (await post(s, '/league/events', { date, season: 'S1', start_time })).json()).event;
+    const html = await page(s, `/league/events/detail?e=${encodeURIComponent(ev.id)}`);
+    return { s, ev, html };
+  };
+
+  it('a future game: no Result, no Player stats -- and the routes refuse it', async () => {
+    const { s, ev, html } = await setup('p142.future@example.com', '2099-05-03', '19:00');
+    expect(html).not.toContain('id="result_card"');
+    expect(html).not.toContain('id="score_section"');
+    expect(html).not.toContain('id="player_stats_section"');
+    const score = await post(s, '/league/events/score', { event_id: ev.id, home_score: 5, away_score: 3 });
+    expect(score.status).toBe(409);
+    expect((await score.json()).errorKey).toBe('GAME_NOT_STARTED');
+    const stats = await post(s, '/league/events/player-stats', { event_id: ev.id, entries: [] });
+    expect((await stats.json()).errorKey).toBe('GAME_NOT_STARTED');
+  });
+
+  it('a past game: one card, the form closed with its button showing, the scoreline on one row', async () => {
+    const { html } = await setup('p142.past@example.com', '2020-05-03', '19:00');
+    const card = html.slice(html.indexOf('id="result_card"'), html.indexOf('</section>', html.indexOf('id="result_card"')));
+    expect(card).toContain('id="score_section"');
+    expect(card).toContain('id="player_stats_section"'); // same card: the two halves of one task
+    expect(card).toContain('<div id="score_form" class="ev-scoreline" hidden');
+    expect(card).toMatch(/<div style="margin-top:8px" id="score_toggle_wrap"><button[^>]*data-i18n="scoreEnterBtn"/);
+    // Blue [ ] — [ ] White, Save beside it: label, input, dash, input, label, then the buttons.
+    const line = card.slice(card.indexOf('id="score_form"'), card.indexOf('id="score_toggle_wrap"'));
+    const order = ['id="score_home_label">Blue<', 'id="score_home"', 'ev-score-dash', 'id="score_away"', 'id="score_away_label">White<', 'data-i18n="scoreSaveBtn"'].map(m => line.indexOf(m));
+    expect(order.every(i => i > 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('started means started: later today is not, earlier today is', async () => {
+    const { eventHasStarted } = await import('../src/league_ids.js');
+    const now = Date.parse('2026-09-28T16:00:00Z'); // 12:00 in Montreal
+    expect(eventHasStarted({ id: 'x:2026-09-28', date: '2026-09-28', start_time: '19:00' }, now)).toBe(false);
+    expect(eventHasStarted({ id: 'x:2026-09-28', date: '2026-09-28', start_time: '10:30' }, now)).toBe(true);
+    expect(eventHasStarted({ id: 'x:2026-09-28', date: '2026-09-28', start_time: null }, now)).toBe(true);
+    expect(eventHasStarted({ id: 'x:2026-09-29', date: '2026-09-29', start_time: null }, now)).toBe(false);
+  });
+});
