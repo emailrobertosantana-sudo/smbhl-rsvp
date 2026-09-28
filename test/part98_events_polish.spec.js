@@ -340,11 +340,10 @@ describe('Events polish, C6: the midnight-crossing warning already covers the bu
     await createLeague(cookie, csrfToken, { name: 'C6 League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const html = await scheduleHtml(cookie);
-    // Present once for the single-event form, once for the bulk form --
-    // both gated on the exact same end_time < start_time comparison.
-    const occurrences = (html.match(/end_time < start_time/g) || []).length;
-    expect(occurrences).toBeGreaterThanOrEqual(2);
-    expect(html).toContain('same non-blocking midnight-crossing warning');
-    expect(html).toContain('as the single-event form');
+    // Follow-up: the check is now on the game's LENGTH (over 6 h), not on
+    // crossing midnight -- still one shared check, on both forms.
+    const occurrences = (html.match(/confirmGameLength\(start_time, end_time\)/g) || []).length;
+    expect(occurrences).toBe(2);
+    expect(html).toContain('Same check as the single-event form, for every game in the series.');
   });
 });
