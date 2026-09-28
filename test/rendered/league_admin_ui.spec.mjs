@@ -170,3 +170,34 @@ describe('Create-game reminder notice', () => {
     await close();
   }, 120000);
 });
+
+// Item 9: the create-game forms are narrow but centred, and wide enough that
+// labels and placeholders fit (at 1450px the map-link label wrapped and the
+// address placeholder was cut at "123 rue Principale, Vill").
+describe('Create-game form layout at 1450px', () => {
+  for (const [label, panelFn, panelSel, prefix] of [['single', 'toggleSchedulePanel', '#sc_panel', 'e'], ['bulk', 'toggleBulkPanel', '#sc_bulk_panel', 'be']]) {
+    it(`${label}: centred, no wrapped label, no cut-off placeholder`, async () => {
+      const { page, errors, close } = await open('/league/schedule', { lang: 'fr' });
+      await page.setViewportSize({ width: 1450, height: 1000 });
+      await page.evaluate(fn => window[fn](), panelFn);
+      const m = await page.evaluate(([sel, pre]) => {
+        const panel = document.querySelector(sel).getBoundingClientRect();
+        const main = document.querySelector('.sc-main').getBoundingClientRect();
+        const lbl = document.querySelector(`label[for="${pre}_venue_map_link"]`);
+        const lh = parseFloat(getComputedStyle(lbl).lineHeight) || 20;
+        const addr = document.getElementById(`${pre}_venue_address`);
+        const cs = getComputedStyle(addr);
+        const ctx = document.createElement('canvas').getContext('2d');
+        ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+        const room = addr.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        return { left: panel.left - main.left, right: main.right - panel.right, width: panel.width, labelLines: Math.round(lbl.getBoundingClientRect().height / lh), placeholderFits: ctx.measureText(addr.placeholder).width <= room };
+      }, [panelSel, prefix]);
+      expect(Math.abs(m.left - m.right)).toBeLessThan(40); // centred (scrollbar tolerance)
+      expect(m.width).toBeLessThanOrEqual(640);
+      expect(m.labelLines).toBe(1);
+      expect(m.placeholderFits).toBe(true);
+      expect(errors).toEqual([]);
+      await close();
+    }, 120000);
+  }
+});

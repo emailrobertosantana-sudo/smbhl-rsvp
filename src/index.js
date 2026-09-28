@@ -7132,7 +7132,7 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-table-wrap tr:last-child td { border-bottom: 0; }
   .ro-who b { display: block; font-weight: 600; }
   .ro-who span { font-size: 13px; color: var(--ink-muted); }
-  .ro-panel { display: none; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); flex-direction: column; gap: var(--space-4); max-width: 400px; }
+  .ro-panel { display: none; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); flex-direction: column; gap: var(--space-4); width: 100%; max-width: 640px; margin: 0 auto; } /* item 9: same shape as the schedule forms */
   /* D1 (forms polish task): this panel's visibility is governed
      entirely by the .open class (added server-side when the roster is
      empty, toggled client-side by the Add a player button otherwise).
@@ -8115,7 +8115,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   .sc-venue { font-size: 14px; color: var(--ink-muted); }
   .sc-reminder-warn { background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-3); }
   .sc-chevron { color: var(--ink-muted); font-size: 20px; }
-  .sc-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); max-width: 420px; }
+  .sc-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); width: 100%; max-width: 640px; margin: 0 auto; } /* item 9: narrow but centred, wide enough that labels do not wrap */
   .sc-panel.open { display: flex; }
   .sc-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
   .sc-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
@@ -8145,7 +8145,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   .nl a.sc-game { flex: 1 1 auto; padding: var(--space-3) var(--space-4); text-decoration: none; color: inherit; }
   .sc-dup-wrap { padding: var(--space-3) var(--space-4) var(--space-3) 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .sc-dup-inline { display: flex; gap: 8px; align-items: center; }
-  .sc-bulk-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); max-width: 480px; }
+  .sc-bulk-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); width: 100%; max-width: 640px; margin: 0 auto; }
   .sc-bulk-panel.open { display: flex; }
   .sc-bulk-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
 </style>${header}
