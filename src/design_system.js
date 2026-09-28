@@ -558,10 +558,15 @@ const NL_FAVICON_DATA_URI = 'data:image/svg+xml,' + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="5" fill="#ffd23f"/></svg>'
 );
 
-export function nlDocument({ title, description = '', bodyHtml, lang = 'fr', leagueColor = null }) {
+// titles: optional { fr, en } -- the tab title in both languages, so the
+// page's FR/EN toggle can switch it too (applyLanguage reads them from the
+// nl-titles meta); `title` alone stays one language.
+export function nlDocument({ title, titles = null, description = '', bodyHtml, lang = 'fr', leagueColor = null }) {
+  const shown = titles ? (lang === 'en' ? titles.en : titles.fr) : title;
+  const titlesMeta = titles ? `<meta name="nl-titles" data-title-fr="${nlEmailEsc(titles.fr)}" data-title-en="${nlEmailEsc(titles.en)}">` : '';
   return `<!DOCTYPE html><html lang="${lang === 'en' ? 'en-CA' : 'fr-CA'}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${nlEmailEsc(title)}</title>
+<title>${nlEmailEsc(shown)}</title>${titlesMeta}
 ${description ? `<meta name="description" content="${nlEmailEsc(description)}">` : ''}
 <link rel="icon" href="${NL_FAVICON_DATA_URI}" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">

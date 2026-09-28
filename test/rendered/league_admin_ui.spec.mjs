@@ -46,3 +46,77 @@ describe('Players table', () => {
     await close();
   }, 120000);
 });
+
+describe('Comms', () => {
+  // Item 11a: each automation is switched on or off right in Comms.
+  it('an automation row\'s switch turns the reminder on and off', async () => {
+    const lid = league.league.id;
+    const get = async () => (await h.db.prepare('SELECT reminder_72h_enabled v FROM leagues WHERE id = ?').bind(lid).first()).v;
+    const before = await get();
+    const { page, errors, close } = await open('/league/comms');
+    const sw = '[data-cadence-key="reminder72h"]';
+    await page.waitForSelector(sw);
+    expect(await page.getAttribute(sw, 'aria-checked')).toBe(before ? 'true' : 'false');
+    await page.click(sw);
+    await page.waitForFunction(([sel, want]) => document.querySelector(sel) && document.querySelector(sel).getAttribute('aria-checked') === want, [sw, before ? 'false' : 'true']);
+    expect(await get()).toBe(before ? 0 : 1);
+    await page.click(sw);
+    await page.waitForFunction(([sel, want]) => document.querySelector(sel) && document.querySelector(sel).getAttribute('aria-checked') === want, [sw, before ? 'true' : 'false']);
+    expect(await get()).toBe(before ? 1 : 0);
+    expect(errors).toEqual([]);
+    await close();
+  }, 120000);
+
+  // Item 11b: switched to EN after loading in FR, nothing French is left.
+  it('toggled to EN, the whole page is English', async () => {
+    const { page, errors, close } = await open('/league/comms');
+    await page.waitForSelector('[data-cadence-key]');
+    await page.evaluate(() => window.__setLang('en'));
+    const text = await page.evaluate(() => document.body.innerText);
+    for (const fr of ['Rappel 72 h (sans réponse)', 'Rappel 24 h (sans réponse)', 'Détails 12 h (confirmés)', 'Appel aux remplaçants', 'Alerte de désistement tardif', 'Aperçu', 'Activé', 'Désactivé', 'Aucune activité', 'Tout le monde (réguliers et substituts)']) {
+      expect(text, fr).not.toContain(fr);
+    }
+    expect(text).toContain('72h reminder (no reply)');
+    expect(text).toContain('Late dropout alert (admin)');
+    expect(await page.evaluate(() => document.documentElement.lang)).toBe('en-CA');
+    expect(errors).toEqual([]);
+    await close();
+  }, 120000);
+});
+
+// Item 11b, the whole admin surface: every league admin page, loaded in FR
+// and toggled to EN, reads exactly like the same page loaded in EN.
+describe('Every league admin page follows the EN toggle', () => {
+  const pagesToCheck = () => [
+    '/dashboard', '/league/roster', '/league/schedule', '/league/settings', '/league/comms',
+    ...(league.eventId ? [`/league/events/detail?e=${encodeURIComponent(league.eventId)}`] : [])
+  ];
+  beforeAll(async () => {
+    league.eventId = (await h.db.prepare('SELECT id FROM events WHERE league_id = ? ORDER BY date DESC LIMIT 1').bind(league.league.id).first()).id;
+  });
+  const visibleText = page => page.evaluate(() => ({ text: document.body.innerText.replace(/\s+/g, ' ').trim(), title: document.title, lang: document.documentElement.lang }));
+  it('toggled = loaded in EN, text, tab title and lang, on every page', async () => {
+    const mismatches = [];
+    for (const path of pagesToCheck()) {
+      const en = await open(path, { lang: 'en' });
+      await en.page.waitForTimeout(300);
+      const a = await visibleText(en.page);
+      await en.close();
+      const fr = await open(path, { lang: 'fr' });
+      await fr.page.waitForTimeout(300);
+      await fr.page.evaluate(() => window.__setLang('en'));
+      await fr.page.waitForTimeout(100);
+      const b = await visibleText(fr.page);
+      expect(fr.errors, path).toEqual([]);
+      await fr.close();
+      if (a.title !== b.title) mismatches.push(`${path} title: "${b.title}" vs "${a.title}"`);
+      if (a.lang !== b.lang) mismatches.push(`${path} lang: ${b.lang} vs ${a.lang}`);
+      if (a.text !== b.text) {
+        const wa = a.text.split(' '), wb = b.text.split(' ');
+        let i = 0; while (i < wa.length && wa[i] === wb[i]) i++;
+        mismatches.push(`${path} text differs at: "${wb.slice(i, i + 12).join(' ')}" (EN load: "${wa.slice(i, i + 12).join(' ')}")`);
+      }
+    }
+    expect(mismatches).toEqual([]);
+  }, 300000);
+});

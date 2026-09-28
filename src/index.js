@@ -276,12 +276,16 @@ function resolveServerLang(req) {
 // today) hides the switcher entirely rather than offering a toggle to
 // a language it doesn't actually expose. Every existing call site
 // (none of which pass this 5th argument) is completely unchanged.
+// title: a string, or { fr, en } for a page whose FR/EN toggle should switch
+// the tab title too (__setLang reads the nl-titles meta).
 function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = false) {
   const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
   const titleAttr = logoTooltip ? ` title="${esc(logoTooltip)}"` : '';
+  const titles = title && typeof title === 'object' ? title : null;
+  const titleFr = titles ? titles.fr : title;
   return `<!DOCTYPE html><html lang="fr-CA"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} — ${esc(league.name)}</title>
+<title>${esc(titleFr)} — ${esc(league.name)}</title>${titles ? `<meta name="nl-titles" data-title-fr="${esc(titles.fr)} — ${esc(league.name)}" data-title-en="${esc(titles.en)} — ${esc(league.name)}">` : ''}
 <meta name="description" content="Plateforme de présence et gestion d’équipe de la ligue de hockey balle ${esc(league.name)} (${esc(league.tagline)}).">
 <meta name="rating" content="general">
 <meta name="rating" content="safe for kids">
@@ -304,6 +308,8 @@ function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = 
     window.__currentLang = l;
     try { localStorage.setItem('smbhl_admin_lang', l); } catch(e) {}
     if (document.documentElement) document.documentElement.lang = l === 'en' ? 'en-CA' : 'fr-CA';
+    var titlesEl = document.querySelector('meta[name="nl-titles"]');
+    if (titlesEl) document.title = titlesEl.getAttribute(l === 'en' ? 'data-title-en' : 'data-title-fr');
     document.querySelectorAll('.langbtn').forEach(function(b) {
       b.classList.toggle('on', b.dataset.l === l);
     });
@@ -776,9 +782,7 @@ const I18N_SIGNUP = {
 // ?lang= yet, e.g. a bookmark or a fresh /signup visit).
 function signupDoc(langParam) {
   const lang = langParam === 'en' ? 'en' : 'fr';
-  return lang === 'en'
-    ? { title: 'Create an account', description: 'Your weekend league, without the paperwork.', lang }
-    : { title: 'Créer un compte', description: 'Ta ligue du dimanche, sans la paperasse.', lang };
+  return { titles: { fr: 'Créer un compte', en: 'Create an account' }, description: lang === 'en' ? 'Your weekend league, without the paperwork.' : 'Ta ligue du dimanche, sans la paperasse.', lang };
 }
 
 // Shared style block every signup screen (steps 1-3 and the done
@@ -982,7 +986,15 @@ window.__errorText = function(errorKey, fallback, vars) {
     var frBtn = document.getElementById('btn-lang-fr'), enBtn = document.getElementById('btn-lang-en');
     if (frBtn) frBtn.setAttribute('aria-pressed', String(l === 'fr'));
     if (enBtn) enBtn.setAttribute('aria-pressed', String(l === 'en'));
+    // Item 11: the rest of the page follows too -- its lang attribute, its
+    // tab title, and anything a page's own script drew (Comms' tables and
+    // automations, the goal tally...), which listens for nl_lang_changed
+    // and redraws. This used to relabel only server-rendered text.
+    if (document.documentElement) document.documentElement.lang = l === 'en' ? 'en-CA' : 'fr-CA';
+    var titlesEl = document.querySelector ? document.querySelector('meta[name="nl-titles"]') : null;
+    if (titlesEl) document.title = titlesEl.getAttribute(l === 'en' ? 'data-title-en' : 'data-title-fr');
     if (window.__onLangApplied) window.__onLangApplied(l);
+    if (typeof CustomEvent === 'function' && window.dispatchEvent) window.dispatchEvent(new CustomEvent('nl_lang_changed', { detail: { lang: l } }));
   }
   applyLanguage(lang);
 })();`;
@@ -1332,7 +1344,7 @@ function copyLink() {
 }
 </script>`;
   const lang = langParam === 'en' ? 'en' : 'fr';
-  return nlDocument({ title: lang === 'en' ? 'League created · Notre Ligue' : 'Ligue créée · Notre Ligue', bodyHtml, lang });
+  return nlDocument({ titles: { fr: 'Ligue créée · Notre Ligue', en: 'League created · Notre Ligue' }, bodyHtml, lang });
 }
 
 // Session-aware dispatcher: step 1 (account creation) needs no
@@ -1347,6 +1359,10 @@ async function renderSignupPage(req, env, url) {
   // language.
   const langParam = url.searchParams.get('lang');
   const langQS = (langParam === 'fr' || langParam === 'en') ? `&lang=${langParam}` : '';
+  // Item 11: rendered in the language the visitor already chose (the
+  // nl_lang cookie) when the URL has no ?lang= -- steps 2/3/done came up
+  // French otherwise. Redirects still carry only an explicit ?lang=.
+  const renderLang = (langParam === 'fr' || langParam === 'en') ? langParam : resolveServerLang(req);
   if (step === '2' || step === '3' || step === 'done') {
     const session = await checkUserSession(req, env);
     if (!session) return Response.redirect(`${url.origin}/signup?step=1${langQS}`, 302);
@@ -1357,7 +1373,7 @@ async function renderSignupPage(req, env, url) {
          WHERE a.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
       ).bind(session.userId).first();
       if (!league) return Response.redirect(`${url.origin}/signup?step=2${langQS}`, 302);
-      return new Response(renderSignupDone(league, langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      return new Response(renderSignupDone(league, renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     }
     // Signup/recovery task, A2: steps 2/3 build a league draft entirely
     // in sessionStorage, submitted only at the very end -- robust to
@@ -1377,10 +1393,10 @@ async function renderSignupPage(req, env, url) {
         WHERE a.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
     ).bind(session.userId).first();
     if (existingLeague) return Response.redirect(`${url.origin}/onboarding/season${langQS.replace('&', '?')}`, 302);
-    if (step === '3') return new Response(renderSignupStep3(langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
-    return new Response(renderSignupStep2(langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    if (step === '3') return new Response(renderSignupStep3(renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    return new Response(renderSignupStep2(renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
-  return new Response(renderSignupStep1(langParam), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  return new Response(renderSignupStep1(renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
 // Login / forgot-password / reset-password (design system Part 2).
@@ -1535,7 +1551,7 @@ async function submitForgot() {
   }
 }
 </script>`;
-  return nlDocument({ title: lang === 'en' ? 'Forgot password' : 'Mot de passe oublié', description: '', bodyHtml, lang });
+  return nlDocument({ titles: { fr: 'Mot de passe oublié', en: 'Forgot password' }, description: '', bodyHtml, lang });
 }
 
 // Reached via the emailed reset link's ?token=. The token itself is
@@ -1589,7 +1605,7 @@ async function submitReset() {
   }
 }
 </script>`;
-  return nlDocument({ title: lang === 'en' ? 'New password' : 'Nouveau mot de passe', description: '', bodyHtml, lang });
+  return nlDocument({ titles: { fr: 'Nouveau mot de passe', en: 'New password' }, description: '', bodyHtml, lang });
 }
 
 // Scoped to exactly which dashboard state is rendering (state: 'none' |
@@ -2307,7 +2323,7 @@ async function loadHardDeleteStatus() {
       statusEl.textContent = window.__pageDict().hardDeleteNotDeactivated;
       btn.disabled = true;
     } else if (data.status === 'locked') {
-      statusEl.textContent = window.__pageDict().hardDeleteLocked + ' ' + new Date(data.unlockAt).toLocaleDateString();
+      statusEl.textContent = window.__pageDict().hardDeleteLocked + ' ' + new Date(data.unlockAt).toLocaleDateString(window.__currentLang === 'en' ? 'en-CA' : 'fr-CA');
       btn.disabled = true;
     } else if (data.status === 'eligible') {
       statusEl.textContent = window.__pageDict().hardDeleteEligible;
@@ -2334,10 +2350,13 @@ async function submitHardDelete() {
     err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
 }
-if (document.getElementById('hardDeleteStatus')) loadHardDeleteStatus();
+if (document.getElementById('hardDeleteStatus')) {
+  loadHardDeleteStatus();
+  window.addEventListener('nl_lang_changed', loadHardDeleteStatus);
+}
 `;
 
-  return new Response(nlDocument({ title: leagueRow ? `${lang === 'en' ? 'Dashboard' : 'Tableau de bord'} — ${leagueRow.name}` : (lang === 'en' ? 'Dashboard' : 'Tableau de bord'), description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+  return new Response(nlDocument({ titles: leagueRow ? { fr: `Tableau de bord — ${leagueRow.name}`, en: `Dashboard — ${leagueRow.name}` } : { fr: 'Tableau de bord', en: 'Dashboard' }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -2885,7 +2904,7 @@ async function obSubmit() {
   }
 }`;
 
-  return new Response(nlDocument({ title: `${lang === 'en' ? 'Welcome' : 'Bienvenue'} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+  return new Response(nlDocument({ titles: { fr: `Bienvenue — ${leagueRow.name}`, en: `Welcome — ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -4814,6 +4833,7 @@ async function handleLeagueCommsPage(req, env, url) {
       cadTeamAssigned: 'Équipe assignée (tirage tardif)',
       cadAutoDraw: 'Tirage automatique des équipes',
       btnPreview: 'Aperçu', cadSubCall: 'Appel aux remplaçants', cadLateReversal: 'Alerte de désistement tardif (admin)',
+      toggleAria: 'Activer ou désactiver', toggleSaved: 'Enregistré.',
       on: 'Activé', off: 'Désactivé',
       cadAutoDrawHoursSuffix: ' h avant le match',
       editCadence: 'Modifier dans Paramètres',
@@ -4855,6 +4875,7 @@ async function handleLeagueCommsPage(req, env, url) {
       cadTeamAssigned: 'Team assigned (late draw)',
       cadAutoDraw: 'Automatic team draw',
       btnPreview: 'Preview', cadSubCall: 'Sub call', cadLateReversal: 'Late dropout alert (admin)',
+      toggleAria: 'Turn on or off', toggleSaved: 'Saved.',
       on: 'On', off: 'Off',
       cadAutoDrawHoursSuffix: 'h before the game',
       editCadence: 'Edit in Settings',
@@ -4890,6 +4911,7 @@ async function handleLeagueCommsPage(req, env, url) {
   <section class="nl-card nl-card--pad-lg">
     <div class="h3" data-i18n="cadenceTitle">Automatismes actifs</div>
     <div id="comms-cadence" style="margin-top:10px"></div>
+    <div id="comms-cadence-msg" class="nl-help" style="margin-top:6px"></div>
     <p class="nl-help" style="margin-top:10px"><a href="/league/settings" data-i18n="editCadence">Modifier dans Paramètres</a></p>
   </section>
 
@@ -4979,17 +5001,20 @@ function renderStats(stats) {
 }
 function renderCadence(c) {
   var d = window.__pageDict();
-  // [label, on/off (null: no toggle), detail, email to preview]
+  // [label, on/off (null: no toggle), detail, email to preview, setting key]
+  // Item 11a: each automation's on/off is a real switch here (it was a
+  // label pointing at Settings); Settings keeps the "when exactly".
   var rows = [
-    [d.cad72, c.reminder72hEnabled, '', 'reminder_72h'],
-    [d.cad24, c.reminder24hEnabled, '', 'reminder_24h'],
-    [d.cad12, c.reminder12hEnabled, '', 'logistics_12h']
+    [d.cad72, c.reminder72hEnabled, '', 'reminder_72h', 'reminder72h'],
+    [d.cad24, c.reminder24hEnabled, '', 'reminder_24h', 'reminder24h'],
+    [d.cad12, c.reminder12hEnabled, '', 'logistics_12h', 'reminder12h']
   ];
-  if (c.isWeeklyDraw) rows.push([d.cadAutoDraw, c.autoDrawEnabled, c.autoDrawEnabled ? (c.autoDrawHoursBefore + d.cadAutoDrawHoursSuffix) : '', 'team_assigned']);
-  rows.push([d.cadSubCall, null, '', 'sub_call'], [d.cadLateReversal, null, '', 'late_reversal']);
+  if (c.isWeeklyDraw) rows.push([d.cadAutoDraw, c.autoDrawEnabled, c.autoDrawEnabled ? (c.autoDrawHoursBefore + d.cadAutoDrawHoursSuffix) : '', 'team_assigned', 'autoDrawEnabled']);
+  rows.push([d.cadSubCall, null, '', 'sub_call', null], [d.cadLateReversal, null, '', 'late_reversal', null]);
   document.getElementById('comms-cadence').innerHTML = rows.map(function(r) {
     var preview = '<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-email-preview="' + r[3] + '" data-preview-endpoint="/league/comms/preview">' + d.btnPreview + '</button>';
-    var state = r[1] == null ? '' : '<span style="font-weight:700;color:' + (r[1] ? '#0e7a4f' : 'var(--ink-muted)') + '">' + (r[1] ? d.on : d.off) + '</span>';
+    var state = r[1] == null ? '' : '<span class="nl-help" style="display:inline;font-weight:700;color:' + (r[1] ? '#0e7a4f' : 'var(--ink-muted)') + '">' + (r[1] ? d.on : d.off) + '</span>' +
+      '<button type="button" class="nl-switch" role="switch" data-cadence-key="' + r[4] + '" aria-checked="' + (r[1] ? 'true' : 'false') + '" aria-label="' + esc(d.toggleAria + ' : ' + r[0]) + '"></button>';
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line);">' +
       '<span>' + r[0] + (r[2] ? ' <span class="nl-help" style="display:inline">(' + r[2] + ')</span>' : '') + '</span>' +
       '<span style="display:flex;gap:10px;align-items:center;">' + preview + state + '</span></div>';
@@ -5026,9 +5051,41 @@ function renderActivity(activity) {
     '<th style="padding:8px 10px;border-bottom:2px solid var(--line);">' + d.colReason + '</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
+// Item 11a: flip one automation from its row.
+async function toggleCadence(btn) {
+  var d = window.__pageDict();
+  var msg = document.getElementById('comms-cadence-msg');
+  var key = btn.getAttribute('data-cadence-key');
+  var next = btn.getAttribute('aria-checked') !== 'true';
+  btn.disabled = true;
+  msg.textContent = '';
+  try {
+    var body = {}; body[key] = next;
+    var res = await fetch('/league/reminders/settings', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(body)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { msg.textContent = window.__errorText(data.errorKey, data.error); btn.disabled = false; return; }
+    var map = { reminder72h: 'reminder72hEnabled', reminder24h: 'reminder24hEnabled', reminder12h: 'reminder12hEnabled', autoDrawEnabled: 'autoDrawEnabled' };
+    if (lastComms && lastComms.cadence) lastComms.cadence[map[key]] = next;
+    renderCadence(lastComms.cadence);
+    msg.textContent = d.toggleSaved;
+  } catch (e) {
+    msg.textContent = window.__errorText('NETWORK_ERROR');
+    btn.disabled = false;
+  }
+}
+document.getElementById('comms-cadence').addEventListener('click', function(e) {
+  var btn = e.target.closest ? e.target.closest('[data-cadence-key]') : null;
+  if (btn) toggleCadence(btn);
+});
 function renderBroadcastOptions(opts) {
   var d = window.__pageDict();
   var sel = document.getElementById('bc-target');
+  var keepTarget = sel.value;
+  var keepEvent = document.getElementById('bc-event').value;
   var html = '<option value="all">' + d.bcTargetAll + '</option>' +
     '<option value="roster">' + d.bcTargetRoster + '</option>' +
     '<option value="subs">' + d.bcTargetSubs + '</option>';
@@ -5048,6 +5105,9 @@ function renderBroadcastOptions(opts) {
     return '<option value="' + esc(e.id) + '">' + esc(e.date) + '</option>';
   }).join('');
 
+  // A redraw (language change) keeps what was picked.
+  if (keepTarget) sel.value = keepTarget;
+  if (keepEvent) eventSel.value = keepEvent;
   sel.onchange = function() {
     var needsEvent = sel.value === 'pending' || sel.value === 'in';
     document.getElementById('bc-event-field').style.display = needsEvent ? '' : 'none';
@@ -5095,11 +5155,23 @@ async function sendBroadcast() {
     btn.disabled = false;
   }
 }
+// Item 11b: everything above draws from the current dictionary; a
+// language change redraws it from the last data (it stayed in the
+// language the page loaded in).
+var lastComms = null;
+function renderComms(data) {
+  renderStats(data.stats);
+  renderCadence(data.cadence);
+  renderActivity(data.activity);
+  renderBroadcastOptions(data.broadcastOptions || { teamNames: [], upcomingEvents: [] });
+}
+window.addEventListener('nl_lang_changed', function() { if (lastComms) renderComms(lastComms); });
 async function loadComms() {
   try {
     var res = await fetch('/league/comms/data', { credentials: 'same-origin' });
     var data = await res.json();
     if (!res.ok || !data.ok) return;
+    lastComms = data;
     renderStats(data.stats);
     renderCadence(data.cadence);
     renderActivity(data.activity);
@@ -6717,7 +6789,7 @@ async function submitDeactivate() {
   }
 }`;
 
-  return new Response(nlDocument({ title: `${(I18N_SETTINGS[lang] || I18N_SETTINGS.fr).title} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` + EMAIL_PREVIEW_ASSETS, lang }), {
+  return new Response(nlDocument({ titles: { fr: `${I18N_SETTINGS.fr.title} — ${leagueRow.name}`, en: `${I18N_SETTINGS.en.title} — ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` + EMAIL_PREVIEW_ASSETS, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -7694,7 +7766,7 @@ async function submitContact() {
   }
 }`;
 
-  return new Response(nlDocument({ title: `${lang === 'en' ? 'Players' : 'Joueurs'} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+  return new Response(nlDocument({ titles: { fr: `Joueurs — ${leagueRow.name}`, en: `Players — ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -8670,7 +8742,7 @@ async function confirmDeleteEvent(eventId) {
   }
 }`;
 
-  return new Response(nlDocument({ title: `${lang === 'en' ? 'Schedule' : 'Horaire'} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+  return new Response(nlDocument({ titles: { fr: `Horaire — ${leagueRow.name}`, en: `Schedule — ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -8735,7 +8807,7 @@ async function handleLeagueEventDetailPage(req, env, url) {
   <h1 data-i18n="notFound">Match introuvable</h1>
 </main>
 ${tabbar}`;
-    return new Response(nlDocument({ title: `${lang === 'en' ? 'Event not found' : 'Match introuvable'} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml404 + `<script>${nlAuthScript(I18N_404)}</script>`, lang }), {
+    return new Response(nlDocument({ titles: { fr: `Match introuvable — ${leagueRow.name}`, en: `Event not found — ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml404 + `<script>${nlAuthScript(I18N_404)}</script>`, lang }), {
       status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
     });
   }
@@ -9606,6 +9678,8 @@ function updateGoalTally() {
   });
 }
 updateGoalTally();
+// Item 11: the tally is drawn by script -- redraw it in the new language.
+window.addEventListener('nl_lang_changed', updateGoalTally);
 async function submitPlayerStats() {
   var err = document.getElementById('playerStatsErr'); var ok = document.getElementById('playerStatsOk');
   err.style.display = 'none'; ok.style.display = 'none';
@@ -9758,7 +9832,7 @@ async function setPlayerStatus(playerId, status, btn) {
   }
 }`;
 
-  return new Response(nlDocument({ title: `${formatEventDate(ev.date, lang, 'short')} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+  return new Response(nlDocument({ titles: { fr: `${formatEventDate(ev.date, 'fr', 'short')} — ${leagueRow.name}`, en: `${formatEventDate(ev.date, 'en', 'short')} — ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -13478,7 +13552,7 @@ if (K) {
 async function boardPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const showStatsTabs = await currentSeasonTracksStats(env);
-  return page('Tableau', `
+  return page({ fr: 'Tableau', en: 'Board' }, `
   ${adminTabs('board', isAuthed, showStatsTabs)}
   <h1 data-i18n="pageTitle">Tableau</h1>
   ${renderKeyGate(isAuthed)}
@@ -14377,7 +14451,7 @@ async function boardData(env, url = null) {
 async function subsPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const showStatsTabs = await currentSeasonTracksStats(env);
-  return page('Substituts', `
+  return page({ fr: 'Substituts', en: 'Subs' }, `
   ${adminTabs('subs', isAuthed, showStatsTabs)}
   <h1 data-i18n="pageTitle">Substituts sollicités</h1>
   ${renderKeyGate(isAuthed)}
@@ -15565,7 +15639,7 @@ async function peoplePage(env = null, isAuthed = false) {
 
 <script>
 const I18N_CONTACTS = {
-  fr: {
+  fr: { adminKeyTitle: "Clé admin", adminKeyPlaceholder: "clé", adminKeyBtn: "OUVRIR",
     title: "Contacts & Coordonnées",
     activeSeasonLbl: "Saison active :",
     bannerDesc: "Coordonnées officielles pour les convocations et communications (courriel & SMS futur). Alignement de la saison en cours et substituts disponibles.",
@@ -15643,7 +15717,7 @@ const I18N_CONTACTS = {
     btnBackupGoalieOn: "Gardien auxiliaire (cliquer pour retirer)",
     btnBackupGoalieOff: "Désigner comme gardien auxiliaire"
   },
-  en: {
+  en: { adminKeyTitle: "Admin Key", adminKeyPlaceholder: "key", adminKeyBtn: "OPEN",
     title: "Player Contacts & Details",
     activeSeasonLbl: "Active Season:",
     bannerDesc: "Official contact details for invitations and communications (email & future SMS). Current season roster and available subs.",
@@ -19094,7 +19168,7 @@ async function sheetData(env, url) {
 async function seasonRecapPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const showStatsTabs = await currentSeasonTracksStats(env);
-  return page('Bilan de fin de saison', `${EMAIL_PREVIEW_ASSETS}
+  return page({ fr: 'Bilan de fin de saison', en: 'Season recap' }, `${EMAIL_PREVIEW_ASSETS}
   ${adminTabs('recap', isAuthed, showStatsTabs)}
   <h1 data-i18n="title">Bilan de fin de saison</h1>
   ${renderKeyGate(isAuthed)}
@@ -20249,7 +20323,7 @@ async function handleFinancesCostDelete(req, env) {
 async function financesPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const showStatsTabs = await currentSeasonTracksStats(env);
-  return page('Cotisations et Finances', `
+  return page({ fr: 'Cotisations et Finances', en: 'Dues & Finances' }, `
   <style>
     .wrap { max-width: 1100px !important; }
     .kpi-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap:12px; margin-bottom:16px; }
@@ -21495,7 +21569,7 @@ async function finishPollSend(env, poll, recipients, sentCount, deferredCount, f
 async function pollsPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const showStatsTabs = await currentSeasonTracksStats(env);
-  return page('Sondages', `${EMAIL_PREVIEW_ASSETS}
+  return page({ fr: 'Sondages', en: 'Polls' }, `${EMAIL_PREVIEW_ASSETS}
   ${adminTabs('polls', isAuthed, showStatsTabs)}
   <h1 data-i18n="title">Sondages & Trophées</h1>
   ${renderKeyGate(isAuthed)}
@@ -21564,7 +21638,7 @@ async function pollsPage(env = null, isAuthed = false) {
   </div>
 <script>
 const I18N_POLLS = {
-  fr: {
+  fr: { adminKeyTitle: "Clé admin", adminKeyPlaceholder: "clé", adminKeyBtn: "OUVRIR",
     title: "Sondages & Trophées",
     newPollTitle: "Nouveau sondage",
     presetLbl: "Modèle prédéfini",
@@ -21627,7 +21701,7 @@ const I18N_POLLS = {
     mvpPresetTitle: "Candidat au Trophée Hart (Joueur le plus utile)",
     mvpPresetDesc: "Vote pour le joueur le plus utile à son équipe cette saison."
   },
-  en: {
+  en: { adminKeyTitle: "Admin Key", adminKeyPlaceholder: "key", adminKeyBtn: "OPEN",
     title: "Polls & Awards Voting",
     newPollTitle: "New Poll",
     presetLbl: "Preset template",
@@ -22069,13 +22143,13 @@ async function seasonPage(env = null, isAuthed = false) {
   const tabsHtml = adminTabs('season', isAuthed, showStatsTabs);
   const gateHtml = renderKeyGate(isAuthed);
   const bodyHtml = await renderSeasonPage(env, isAuthed, tabsHtml, gateHtml);
-  return page('Saison', bodyHtml, logoTooltip);
+  return page({ fr: 'Saison', en: 'Season' }, bodyHtml, logoTooltip);
 }
 
 async function schedulePage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const showStatsTabs = await currentSeasonTracksStats(env);
-  return page('Calendrier', `${EMAIL_PREVIEW_ASSETS}
+  return page({ fr: 'Calendrier', en: 'Schedule' }, `${EMAIL_PREVIEW_ASSETS}
   <style>
     .wrap { max-width: 1100px !important; }
     .sch-top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
@@ -22218,7 +22292,7 @@ async function schedulePage(env = null, isAuthed = false) {
         </div>
         <div class="form-group">
           <label for="edit-date" data-i18n="lblDisplayDate">Date affichée</label>
-          <input class="form-control" id="edit-date" placeholder="ex: 4 oct. 2026" required>
+          <input class="form-control" id="edit-date" placeholder="ex: 4 oct. 2026" data-i18n-ph="phEditDate" required>
         </div>
       </div>
       <div class="form-row">
@@ -22233,7 +22307,7 @@ async function schedulePage(env = null, isAuthed = false) {
       </div>
       <div class="form-group">
         <label for="edit-venue" data-i18n="lblVenue">Lieu / Gymnase</label>
-        <input class="form-control" id="edit-venue" placeholder="ex: Collège Laval" value="Collège Laval">
+        <input class="form-control" id="edit-venue" placeholder="ex: Collège Laval" data-i18n-ph="phEditVenue" value="Collège Laval">
       </div>
       <div class="form-group">
         <label for="edit-state" data-i18n="lblGameStatus">Statut du match</label>
@@ -22281,7 +22355,7 @@ async function schedulePage(env = null, isAuthed = false) {
 
   <script>
   const I18N_SCHEDULE = {
-    fr: {
+    fr: { adminKeyTitle: "Clé admin", adminKeyPlaceholder: "clé", adminKeyBtn: "OUVRIR",
       title: "Gestion du calendrier",
       seasonLbl: "Saison :",
       btnAddGame: "+ Ajouter un match sur mesure",
@@ -22316,6 +22390,7 @@ async function schedulePage(env = null, isAuthed = false) {
       btnOpenState: "Ouvrir",
       btnReopenState: "Rouvrir",
       btnNotifyCancelled: "✉️ Avis joueurs",
+      phEditDate: "ex: 4 oct. 2026", phEditVenue: "ex: Collège Laval",
       btnPreviewEmail: "👁 Aperçu de l'avis",
       btnImportArchive: "📥 Importer (Archive)",
       btnImportActive: "🚀 Importer & Activer",
@@ -22356,7 +22431,7 @@ async function schedulePage(env = null, isAuthed = false) {
       deferredSuffix: "{n} reporté(s) : limite d'envois du jour atteinte, ils partiront dès sa réinitialisation.",
       fillReqFields: "Veuillez remplir les champs obligatoires (ID, saison, semaine, date)."
     },
-    en: {
+    en: { adminKeyTitle: "Admin Key", adminKeyPlaceholder: "key", adminKeyBtn: "OPEN",
       title: "Schedule Management",
       seasonLbl: "Season:",
       btnAddGame: "+ Add Custom Game",
@@ -22391,6 +22466,7 @@ async function schedulePage(env = null, isAuthed = false) {
       btnOpenState: "Open",
       btnReopenState: "Reopen",
       btnNotifyCancelled: "✉️ Notify Players",
+      phEditDate: "e.g. Oct 4, 2026", phEditVenue: "e.g. Collège Laval",
       btnPreviewEmail: "👁 Preview the notice",
       btnImportArchive: "📥 Import (Archive)",
       btnImportActive: "🚀 Import & Activate",
@@ -24689,6 +24765,7 @@ async function emailsPage(env = null, isAuthed = false) {
     if (window.__updateAdminTabsLang) window.__updateAdminTabsLang(currentLang);
     renderBroadcastOptions();
     renderBroadcastEvents();
+    if (emailsData) renderLeagueMessageSection();
     updateQuietBadge();
     updateCadenceHints();
     if (emailsData) renderOutbox();
@@ -25907,7 +25984,7 @@ async function teamsPage(env = null, isAuthed = false) {
   const resolvedCfg = env ? await getSeasonConfigFromEnv(env, null) : null;
   const leagueCfg = resolvedCfg ? getLeagueConfig(resolvedCfg) : null;
   const showStatsTabs = resolvedCfg ? tracksStats(resolvedCfg) : true;
-  return page('Équipes', `
+  return page({ fr: 'Équipes', en: 'Teams' }, `
   <style>
     .wrap { max-width: 1200px !important; }
     .teams-top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:20px; }
@@ -26107,7 +26184,7 @@ async function teamsPage(env = null, isAuthed = false) {
 
   <script>
   const I18N_TEAMS = {
-    fr: {
+    fr: { adminKeyTitle: "Clé admin", adminKeyPlaceholder: "clé", adminKeyBtn: "OUVRIR",
       title: "Alignements & Équipes",
       seasonLbl: "Saison :",
       refreshBtn: "🔄 Rafraîchir",
@@ -26168,7 +26245,7 @@ async function teamsPage(env = null, isAuthed = false) {
       nameReqAlert: "Nom complet requis",
       teamPrefix: "Équipe"
     },
-    en: {
+    en: { adminKeyTitle: "Admin Key", adminKeyPlaceholder: "key", adminKeyBtn: "OPEN",
       title: "Rosters & Teams",
       seasonLbl: "Season:",
       refreshBtn: "🔄 Refresh",
