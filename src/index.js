@@ -1651,8 +1651,46 @@ const SETUP_CARD_I18N = {
     setupDoneDismiss: 'Hide'
   }
 };
-// The same four steps as the dashboard's next-steps checklist.
+// Onboarding item 3: "Passer pour l'instant" moves on to the next step; a
+// step actually skipped is remembered (settings onboarding_skipped:<league>)
+// and shows on the checklist until done. Roster and team names already
+// have checklist items of their own; these three had nothing.
+const onboardingSkipKey = leagueId => `onboarding_skipped:${leagueId}`;
+async function readOnboardingSkips(env, leagueId) {
+  const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(onboardingSkipKey(leagueId)).first();
+  try { const v = JSON.parse((row && row.value) || '[]'); return Array.isArray(v) ? v : []; } catch (_) { return []; }
+}
+async function pendingSkippedSteps(env, leagueRow) {
+  const skipped = await readOnboardingSkips(env, leagueRow.id);
+  const steps = onboardingStepsFor(leagueRow.team_structure || 'fixed');
+  const remindersOn = !!(leagueRow.reminder_72h_enabled || leagueRow.reminder_24h_enabled || leagueRow.reminder_12h_enabled);
+  const items = { reminders: ['nsReminders', 'Choisir tes rappels'], stats: ['nsStats', 'Choisir les statistiques'], playoffs: ['nsPlayoffs', 'Configurer les séries'] };
+  return skipped
+    .filter(k => items[k] && steps.includes(k) && !(k === 'reminders' && remindersOn))
+    .map(k => ({ key: items[k][0], fr: items[k][1], href: `/onboarding/season?step=${steps.indexOf(k) + 1}` }));
+}
+async function handleOnboardingStepMark(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  const body = await req.json().catch(() => ({}));
+  const step = String(body.step || '');
+  if (!['roster', 'teams', 'playoffs', 'reminders', 'stats'].includes(step)) return Response.json({ ok: false, error: 'Unknown step.' }, { status: 400 });
+  const skipped = new Set(await readOnboardingSkips(env, leagueId));
+  if (body.action === 'skip') skipped.add(step); else skipped.delete(step);
+  await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(onboardingSkipKey(leagueId), JSON.stringify([...skipped])).run();
+  return Response.json({ ok: true, skipped: [...skipped] });
+}
+
+// The same steps as the dashboard's next-steps checklist, skipped ones included.
 async function leagueSetupComplete(env, leagueRow) {
+  if ((await pendingSkippedSteps(env, leagueRow)).length) return false;
   const leagueData = await getLeagueDataJson(env, leagueRow.id);
   const season = leagueData.current_season;
   if (!season) return false;
@@ -1756,7 +1794,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // real state (no players yet, team names still the generic
       // default, roster limits never set), not a one-time flag, so it
       // naturally disappears once each is genuinely addressed.
-      nextStepsTitle: 'Prochaines étapes', nsCreateSchedule: "Créer l'horaire", nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif"
+      nextStepsTitle: 'Prochaines étapes', nsCreateSchedule: "Créer l'horaire", nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif", nsReminders: 'Choisir tes rappels', nsStats: 'Choisir les statistiques', nsPlayoffs: 'Configurer les séries'
       // Live-testing task (batch 5), Part 7: coAdmins/invite*/
       // deactivate*/hardDelete* used to live here too -- moved to
       // I18N_SETTINGS alongside the sections that use them (see
@@ -1775,7 +1813,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       teamsPerGameCount: 'team names available',
       noFixedTeamsDesc: "This league has no fixed teams — it's a single player list, with no team split.",
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
-      nextStepsTitle: 'Next steps', nsCreateSchedule: 'Create the schedule', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size'
+      nextStepsTitle: 'Next steps', nsCreateSchedule: 'Create the schedule', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size', nsReminders: 'Choose your reminders', nsStats: 'Choose what to track', nsPlayoffs: 'Set up playoffs'
     });
     if (needsSeason) {
       Object.assign(fr, {
@@ -2245,7 +2283,8 @@ async function handleDashboardPage(req, env, url) {
       !hasAnyEvents ? { key: 'nsCreateSchedule', href: '/league/schedule', fr: "Créer l'horaire" } : null,
       playerCount === 0 ? { key: 'nsAddPlayers', href: '/league/roster', fr: 'Ajouter des joueurs' } : null,
       stillDefaultTeamNames ? { key: 'nsNameTeams', href: '/onboarding/season?step=2', fr: 'Nommer tes équipes' } : null,
-      !dashHasRosterLimits ? { key: 'nsRosterLimits', href: '/onboarding/season?step=1', fr: "Définir l'effectif" } : null
+      !dashHasRosterLimits ? { key: 'nsRosterLimits', href: '/onboarding/season?step=1', fr: "Définir l'effectif" } : null,
+      ...(await pendingSkippedSteps(env, leagueRow))
     ].filter(Boolean) : [];
     const setupDoneHtml = !nextStepsItems.length && !needsSeason ? await setupCompleteCardHtml(env, url, leagueRow) : '';
     const nextStepsHtml = nextStepsItems.length ? `
@@ -2838,7 +2877,10 @@ async function handleOnboardingSeasonPage(req, env, url) {
        this exact small centered-text pattern instead; this brings
        "Skip for now" in line with that established convention rather
        than inventing a new one. -->
-  <p class="su-center"><a href="/dashboard" data-i18n="skip">Passer pour l'instant</a></p>
+  <!-- Onboarding item 3: Skip moves on to the next step (it used to leave
+       onboarding for the dashboard); the step is remembered as skipped and
+       shows on the dashboard checklist until done. -->
+  <p class="su-center"><a href="${isLast ? '/dashboard' : `/onboarding/season?step=${nextStepNum}`}" id="ob_skip" data-i18n="skip" onclick="return obSkip()">Passer pour l'instant</a></p>
 </div>`;
 
   // B1: the step label text is computed per-request (structure/step
@@ -2996,11 +3038,25 @@ async function obSubmit() {
       if (resultsEl) payload.tracksResults = resultsEl.getAttribute('aria-checked') === 'true';
       await obSave('/league/settings/identity', payload);
     }
+    await obMark('done');
     window.location.href = OB_IS_LAST ? '/dashboard' : OB_NEXT_URL;
   } catch (e) {
     showErr(window.__pageDict().saveErr);
     btn.disabled = false;
   }
+}
+// Remembers this step as skipped or done (never blocks moving on).
+function obMark(action) {
+  return fetch('/league/onboarding/step', {
+    method: 'POST', credentials: 'same-origin',
+    headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+    body: JSON.stringify({ step: OB_STEP, action: action })
+  }).catch(function () {});
+}
+function obSkip() {
+  var href = document.getElementById('ob_skip').getAttribute('href');
+  obMark('skip').then(function () { window.location.href = href; });
+  return false;
 }`;
 
   return new Response(nlDocument({ titles: { fr: `Bienvenue — ${leagueRow.name}`, en: `Welcome — ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
@@ -27455,6 +27511,9 @@ async function handleFetch(req, env, ctx) {
       // Email preview: what an email would look like now, sending nothing.
       if (url.pathname === '/league/comms/preview' && req.method === 'POST')
         return await handleLeagueCommsPreview(req, env, url);
+      // Onboarding: a step skipped or done (Skip moves on, and is remembered).
+      if (url.pathname === '/league/onboarding/step' && req.method === 'POST')
+        return await handleOnboardingStepMark(req, env, url);
       // Item 1: hide the "setup complete" card.
       if (url.pathname === '/league/setup-card/dismiss' && req.method === 'POST')
         return await handleSetupCardDismiss(req, env, url);

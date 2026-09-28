@@ -49,3 +49,49 @@ describe('2. The mid-flow screen says created, not ready', () => {
     expect(html).not.toContain('is ready');
   });
 });
+
+describe('3. Skip advances, and what was skipped stays on the checklist', () => {
+  it('Skip on each step leads to the NEXT step (the last one to the dashboard)', async () => {
+    const s = await signup('p140.skip.links@example.com');
+    await post(s, '/leagues/create', { name: 'P140 Skip Links', teamNames: ['A', 'B'] });
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    // fixed: roster, teams, playoffs, reminders, stats
+    for (let step = 1; step <= 4; step++) {
+      expect(await page(s, `/onboarding/season?step=${step}`)).toContain(`href="/onboarding/season?step=${step + 1}" id="ob_skip"`);
+    }
+    expect(await page(s, '/onboarding/season?step=5')).toContain('href="/dashboard" id="ob_skip"');
+  });
+
+  it('skipped reminders, stats and playoffs appear on the dashboard checklist; done or reminders on, they go', async () => {
+    const s = await signup('p140.skip.list@example.com');
+    await post(s, '/leagues/create', { name: 'P140 Skip List', teamNames: ['Otters', 'Bears'] });
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    for (const step of ['playoffs', 'reminders', 'stats']) expect((await post(s, '/league/onboarding/step', { step, action: 'skip' })).status).toBe(200);
+    let html = await page(s, '/dashboard');
+    expect(html).toContain('href="/onboarding/season?step=3" data-i18n="nsPlayoffs">Configurer les séries<');
+    expect(html).toContain('href="/onboarding/season?step=4" data-i18n="nsReminders">Choisir tes rappels<');
+    expect(html).toContain('href="/onboarding/season?step=5" data-i18n="nsStats">Choisir les statistiques<');
+    expect(html).toContain('"nsReminders":"Choose your reminders"');
+    // Stats completed later through its step; reminders turned on in Settings.
+    await post(s, '/league/onboarding/step', { step: 'stats', action: 'done' });
+    await post(s, '/league/reminders/settings', { reminder24h: true });
+    html = await page(s, '/dashboard');
+    expect(html).not.toContain('data-i18n="nsStats"');
+    expect(html).not.toContain('data-i18n="nsReminders"');
+    expect(html).toContain('data-i18n="nsPlayoffs"');
+  });
+
+  it('a skipped step keeps the completion card away until it is done', async () => {
+    const s = await signup('p140.skip.card@example.com');
+    await post(s, '/leagues/create', { name: 'P140 Skip Card', teamNames: ['Otters', 'Bears'] });
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    await post(s, '/league/settings/structure', { min_players: 1, max_players: 20 });
+    await post(s, '/league/events', { date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' });
+    await post(s, '/league/contacts', { name: 'Lea Player', role: 'roster', team: 'Otters' });
+    await post(s, '/league/onboarding/step', { step: 'stats', action: 'skip' });
+    expect(await page(s, '/dashboard')).not.toContain('id="setup_done_card"');
+    expect(await page(s, '/league/roster')).not.toContain('id="setup_done_card"');
+    await post(s, '/league/onboarding/step', { step: 'stats', action: 'done' });
+    expect(await page(s, '/dashboard')).toContain('id="setup_done_card"');
+  });
+});
