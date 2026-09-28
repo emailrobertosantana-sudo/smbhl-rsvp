@@ -7,6 +7,7 @@
 // "send now" trigger, and a distinct admin alert when the 12h opt-out
 // specifically is used by a previously-confirmed player.
 import { env, SELF } from 'cloudflare:test';
+import { answerViaEmailLink } from './support/email_link.js';
 import worker, { runLeagueReminders, getNonResponders, getConfirmedPlayers } from '../src/index.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
@@ -371,7 +372,7 @@ describe('Part 2: per-league automated reminders', () => {
     const token = [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
 
     const { sentMails } = await withMailMock(() =>
-      SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}&v=out&src=logistics12h`)
+      answerViaEmailLink((u, i) => SELF.fetch(u, i), `http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}&v=out&src=logistics12h`)
     );
 
     const rsvpRow = await env.DB.prepare('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
@@ -403,7 +404,7 @@ describe('Part 2: per-league automated reminders', () => {
     const token = [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
 
     const { sentMails } = await withMailMock(() =>
-      SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}&v=out`)
+      answerViaEmailLink((u, i) => SELF.fetch(u, i), `http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}&v=out`)
     );
     expect(sentMails.some(m => m.subject.includes('désiste') || m.subject.includes('dropped'))).toBe(false);
   });

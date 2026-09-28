@@ -7,6 +7,7 @@
 // League B, both because the signed message differs AND because a
 // mismatched league/event/player combination fails the DB lookups.
 import { env, SELF } from 'cloudflare:test';
+import { answerViaEmailLink } from './support/email_link.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 
@@ -117,7 +118,11 @@ describe('Part M: GET /league/rsvp and the league RSVP token', () => {
 
   it('?v=in writes the rsvp status via the one-click link, tagged with the correct league_id', async () => {
     const token = await computeToken(RSVP_SECRET, `lr:${leagueA}:${eventA}:${playerA}:${playerASalt}`);
-    const res = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueA)}&e=${encodeURIComponent(eventA)}&p=${encodeURIComponent(playerA)}&t=${token}&v=in`);
+    // The link opens a confirmation; its button records the answer.
+    const link = `http://example.com/league/rsvp?league=${encodeURIComponent(leagueA)}&e=${encodeURIComponent(eventA)}&p=${encodeURIComponent(playerA)}&t=${token}&v=in`;
+    const { postRes } = await answerViaEmailLink((u, i) => SELF.fetch(u, i), link);
+    expect(postRes.status).toBe(303);
+    const res = await SELF.fetch(new URL(postRes.headers.get('location'), link).toString());
     expect(res.status).toBe(200);
 
     const row = await env.DB.prepare('SELECT * FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventA, playerA).first();

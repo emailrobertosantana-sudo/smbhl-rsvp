@@ -9,6 +9,7 @@
 // Checked at event creation, every cron pass, when a sub is added, and
 // when a league event is created.
 import { env, SELF } from 'cloudflare:test';
+import { answerViaEmailLink } from './support/email_link.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { runSchedule, runLeagueReminders } from '../src/index.js';
@@ -138,7 +139,7 @@ describe('The two-invite limit holds across the new trigger and a later cancella
 
     // A rostered Blue player cancels through their own RSVP link.
     const t = await hmac(RSVP_SECRET, `p:${eventId}:A108B:salt`);
-    await withResend(() => SELF.fetch(`http://example.com/rsvp?e=${encodeURIComponent(eventId)}&p=A108B&t=${t}&v=out`));
+    await withResend(() => answerViaEmailLink((u, i) => SELF.fetch(u, i), `http://example.com/rsvp?e=${encodeURIComponent(eventId)}&p=A108B&t=${t}&v=out`));
     expect((await env.DB.prepare(`SELECT status FROM rsvp WHERE event_id = ? AND player_id = 'A108B'`).bind(eventId).first()).status).toBe('out');
     await withResend(() => runSchedule(env));
     for (const pid of subs) expect(await sentInvites(eventId, pid)).toBe(2);

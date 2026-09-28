@@ -10,6 +10,7 @@
 // interactive POST-in-place buttons (not full-page-reload links), and
 // the ?v=in/out one-click emailed-link path still working.
 import { env, SELF } from 'cloudflare:test';
+import { answerViaEmailLink } from './support/email_link.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 
@@ -136,7 +137,10 @@ describe('UI task Part V: GET /league/rsvp visual polish (design system Part 4)'
 
   it('the ?v=in/out one-click emailed-link path still works unchanged after the visual update', async () => {
     const token = await computeToken(RSVP_SECRET, `lr:${leagueId}:${eventId}:${playerId}:${salt}`);
-    const res = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}&v=out`);
+    // The link opens a confirmation; its button records the answer.
+    const link = `http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}&v=out`;
+    const { postRes } = await answerViaEmailLink((u, i) => SELF.fetch(u, i), link);
+    const res = await SELF.fetch(new URL(postRes.headers.get('location'), link).toString());
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('rv-done--no');

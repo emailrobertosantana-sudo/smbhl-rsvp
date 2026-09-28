@@ -8,6 +8,7 @@
 // product league with no config); the cancellation path still fills to
 // skatersPerTeam (8); goaliesPerTeam stays 1; a configured value wins.
 import { env, SELF } from 'cloudflare:test';
+import { answerViaEmailLink } from './support/email_link.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { runSchedule, teamState, runLeagueReminders } from '../src/index.js';
@@ -95,7 +96,7 @@ describe('SMBHL (season with no config): the shortfall trigger needs 7 skaters',
     }
     const { hmac } = await import('../src/crypto_utils.js');
     const t = await hmac(env.RSVP_SECRET, `p:${eventId}:C109S0:s`);
-    await withResend(() => SELF.fetch(`http://example.com/rsvp?e=${encodeURIComponent(eventId)}&p=C109S0&t=${t}&v=out`));
+    await withResend(() => answerViaEmailLink((u, i) => SELF.fetch(u, i), `http://example.com/rsvp?e=${encodeURIComponent(eventId)}&p=C109S0&t=${t}&v=out`));
     // 7 skaters left: at the shortfall minimum, but the cancellation path
     // still wants the full 8 -- unchanged.
     expect(await skaterCalls(eventId, 'Blue')).toBeGreaterThan(0);

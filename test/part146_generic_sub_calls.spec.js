@@ -5,6 +5,7 @@
 // inside 24 h, every placement or move is emailed at once; a sub added by
 // hand is always told, with the caveat only when more than 24 h out.
 import { env, SELF } from 'cloudflare:test';
+import { answerViaEmailLink } from './support/email_link.js';
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { hmac } from '../src/crypto_utils.js';
@@ -83,7 +84,7 @@ describe('The invite', () => {
 describe('Accepting, more than 24 h out', () => {
   it('lands them on a team provisionally, says it may change, and emails nothing', async () => {
     const at = await hmac(env.RSVP_SECRET, `a:${FAR}:SA:skater:s`);
-    const html = await (await SELF.fetch(`http://example.com/avail?e=${encodeURIComponent(FAR)}&p=SA&n=skater&t=${at}&a=yes`)).text();
+    const { finalHtml: html } = await answerViaEmailLink((u, i) => SELF.fetch(u, i), `http://example.com/avail?e=${encodeURIComponent(FAR)}&p=SA&n=skater&t=${at}&a=yes`);
     const row = await env.DB.prepare('SELECT team, role, status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(FAR, 'SA').first();
     expect(row.role).toBe('sub');
     expect(row.team).not.toBe('Red'); // Red was full
@@ -122,7 +123,7 @@ describe('Accepting, more than 24 h out', () => {
 describe('Inside 24 h, every placement or move is emailed at once', () => {
   it('a late accept: the game-day email goes straight away, with the team and no "may change"', async () => {
     const at = await hmac(env.RSVP_SECRET, `a:${NEAR}:SB:skater:s`);
-    const html = await (await SELF.fetch(`http://example.com/avail?e=${encodeURIComponent(NEAR)}&p=SB&n=skater&t=${at}&a=yes`)).text();
+    const { finalHtml: html } = await answerViaEmailLink((u, i) => SELF.fetch(u, i), `http://example.com/avail?e=${encodeURIComponent(NEAR)}&p=SB&n=skater&t=${at}&a=yes`);
     expect(html).not.toContain('id="sub_team_caveat"');
     const mails = to('SB');
     expect(mails.length).toBe(1);

@@ -7,6 +7,7 @@
 // within 48 h calls at once; a real cancellation still calls promptly; an
 // admin can release the calls early ("send sub calls now").
 import { env, SELF } from 'cloudflare:test';
+import { answerViaEmailLink } from './support/email_link.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { runSchedule } from '../src/index.js';
@@ -91,7 +92,7 @@ describe('Shortfall sub calls go out with the roster invite', () => {
     await runSchedule(env);
     expect(await subCalls(E2)).toEqual([]);
     const t = await hmac(RSVP_SECRET, `p:${E2}:Red3:salt`);
-    await SELF.fetch(`http://example.com/rsvp?e=${encodeURIComponent(E2)}&p=Red3&t=${t}&v=out`);
+    await answerViaEmailLink((u, i) => SELF.fetch(u, i), `http://example.com/rsvp?e=${encodeURIComponent(E2)}&p=Red3&t=${t}&v=out`);
     at('2026-11-15T21:05:00Z'); // the cancellation's one-hour hold (>48 h out) has passed
     await runSchedule(env);
     expect(await inviteJob(E2)).toBeNull(); // still before the invite...

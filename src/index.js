@@ -13894,6 +13894,24 @@ async function subPool(db, eventId) {
   ).bind(eventId, eventId).all()).results || [];
 }
 
+function availConfirmPage(ev, url, need, a, logoTooltip = '') {
+  const w = whenLine(ev);
+  const yes = a !== 'no';
+  const g = need === 'goalie';
+  const action = `/avail?${['e', 'p', 'n', 't'].map(k => `${k}=${encodeURIComponent(url.searchParams.get(k) || '')}`).join('&')}`;
+  return page(`À confirmer · ${w.fr}`, `<h1>Encore un clic pour confirmer<span class="en">One more tap to confirm</span></h1>
+    <p class="when">${esc(w.fr)}<span class="en">${esc(w.en)}</span></p>
+    <div class="card" id="avail_confirm" style="border:2px solid #b45309;">
+      <p style="font-weight:700;margin:0 0 10px;">${yes ? "Tu n'es pas encore inscrit." : "Ta réponse n'est pas encore enregistrée."}<span class="en">${yes ? 'You are not signed up yet.' : 'Your answer is not recorded yet.'}</span></p>
+      <p style="margin:0 0 16px;">${yes ? `Tu vas dire que tu es disponible ${g ? 'comme gardien' : 'comme joueur'}.` : "Tu vas dire que tu n'es pas disponible."}<span class="en">${yes ? `You are about to say you are available ${g ? 'as a goalie' : 'as a skater'}.` : 'You are about to say you are not available.'}</span></p>
+      <form method="post" action="${esc(action)}" style="margin:0 0 12px;">
+        <input type="hidden" name="a" value="${yes ? 'yes' : 'no'}">
+        <button type="submit" class="btn ${yes ? 'in' : 'out'}" style="width:100%;padding:18px 12px;font-size:20px;">${yes ? 'OUI, JE SUIS DISPONIBLE' : 'NON, PAS DISPONIBLE'}<span class="en">${yes ? "YES, I'M AVAILABLE" : 'NO, NOT AVAILABLE'}</span></button>
+      </form>
+      <p class="state" style="margin:0;">Tant que tu n'as pas appuyé, tu restes « sans réponse ».<span class="en">Until you press it, you stay as "no reply".</span></p>
+    </div>`, logoTooltip);
+}
+
 // Wherever a sub sees their team before the game: more than 24 h out a
 // placement is provisional (reshuffles send no email), so say so. Inside
 // 24 h the team shown is the one the game-day email carries.
@@ -13906,11 +13924,14 @@ function subTeamCaveatHtml(ev) {
   return `<p class="state" id="sub_team_caveat">${esc(SUB_TEAM_CAVEAT.fr)}<span class="en">${esc(SUB_TEAM_CAVEAT.en)}</span></p>`;
 }
 
+// A sub call's YES/NO link: GET shows the confirmation page, POST (its
+// button) records the answer -- the answer comes from the form on POST.
 async function availRoute(req, env, url) {
   const eventId = url.searchParams.get('e');
   const playerId = url.searchParams.get('p');
   const need = url.searchParams.get('n');
-  const ans = url.searchParams.get('a');
+  const form = req.method === 'POST' ? await req.formData().catch(() => null) : null;
+  const ans = form ? String(form.get('a') || '') : url.searchParams.get('a');
   const token = url.searchParams.get('t');
   if (!['goalie', 'skater'].includes(need)) return notice('Lien incomplet', 'Incomplete link');
 
@@ -13924,6 +13945,10 @@ async function availRoute(req, env, url) {
   if (ev.state !== 'open') return notice('Les réponses sont fermées', 'Responses are closed');
 
   const w = whenLine(ev);
+  // Opening the link records nothing (a link scanner said Yes for two
+  // subs who never came): it shows what they are about to answer, and
+  // their answer is recorded when they press the button (POST /avail).
+  if (req.method !== 'POST') return availConfirmPage(ev, url, need, ans === 'no' ? 'no' : 'yes', await getStandingsTooltip(env));
   await env.DB.prepare(
     `UPDATE contacts SET asked_streak = 0, answered_ever = 1, dormant = 0
       WHERE player_id = ?`).bind(playerId).run();
@@ -17600,51 +17625,14 @@ async function rsvpGet(req, env, url) {
   let status = row ? row.status : 'pending';
   const locked = ev.state !== 'open';
 
-  // Instant response via email link
+  // An email's IN/OUT link (?v=in|out) no longer records anything on its
+  // own: link-scanning mail security fetches every URL in a message, and a
+  // scanner "answering" filled spots and stopped the sub calls. The link
+  // lands on a confirmation page; the answer is recorded only when the
+  // player presses its button (POST /rsvp/confirm, below).
   const autoVal = url.searchParams.get('v');
   if (['in', 'out'].includes(autoVal) && ev.state === 'open' && status !== autoVal) {
-    const previousStatus = status;
-    const now = new Date().toISOString();
-    await env.DB.prepare(
-      `INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at)
-       VALUES (?, ?, (SELECT team FROM rsvp WHERE event_id=? AND player_id=?), ?, 'roster', 'self', ?)
-       ON CONFLICT(event_id, player_id) DO UPDATE SET
-         status = excluded.status, status_by = 'self', updated_at = excluded.updated_at`
-    ).bind(eventId, playerId, eventId, playerId, autoVal, now).run();
-
-    await cancelPending(env, `notice:${eventId}:${playerId}`);
-    const isPrimaryGoalie = contact && (contact.is_goalie === 1 || contact.role === 'sub_goalie');
-    const isBackupGoalie = contact && contact.is_backup_goalie === 1;
-    let need = 'skater';
-    if (isPrimaryGoalie) {
-      const backupRow = await env.DB.prepare(
-        `SELECT r.status FROM rsvp r JOIN contacts c2 ON c2.player_id = r.player_id
-          WHERE r.event_id=? AND r.team=? AND c2.is_backup_goalie=1 AND r.status != 'out'`
-      ).bind(eventId, team).first();
-      need = backupRow ? 'skater' : 'goalie';
-    } else if (isBackupGoalie) {
-      const primaryRow = await env.DB.prepare(
-        `SELECT r.status FROM rsvp r JOIN contacts c2 ON c2.player_id = r.player_id
-          WHERE r.event_id=? AND r.team=? AND c2.is_goalie=1 AND r.status != 'out'`
-      ).bind(eventId, team).first();
-      need = primaryRow ? 'skater' : 'goalie';
-    }
-    if (team) {
-      const cfg6 = await getSeasonConfigForEvent(env, ev.id, ev.season);
-      await cancelPending(env, `hold:${eventId}:${team}:${need}`);
-      if (autoVal === 'out') {
-        if (need === 'goalie' && previousStatus !== 'out') {
-          await notifyAdminGoalieCancel(env, ev, contact, team, 'self', previousStatus);
-        }
-        if (await openSpots(env.DB, eventId, team, need, cfg6) > 0) {
-          if (!(await fillFromWaitlist(env, ev, team, need, cfg6)))
-            await callSubs(env, ev, team, need);
-        }
-      } else if (await openSpots(env.DB, eventId, team, need, cfg6) < 1) {
-        await stopWaves(env, eventId, need, cfg6);
-      }
-    }
-    status = autoVal;
+    return rsvpConfirmPage(ev, eventId, playerId, token, autoVal, await getStandingsTooltip(env));
   }
 
   let setBy = '';
@@ -17926,7 +17914,7 @@ async function rsvpGet(req, env, url) {
     ${ev.state === 'cancelled'
       ? `<div style="background:#fee2e2;border:1px solid #f87171;border-radius:4px;padding:10px 12px;margin-top:12px;color:#991b1b;font-weight:700;">⚠️ Ce match a été annulé.<span class="en" style="display:block;font-weight:normal;font-size:13px;color:#7f1d1d;">This game has been cancelled.</span></div>`
       : (locked ? '<p class="state">Les réponses sont fermées.<span class="en">Responses are closed.</span></p>' : '')}
-    <p class="state" id="msg">${autoVal ? 'Réponse enregistrée avec succès! / Response recorded!' : ''}</p>
+    <p class="state" id="msg">${url.searchParams.get('saved') ? 'Réponse enregistrée avec succès! / Response recorded!' : ''}</p>
   </div>
   ${selfPosHtml}
   ${pollCardHtml}
@@ -18118,26 +18106,19 @@ async function adminAbsenceAction(req, env) {
   return new Response('unknown action', { status: 400 });
 }
 
-async function rsvpPost(req, env, url) {
-  const eventId = url.searchParams.get('e');
-  const playerId = url.searchParams.get('p');
-  const token = url.searchParams.get('t');
-  const { status } = await req.json().catch(() => ({}));
-  if (!['in', 'out'].includes(status)) return new Response('bad status', { status: 400 });
-
-  const contact = await getContact(env.DB, playerId);
-  if (!contact) return new Response('unknown player', { status: 404 });
-  const want = await hmac(env.RSVP_SECRET, playerMsg(eventId, playerId, contact.token_salt));
-  if (!same(want, token)) return new Response('bad token', { status: 403 });
-
-  const ev = await getEvent(env.DB, eventId);
-  if (!ev) return new Response('no event', { status: 404 });
-  if (ev.state !== 'open') return new Response('locked', { status: 409 });
-
+// Records an SMBHL player's own IN/OUT for a game and does what follows
+// from it (a goalie out alerts the admin; a spot opening calls subs or
+// fills from the waitlist; a team filling stops the waves). One writer for
+// the page's own buttons (rsvpPost) and an email link's confirmation
+// (rsvpConfirmPost). The caller has checked the token and that the game
+// is open. (rsvpPost used to read `mine.team` before declaring `mine` on
+// the goalie paths -- a goalie's answer from the page's buttons threw.)
+async function recordSmbhlRsvp(env, ev, contact, playerId, status) {
+  const eventId = ev.id;
   const existing = await env.DB.prepare(
-    'SELECT status FROM rsvp WHERE event_id=? AND player_id=?').bind(eventId, playerId).first();
+    'SELECT status, team FROM rsvp WHERE event_id=? AND player_id=?').bind(eventId, playerId).first();
   const previousStatus = existing ? existing.status : 'pending';
-
+  const team = existing ? existing.team : null;
   const now = new Date().toISOString();
   await env.DB.prepare(
     `INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at)
@@ -18154,34 +18135,95 @@ async function rsvpPost(req, env, url) {
     const backupRow = await env.DB.prepare(
       `SELECT r.status FROM rsvp r JOIN contacts c2 ON c2.player_id = r.player_id
         WHERE r.event_id=? AND r.team=? AND c2.is_backup_goalie=1 AND r.status != 'out'`
-    ).bind(eventId, mine.team).first();
+    ).bind(eventId, team).first();
     need = backupRow ? 'skater' : 'goalie';
   } else if (isBackupGoalie) {
     const primaryRow = await env.DB.prepare(
       `SELECT r.status FROM rsvp r JOIN contacts c2 ON c2.player_id = r.player_id
         WHERE r.event_id=? AND r.team=? AND c2.is_goalie=1 AND r.status != 'out'`
-    ).bind(eventId, mine.team).first();
+    ).bind(eventId, team).first();
     need = primaryRow ? 'skater' : 'goalie';
   }
-  const mine = await env.DB.prepare(
-    'SELECT team FROM rsvp WHERE event_id=? AND player_id=?').bind(eventId, playerId).first();
-  if (mine && mine.team) {
-    const ev2 = await getEvent(env.DB, eventId);
-    const cfg7 = await getSeasonConfigForEvent(env, ev2.id, ev2.season);
-    await cancelPending(env, `hold:${eventId}:${mine.team}:${need}`);
+  if (team) {
+    const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+    await cancelPending(env, `hold:${eventId}:${team}:${need}`);
     if (status === 'out') {
       if (need === 'goalie' && previousStatus !== 'out') {
-        await notifyAdminGoalieCancel(env, ev2, contact, mine.team, 'self', previousStatus);
+        await notifyAdminGoalieCancel(env, ev, contact, team, 'self', previousStatus);
       }
-      if (await openSpots(env.DB, eventId, mine.team, need, cfg7) > 0) {
-        if (!(await fillFromWaitlist(env, ev2, mine.team, need, cfg7)))
-          await callSubs(env, ev2, mine.team, need);
+      if (await openSpots(env.DB, eventId, team, need, cfg) > 0) {
+        if (!(await fillFromWaitlist(env, ev, team, need, cfg)))
+          await callSubs(env, ev, team, need);
       }
-    } else if (await openSpots(env.DB, eventId, mine.team, need, cfg7) < 1) {
-      await stopWaves(env, eventId, need, cfg7);
+    } else if (await openSpots(env.DB, eventId, team, need, cfg) < 1) {
+      await stopWaves(env, eventId, need, cfg);
     }
   }
+}
+
+async function rsvpPost(req, env, url) {
+  const eventId = url.searchParams.get('e');
+  const playerId = url.searchParams.get('p');
+  const token = url.searchParams.get('t');
+  const { status } = await req.json().catch(() => ({}));
+  if (!['in', 'out'].includes(status)) return new Response('bad status', { status: 400 });
+
+  const contact = await getContact(env.DB, playerId);
+  if (!contact) return new Response('unknown player', { status: 404 });
+  const want = await hmac(env.RSVP_SECRET, playerMsg(eventId, playerId, contact.token_salt));
+  if (!same(want, token)) return new Response('bad token', { status: 403 });
+
+  const ev = await getEvent(env.DB, eventId);
+  if (!ev) return new Response('no event', { status: 404 });
+  if (ev.state !== 'open') return new Response('locked', { status: 409 });
+
+  await recordSmbhlRsvp(env, ev, contact, playerId, status);
   return new Response('ok');
+}
+
+// What an email's IN/OUT link opens: NOT a success page. It says plainly
+// that nothing is recorded yet, shows the game, and one large button that
+// records the answer (a form POST: scanners follow links, they do not
+// submit forms; no JavaScript needed).
+function rsvpConfirmPage(ev, eventId, playerId, token, v, logoTooltip = '') {
+  const w = whenLine(ev);
+  const inAns = v === 'in';
+  const qs = `e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}`;
+  return page(`À confirmer · ${w.fr}`, `<h1>Encore un clic pour confirmer<span class="en">One more tap to confirm</span></h1>
+    <p class="when">${esc(w.fr)}<span class="en">${esc(w.en)}</span></p>
+    <div class="card" id="rsvp_confirm" style="border:2px solid #b45309;">
+      <p style="font-weight:700;margin:0 0 10px;">Ta réponse n'est pas encore enregistrée.<span class="en">Your answer is not recorded yet.</span></p>
+      <p style="margin:0 0 16px;">Tu vas répondre : <b>${inAns ? 'PRÉSENT' : 'ABSENT'}</b><span class="en">You are about to answer: <b>${inAns ? 'IN' : 'OUT'}</b></span></p>
+      <form method="post" action="/rsvp/confirm?${qs}" style="margin:0 0 12px;">
+        <input type="hidden" name="status" value="${inAns ? 'in' : 'out'}">
+        <button type="submit" class="btn ${inAns ? 'in' : 'out'}" style="width:100%;padding:18px 12px;font-size:20px;">${inAns ? 'CONFIRMER : JE SERAI LÀ' : 'CONFIRMER : JE NE SERAI PAS LÀ'}<span class="en">${inAns ? "CONFIRM: I'LL BE THERE" : "CONFIRM: I WON'T BE THERE"}</span></button>
+      </form>
+      <p class="state" style="margin:0;">Tant que tu n'as pas appuyé, tu restes « sans réponse ».<span class="en">Until you press it, you stay as "no reply".</span></p>
+    </div>`, logoTooltip);
+}
+
+// POST /rsvp/confirm (form): records the answer the confirmation page
+// showed, then shows the normal RSVP page with "Response recorded".
+async function rsvpConfirmPost(req, env, url) {
+  const eventId = url.searchParams.get('e');
+  const playerId = url.searchParams.get('p');
+  const token = url.searchParams.get('t');
+  const form = await req.formData().catch(() => null);
+  const status = form && String(form.get('status') || '');
+  if (!eventId || !playerId || !token) return htmlNotice('Lien incomplet', 'Incomplete link');
+  const contact = await getContact(env.DB, playerId);
+  if (!contact) return htmlNotice('Joueur inconnu', 'Unknown player');
+  const want = await hmac(env.RSVP_SECRET, playerMsg(eventId, playerId, contact.token_salt));
+  if (!same(want, token)) return htmlNotice('Lien invalide ou expiré', 'Invalid or expired link');
+  const ev = await getEvent(env.DB, eventId);
+  if (!ev) return htmlNotice('Match introuvable', 'Game not found');
+  if (!['in', 'out'].includes(status)) return htmlNotice('Réponse invalide', 'Invalid answer');
+  if (ev.state === 'open') await recordSmbhlRsvp(env, ev, contact, playerId, status);
+  const back = `/rsvp?e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}${ev.state === 'open' ? '&saved=1' : ''}`;
+  return new Response(null, { status: 303, headers: { location: back, 'cache-control': 'no-store' } });
+}
+function htmlNotice(fr, en) {
+  return new Response(notice(fr, en), { status: 400, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
 /* ---------- league-scoped player RSVP (Parts M/N) ----------
@@ -19161,24 +19203,11 @@ async function leagueRsvpGet(req, env, url) {
     .bind(eventId, playerId).first();
   let status = row ? row.status : 'pending';
 
+  // An email's link (?v=in|out, and the 12h email's ?v=out&src=logistics12h)
+  // records nothing when opened -- link scanners open every URL -- it shows
+  // a confirmation instead, and POST /league/rsvp/confirm records it.
   const autoVal = url.searchParams.get('v');
-  if (['in', 'out'].includes(autoVal) && ev.state === 'open' && status !== autoVal) {
-    // Part 2 (automated reminders task): a confirmed player using the
-    // 12h logistics email's own opt-out link (src=logistics12h) is a
-    // late reversal -- the least-recoverable shortage scenario, per
-    // the task's own framing -- distinct from an ordinary self-service
-    // OUT click at any other time, which never sends this alert. The
-    // reuse of writeLeagueRsvpStatus/maybeInviteSubsForShortage right
-    // below is completely unchanged either way -- this only ADDS one
-    // extra notification on top of that existing, unmodified path.
-    const wasConfirmed = row && row.status === 'in';
-    const isLateReversalOptOut = autoVal === 'out' && wasConfirmed && url.searchParams.get('src') === 'logistics12h';
-
-    await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, autoVal, 'self', ev.season);
-    status = autoVal;
-    if (autoVal === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
-    if (isLateReversalOptOut) await sendLateReversalAdminAlert(env, leagueId, ev, contact);
-  }
+  const confirmFor = (['in', 'out'].includes(autoVal) && ev.state === 'open' && status !== autoVal) ? autoVal : null;
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
   const leagueCfg = cfg.league;
@@ -19232,6 +19261,13 @@ async function leagueRsvpGet(req, env, url) {
       doneInBody: `On se voit ${dayLabel || ''}${ev.start_time ? ' à ' + ev.start_time : ''}${ev.venue ? ' au ' + ev.venue : ''}.`,
       doneOutTitle: 'Merci de nous le dire.',
       doneOutBody: "On invite un remplaçant pour ta place. Rien d'autre à faire.",
+      confirmTitle: 'Encore un clic pour confirmer',
+      confirmNotYet: "Ta réponse n'est pas encore enregistrée.",
+      confirmAnswerIn: 'Tu vas répondre : je joue.',
+      confirmAnswerOut: 'Tu vas répondre : je ne peux pas.',
+      confirmBtnIn: 'Confirmer : je joue',
+      confirmBtnOut: 'Confirmer : je ne peux pas',
+      confirmHelp: "Tant que tu n'as pas appuyé sur le bouton, tu restes « sans réponse ».",
       change: 'Changer ma réponse',
       poweredBy: 'Propulsé par Notre Ligue',
       errBadStatus: 'Réponse invalide. Réessaie.',
@@ -19247,6 +19283,13 @@ async function leagueRsvpGet(req, env, url) {
       doneInBody: `See you ${dayLabel || 'then'}${ev.start_time ? ' at ' + ev.start_time : ''}${ev.venue ? ' at ' + ev.venue : ''}.`,
       doneOutTitle: 'Thanks for letting us know.',
       doneOutBody: "We'll invite a sub for your spot. Nothing else to do.",
+      confirmTitle: 'One more tap to confirm',
+      confirmNotYet: 'Your answer is not recorded yet.',
+      confirmAnswerIn: "You're about to answer: I'm in.",
+      confirmAnswerOut: "You're about to answer: can't make it.",
+      confirmBtnIn: "Confirm: I'm in",
+      confirmBtnOut: "Confirm: can't make it",
+      confirmHelp: 'Until you press the button, you stay as "no reply".',
       change: 'Change my answer',
       poweredBy: 'Powered by Notre Ligue',
       errBadStatus: 'Invalid response. Please try again.',
@@ -19266,7 +19309,23 @@ async function leagueRsvpGet(req, env, url) {
     <div class="rv-where">${ev.venue ? esc(ev.venue) : ''}${ev.start_time && ev.end_time ? ` · ${timeSpanHtml('span', ev.start_time)} – ${timeSpanHtml('span', ev.end_time)}` : ''}${venueMapLink ? ` · <a href="${esc(venueMapLink)}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
   </div>`;
 
-  const answeredHtml = status !== 'pending' ? `
+  const confirmQs = `league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}`;
+  const confirmHtml = confirmFor ? `
+    <section class="rv-confirm" id="rv_confirm" role="alert">
+      <div class="overline">${overline}</div>
+      <h1 class="rv-q" data-i18n="confirmTitle">${esc(t.confirmTitle)}</h1>
+      <p class="rv-warn" data-i18n="confirmNotYet">${esc(t.confirmNotYet)}</p>
+      ${metaHtml}
+      <p data-i18n="${confirmFor === 'in' ? 'confirmAnswerIn' : 'confirmAnswerOut'}">${esc(confirmFor === 'in' ? t.confirmAnswerIn : t.confirmAnswerOut)}</p>
+      <form method="post" action="/league/rsvp/confirm?${confirmQs}">
+        <input type="hidden" name="status" value="${confirmFor}">
+        ${url.searchParams.get('src') === 'logistics12h' ? '<input type="hidden" name="src" value="logistics12h">' : ''}
+        <button type="submit" class="nl-btn ${confirmFor === 'in' ? 'nl-btn--league' : 'nl-btn--secondary'} nl-btn--lg nl-btn--block" data-i18n="${confirmFor === 'in' ? 'confirmBtnIn' : 'confirmBtnOut'}">${esc(confirmFor === 'in' ? t.confirmBtnIn : t.confirmBtnOut)}</button>
+      </form>
+      <p class="nl-help" data-i18n="confirmHelp">${esc(t.confirmHelp)}</p>
+    </section>` : '';
+
+  const answeredHtml = (!confirmFor && status !== 'pending') ? `
     <section class="rv-done rv-done--${status === 'in' ? 'ok' : 'no'}" role="status">
       <div class="rv-mark">${status === 'in' ? '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 10.5l4 4 8-9"/></svg>' : '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 10h10"/></svg>'}</div>
       <h2 data-i18n="${status === 'in' ? 'doneInTitle' : 'doneOutTitle'}">${esc(status === 'in' ? t.doneInTitle : t.doneOutTitle)}</h2>
@@ -19276,7 +19335,7 @@ async function leagueRsvpGet(req, env, url) {
     ${!locked ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="change" onclick="showAnswerForm()">${esc(t.change)}</button>` : ''}
   ` : '';
 
-  const formHtml = (status === 'pending' || !locked) ? `
+  const formHtml = (!confirmFor && (status === 'pending' || !locked)) ? `
     <div id="rv_form" style="${status !== 'pending' ? 'display:none' : ''}">
       <div class="overline">${overline}</div>
       <h1 class="rv-q" data-i18n="question">${esc(t.question)}</h1>
@@ -19301,6 +19360,9 @@ async function leagueRsvpGet(req, env, url) {
   .rv-team { display: flex; flex-direction: column; gap: 10px; }
   .rv-team-top { display: flex; justify-content: space-between; align-items: baseline; }
   .rv-done { border-radius: var(--radius-lg); padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+  /* The email-link confirmation: an unfinished step, never a success. */
+  .rv-confirm { border: 2px solid var(--warning, #b45309); border-radius: var(--radius-lg); padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+  .rv-warn { font-weight: 700; font-size: 18px; line-height: 26px; }
   .rv-done--ok { background: var(--success-tint); }
   .rv-done--no { background: var(--surface-sunken); }
   .rv-mark { width: 48px; height: 48px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; }
@@ -19326,6 +19388,7 @@ async function leagueRsvpGet(req, env, url) {
   </div>`}
 </header>
 <main class="rv-body">
+  ${confirmHtml}
   ${answeredHtml}
   ${formHtml}
 </main>
@@ -19442,6 +19505,32 @@ document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(b) {
 // other page's ERROR_I18N-through-window.__errorText pattern, but
 // this page doesn't load that shared script -- see nlAuthScript's own
 // comment on why it's a separate, forcedLang-aware script).
+// POST /league/rsvp/confirm (form): records what an email link's
+// confirmation showed, then back to the RSVP page, which shows it done.
+async function leagueRsvpConfirmPost(req, env, url) {
+  const leagueId = url.searchParams.get('league');
+  const eventId = url.searchParams.get('e');
+  const playerId = url.searchParams.get('p');
+  const token = url.searchParams.get('t');
+  const result = await verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token);
+  if (!result.ok) return leagueRsvpNotice(result.error.fr, result.error.en);
+  const { contact, ev } = result;
+  const form = await req.formData().catch(() => null);
+  const status = form && String(form.get('status') || '');
+  if (!['in', 'out'].includes(status)) return leagueRsvpNotice('Réponse invalide.', 'Invalid answer.');
+  if (ev.state === 'open') {
+    const row = await env.DB.prepare('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
+    // The 12h email's "can't make it" from a confirmed player: the late-
+    // reversal alert to the admins, as before.
+    const isLateReversalOptOut = status === 'out' && row && row.status === 'in' && form.get('src') === 'logistics12h';
+    await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'self', ev.season);
+    if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
+    if (isLateReversalOptOut) await sendLateReversalAdminAlert(env, leagueId, ev, contact);
+  }
+  const back = `/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}`;
+  return new Response(null, { status: 303, headers: { location: back, 'cache-control': 'no-store' } });
+}
+
 async function leagueRsvpPost(req, env, url) {
   const leagueId = url.searchParams.get('league');
   const eventId = url.searchParams.get('e');
@@ -27778,6 +27867,9 @@ async function handleFetch(req, env, ctx) {
           { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if (url.pathname === '/rsvp' && req.method === 'POST')
         return await rsvpPost(req, env, url);
+      // An email link's confirmation button (the link itself records nothing).
+      if (url.pathname === '/rsvp/confirm' && req.method === 'POST')
+        return await rsvpConfirmPost(req, env, url);
       // League-scoped player RSVP (Parts M/N — see the task report). No
       // session/ADMIN_KEY involved at all — this is the token-only, "a
       // player clicked an emailed link" path, matching /rsvp's own
@@ -27786,6 +27878,8 @@ async function handleFetch(req, env, ctx) {
         return await leagueRsvpGet(req, env, url);
       if (url.pathname === '/league/rsvp' && req.method === 'POST')
         return await leagueRsvpPost(req, env, url);
+      if (url.pathname === '/league/rsvp/confirm' && req.method === 'POST')
+        return await leagueRsvpConfirmPost(req, env, url);
       // Part 4: public, read-only league page. No session/ADMIN_KEY at
       // all -- deliberately as unauthenticated as /league/rsvp above.
       if (url.pathname === '/league/public' && (req.method === 'GET' || req.method === 'HEAD'))
@@ -28650,7 +28744,7 @@ async function handleFetch(req, env, ctx) {
         return await handleSeasonRecapSend(req, env);
       if (url.pathname === '/api/champion-photo' && req.method === 'GET')
         return await handleChampionPhoto(req, env, url);
-      if (url.pathname === '/avail' && req.method === 'GET')
+      if (url.pathname === '/avail' && (req.method === 'GET' || req.method === 'POST'))
         return new Response(await availRoute(req, env, url),
           { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if (url.pathname === '/health')

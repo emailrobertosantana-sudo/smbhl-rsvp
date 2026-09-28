@@ -6,6 +6,7 @@ import {
 } from "cloudflare:test";
 import { describe, it, expect, beforeAll, vi, beforeEach, afterEach } from "vitest";
 import { useDaytimeClock } from "./support/daytime_clock.js";
+import { answerViaEmailLink } from './support/email_link.js';
 import worker, { body, drain, notifyAdminGoalieCancel, getTeamMessages, addTeamMessage, getStandingsTooltip, sanitizeAndValidateEmail, acceptAvailability, sortTeamBoardRows, computeTeamBalance, resolveTeamGoalies, boardData, ensureNextEvent, teamState, expected, handleLeagueMessageGet, handleLeagueMessageSave, runSchedule, handleSendSampleInvites } from "../src";
 import { handleReviewPublish, handleReviewManualStart, handleScoresheetEmail } from "../src/review.js";
 import { generateReviewToken } from "../src/admin_auth.js";
@@ -671,18 +672,20 @@ describe("SMBHL Worker", () => {
 			const sigS = await crypto.subtle.sign("HMAC", key, encoder.encode(`p:2026-09-20:S001:salt_s`));
 			const tokS = [...new Uint8Array(sigS)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
 
-			const skaterResp = await worker.fetch(new Request(`http://example.com/rsvp?e=2026-09-20&p=S001&t=${tokS}&v=out`), env, ctx);
+			// The email link opens a confirmation (records nothing); its button records the answer.
+			const wf = (u, init) => worker.fetch(new Request(u, init), env, ctx);
+			const skaterResp = await answerViaEmailLink(wf, `http://example.com/rsvp?e=2026-09-20&p=S001&t=${tokS}&v=out`);
 			await waitOnExecutionContext(ctx);
-			expect(skaterResp.status).toBe(200);
+			expect(skaterResp.postRes.status).toBe(303);
 			expect(sentMails.length).toBe(0); // No goalie alert for skater!
 
 			// 2. Goalie marks OUT -> goalie alert IS sent to admin!
 			const sigG = await crypto.subtle.sign("HMAC", key, encoder.encode(`p:2026-09-20:G001:salt_g`));
 			const tokG = [...new Uint8Array(sigG)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
 
-			const goalieResp = await worker.fetch(new Request(`http://example.com/rsvp?e=2026-09-20&p=G001&t=${tokG}&v=out`), env, ctx);
+			const goalieResp = await answerViaEmailLink(wf, `http://example.com/rsvp?e=2026-09-20&p=G001&t=${tokG}&v=out`);
 			await waitOnExecutionContext(ctx);
-			expect(goalieResp.status).toBe(200);
+			expect(goalieResp.postRes.status).toBe(303);
 			expect(sentMails.length).toBe(1);
 			expect(sentMails[0].subject).toContain('Alerte Gardien : Goalie Bob absent pour Bleu');
 
