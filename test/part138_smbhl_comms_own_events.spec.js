@@ -20,3 +20,14 @@ describe('SMBHL Comms event pickers', () => {
     expect(data.open_events.map(e => e.id)).toEqual(['smbhl:2099-02-01']);
   });
 });
+
+describe('SMBHL Comms outbox', () => {
+  it('shows SMBHL\'s rows and the system rows, nothing from other leagues -- in the list and the counts', async () => {
+    for (const [lg, key] of [['smbhl', 'o-smbhl'], ['system', 'o-system'], ['lg-p138', 'o-other']]) {
+      await env.DB.prepare(`INSERT INTO outbox (kind, event_id, player_id, dedup_key, payload, send_after, created_at, league_id) VALUES ('broadcast', 'smbhl:2099-02-01', NULL, ?, '{}', '2099-01-01T00:00:00Z', '2099-01-01T00:00:00Z', ?)`).bind(key, lg).run();
+    }
+    const data = await (await SELF.fetch('http://example.com/admin/comms/data', { headers: { 'x-admin': 'p138-admin' } })).json();
+    expect(data.outbox.map(o => o.dedup_key).sort()).toEqual(['o-smbhl', 'o-system']);
+    expect(data.stats.total).toBe(2);
+  });
+});

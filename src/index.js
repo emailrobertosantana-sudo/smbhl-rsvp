@@ -23890,6 +23890,8 @@ async function handleEmailsData(req, env, url) {
     // row carries its derived status (src/mail_queue.js outboxRowStatus),
     // so the page never re-derives it from raw columns.
     const failureWindow = new Date(Date.now() - 30 * 24 * 3600000).toISOString();
+    // SMBHL's own mail plus 'system' rows (deferred direct sends that belong
+    // to no league); other leagues' mail stays out (same database on demo).
     const outbox = ((await env.DB.prepare(
       `SELECT o.id, o.kind, o.event_id, o.player_id, o.team, o.dedup_key, o.payload, o.send_after, o.sent_at, o.cancelled, o.error, o.created_at,
               o.attempts, o.next_attempt_at, o.failed_at, o.last_error, o.defer_reason,
@@ -23898,8 +23900,9 @@ async function handleEmailsData(req, env, url) {
          FROM outbox o
          LEFT JOIN contacts c ON c.player_id = o.player_id
          LEFT JOIN events e ON e.id = o.event_id
-        WHERE o.id IN (SELECT id FROM outbox ORDER BY id DESC LIMIT 150)
-           OR (o.created_at >= ? AND (o.failed_at IS NOT NULL OR (o.error IS NOT NULL AND o.sent_at IS NULL AND o.cancelled = 0)))
+        WHERE COALESCE(o.league_id, 'smbhl') IN ('smbhl', 'system')
+          AND (o.id IN (SELECT id FROM outbox WHERE COALESCE(league_id, 'smbhl') IN ('smbhl', 'system') ORDER BY id DESC LIMIT 150)
+           OR (o.created_at >= ? AND (o.failed_at IS NOT NULL OR (o.error IS NOT NULL AND o.sent_at IS NULL AND o.cancelled = 0))))
         ORDER BY o.id DESC LIMIT 500`
     ).bind(failureWindow).all()).results || []).map(o => ({ ...o, status: outboxRowStatus(o) }));
 
@@ -23913,7 +23916,7 @@ async function handleEmailsData(req, env, url) {
               sum(case when failed_at is not null then 1 else 0 end) as failed_permanent,
               sum(case when error is not null and cancelled = 0 and sent_at is null then 1 else 0 end) as retrying,
               sum(case when sent_at is null and cancelled = 0 then 1 else 0 end) as pending
-         FROM outbox`
+         FROM outbox WHERE COALESCE(league_id, 'smbhl') IN ('smbhl', 'system')`
     ).first()) || { total: 0, sent: 0, cancelled: 0, failed_permanent: 0, retrying: 0, pending: 0 };
     counts.failed = (counts.failed_permanent || 0) + (counts.retrying || 0);
 
