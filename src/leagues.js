@@ -2362,10 +2362,9 @@ export function computePlayoffSlots({ format, numTeams, thirdPlace, bestOf, rese
 // power of two up front means every round from the second one on has
 // an exact power-of-two participant count -- no further byes, ever.
 // Total real games is still always numTeams-1 regardless (byes are
-// free, mathematically) -- computePlayoffSlots' own separate "+1 flat
-// bye slot" is an intentionally different, simplified thing (a
-// reserved scheduling buffer, per the task's own instruction), not a
-// second copy of this cost.
+// free, mathematically) -- and computePlayoffSlots agrees: its old "+1
+// flat bye slot" was revoked (Group D), so a bye costs no slot anywhere.
+// The onboarding playoff step's bye note says the same.
 export function buildEliminationBracket(numTeams) {
   let bracketSize = 1;
   while (bracketSize < numTeams) bracketSize *= 2;

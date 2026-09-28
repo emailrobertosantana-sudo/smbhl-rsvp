@@ -2628,7 +2628,7 @@ function buildOnboardingI18n() {
     formatReservedDesc: "Tu dis combien de matchs il te faut — on réserve les créneaux, sans équipes assignées. Idéal si ton format ne correspond à aucun modèle, ou si tu décideras plus tard.",
     bestOfLabel: 'Le meilleur de combien de matchs?',
     playoffTeamsLabel: "Combien d'équipes participent aux séries?",
-    byeNote: "Un nombre impair d'équipes a besoin d'une ronde de repos (bye), ce qui utilise un créneau de plus.",
+    byeNote: "Avec un nombre impair d'équipes, au moins une équipe passe la première ronde (bye). Un bye n'est pas un match : il n'utilise aucun créneau.",
     thirdPlaceLabel: 'Match pour la 3e place?',
     reservedSlotsLabel: 'Combien de matchs faut-il réserver?'
   };
@@ -2658,7 +2658,7 @@ function buildOnboardingI18n() {
     formatReservedDesc: "Tell us how many games you need — we reserve the slots, with no teams assigned. For a format that doesn't fit a template, or if you'll decide later.",
     bestOfLabel: 'Best of how many games?',
     playoffTeamsLabel: 'How many teams make the playoffs?',
-    byeNote: 'An odd number of teams needs a bye round, which costs one extra slot.',
+    byeNote: 'With an odd number of teams, at least one team skips the first round (a bye). A bye is not a game: it uses no slot.',
     thirdPlaceLabel: 'Third-place game?',
     reservedSlotsLabel: 'How many games do you need to reserve?'
   };
@@ -2808,7 +2808,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
       <select class="nl-select" id="ob_playoff_teams" onchange="obPlayoffsUpdate()">
         ${teamCountOptions.map(n => `<option value="${n}"${leagueRow.playoff_teams === n ? ' selected' : ''}>${n}</option>`).join('')}
       </select>
-      <p class="nl-help" id="ob_bye_note" style="display:none" data-i18n="byeNote">Un nombre impair d'équipes a besoin d'une ronde de repos (bye), ce qui utilise un créneau de plus.</p>
+      <p class="nl-help" id="ob_bye_note" style="display:none" data-i18n="byeNote">Avec un nombre impair d'équipes, au moins une équipe passe la première ronde (bye). Un bye n'est pas un match : il n'utilise aucun créneau.</p>
     </div>
     <div class="nl-toggle" id="ob_third_place_wrap">
       <div class="nl-label" data-i18n="thirdPlaceLabel">Match pour la 3e place?</div>
