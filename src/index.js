@@ -18620,17 +18620,33 @@ function reminderDayLabel(dateStr, lang) {
 // with a roster player who was left team-unassigned is a real (if
 // narrow) existing-behavior case, and "fixed mode provably unaffected"
 // is this task's own paramount constraint.
+// Who a league game is FOR: in a fixed-teams league, a game with a
+// matchup is for its two teams only -- a 3-team league with two games a
+// night used to remind every player about both games, including the one
+// their team isn't in. null = the whole league: a game with no matchup
+// yet (nobody knows who plays, and reminding nobody would silently skip a
+// game that will be played -- the Schedule page's "assign matchups" step
+// is what narrows it), and every weekly-draw / headcount game (one pool).
+// League product only: SMBHL's reminders are runSchedule's, per night.
+async function leagueGameTeams(env, leagueId, eventId, teamStructure) {
+  if (teamStructure !== 'fixed' || leagueId === SMBHL_LEAGUE_ID) return null;
+  const ev = await env.DB.prepare('SELECT home_team, away_team FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  return ev && ev.home_team && ev.away_team ? [ev.home_team, ev.away_team] : null;
+}
+
 async function getNonResponders(env, leagueId, eventId, season = null) {
   const teamStructure = await getLeagueTeamStructure(env, leagueId, season);
   const rosterCondition = teamStructure === 'fixed' ? 'c.preferred_team IS NOT NULL' : "c.role = 'roster'";
+  const gameTeams = await leagueGameTeams(env, leagueId, eventId, teamStructure);
   return (await env.DB.prepare(
     `SELECT c.player_id, c.name, c.email, c.token_salt, c.preferred_team
        FROM contacts c
        LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
       WHERE c.league_id = ? AND ${rosterCondition} AND c.is_active = 1
         AND c.opted_out = 0 AND c.email IS NOT NULL
-        AND (r.status IS NULL OR r.status = 'pending')`
-  ).bind(eventId, leagueId).all()).results || [];
+        AND (r.status IS NULL OR r.status = 'pending')
+        ${gameTeams ? 'AND c.preferred_team IN (?, ?)' : ''}`
+  ).bind(eventId, leagueId, ...(gameTeams || [])).all()).results || [];
 }
 
 // Confirmed players: a real rsvp row with status = 'in'.
@@ -18647,14 +18663,21 @@ async function getNonResponders(env, leagueId, eventId, season = null) {
 // meant the 12h "you're confirmed" logistics email below NEVER showed
 // a weekly_draw player their team, even when the draw had already
 // happened before the email went out.
+// A game with a matchup: only the players confirmed FOR one of its two
+// teams (a sub placed on one of them has that team too) -- same rule as
+// getNonResponders (leagueGameTeams).
 async function getConfirmedPlayers(env, leagueId, eventId) {
+  const evRow = await env.DB.prepare('SELECT season FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  const teamStructure = await getLeagueTeamStructure(env, leagueId, evRow ? evRow.season : null);
+  const gameTeams = await leagueGameTeams(env, leagueId, eventId, teamStructure);
   return (await env.DB.prepare(
     `SELECT c.player_id, c.name, c.email, c.token_salt, r.team AS rsvp_team
        FROM contacts c
        JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
       WHERE c.league_id = ? AND r.status = 'in' AND c.is_active = 1
-        AND c.opted_out = 0 AND c.email IS NOT NULL`
-  ).bind(eventId, leagueId).all()).results || [];
+        AND c.opted_out = 0 AND c.email IS NOT NULL
+        ${gameTeams ? 'AND r.team IN (?, ?)' : ''}`
+  ).bind(eventId, leagueId, ...(gameTeams || [])).all()).results || [];
 }
 
 async function leagueOptInOutLinks(env, leagueId, ev, contact) {
