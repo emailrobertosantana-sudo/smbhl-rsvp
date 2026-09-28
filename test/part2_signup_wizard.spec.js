@@ -36,7 +36,8 @@ describe('Part 2: signup wizard, step-by-step', () => {
     expect(step1Html).toContain('id="su_email"');
     expect(step1Html).toContain('id="su_password"');
     expect(step1Html).toContain('nl-steps');
-    expect(step1Html).toContain('aria-valuenow="1"');
+    // Before the structure is chosen there is no total, so no progress bar.
+    expect(step1Html).toContain('data-i18n="step1">Étape 1<');
 
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
@@ -53,7 +54,7 @@ describe('Part 2: signup wizard, step-by-step', () => {
     expect(step2Html).toContain('id="su_league_name"');
     expect(step2Html).toContain('id="su_slug"');
     expect(step2Html).toContain('notreligue.ca/');
-    expect(step2Html).toContain('aria-valuenow="2"');
+    expect(step2Html).toContain('data-i18n="step2">Étape 2<');
 
     const step3Res = await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie } });
     expect(step3Res.status).toBe(200);
@@ -81,7 +82,7 @@ describe('Part 2: signup wizard, step-by-step', () => {
     const doneHtml = await doneRes.text();
     expect(doneHtml).toContain('Wizard E2E League'); // league's own name in the header, not "Notre Ligue"
     expect(doneHtml).toContain('wizard-e2e-league'); // the real public URL, not a placeholder
-    expect(doneHtml).toContain('Ta ligue est prête');
+    expect(doneHtml).toContain('Ta ligue est créée.'); // created, not ready: steps remain
   });
 
   it('step 2 without a session redirects to step 1 instead of rendering a broken form', async () => {

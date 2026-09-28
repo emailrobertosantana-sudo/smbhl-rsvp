@@ -679,10 +679,13 @@ ${nlAuthScript(I18N_HOME)}
  */
 const I18N_SIGNUP = {
   fr: {
-    step1: 'Étape 1 sur 8', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.',
+    // Onboarding item 1: steps 1 and 2 come before the team structure is
+    // chosen, and the real total depends on it (8 fixed, 6 pickup, 5 no
+    // teams) -- so no total until it is known.
+    step1: 'Étape 1', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.',
     lblEmail: 'Courriel', lblPassword: 'Mot de passe', showPw: 'Afficher', hidePw: 'Cacher',
     pwHelp: '8 caractères minimum.', continueBtn: 'Continuer', alreadySignedUp: 'Déjà inscrit?', login: 'Se connecter',
-    step2: 'Étape 2 sur 8', title2: 'Parle-nous de ta ligue',
+    step2: 'Étape 2', title2: 'Parle-nous de ta ligue',
     lblLeagueName: 'Nom de la ligue', lblSlug: 'Adresse de ta page',
     // A2 bug fix (onboarding polish task): the old text ("tu peux la
     // changer") was actively wrong -- true only before submitting; once
@@ -716,7 +719,10 @@ const I18N_SIGNUP = {
     minMaxHelp: "On invite des remplaçants automatiquement quand tu es sous le minimum.",
     lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.',
     createLeague: 'Créer la ligue',
-    doneBadge: 'Ligue créée', doneTitle: 'Ta ligue est prête.',
+    // Onboarding item 2: this screen comes mid-flow -- the league exists,
+    // setup does not. "Ready" belongs to the completion card at the end.
+    doneBadge: 'Ligue créée', doneTitle: 'Ta ligue est créée.',
+    doneNext: 'Il reste quelques étapes : crée ta saison, puis ton horaire et tes joueurs.',
     // A1 bug fix (onboarding polish task): the public page is genuinely
     // empty the moment a league is created (no schedule, no roster) --
     // "déjà en ligne... partage-la" read as an invitation to share
@@ -739,10 +745,10 @@ const I18N_SIGNUP = {
     already: 'Déjà inscrit?'
   },
   en: {
-    step1: 'Step 1 of 8', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.',
+    step1: 'Step 1', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.',
     lblEmail: 'Email', lblPassword: 'Password', showPw: 'Show', hidePw: 'Hide',
     pwHelp: '8 characters minimum.', continueBtn: 'Continue', alreadySignedUp: 'Already signed up?', login: 'Log in',
-    step2: 'Step 2 of 8', title2: 'Tell us about your league',
+    step2: 'Step 2', title2: 'Tell us about your league',
     lblLeagueName: 'League name', lblSlug: 'Your page address',
     slugHelp: "Becomes permanent once your league is created — that guarantees the links you share always keep working.",
     structureLabel: 'How are your teams organized?',
@@ -759,7 +765,8 @@ const I18N_SIGNUP = {
     minMaxHelp: 'Subs are invited automatically when you drop below the minimum.',
     lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately.",
     createLeague: 'Create the league',
-    doneBadge: 'League created', doneTitle: 'Your league is ready.',
+    doneBadge: 'League created', doneTitle: 'Your league is created.',
+    doneNext: 'A few steps left: create your season, then your schedule and your players.',
     doneBody: "Your league's page is at this address. It's empty for now, and fills in automatically as you add your schedule and roster. Share it when your season is set up.",
     copyLink: 'Copy link', copied: 'Copied!',
     startMySeason: 'Create my season',
@@ -1005,8 +1012,7 @@ function renderSignupStep1(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" data-i18n="step1">Étape 1 sur 8</div>
-    ${flowStepper(1, 8)}
+    <div class="overline" data-i18n="step1">Étape 1</div>
   </div>
   <div class="su-title">
     <h1 data-i18n="title1">Créons ton compte</h1>
@@ -1084,8 +1090,7 @@ function renderSignupStep2(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" data-i18n="step2">Étape 2 sur 8</div>
-    ${flowStepper(2, 8)}
+    <div class="overline" data-i18n="step2">Étape 2</div>
   </div>
   <div class="su-title"><h1 data-i18n="title2">Parle-nous de ta ligue</h1></div>
   <div id="formErr" class="nl-error" style="display:none"></div>
@@ -1309,7 +1314,8 @@ function renderSignupDone(league, langParam) {
 <main class="su-body">
   <div class="su-done">
     <span class="nl-badge nl-badge--in" data-i18n="doneBadge">Ligue créée</span>
-    <h1 data-i18n="doneTitle">Ta ligue est prête.</h1>
+    <h1 data-i18n="doneTitle">Ta ligue est créée.</h1>
+    <p style="font-weight:600;margin:0" data-i18n="doneNext">Il reste quelques étapes : crée ta saison, puis ton horaire et tes joueurs.</p>
     <p class="nl-help" data-i18n="doneBody">La page de ta ligue se trouve à cette adresse. Elle est vide pour l'instant et se remplit automatiquement au fur et à mesure que tu ajoutes ton calendrier et ton alignement. Partage-la une fois ta saison en place.</p>
     <div class="su-url" id="su_public_url">notreligue.ca/${esc(league.slug)}</div>
     <button type="button" class="nl-btn nl-btn--secondary nl-btn--block" id="su_copy" data-i18n="copyLink" onclick="copyLink()">Copier le lien</button>
@@ -2505,13 +2511,10 @@ function onboardingStepsFor(teamStructure) {
 //   fixed:       signup 1,2,3 + onboarding roster,teams,playoffs,reminders,stats = 8
 //   headcount:   signup 1,2   + onboarding roster,reminders,stats                = 5
 //   weekly_draw: signup 1,2   + onboarding roster,teams,reminders,stats          = 6
-// Steps 1/2 render before a structure is chosen -- they show the
-// pre-selected 'fixed' structure's total (8) as the honest current
-// best guess (never an impossible/unreachable number); the real total
-// takes over the moment a structure is actually chosen (client-side
-// on step 3 for fixed/headcount -- see su_step3_title's own swap
-// logic -- or server-side straight from step 2 for weekly_draw, which
-// knows its structure by the time onboarding starts). Playoff
+// Steps 1/2 render before a structure is chosen -- they show no total
+// at all ("Étape 1" / "Step 1"; a guess of 8 was wrong for 2 of 3
+// structures). The real total appears once the structure is known:
+// step 3 (fixed only) and every onboarding step. Playoff
 // extension: added fixed's own conditional 'playoffs' step (between
 // 'teams' and 'reminders') -- fixed's total goes from 7 to 8;
 // headcount/weekly_draw are completely untouched (neither structure

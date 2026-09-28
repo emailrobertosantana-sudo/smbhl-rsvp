@@ -75,25 +75,27 @@ describe('B1: one continuous "STEP n OF m" count, signup through onboarding', ()
     await applyRealSchema(env);
   });
 
-  it('signup steps 1 and 2 (structure not chosen yet) show the fixed-structure default total of 8, both languages', async () => {
+  // Onboarding item 1: before the structure is chosen the real total is
+  // unknown (8 fixed, 6 pickup, 5 no teams) -- no total, no dot bar.
+  it('signup steps 1 and 2 (structure not chosen yet) show no total at all, both languages', async () => {
     const step1 = await getSignup(null, 1);
-    expect(step1).toContain('data-i18n="step1">Étape 1 sur 8<');
-    expect(stepAttrs(step1)).toEqual({ now: '1', max: '8' });
+    expect(step1).toContain('data-i18n="step1">Étape 1<');
+    expect(step1).not.toContain('role="progressbar"');
 
     const { cookie } = await signup('flow.step12@example.com', '203.0.210.001');
     const step2 = await getSignup(cookie, 2);
-    expect(step2).toContain('data-i18n="step2">Étape 2 sur 8<');
-    expect(stepAttrs(step2)).toEqual({ now: '2', max: '8' });
+    expect(step2).toContain('data-i18n="step2">Étape 2<');
+    expect(step2).not.toContain('role="progressbar"');
   });
 
   it('English copy for steps 1/2 (embedded in the page\'s own __I18N dict, applied client-side)', async () => {
     const step1 = await getSignup(null, 1);
     const m = step1.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.en.step1).toBe('Step 1 of 8');
-    expect(dict.fr.step1).toBe('Étape 1 sur 8');
-    expect(dict.en.step2).toBe('Step 2 of 8');
-    expect(dict.fr.step2).toBe('Étape 2 sur 8');
+    expect(dict.en.step1).toBe('Step 1');
+    expect(dict.fr.step1).toBe('Étape 1');
+    expect(dict.en.step2).toBe('Step 2');
+    expect(dict.fr.step2).toBe('Étape 2');
   });
 
   it('fixed structure: signup step 3 (client-side, real total known) stays at 8; the full flow numbers 1-8 across every real screen, including the playoffs step', async () => {
