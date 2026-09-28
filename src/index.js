@@ -8366,8 +8366,13 @@ async function handleLeagueSchedulePage(req, env, url) {
     ? events.map(ev => `<div class="nl-card sc-game-row">
       <a class="sc-game" href="/league/events/detail?e=${encodeURIComponent(ev.id)}">
         <div class="sc-when">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
-        ${ev.is_playoff ? playoffLabelSpanHtml('div', (() => { try { return JSON.parse(ev.playoff_meta || 'null') || {}; } catch (_) { return {}; } })(), lang, 'class="sc-venue"') : (ev.home_team && ev.away_team ? `<div class="sc-venue">${esc(ev.home_team)} <span data-i18n="matchupVsWord">contre</span> ${esc(ev.away_team)}</div>` : '')}
-        <div class="sc-venue">${ev.venue ? esc(ev.venue) : ''}</div>
+        <!-- Who plays is the row's headline; the venue sits under it, small.
+             (Both used to be small grey text side by side, and the extra
+             cell pushed the row's grid out of line.) -->
+        <div class="sc-main-col">
+          ${ev.is_playoff ? playoffLabelSpanHtml('div', (() => { try { return JSON.parse(ev.playoff_meta || 'null') || {}; } catch (_) { return {}; } })(), lang, 'class="sc-matchup"') : (ev.home_team && ev.away_team ? `<div class="sc-matchup">${esc(ev.home_team)} <span class="sc-vs" data-i18n="matchupVsWord">contre</span> ${esc(ev.away_team)}</div>` : '')}
+          ${ev.venue ? `<div class="sc-venue">${esc(ev.venue)}</div>` : ''}
+        </div>
         <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
         <span class="sc-chevron">&rsaquo;</span>
       </a>
@@ -8421,6 +8426,9 @@ async function handleLeagueSchedulePage(req, env, url) {
   .sc-when b { display: block; font: 700 18px/22px var(--font-display); font-stretch: 118%; white-space: nowrap; }
   .sc-when span { font-size: 13px; color: var(--ink-muted); white-space: nowrap; }
   .sc-venue { font-size: 14px; color: var(--ink-muted); }
+  .sc-main-col { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .sc-matchup { font: 700 18px/24px var(--font-display); font-stretch: 112%; color: var(--ink); overflow-wrap: anywhere; }
+  .sc-vs { font-weight: 500; font-size: 14px; color: var(--ink-muted); margin: 0 4px; }
   .sc-reminder-warn { background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-3); }
   .sc-chevron { color: var(--ink-muted); font-size: 20px; }
   .sc-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); width: 100%; max-width: 640px; margin: 0 auto; } /* item 9: narrow but centred, wide enough that labels do not wrap */

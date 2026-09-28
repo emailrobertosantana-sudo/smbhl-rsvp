@@ -265,6 +265,27 @@ describe('Schedule', () => {
     await close();
   }, 120000);
 
+  // Item 4 (follow-up): the matchup is the row's headline, not small grey
+  // text weighted like the venue; the row's cells stay on one line.
+  for (const width of [1200, 400]) it(`the matchup leads the Schedule row at ${width}px`, async () => {
+    const { page, errors, close } = await open('/league/schedule');
+    await page.setViewportSize({ width, height: 900 });
+    const row = page.locator('.sc-game-row', { has: page.locator('.sc-matchup') }).first();
+    const m = await row.locator('.sc-matchup').evaluate(el => { const cs = getComputedStyle(el); const r = el.getBoundingClientRect(); return { size: parseFloat(cs.fontSize), weight: Number(cs.fontWeight), color: cs.color, top: r.top, left: r.left }; });
+    const v = await row.locator('.sc-venue').evaluate(el => { const cs = getComputedStyle(el); const r = el.getBoundingClientRect(); return { size: parseFloat(cs.fontSize), color: cs.color, top: r.top }; });
+    const when = await row.locator('.sc-when').evaluate(el => { const r = el.getBoundingClientRect(); return { right: r.right, top: r.top, bottom: r.bottom }; });
+    expect(m.size).toBeGreaterThanOrEqual(18);
+    expect(m.weight).toBeGreaterThanOrEqual(700);
+    expect(m.size).toBeGreaterThan(v.size);
+    expect(m.color).not.toBe(v.color);
+    expect(v.top).toBeGreaterThan(m.top);             // the venue under it, not beside it
+    expect(m.left).toBeGreaterThanOrEqual(when.right); // beside the date, in the same line
+    expect(m.top).toBeLessThan(when.bottom);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(errors).toEqual([]);
+    await close();
+  }, 120000);
+
   // Item 3a (follow-up): one game's matchup, changed from its row.
   it('Edit matchup changes that one game from the Schedule row, nothing else', async () => {
     const ev = await h.db.prepare("SELECT id FROM events WHERE league_id = ? AND date = '2099-01-05'").bind(league.league.id).first();
