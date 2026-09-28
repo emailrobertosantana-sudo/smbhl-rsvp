@@ -939,6 +939,12 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
     venue = venueRow.name;
     venueAddress = null;
     venueMapLink = null;
+  } else if (venue) {
+    // Item 7: a venue typed when creating a game (the form, bulk create,
+    // duplicate -- including the setup flow's first schedule) is saved as
+    // a real venue, or matched to the saved one of the same name.
+    const saved = await savedVenueForFreeText(env, leagueId, venue, venueAddress, venueMapLink);
+    if (saved) { venueId = saved.id; venue = saved.name; venueAddress = null; venueMapLink = null; }
   }
 
   const season = String(body.season || '').trim() || (leagueData && leagueData.current_season);
@@ -1338,6 +1344,9 @@ export async function handleLeagueEventUpdate(req, env) {
     venueAddress = null;
     venueMapLink = null;
   }
+  // (Editing an event to free text stays free text: the edit form's own
+  // "Aucun — texte libre ci-dessous" is a deliberate one-off choice.
+  // Creating one saves the venue -- createLeagueEventRow.)
 
   // Fixed-teams scheduling task (Part 2): the matchup Part 1's "no
   // matchup set" state points at getting fixed. Only touched when the
@@ -1507,6 +1516,29 @@ export async function handleLeagueEventDelete(req, env) {
  * nothing breaks), a smaller surface than a full edit form for this
  * first version.
  */
+// Item 7: a venue typed as free text -- the create form (including the
+// setup flow's first schedule), bulk create, duplicate, the edit form --
+// is saved as a real venue, matched by name when the league already has
+// it, so Settings can reuse it and its address/map link travel with it.
+// A name that can't be saved (too long, a map link that isn't http(s))
+// stays free text on the event, exactly as before.
+async function savedVenueForFreeText(env, leagueId, name, address, mapLink) {
+  const existing = await env.DB.prepare(
+    'SELECT id, name, address, map_link FROM venues WHERE league_id = ? AND lower(trim(name)) = lower(trim(?)) ORDER BY created_at LIMIT 1'
+  ).bind(leagueId, name).first();
+  if (existing) {
+    // Fill what the saved venue is missing, never overwrite what it has.
+    const link = mapLink && /^https?:\/\//i.test(mapLink) ? mapLink : null;
+    if ((!existing.address && address) || (!existing.map_link && link)) {
+      await env.DB.prepare('UPDATE venues SET address = COALESCE(address, ?), map_link = COALESCE(map_link, ?) WHERE id = ?')
+        .bind(address || null, link, existing.id).run();
+    }
+    return existing;
+  }
+  const made = await createLeagueVenueRow(env, leagueId, { name, address, map_link: mapLink });
+  return made.ok ? made.venue : null;
+}
+
 async function createLeagueVenueRow(env, leagueId, body) {
   const name = String(body.name || '').trim();
   if (!name) return { ok: false, error: 'name is required.', errorKey: 'VENUE_NAME_REQUIRED' };

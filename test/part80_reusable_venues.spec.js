@@ -175,7 +175,9 @@ describe('Part 9 (live-testing task, batch 6): reusable venues', () => {
     expect((await resFake.json()).errorKey).toBe('VENUE_UNKNOWN');
   });
 
-  it('free-text event creation (no venue_id) still behaves exactly as before this task', async () => {
+  // Item 7: a venue typed when creating a game is now saved as a real venue
+  // (matched by name if the league already has it) and the event points at it.
+  it('free-text event creation (no venue_id) saves the venue and references it', async () => {
     const { cookie, csrfToken } = await signup('venues.freetext@example.com', '203.0.199.007');
     await createLeague(cookie, csrfToken, { name: 'Venues Freetext League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
@@ -184,7 +186,8 @@ describe('Part 9 (live-testing task, batch 6): reusable venues', () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.event.venue).toBe('Plain Old Text Rink');
-    expect(data.event.venue_id).toBeNull();
+    const saved = await env.DB.prepare('SELECT id FROM venues WHERE name = ?').bind('Plain Old Text Rink').first();
+    expect(data.event.venue_id).toBe(saved.id);
   });
 
   it('SMBHL is blocked from every venue route', async () => {

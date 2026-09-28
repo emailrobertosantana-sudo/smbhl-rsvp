@@ -213,12 +213,12 @@ describe('Events polish, C3: a free-text venue can carry its own address and map
       venue_address: '123 rue Principale, Ville', venue_map_link: 'https://maps.example.com/parc-central'
     });
     expect(created.status).toBe(200);
-    expect(created.json.event.venue_address).toBe('123 rue Principale, Ville');
-    expect(created.json.event.venue_map_link).toBe('https://maps.example.com/parc-central');
-
-    const row = await env.DB.prepare('SELECT venue_address, venue_map_link FROM events WHERE id = ?').bind(created.json.event.id).first();
-    expect(row.venue_address).toBe('123 rue Principale, Ville');
-    expect(row.venue_map_link).toBe('https://maps.example.com/parc-central');
+    // Item 7: creating saves the venue itself -- the address and map link
+    // travel with it (a saved venue, reusable from Settings), not the event.
+    const venue = await env.DB.prepare('SELECT id, address, map_link FROM venues WHERE name = ?').bind('Parc Central').first();
+    expect(venue.address).toBe('123 rue Principale, Ville');
+    expect(venue.map_link).toBe('https://maps.example.com/parc-central');
+    expect(created.json.event.venue_id).toBe(venue.id);
 
     // Rendered on the public page (past event, so it's in that list).
     const html = await publicPageHtml(league.id);

@@ -148,6 +148,12 @@ describe('D2/D3/D4 (forms polish task): schedule create/bulk/edit forms', () => 
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await createVenue(cookie, csrfToken, { name: 'D4 Unused Arena' });
     const ev = await (await createEvent(cookie, csrfToken, { date: '2099-06-02', venue: 'Some Rink' })).json();
+    // Creating saves "Some Rink" as a venue (item 7); a free-text-only event
+    // is now what the edit form's own "None -- free text" choice leaves.
+    await SELF.fetch('http://example.com/league/events/update', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ event_id: ev.event.id, venue: 'Some Rink', venue_id: '' })
+    });
 
     const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(ev.event.id)}`, { headers: { cookie } })).text();
     const wrapTag = (html.match(/<div[^>]*id="ev_edit_venue_wrap"[^>]*>/) || [''])[0];
