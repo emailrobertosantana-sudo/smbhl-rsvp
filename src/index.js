@@ -22289,7 +22289,7 @@ async function schedulePage(env = null, isAuthed = false) {
   </div>
 
   <!-- Modal Cancellation Notice Confirmation & Preview -->
-  <div class="modal-overlay" id="cancel-modal">
+  <div class="modal-overlay" id="cancel-email-modal">
     <div class="modal-card" style="max-width:600px;">
       <h2 style="margin-top:0; color:var(--red); font-size:20px; display:flex; align-items:center; gap:8px;">
         <span>⚠️</span> <span data-i18n="cancelNoticeTitle">Annulation officielle du match</span>
@@ -22297,17 +22297,17 @@ async function schedulePage(env = null, isAuthed = false) {
       <p style="font-size:14px; color:var(--soft); margin-bottom:14px;" data-i18n="cancelNoticeDesc">
         Ce match a été marqué <b>ANNULÉ</b>. Souhaitez-vous envoyer automatiquement un avis d'annulation par courriel à tous les joueurs de la ligue ?
       </p>
+      <input type="hidden" id="cancel-event-id">
+      <p id="cancel-event-info" style="font-size:14px; margin:0 0 12px;"></p>
       <div class="form-group">
         <label for="cancel-reason" data-i18n="lblCancelReason">Motif de l'annulation (optionnel, affiché dans le courriel)</label>
         <input class="form-control" id="cancel-reason" data-i18n-ph="cancelReasonPh" placeholder="ex: Tempête de neige / Fermeture de l'établissement">
       </div>
       <div class="form-group">
         <label data-i18n="lblCancelPreview">Aperçu du courriel qui sera envoyé</label>
-        <div id="cancel-preview-box" style="border:1px solid var(--rule); border-radius:4px; padding:12px; background:#f8fafc; font-size:13px; max-height:160px; overflow-y:auto;">
-          Chargement de l'aperçu...
-        </div>
+        <div>${emailPreviewBtn('cancellation', { cls: 'act-btn', i18n: 'btnPreviewEmail', text: "👁 Aperçu de l'avis" }).replace('<button ', '<button id="cancel-preview-btn" ')}</div>
       </div>
-      <p class="state" id="cancel-status" style="font-size:13px; font-weight:600;"></p>
+      <p class="state" id="cancel-modal-msg" style="font-size:13px; font-weight:600; display:none;"></p>
       <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
         <button type="button" class="act-btn" id="cancel-modal-close" data-i18n="btnClose">Fermer</button>
         <button type="button" class="act-btn" id="cancel-modal-test" style="border-color:var(--blue); color:var(--blue);" data-i18n="btnTestAdmin">Tester (aperçu admin)</button>
@@ -22720,6 +22720,7 @@ async function schedulePage(env = null, isAuthed = false) {
 
   function openCancelModal(ev) {
     $('cancel-event-id').value = ev.id;
+    $('cancel-preview-btn').setAttribute('data-preview-event', ev.id);
     const matchLabel = currentLang === 'en' ? 'Game:' : 'Match :';
     const weekLabel = currentLang === 'en' ? 'Week ' : 'Semaine ';
     $('cancel-event-info').innerHTML = '<b>' + matchLabel + '</b> ' + weekLabel + esc(ev.week) + ' · ' + esc(ev.date) + (ev.venue ? ' (' + esc(ev.venue) + ')' : '');
