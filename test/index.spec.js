@@ -853,7 +853,7 @@ describe("SMBHL Worker", () => {
 		const html1 = await resp1.text();
 
 		expect(resp1.status).toBe(200);
-		expect(html1).toContain('data-t-en="From:">De :</span> <b style="color:var(--blue); font-size:16px;">Test Player</b>');
+		expect(html1).toContain('De / From : <b style="color:var(--blue); font-size:16px;">Test Player</b>');
 		expect(html1).not.toContain('<select id="msgauthor"');
 
 		// 2. Visit without &p= (Admin / generic link) -> dropdown selector visible
@@ -885,13 +885,13 @@ describe("SMBHL Worker", () => {
 
 		expect(resp.status).toBe(200);
 		// Compact top banner above roster
-		expect(html).toContain('💬 <span data-t-fr="Notes d&#39;équipe" data-t-en="Team notes">');
+		expect(html).toContain("💬 Notes d'équipe / Team Notes");
 		expect(html).toContain("Dave L.");
 		expect(html).toContain("Carpooling from metro");
 		expect(html).toContain('href="#team-board" class="jump-to-board"');
 		// Bottom full board target
 		expect(html).toContain('id="team-board"');
-		expect(html).toContain('Tableau d&#39;équipe');
+		expect(html).toContain("Tableau d'équipe");
 	});
 
 	it("formats standings tooltip from data_json in SHEETS_KV", async () => {
@@ -2443,7 +2443,7 @@ describe("SMBHL Worker", () => {
 			expect(rsvpRes.status).toBe(200);
 			const rsvpHtml = await rsvpRes.text();
 			expect(rsvpHtml).toContain('id="self-pos-picker"');
-			expect(rsvpHtml).toContain('data-t-fr="Défenseur (D)" data-t-en="Defense (D)"');
+			expect(rsvpHtml).toContain('Défenseur / Defenseman (D)');
 			expect(rsvpHtml).not.toContain('id="poll-card"');
 			expect(rsvpHtml).not.toContain('poll-vote-btn');
 		});
@@ -2501,7 +2501,7 @@ describe("SMBHL Worker", () => {
 			const afterRes = await worker.fetch(new Request(`http://example.com/poll?id=${pollId}&p=V002&t=${pollTok}`), env);
 			expect(afterRes.status).toBe(200);
 			const afterHtml = await afterRes.text();
-			expect(afterHtml).toContain('data-t-en="Your recorded vote:">Ton vote enregistré :</span> <b>Arber Xhekaj</b>');
+			expect(afterHtml).toContain('Ton vote enregistré : <b>Arber Xhekaj</b>');
 			expect(afterHtml).toContain('Résultats en direct (1 vote)');
 			expect(afterHtml).toContain('MODIFIER MON VOTE ✎');
 		});
@@ -2823,7 +2823,7 @@ describe("SMBHL Worker", () => {
 			const rsvpRes3 = await worker.fetch(new Request(`http://example.com/rsvp?e=ev-rsvp-poll&p=REG1&t=${tok1}`), env);
 			expect(rsvpRes3.status).toBe(200);
 			const html3 = await rsvpRes3.text();
-			expect(html3).toContain('data-t-en="Your recorded vote:">Ton vote enregistré :</span> <b>Scott Stevens</b>');
+			expect(html3).toContain("Ton vote enregistré : <b>Scott Stevens</b>");
 			expect(html3).toContain("Scrutin secret");
 			expect(html3).not.toContain("Résultats en direct");
 			expect(html3).toContain("MODIFIER MON VOTE");

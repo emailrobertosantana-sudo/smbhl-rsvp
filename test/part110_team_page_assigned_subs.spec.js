@@ -61,7 +61,7 @@ describe('Public team page counts a sub the admin assigned to the team', () => {
   it('shows the assigned sub goalie as the goalie, and the same counts the admin shows', async () => {
     const t = await hmac(env.RSVP_SECRET, `t:${SEASON}:Blue:fixedsalt`);
     const html = await (await SELF.fetch(`http://example.com/team-rsvp?s=${encodeURIComponent(SEASON)}&team=Blue&t=${t}`)).text();
-    expect(html).toContain('data-t-fr="7 joueurs, gardien confirmé" data-t-en="7 skaters, goalie confirmed"');
+    expect(html).toContain('<span class="en">7 skaters, goalie confirmed</span>');
     expect(html).not.toContain('no goalie yet');
     expect(html).not.toContain('équipe incomplète');
     // Listed, with the G tag, and without the forward/defence toggle.
