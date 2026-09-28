@@ -7,9 +7,14 @@
 //     Worker restart, and a Resend quota refusal marks the day full.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { useDaytimeClock } from './support/daytime_clock.js';
 import { applyRealSchema } from './support/real_schema.js';
 import { drain } from '../src/index.js';
 import { utcDay, nextUtcMidnight, ADMIN_ALERT_RESERVE } from '../src/mail_queue.js';
+
+// Drains here must not depend on the time of day (test/support/daytime_clock.js).
+beforeEach(() => { useDaytimeClock(); });
+afterEach(() => { vi.useRealTimers(); });
 
 const ADMIN_KEY = 'test-part107-admin';
 let EVENT_ID;

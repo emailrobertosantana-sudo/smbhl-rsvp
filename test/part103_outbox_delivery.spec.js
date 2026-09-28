@@ -15,13 +15,18 @@
 // against a fetch stand-in that enforces the Free plan's 50-subrequest
 // limit the way Cloudflare does (the 51st fetch throws the real error).
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi, afterEach } from 'vitest';
+import { useDaytimeClock } from './support/daytime_clock.js';
 import { applyRealSchema, getRealMigrationQueries } from './support/real_schema.js';
 import { drain, runSchedule, runLeagueReminders } from '../src/index.js';
 import {
   MAIL_SENDS_PER_INVOCATION, EXTERNAL_SUBREQUEST_LIMIT, RESERVED_NON_SEND_SUBREQUESTS,
   MAX_SEND_ATTEMPTS, RETRY_BACKOFF_MINUTES, classifySendError, createSendBudget
 } from '../src/mail_queue.js';
+
+// Drains here must not depend on the time of day (test/support/daytime_clock.js).
+beforeEach(() => { useDaytimeClock(); });
+afterEach(() => { vi.useRealTimers(); });
 
 const ADMIN_KEY = 'test-part103-admin-key';
 const EVENT_ID = 'p103-2026-10-01';

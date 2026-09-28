@@ -10,8 +10,13 @@
 // genuinely due outbox row, call the REAL route (not drain()
 // directly), and assert it actually sends.
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi, beforeEach, afterEach } from 'vitest';
+import { useDaytimeClock } from './support/daytime_clock.js';
 import { applyRealSchema } from './support/real_schema.js';
+
+// Drains here must not depend on the time of day (test/support/daytime_clock.js).
+beforeEach(() => { useDaytimeClock(); });
+afterEach(() => { vi.useRealTimers(); });
 
 const ADMIN_KEY = 'test-part1-batch4-drain-admin-key';
 const RSVP_SECRET = 'test-part1-batch4-drain-rsvp-secret';

@@ -27,6 +27,7 @@ beforeAll(async () => {
     if (String(url).includes('api.resend.com')) { sent.push(JSON.parse(opts.body).to[0]); return new Response('{"id":"x"}', { status: 200 }); }
     return new Response('{}', { status: 404 });
   };
+  await env.DB.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('email_cadence_settings', '{"quiet_hours_enabled":false}')`).run();
   await env.SHEETS_KV.put('data_json', JSON.stringify({ current_season: 'Fall 2099', seasons: [{ name: 'Fall 2099', standings: [], fixtures: [] }], players: [] }));
   await env.DB.prepare(`INSERT INTO events (id, season, week, date, venue, state, start_time, league_id) VALUES (?, 'Fall 2099', 4, 'Sunday', 'Aréna', 'open', '10:30', 'smbhl')`).bind(EV).run();
   await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, role, is_sub, is_goalie, token_salt, league_id) VALUES ('S1', 'Sam Sub', 's1@example.com', 'sub_skater', 1, 0, 's', 'smbhl')`).run();

@@ -11,9 +11,14 @@
 // Both are now real: this manual button, and a per-league drain(env,
 // 40, null, leagueRow.id) added to every runLeagueReminders tick.
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi, beforeEach, afterEach } from 'vitest';
+import { useDaytimeClock } from './support/daytime_clock.js';
 import { applyRealSchema } from './support/real_schema.js';
 import { runLeagueReminders } from '../src';
+
+// Drains here must not depend on the time of day (test/support/daytime_clock.js).
+beforeEach(() => { useDaytimeClock(); });
+afterEach(() => { vi.useRealTimers(); });
 
 const AUTH_SECRET = 'test-part3-batch4-comms-drain-secret';
 const RSVP_SECRET = 'test-part3-batch4-comms-drain-rsvp-secret';

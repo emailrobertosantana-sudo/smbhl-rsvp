@@ -4,11 +4,16 @@ import {
 	waitOnExecutionContext,
 	SELF,
 } from "cloudflare:test";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi, beforeEach, afterEach } from "vitest";
+import { useDaytimeClock } from "./support/daytime_clock.js";
 import worker, { body, drain, notifyAdminGoalieCancel, getTeamMessages, addTeamMessage, getStandingsTooltip, sanitizeAndValidateEmail, acceptAvailability, sortTeamBoardRows, computeTeamBalance, resolveTeamGoalies, boardData, ensureNextEvent, teamState, expected, handleLeagueMessageGet, handleLeagueMessageSave, runSchedule, handleSendSampleInvites } from "../src";
 import { handleReviewPublish, handleReviewManualStart, handleScoresheetEmail } from "../src/review.js";
 import { generateReviewToken } from "../src/admin_auth.js";
 import { applyRealSchema } from "./support/real_schema.js";
+
+// Drains here must not depend on the time of day (test/support/daytime_clock.js).
+beforeEach(() => { useDaytimeClock(); });
+afterEach(() => { vi.useRealTimers(); });
 
 describe("SMBHL Worker", () => {
 	beforeAll(async () => {

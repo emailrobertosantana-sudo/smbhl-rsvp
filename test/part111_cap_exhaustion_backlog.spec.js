@@ -8,9 +8,14 @@
 //   5. an admin action whose email is deferred SAYS so.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { useDaytimeClock } from './support/daytime_clock.js';
 import { applyRealSchema } from './support/real_schema.js';
 import { drain, runSchedule } from '../src/index.js';
 import { utcDay, nextUtcMidnight } from '../src/mail_queue.js';
+
+// Drains here must not depend on the time of day (test/support/daytime_clock.js).
+beforeEach(() => { useDaytimeClock(); });
+afterEach(() => { vi.useRealTimers(); });
 
 const ADMIN_KEY = 'test-part111-admin';
 const SEASON = 'P111 Season';
