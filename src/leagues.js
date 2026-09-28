@@ -631,6 +631,21 @@ export async function handleLeagueContactUpdate(req, env, url) {
     }
     updates.push('is_backup_goalie = ?'); params.push(body.is_backup_goalie === true ? 1 : 0);
   }
+  // A player's team, after creation (the Players table's own Team
+  // dropdown). Until now it could only be chosen in the Add-a-player form
+  // (createLeagueContactRow) -- bulk import has no team column, and
+  // nothing changed it afterwards. Same validation as creation: one of
+  // this season's teams, or empty for Unassigned.
+  if (body.team !== undefined) {
+    const team = String(body.team || '').trim() || null;
+    if (team) {
+      const validTeams = getTeamNames(await getLeagueSeasonConfig(env, leagueId));
+      if (!validTeams.includes(team)) {
+        return Response.json({ ok: false, error: `team must be one of: ${validTeams.join(', ')}`, errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
+      }
+    }
+    updates.push('preferred_team = ?'); params.push(team);
+  }
   if (!updates.length) {
     return Response.json({ ok: false, error: 'No settings provided.', errorKey: 'NO_SETTINGS_PROVIDED' }, { status: 400 });
   }
@@ -638,8 +653,8 @@ export async function handleLeagueContactUpdate(req, env, url) {
   params.push(playerId, leagueId);
   await env.DB.prepare(`UPDATE contacts SET ${updates.join(', ')} WHERE player_id = ? AND league_id = ?`).bind(...params).run();
 
-  const row = await env.DB.prepare('SELECT name, email, phone, role, is_goalie, is_backup_goalie FROM contacts WHERE player_id = ?').bind(playerId).first();
-  return Response.json({ ok: true, player_id: playerId, name: row.name, email: row.email, phone: row.phone, role: row.role, is_goalie: !!row.is_goalie, is_backup_goalie: !!row.is_backup_goalie });
+  const row = await env.DB.prepare('SELECT name, email, phone, role, is_goalie, is_backup_goalie, preferred_team FROM contacts WHERE player_id = ?').bind(playerId).first();
+  return Response.json({ ok: true, player_id: playerId, name: row.name, email: row.email, phone: row.phone, role: row.role, is_goalie: !!row.is_goalie, is_backup_goalie: !!row.is_backup_goalie, team: row.preferred_team || null });
 }
 
 /* ---------- Item 3 (players polish task): inactive players ----------

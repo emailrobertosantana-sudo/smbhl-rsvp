@@ -7297,6 +7297,15 @@ async function handleLeagueRosterPage(req, env, url) {
     // same condition the roster ADD form already uses (goalie-capable
     // sport, and not already flagged as a real goalie).
     const editBtn = `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="editPlayerBtn" onclick="toggleEditRow('${esc(c.player_id)}')" style="margin-left:8px;">Modifier</button>`;
+    // Team, settable in the row like Role and Position: the season's teams
+    // plus Unassigned. (A team could only be chosen when adding a player
+    // one at a time; bulk import never sets one.) A team no longer in the
+    // season stays listed, so the select never silently shows a different one.
+    const teamOptions = c.preferred_team && !teamNames.includes(c.preferred_team) ? [...teamNames, c.preferred_team] : teamNames;
+    const teamSelect = `<select class="nl-select ro-team-select" data-set-team="${esc(c.player_id)}" data-current="${esc(c.preferred_team || '')}" data-i18n-aria="colTeam" aria-label="Équipe">
+        <option value="" data-i18n="teamUnassigned"${c.preferred_team ? '' : ' selected'}>Non assigné</option>
+        ${teamOptions.map(t => `<option value="${esc(t)}"${c.preferred_team === t ? ' selected' : ''}>${esc(t)}</option>`).join('')}
+      </select>`;
     const editRow = `<tr id="edit_row_${esc(c.player_id)}" data-edit-row="${esc(c.player_id)}" style="display:none;">
       <td colspan="${rosterColCount}">
         <div class="ro-edit-panel">
@@ -7329,7 +7338,7 @@ async function handleLeagueRosterPage(req, env, url) {
     </tr>`;
     return `<tr data-row-filter="${esc(filterAttr)}">
       <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}${editBtn}</td>
-      ${showTeams ? `<td>${c.preferred_team ? esc(c.preferred_team) : `<span class="nl-help" data-i18n="teamUnassigned">Non assigné</span>`}</td>` : ''}
+      ${showTeams ? `<td>${teamSelect}</td>` : ''}
       <td>${roleBtn}</td>
       ${showGoalieAxis ? `<td>${goalieBtn}${backupGoalieBadge}</td>` : ''}
     </tr>${editRow}`;
@@ -7339,6 +7348,7 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
   .ro-top { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--space-3); flex-wrap: wrap; }
   .ro-top h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; }
+  .ro-team-select { width: auto; min-width: 8em; max-width: 12em; padding-top: 4px; padding-bottom: 4px; }
   .ro-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; }
   .ro-f { height: 36px; padding: 0 var(--space-3); border: 1.5px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); font: 600 14px/1 var(--font-sans); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
   .ro-f[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
@@ -7850,6 +7860,25 @@ document.querySelectorAll('[data-toggle-role]').forEach(function(btn) {
       showErr(String(e.message));
     } finally {
       btn.disabled = false;
+    }
+  });
+});
+// A player's team, from the row. The filter tabs and their counts depend
+// on it, so a reload keeps them right (same as the Role toggle).
+document.querySelectorAll('[data-set-team]').forEach(function(sel) {
+  sel.addEventListener('change', async function() {
+    var playerId = sel.getAttribute('data-set-team');
+    var previous = sel.getAttribute('data-current') || '';
+    sel.disabled = true;
+    document.getElementById('formErr').style.display = 'none';
+    try {
+      await toggleRosterField(playerId, { team: sel.value });
+      sel.setAttribute('data-current', sel.value);
+      window.location.reload();
+    } catch (e) {
+      sel.value = previous;
+      showErr(String(e.message));
+      sel.disabled = false;
     }
   });
 });
