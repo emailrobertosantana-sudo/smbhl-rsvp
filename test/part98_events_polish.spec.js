@@ -289,17 +289,16 @@ describe('Events polish, C4/C5: the bulk reminder warning is plural-aware, and t
     const remindersRes = await enableReminders(cookie, csrfToken);
     expect(remindersRes.ok).toBe(true);
 
+    // Item 10: the bulk notice names the games that send soon (filled in by
+    // the page), with its own wording and a suppress for just those.
     const html = await scheduleHtml(cookie);
-    expect(html).toContain('Chacun de ces matchs enverra automatiquement');
-    expect(html).toContain('Each of these games will automatically send');
-    expect(html).toContain('data-i18n="remindersOptOutLabelBulk"');
-    expect(html).toContain('Ne pas envoyer les rappels automatiques pour ces matchs');
-    expect(html).toContain("Don't send automated reminders for these games");
-    // The single-event panel's own wording is untouched, still present too.
-    expect(html).toContain('Ce match enverra automatiquement');
-    // C5: real pluralization -- exactly 1 real email on file here.
-    expect(html).toContain('1 joueur avec un courriel');
-    expect(html).toContain('1 player with an email');
+    expect(html).toContain('id="be_reminder_notice"');
+    expect(html).toContain('Ces matchs enverront des rappels dans les 7 prochains jours :');
+    expect(html).toContain('These games will send reminders within the next 7 days:');
+    expect(html).toContain('Ne pas envoyer de rappels automatiques pour ces {n} matchs seulement (les autres gardent les leurs)');
+    // C5: real pluralization, singular and plural both.
+    expect(html).toContain("Jusqu'à 1 joueur avec un courriel enregistré le recevra.");
+    expect(html).toContain('Up to 1 player with an email on file will receive it.');
     expect(html).not.toContain('joueur(s)');
     expect(html).not.toContain('player(s)');
   });
@@ -312,8 +311,9 @@ describe('Events polish, C4/C5: the bulk reminder warning is plural-aware, and t
     await addContact(cookie, csrfToken, { name: 'Plural Player Two', role: 'roster', email: 'plural2@example.com' });
     await enableReminders(cookie, csrfToken);
     const html = await scheduleHtml(cookie);
-    expect(html).toContain('2 joueurs avec un courriel');
-    expect(html).toContain('2 players with an email');
+    expect(html).toContain('"recipients":2');
+    expect(html).toContain("Jusqu'à {n} joueurs avec un courriel enregistré les recevront.");
+    expect(html).toContain('Up to {n} players with an email on file will receive them.');
   });
 
   it('confirmed: the opt-out checkbox suppresses reminders for EVERY event the bulk route creates, not just the first', async () => {

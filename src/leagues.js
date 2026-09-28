@@ -1152,10 +1152,15 @@ export async function handleLeagueEventsBulkCreate(req, env) {
   occurrences = Math.min(Math.floor(occurrences), 52);
 
   const leagueData = await getLeagueDataJson(env, leagueId);
+  // Item 10c: the games the form named as sending reminders soon, whose
+  // reminders the admin chose to turn off -- just those; the rest of the
+  // series keeps the default.
+  const suppressDates = new Set(Array.isArray(body.suppress_reminders_dates) ? body.suppress_reminders_dates.map(String) : []);
   const results = [];
   let date = startDate;
   for (let i = 0; i < occurrences; i++) {
-    const created = await createLeagueEventRow(env, leagueId, { date, venue: body.venue, venue_id: body.venue_id, venue_address: body.venue_address, venue_map_link: body.venue_map_link, start_time: body.start_time, end_time: body.end_time, season: body.season, auto_reminders_enabled: body.auto_reminders_enabled }, leagueData);
+    const autoReminders = suppressDates.has(date) ? false : body.auto_reminders_enabled;
+    const created = await createLeagueEventRow(env, leagueId, { date, venue: body.venue, venue_id: body.venue_id, venue_address: body.venue_address, venue_map_link: body.venue_map_link, start_time: body.start_time, end_time: body.end_time, season: body.season, auto_reminders_enabled: autoReminders }, leagueData);
     if (created.ok) {
       results.push({ status: 'created', event: created.event });
     } else {

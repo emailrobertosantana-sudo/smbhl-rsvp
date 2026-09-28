@@ -150,14 +150,16 @@ describe('Part 10 (live-testing task, batch 6): event creation warns before armi
     // present in <style>, regardless of whether the box renders) -- the
     // real presence check is the checkbox/label that only exist INSIDE
     // the conditional block.
-    expect(html).toContain('class="sc-reminder-warn"');
-    expect(html).toContain('Rappel 72');
+    // Item 10: the box is there (hidden until the chosen date makes it
+    // relevant -- the page fills it in); the bulk form's opt-out now covers
+    // only the games it names (be_suppress_soon), never the whole series.
+    expect(html).toContain('class="sc-reminder-warn" id="e_reminder_notice"');
+    expect(html).toContain('"fr":"Rappel 72 h avant"');
+    expect(html).toContain('"recipients":1');
     expect(html).toContain('id="e_reminders_optout"');
-    expect(html).toContain('id="be_reminders_optout"');
+    expect(html).toContain('id="be_suppress_soon"');
+    expect(html).not.toContain('id="be_reminders_optout"');
     expect(html).toContain('data-i18n="remindersOptOutLabel"');
-    // The apostrophe in "Jusqu'à" is HTML-escaped (&#39;) by this page's
-    // own esc() -- matches the real rendered entity, not a raw quote.
-    expect(html).toMatch(/Jusqu&#39;à 1 joueur/);
   });
 
   it('shows no warning when every reminder is disabled for this league', async () => {

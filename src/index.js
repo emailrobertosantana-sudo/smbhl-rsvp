@@ -7,7 +7,7 @@ import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
-import { REMINDER_WINDOW_THRESHOLD_HOURS, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
+import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
@@ -7857,32 +7857,20 @@ async function handleLeagueSchedulePage(req, env, url) {
   ).bind(leagueId).first();
   const scheduleActivePlayerCount = scheduleActivePlayerCountRow ? Number(scheduleActivePlayerCountRow.c) || 0 : 0;
   const showReminderWarning = armedKindsFr.length > 0 && reminderEmailCount > 0;
-  // C5 bug fix (events polish task): "joueur(s)"/"player(s)" always
-  // rendered the literal "(s)" regardless of count -- not real
-  // pluralization. Real singular/plural chosen from the actual count.
-  const playerWordFr = reminderEmailCount === 1 ? 'joueur' : 'joueurs';
-  const playerWordEn = reminderEmailCount === 1 ? 'player' : 'players';
-  const reminderWarningFr = showReminderWarning
-    ? `Ce match enverra automatiquement : ${armedKindsFr.join(' · ')}. Jusqu'à ${reminderEmailCount} ${playerWordFr} avec un courriel enregistré recevront ces envois.`
-    : '';
-  const reminderWarningEn = showReminderWarning
-    ? `This game will automatically send: ${armedKindsEn.join(' · ')}. Up to ${reminderEmailCount} ${playerWordEn} with an email on file will receive them.`
-    : '';
-  // C4 bug fix (events polish task): the bulk panel used to reuse this
-  // exact singular "this game"/"ce match" wording verbatim, reading as
-  // if only one event were being created. A real, plural-aware
-  // variant for the "Create multiple events" panel -- confirmed
-  // (handleLeagueEventsBulkCreate, leagues.js) that
-  // auto_reminders_enabled is read ONCE from the request body and
-  // applied to EVERY event the series creates, so this warning is
-  // honest either way: the checkbox really does cover the whole
-  // series, not just the first game.
-  const bulkReminderWarningFr = showReminderWarning
-    ? `Chacun de ces matchs enverra automatiquement : ${armedKindsFr.join(' · ')}. Jusqu'à ${reminderEmailCount} ${playerWordFr} avec un courriel enregistré recevront ces envois à chaque match de la série.`
-    : '';
-  const bulkReminderWarningEn = showReminderWarning
-    ? `Each of these games will automatically send: ${armedKindsEn.join(' · ')}. Up to ${reminderEmailCount} ${playerWordEn} with an email on file will receive them for every game in the series.`
-    : '';
+  // Item 10: which reminders a game would actually send, and when, is
+  // worked out in the page from the chosen date and time -- a step whose
+  // window has already passed when the game is created is skipped
+  // (applyReminderWindowSkipRule), the others go out that many hours
+  // before. A league on the advanced model uses its own hours.
+  const reminderAdvanced = (await usesAdvancedReminders(env, leagueId)) ? await getEmailSettings(env.DB, leagueId) : null;
+  const reminderPlan = {
+    recipients: reminderEmailCount,
+    steps: [
+      ['reminder_72h', leagueRow.reminder_72h_enabled, 'Rappel 72 h avant', '72h reminder'],
+      ['reminder_24h', leagueRow.reminder_24h_enabled, 'Rappel 24 h avant', '24h reminder'],
+      ['logistics_12h', leagueRow.reminder_12h_enabled, 'Détails 12 h avant', '12h game details']
+    ].filter(x => x[1]).map(([kind, , fr, en]) => ({ kind, fr, en, hours: reminderAdvanced ? advancedStepHours(reminderAdvanced, kind) : REMINDER_WINDOW_THRESHOLD_HOURS[kind] }))
+  };
   // Live-testing task (batch 6), Part 9: reusable venues -- `venues`
   // populates the create-event form's select-or-freetext control;
   // `venueMapLinks` resolves each listed event's own venue_id (if any)
@@ -7932,6 +7920,12 @@ async function handleLeagueSchedulePage(req, env, url) {
       viewOnMap: 'Voir sur la carte',
       remindersOptOutLabel: 'Ne pas envoyer les rappels automatiques pour ce match',
       remindersOptOutLabelBulk: 'Ne pas envoyer les rappels automatiques pour ces matchs',
+      remNoticeTitle: 'Rappels automatiques pour ce match :', remNoticeGoesOut: 'part dans environ {t}', remNoticeTooLate: 'trop tard, ne sera pas envoyé',
+      remNoticeRecipients: "Jusqu'à {n} joueurs avec un courriel enregistré les recevront.", remNoticeRecipientsOne: "Jusqu'à 1 joueur avec un courriel enregistré le recevra.",
+      remHours: '{n} h', remDays: '{n} jours', remDayOne: '1 jour',
+      remBulkTitle: 'Ces matchs enverront des rappels dans les 7 prochains jours :',
+      remBulkSuppress: 'Ne pas envoyer de rappels automatiques pour ces {n} matchs seulement (les autres gardent les leurs)',
+      remBulkSuppressOne: 'Ne pas envoyer de rappels automatiques pour ce match seulement (les autres gardent les leurs)',
       noEvents: "Aucun match pour l'instant.",
       stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
       needsSeasonTitle: "Lance ta saison d'abord",
@@ -8013,6 +8007,12 @@ async function handleLeagueSchedulePage(req, env, url) {
       viewOnMap: 'View on map',
       remindersOptOutLabel: "Don't send automated reminders for this game",
       remindersOptOutLabelBulk: "Don't send automated reminders for these games",
+      remNoticeTitle: 'Automatic reminders for this game:', remNoticeGoesOut: 'goes out in about {t}', remNoticeTooLate: "too late, won't be sent",
+      remNoticeRecipients: 'Up to {n} players with an email on file will receive them.', remNoticeRecipientsOne: 'Up to 1 player with an email on file will receive it.',
+      remHours: '{n} h', remDays: '{n} days', remDayOne: '1 day',
+      remBulkTitle: 'These games will send reminders within the next 7 days:',
+      remBulkSuppress: "Don't send automatic reminders for these {n} games only (the others keep theirs)",
+      remBulkSuppressOne: "Don't send automatic reminders for this game only (the others keep theirs)",
       noEvents: 'No events yet.',
       stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled',
       needsSeasonTitle: 'Start your season first',
@@ -8230,8 +8230,8 @@ async function handleLeagueSchedulePage(req, env, url) {
           <input class="nl-input" id="e_venue_map_link" type="text" data-i18n-ph="venueMapLinkPh" placeholder="https://maps.google.com/...">
         </div>
       </div>
-      ${showReminderWarning ? `<div class="sc-reminder-warn">
-        <p class="nl-help" style="margin:0" data-date-fr="${esc(reminderWarningFr)}" data-date-en="${esc(reminderWarningEn)}">${esc(reminderWarningFr)}</p>
+      ${showReminderWarning ? `<div class="sc-reminder-warn" id="e_reminder_notice" style="display:none">
+        <div class="nl-help" style="margin:0" id="e_reminder_notice_body"></div>
         <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px;">
           <input type="checkbox" id="e_reminders_optout">
           <span data-i18n="remindersOptOutLabel">Ne pas envoyer les rappels automatiques pour ce match</span>
@@ -8290,11 +8290,11 @@ async function handleLeagueSchedulePage(req, env, url) {
           <input class="nl-input" id="be_venue_map_link" type="text" data-i18n-ph="venueMapLinkPh" placeholder="https://maps.google.com/...">
         </div>
       </div>
-      ${showReminderWarning ? `<div class="sc-reminder-warn">
-        <p class="nl-help" style="margin:0" data-date-fr="${esc(bulkReminderWarningFr)}" data-date-en="${esc(bulkReminderWarningEn)}">${esc(bulkReminderWarningFr)}</p>
+      ${showReminderWarning ? `<div class="sc-reminder-warn" id="be_reminder_notice" style="display:none">
+        <div class="nl-help" style="margin:0" id="be_reminder_notice_body"></div>
         <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px;">
-          <input type="checkbox" id="be_reminders_optout">
-          <span data-i18n="remindersOptOutLabelBulk">Ne pas envoyer les rappels automatiques pour ces matchs</span>
+          <input type="checkbox" id="be_suppress_soon">
+          <span id="be_suppress_soon_label"></span>
         </label>
       </div>` : ''}
       <div style="display:flex;flex-direction:column;gap:8px;">
@@ -8458,6 +8458,92 @@ function showBulkErr(msg) {
   document.getElementById('bulkEventOk').style.display = 'none';
   var el = document.getElementById('bulkEventErr'); el.textContent = msg; el.style.display = 'block';
 }
+// Item 10: the reminder notice, from the chosen date/time. A reminder
+// goes out its hours before the game; one whose moment has already
+// passed when the game is created is skipped. The notice shows only when
+// something would go out within 7 days (or would be skipped), and says
+// which.
+var REMINDER_PLAN = ${JSON.stringify(reminderPlan)};
+var REMINDER_SOON_HOURS = 168;
+function hoursUntilGame(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return null; // no start time: no reminders at all
+  var naive = Date.parse(dateStr + 'T' + timeStr + ':00Z');
+  if (isNaN(naive)) return null;
+  var wall = Date.parse(new Date(naive).toLocaleString('en-US', { timeZone: 'America/Toronto' }) + ' UTC');
+  return (naive + (naive - wall) - Date.now()) / 3600000;
+}
+function reminderOutcomes(hoursUntil) {
+  if (hoursUntil == null || hoursUntil <= 0) return [];
+  return REMINDER_PLAN.steps.map(function(st) { var inH = hoursUntil - st.hours; return { step: st, inHours: inH, skipped: inH <= 0 }; });
+}
+function relevantOutcomes(outs) {
+  return outs.some(function(o) { return o.skipped || o.inHours <= REMINDER_SOON_HOURS; });
+}
+function stepLabel(st) { return window.__currentLang === 'en' ? st.en : st.fr; }
+function roughTime(h) {
+  var d = window.__pageDict();
+  if (h < 48) return d.remHours.replace('{n}', String(Math.max(1, Math.round(h))));
+  var days = Math.round(h / 24);
+  return days === 1 ? d.remDayOne : d.remDays.replace('{n}', String(days));
+}
+function escText(t) { var el = document.createElement('div'); el.textContent = t; return el.innerHTML; }
+function renderSingleReminderNotice() {
+  var box = document.getElementById('e_reminder_notice');
+  if (!box) return;
+  var d = window.__pageDict();
+  var outs = reminderOutcomes(hoursUntilGame(document.getElementById('e_date').value, document.getElementById('e_start').value));
+  if (!outs.length || !relevantOutcomes(outs)) { box.style.display = 'none'; return; }
+  var items = outs.map(function(o) {
+    return '<li>' + escText(stepLabel(o.step)) + ' — ' + escText(o.skipped ? d.remNoticeTooLate : d.remNoticeGoesOut.replace('{t}', roughTime(o.inHours))) + '</li>';
+  }).join('');
+  var n = REMINDER_PLAN.recipients;
+  document.getElementById('e_reminder_notice_body').innerHTML = '<p style="margin:0">' + escText(d.remNoticeTitle) + '</p><ul style="margin:4px 0 0;padding-left:20px">' + items + '</ul>' +
+    '<p style="margin:4px 0 0">' + escText(n === 1 ? d.remNoticeRecipientsOne : d.remNoticeRecipients.replace('{n}', String(n))) + '</p>';
+  box.style.display = '';
+}
+function addDays(dateStr, days) {
+  var t = Date.parse(dateStr + 'T12:00:00Z') + days * 86400000;
+  return new Date(t).toISOString().slice(0, 10);
+}
+// The series' dates, the way the server builds them (weekly, at most 52).
+function bulkDates() {
+  var start = document.getElementById('be_start_date').value;
+  if (!start) return [];
+  var occ = Number(document.getElementById('be_occurrences').value);
+  var end = document.getElementById('be_end_date').value;
+  if (end) occ = Math.floor((Date.parse(end + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z')) / (7 * 86400000)) + 1;
+  if (!(occ >= 1)) return [];
+  occ = Math.min(Math.floor(occ), 52);
+  var out = []; for (var i = 0; i < occ; i++) out.push(addDays(start, 7 * i));
+  return out;
+}
+// The games in the series that would send (or skip) reminders within 7 days.
+function bulkSoonGames() {
+  var time = document.getElementById('be_start').value;
+  return bulkDates().map(function(date) { return { date: date, outs: reminderOutcomes(hoursUntilGame(date, time)) }; })
+    .filter(function(g) { return g.outs.length && relevantOutcomes(g.outs); });
+}
+function renderBulkReminderNotice() {
+  var box = document.getElementById('be_reminder_notice');
+  if (!box) return;
+  var d = window.__pageDict();
+  var soon = bulkSoonGames();
+  if (!soon.length) { box.style.display = 'none'; document.getElementById('be_suppress_soon').checked = false; return; }
+  var locale = window.__currentLang === 'en' ? 'en-CA' : 'fr-CA';
+  var items = soon.map(function(g) {
+    var when = new Date(g.date + 'T12:00:00Z').toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+    var what = g.outs.map(function(o) { return stepLabel(o.step) + ' (' + (o.skipped ? d.remNoticeTooLate : d.remNoticeGoesOut.replace('{t}', roughTime(o.inHours))) + ')'; }).join(', ');
+    return '<li><b>' + escText(when) + '</b> — ' + escText(what) + '</li>';
+  }).join('');
+  document.getElementById('be_reminder_notice_body').innerHTML = '<p style="margin:0">' + escText(d.remBulkTitle) + '</p><ul style="margin:4px 0 0;padding-left:20px">' + items + '</ul>';
+  document.getElementById('be_suppress_soon_label').textContent = soon.length === 1 ? d.remBulkSuppressOne : d.remBulkSuppress.replace('{n}', String(soon.length));
+  box.style.display = '';
+}
+['e_date', 'e_start'].forEach(function(id) { var el = document.getElementById(id); if (el) { el.addEventListener('input', renderSingleReminderNotice); el.addEventListener('change', renderSingleReminderNotice); } });
+['be_start_date', 'be_occurrences', 'be_end_date', 'be_start'].forEach(function(id) { var el = document.getElementById(id); if (el) { el.addEventListener('input', renderBulkReminderNotice); el.addEventListener('change', renderBulkReminderNotice); } });
+window.addEventListener('nl_lang_changed', function() { renderSingleReminderNotice(); renderBulkReminderNotice(); });
+renderSingleReminderNotice();
+renderBulkReminderNotice();
 async function submitBulkEvents() {
   document.getElementById('bulkEventErr').style.display = 'none';
   document.getElementById('bulkEventOk').style.display = 'none';
@@ -8473,8 +8559,11 @@ async function submitBulkEvents() {
   var venueMapLinkEl = document.getElementById('be_venue_map_link');
   var venueAddress = venueAddressEl ? venueAddressEl.value.trim() : '';
   var venueMapLink = venueMapLinkEl ? venueMapLinkEl.value.trim() : '';
-  var optOutEl = document.getElementById('be_reminders_optout');
-  var autoRemindersEnabled = optOutEl ? !optOutEl.checked : true;
+  // Item 10c: never a blanket suppress -- only the games named as sending
+  // soon, and only if the admin ticked the box.
+  var autoRemindersEnabled = true;
+  var suppressEl = document.getElementById('be_suppress_soon');
+  var suppressDates = (suppressEl && suppressEl.checked) ? bulkSoonGames().map(function(g) { return g.date; }) : [];
   if (!startDate) { showBulkErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
   // D3 (forms polish task): same non-blocking midnight-crossing warning
   // as the single-event form -- applies to every event the series creates.
@@ -8495,7 +8584,8 @@ async function submitBulkEvents() {
         start_time: start_time || undefined, end_time: end_time || undefined,
         venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined,
         venue_address: venueAddress || undefined, venue_map_link: venueMapLink || undefined,
-        auto_reminders_enabled: autoRemindersEnabled
+        auto_reminders_enabled: autoRemindersEnabled,
+        suppress_reminders_dates: suppressDates.length ? suppressDates : undefined
       })
     });
     var data = await res.json().catch(function() { return {}; });
