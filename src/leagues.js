@@ -3062,7 +3062,7 @@ export async function verifyInviteToken(env, token) {
 // regardless of any setting ... confirmed live on the co-admin
 // invitation email"). Uses the one shared assembler every bilingual
 // email in this app now goes through (design_system.js).
-function buildInviteEmail(leagueName, inviteLink, leagueColor = '#b3122e', languageMode = 'both') {
+export function buildInviteEmail(leagueName, inviteLink, leagueColor = '#b3122e', languageMode = 'both') {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
   const fr = {
     subject: `Invitation à co-administrer ${leagueName}`,

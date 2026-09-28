@@ -3,6 +3,7 @@ import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
+import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
@@ -4707,6 +4708,60 @@ async function handleLeagueCommsBroadcast(req, env, url) {
     return Response.json({ ok: false, error: 'Subject and message are required.', errorKey: 'BROADCAST_FIELDS_REQUIRED' }, { status: 400 });
   }
 
+  const picked = await leagueBroadcastRecipients(env, leagueId, leagueRow, target, eventId);
+  if (picked.error) return Response.json({ ok: false, error: picked.error, errorKey: picked.errorKey }, { status: 400 });
+  const recipients = picked.recipients;
+
+  // Real per-league send identity (Bug 1 fix, an earlier task this
+  // session) -- the league's own verified-domain from-address and its
+  // real admin's reply-to, never SMBHL's defaults.
+  const cfg = await getLeagueSeasonConfig(env, leagueId);
+  const { text, html } = renderLeagueBroadcastEmail(leagueRow, subject, message);
+
+  let sent = 0, failed = 0, deferred = 0;
+  for (const r of recipients) {
+    try {
+      await sendMail(env, r.email, subject, text, html, null, cfg.league);
+      sent++;
+    } catch (e) {
+      // Deferred = queued for when the daily limit resets: not sent, not failed.
+      if (isMailDeferred(e)) deferred++; else failed++;
+    }
+  }
+
+  return Response.json({ ok: true, sent_count: sent, failed_count: failed, deferred_count: deferred, total: recipients.length });
+}
+
+// Email preview (src/email_preview.js): the email as it would go out with
+// the league's real upcoming data. Sends nothing, queues nothing.
+function emailPreviewResponse(r) {
+  return Response.json(r, { status: r.ok ? 200 : (r.status || 400), headers: { 'cache-control': 'no-store' } });
+}
+async function handleLeagueCommsPreview(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot preview for this league.', errorKey: 'ROUTE_BLOCKED_PREVIEW' }, { status: 403 });
+  }
+  const body = await req.json().catch(() => ({}));
+  return emailPreviewResponse(await buildEmailPreview(env, leagueId, body));
+}
+// SMBHL's (admin key, checked by the /admin/comms router).
+async function handleEmailsPreview(req, env) {
+  const body = await req.json().catch(() => ({}));
+  return emailPreviewResponse(await buildEmailPreview(env, SMBHL_LEAGUE_ID, body));
+}
+
+// Who a league broadcast goes to for a target ('all', 'roster', 'subs', a
+// team, or 'pending'/'in' for one event). { recipients } or { error, errorKey }.
+async function leagueBroadcastRecipients(env, leagueId, leagueRow, target, eventId) {
   let teamNames = [];
   try {
     const parsed = JSON.parse(leagueRow.team_names || '[]');
@@ -4735,7 +4790,7 @@ async function handleLeagueCommsBroadcast(req, env, url) {
     ).bind(leagueId, target).all()).results || [];
   } else if (target === 'pending' || target === 'in') {
     if (!eventId) {
-      return Response.json({ ok: false, error: 'event_id is required to target by RSVP status.', errorKey: 'BROADCAST_EVENT_REQUIRED' }, { status: 400 });
+      return { error: 'event_id is required to target by RSVP status.', errorKey: 'BROADCAST_EVENT_REQUIRED' };
     }
     // r.event_id alone already can't cross leagues (event ids are
     // globally unique and league-prefixed, league_ids.js) -- c.league_id
@@ -4748,13 +4803,13 @@ async function handleLeagueCommsBroadcast(req, env, url) {
         ORDER BY c.name`
     ).bind(eventId, target, leagueId).all()).results || [];
   } else {
-    return Response.json({ ok: false, error: 'Invalid recipient target.', errorKey: 'BROADCAST_INVALID_TARGET' }, { status: 400 });
+    return { error: 'Invalid recipient target.', errorKey: 'BROADCAST_INVALID_TARGET' };
   }
+  return { recipients };
+}
 
-  // Real per-league send identity (Bug 1 fix, an earlier task this
-  // session) -- the league's own verified-domain from-address and its
-  // real admin's reply-to, never SMBHL's defaults.
-  const cfg = await getLeagueSeasonConfig(env, leagueId);
+// A league broadcast's text and HTML (the subject is the admin's own).
+function renderLeagueBroadcastEmail(leagueRow, subject, message) {
   const languageMode = leagueRow.language_mode || 'both';
   const barColor = leagueFillColor(leagueRow.color || '#b3122e');
   const bodyHtmlCore = `<div style="font-size:15px;color:#1e293b;line-height:1.6;margin-bottom:20px;white-space:pre-line;">${esc(message)}</div>`;
@@ -4771,19 +4826,7 @@ async function handleLeagueCommsBroadcast(req, env, url) {
     bodyHtml: bodyHtmlCore + footerAssembled.html,
     footerHtml: 'Notre Ligue'
   });
-
-  let sent = 0, failed = 0, deferred = 0;
-  for (const r of recipients) {
-    try {
-      await sendMail(env, r.email, subject, text, html, null, cfg.league);
-      sent++;
-    } catch (e) {
-      // Deferred = queued for when the daily limit resets: not sent, not failed.
-      if (isMailDeferred(e)) deferred++; else failed++;
-    }
-  }
-
-  return Response.json({ ok: true, sent_count: sent, failed_count: failed, deferred_count: deferred, total: recipients.length });
+  return { subject, text, html };
 }
 
 // Cadence is deliberately READ-ONLY here -- editing already lives on
@@ -4820,6 +4863,7 @@ async function handleLeagueCommsPage(req, env, url) {
       // drift apart.
       cadTeamAssigned: 'Équipe assignée (tirage tardif)',
       cadAutoDraw: 'Tirage automatique des équipes',
+      btnPreview: 'Aperçu', cadSubCall: 'Appel aux remplaçants', cadLateReversal: 'Alerte de désistement tardif (admin)',
       on: 'Activé', off: 'Désactivé',
       cadAutoDrawHoursSuffix: ' h avant le match',
       editCadence: 'Modifier dans Paramètres',
@@ -4860,6 +4904,7 @@ async function handleLeagueCommsPage(req, env, url) {
       cad72: '72h reminder (no reply)', cad24: '24h reminder (no reply)', cad12: '12h details (confirmed)',
       cadTeamAssigned: 'Team assigned (late draw)',
       cadAutoDraw: 'Automatic team draw',
+      btnPreview: 'Preview', cadSubCall: 'Sub call', cadLateReversal: 'Late dropout alert (admin)',
       on: 'On', off: 'Off',
       cadAutoDrawHoursSuffix: 'h before the game',
       editCadence: 'Edit in Settings',
@@ -4928,7 +4973,10 @@ async function handleLeagueCommsPage(req, env, url) {
       <label class="nl-label" for="bc-message" data-i18n="lblBcMessage">Message</label>
       <textarea class="nl-input" id="bc-message" rows="6" data-i18n-ph="bcMessagePh" placeholder="Écris ton message ici..." style="resize:vertical"></textarea>
     </div>
-    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="btn-broadcast" data-i18n="btnBroadcast" onclick="sendBroadcast()">Envoyer la diffusion</button></div>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-email-preview="broadcast" data-preview-endpoint="/league/comms/preview" data-preview-fields="subject=bc-subject,message=bc-message,target=bc-target,event_id=bc-event" data-i18n="btnPreview">Aperçu</button>
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="btn-broadcast" data-i18n="btnBroadcast" onclick="sendBroadcast()">Envoyer la diffusion</button>
+    </div>
   </section>
 
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
@@ -4981,16 +5029,20 @@ function renderStats(stats) {
 }
 function renderCadence(c) {
   var d = window.__pageDict();
+  // [label, on/off (null: no toggle), detail, email to preview]
   var rows = [
-    [d.cad72, c.reminder72hEnabled],
-    [d.cad24, c.reminder24hEnabled],
-    [d.cad12, c.reminder12hEnabled]
+    [d.cad72, c.reminder72hEnabled, '', 'reminder_72h'],
+    [d.cad24, c.reminder24hEnabled, '', 'reminder_24h'],
+    [d.cad12, c.reminder12hEnabled, '', 'logistics_12h']
   ];
-  if (c.isWeeklyDraw) rows.push([d.cadAutoDraw, c.autoDrawEnabled, c.autoDrawEnabled ? (c.autoDrawHoursBefore + d.cadAutoDrawHoursSuffix) : '']);
+  if (c.isWeeklyDraw) rows.push([d.cadAutoDraw, c.autoDrawEnabled, c.autoDrawEnabled ? (c.autoDrawHoursBefore + d.cadAutoDrawHoursSuffix) : '', 'team_assigned']);
+  rows.push([d.cadSubCall, null, '', 'sub_call'], [d.cadLateReversal, null, '', 'late_reversal']);
   document.getElementById('comms-cadence').innerHTML = rows.map(function(r) {
-    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);">' +
+    var preview = '<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-email-preview="' + r[3] + '" data-preview-endpoint="/league/comms/preview">' + d.btnPreview + '</button>';
+    var state = r[1] == null ? '' : '<span style="font-weight:700;color:' + (r[1] ? '#0e7a4f' : 'var(--ink-muted)') + '">' + (r[1] ? d.on : d.off) + '</span>';
+    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line);">' +
       '<span>' + r[0] + (r[2] ? ' <span class="nl-help" style="display:inline">(' + r[2] + ')</span>' : '') + '</span>' +
-      '<span style="font-weight:700;color:' + (r[1] ? '#0e7a4f' : 'var(--ink-muted)') + '">' + (r[1] ? d.on : d.off) + '</span></div>';
+      '<span style="display:flex;gap:10px;align-items:center;">' + preview + state + '</span></div>';
   }).join('');
 }
 function renderActivity(activity) {
@@ -5136,7 +5188,7 @@ async function drainNow() {
 }
 `;
 
-  return new Response(nlDocument({ title: `Communications — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+  return new Response(nlDocument({ title: `Communications — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` + EMAIL_PREVIEW_ASSETS, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -5366,6 +5418,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       langBoth: 'Les deux (FR/EN)', langFrOnly: 'Français seulement', langEnOnly: 'Anglais seulement',
       remindersTitle: 'Rappels automatiques', remindersDesc: 'Envoyés automatiquement à tes joueurs avant chaque match.',
       reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder72Desc: "Envoyé aux joueurs qui n'ont pas encore répondu.",
+      btnPreview: 'Aperçu', btnPreviewLateReversal: "Aperçu de l'alerte à l'admin", btnPreviewTeamAssigned: 'Aperçu du courriel « équipe assignée »', btnPreviewInvite: "Aperçu de l'invitation",
       reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder24Desc: 'Même chose, plus proche du match.',
       reminder12Label: 'Détails 12 h avant (joueurs confirmés)', reminder12Desc: 'Heure, lieu, et un lien pour se désister si besoin.',
       advTitle: 'Horaire avancé',
@@ -5485,6 +5538,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       langBoth: 'Both (FR/EN)', langFrOnly: 'French only', langEnOnly: 'English only',
       remindersTitle: 'Automatic reminders', remindersDesc: 'Sent automatically to your players before each game.',
       reminder72Label: '72h reminder (no reply yet)', reminder72Desc: "Sent to players who haven't answered yet.",
+      btnPreview: 'Preview', btnPreviewLateReversal: 'Preview the admin alert', btnPreviewTeamAssigned: 'Preview the "team assigned" email', btnPreviewInvite: 'Preview the invitation',
       reminder24Label: '24h reminder (no reply yet)', reminder24Desc: 'Same thing, closer to the game.',
       reminder12Label: '12h game details (confirmed players)', reminder12Desc: 'Time, venue, and a link to drop out if needed.',
       advTitle: 'Advanced timing',
@@ -6028,15 +6082,15 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div id="remindersErr" class="nl-error" style="display:none"></div>
     <div id="remindersOk" class="nl-ok" style="display:none"></div>
     <div class="nl-toggle" style="margin-top:8px">
-      <div><div class="nl-label" data-i18n="reminder72Label">Rappel 72 h avant (sans réponse)</div><div class="nl-help" data-i18n="reminder72Desc">Envoyé aux joueurs qui n'ont pas encore répondu.</div></div>
+      <div><div class="nl-label" data-i18n="reminder72Label">Rappel 72 h avant (sans réponse)</div><div class="nl-help" data-i18n="reminder72Desc">Envoyé aux joueurs qui n'ont pas encore répondu.</div><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" style="margin-top:6px" data-email-preview="reminder_72h" data-preview-endpoint="/league/comms/preview" data-i18n="btnPreview">Aperçu</button></div>
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_72h_enabled ? 'true' : 'false'}" id="reminder_72h_switch" onclick="toggleReminderSwitch(this,'reminder72h')"></button>
     </div>
     <div class="nl-toggle">
-      <div><div class="nl-label" data-i18n="reminder24Label">Rappel 24 h avant (sans réponse)</div><div class="nl-help" data-i18n="reminder24Desc">Même chose, plus proche du match.</div></div>
+      <div><div class="nl-label" data-i18n="reminder24Label">Rappel 24 h avant (sans réponse)</div><div class="nl-help" data-i18n="reminder24Desc">Même chose, plus proche du match.</div><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" style="margin-top:6px" data-email-preview="reminder_24h" data-preview-endpoint="/league/comms/preview" data-i18n="btnPreview">Aperçu</button></div>
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_24h_enabled ? 'true' : 'false'}" id="reminder_24h_switch" onclick="toggleReminderSwitch(this,'reminder24h')"></button>
     </div>
     <div class="nl-toggle">
-      <div><div class="nl-label" data-i18n="reminder12Label">Détails 12 h avant (joueurs confirmés)</div><div class="nl-help" data-i18n="reminder12Desc">Heure, lieu, et un lien pour se désister si besoin.</div></div>
+      <div><div class="nl-label" data-i18n="reminder12Label">Détails 12 h avant (joueurs confirmés)</div><div class="nl-help" data-i18n="reminder12Desc">Heure, lieu, et un lien pour se désister si besoin.</div><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" style="margin-top:6px" data-email-preview="logistics_12h" data-preview-endpoint="/league/comms/preview" data-i18n="btnPreview">Aperçu</button> <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" style="margin-top:6px" data-email-preview="late_reversal" data-preview-endpoint="/league/comms/preview" data-i18n="btnPreviewLateReversal">Aperçu de l'alerte à l'admin</button></div>
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="reminder_12h_switch" onclick="toggleReminderSwitch(this,'reminder12h')"></button>
     </div>
     ${advancedCadence ? `
@@ -6071,7 +6125,7 @@ async function handleLeagueSettingsPage(req, env, url) {
     <div id="autoDrawErr" class="nl-error" style="display:none"></div>
     <div id="autoDrawOk" class="nl-ok" style="display:none"></div>
     <div class="nl-toggle" style="margin-top:8px">
-      <div><div class="nl-label" data-i18n="autoDrawEnableLabel">Activer le tirage automatique</div><div class="nl-help" data-i18n="autoDrawEnableDesc">Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.</div></div>
+      <div><div class="nl-label" data-i18n="autoDrawEnableLabel">Activer le tirage automatique</div><div class="nl-help" data-i18n="autoDrawEnableDesc">Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.</div><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" style="margin-top:6px" data-email-preview="team_assigned" data-preview-endpoint="/league/comms/preview" data-i18n="btnPreviewTeamAssigned">Aperçu du courriel « équipe assignée »</button></div>
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.auto_draw_enabled ? 'true' : 'false'}" id="auto_draw_switch" onclick="toggleReminderSwitch(this,'autoDrawEnabled')"></button>
     </div>
     <div class="nl-field" style="margin-top:8px;max-width:220px;">
@@ -6091,7 +6145,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       <label class="nl-label" for="invite_email" data-i18n="inviteLabel">Inviter un(e) co-administrateur(-trice)</label>
       <input class="nl-input" id="invite_email" type="email" data-i18n-ph="inviteEmailPh" placeholder="courriel@exemple.com">
     </div>
-    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="invite_submit" data-i18n="inviteBtn" onclick="submitInvite()">Inviter</button></div>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="invite_submit" data-i18n="inviteBtn" onclick="submitInvite()">Inviter</button><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-email-preview="coadmin_invite" data-preview-endpoint="/league/comms/preview" data-i18n="btnPreviewInvite">Aperçu de l'invitation</button></div>
   </section>
   <section class="nl-card nl-card--pad-lg" style="border-color:var(--danger,#b3122e)" id="section-deactivate">
     <div class="h3" data-i18n="deactivateLeague">Désactiver la ligue</div>
@@ -6713,7 +6767,7 @@ async function submitDeactivate() {
   }
 }`;
 
-  return new Response(nlDocument({ title: `${(I18N_SETTINGS[lang] || I18N_SETTINGS.fr).title} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+  return new Response(nlDocument({ title: `${(I18N_SETTINGS[lang] || I18N_SETTINGS.fr).title} — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>` + EMAIL_PREVIEW_ASSETS, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -11047,6 +11101,261 @@ async function runHoldCall(env, m) {
 // SAME budget to every drain() in one invocation (the league cron
 // drains once per league); a lone call gets a fresh full budget.
 // `limit` still caps the batch for callers that want a smaller one.
+// Per-drain caches shared by every row rendered in one pass (one data.json
+// fetch, one pricing/highlights lookup per season/week).
+function createOutboxRenderContext(env) {
+  let siteDataPromise = null;
+  const loadSiteData = () => (siteDataPromise ||= fetchSiteDataJson(env).catch(() => null));
+  let dataJsonCache = null;
+  const getDataJson = async () => {
+    if (dataJsonCache !== null) return dataJsonCache;
+    if (!env.SHEETS_KV) return null;
+    try {
+      const raw = await env.SHEETS_KV.get('data_json');
+      dataJsonCache = raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      dataJsonCache = null;
+    }
+    return dataJsonCache;
+  };
+  return { loadSiteData, getDataJson, highlightsCache: new Map(), pricingCache: new Map() };
+}
+
+// Everything drain() works out for one outbox row before sending it --
+// recipient, links, dues, fixtures, team messages, highlights -- and the
+// rendered message, WITHOUT sending or writing anything. drain() sends
+// what this returns; the Comms preview (src/email_preview.js) shows it, so
+// a preview is exactly what would go out.
+//
+// Returns { action: 'send', to, msg, leagueCfg }, { action: 'cancel',
+// reason } (drain marks the row cancelled with that reason), or
+// { action: 'holdcall' }. Throws for 'event gone' / 'contact gone' /
+// 'unknown kind' (drain records a send failure). Pre-rendered rows are
+// drain's own business and never reach here.
+//
+// opts.preview: the send-time rules that would drop THIS row now (no
+// longer confirmed, invite limit, too close to game time) are reported
+// in `notes` and the message is still rendered, so the preview shows it.
+async function prepareOutboxMessage(env, m, rctx, opts = {}) {
+  const preview = !!opts.preview;
+  const notes = [];
+  // A rule that drops the row: drain cancels it; a preview notes it and goes on.
+  const drop = reason => { if (preview) { notes.push(reason); return null; } return { action: 'cancel', reason }; };
+  const { loadSiteData, getDataJson, highlightsCache, pricingCache } = rctx;
+  const payload = JSON.parse(m.payload || '{}');
+  let ev = opts.event || await getEvent(env.DB, m.event_id);
+  if (!ev && (m.kind === 'season_recap' || m.kind === 'season_recap_prompt')) {
+    ev = {
+      id: m.event_id,
+      season: payload.season || 'Fall 2026',
+      week: 14,
+      date: 'Playoffs',
+      state: 'locked'
+    };
+  } else if (!ev) {
+    throw new Error('event gone');
+  }
+  // Part P: an outbox row tagged with a league other than SMBHL's
+  // resolves its send identity from THAT league's own data_json/
+  // branding (getLeagueSeasonConfig) instead of getDataJson(), which
+  // always reads the literal 'data_json' key — SMBHL's, unconditionally
+  // — and so is never correct for any other league's mail. Every
+  // existing SMBHL outbox row (m.league_id === SMBHL_LEAGUE_ID, the
+  // column's own DEFAULT) takes the exact same path as before this
+  // change, byte for byte.
+  const seasonCfg = (m.league_id && m.league_id !== SMBHL_LEAGUE_ID)
+    ? await getLeagueSeasonConfig(env, m.league_id, ev.season)
+    : getSeasonConfig(await getDataJson(), ev.season);
+  const leagueCfg = getLeagueConfig(seasonCfg);
+  if ((m.kind === 'season_recap' || m.kind === 'season_recap_prompt') && !tracksStats(seasonCfg)) {
+    return { action: 'cancel', reason: 'season does not track stats (tracksStats: false)' };
+  }
+  if (m.kind === 'holdcall') return { action: 'holdcall' };
+
+  let to, name = '', link = '', playerTeam = m.team;
+  // Admin mail: any row with no player (the 'created' notice, the
+  // summary, the season-recap prompt -- and any future admin kind) goes
+  // to the admin. It used to be a list of two kinds, so 'created' fell
+  // through to the player lookup and failed as "contact gone".
+  if (m.kind === 'summary' || m.kind === 'season_recap_prompt' || !m.player_id) {
+    to = (payload && payload.to) || (env.ADMIN_EMAIL || ADMIN_EMAIL);
+    name = 'Roberto';
+    payload.base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+  } else {
+    const c = await getContact(env.DB, m.player_id);
+    if (!c) throw new Error('contact gone');
+    if (!c.email) return { action: 'cancel', reason: 'no email on file' };
+    if (c.opted_out) return { action: 'cancel', reason: 'opted out' };
+    to = c.email; name = c.name.split(' ')[0];
+    const t = await hmac(env.RSVP_SECRET, playerMsg(m.event_id, m.player_id, c.token_salt));
+    const base = env.PUBLIC_URL || 'https://smbhl-rsvp.emailrobertosantana.workers.dev';
+    link = `${base}/rsvp?e=${encodeURIComponent(m.event_id)}&p=${m.player_id}&t=${t}`;
+
+    playerTeam = m.team;
+    if (m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
+      const currentRsvp = await env.DB.prepare(
+        'SELECT status, role, team FROM rsvp WHERE event_id=? AND player_id=?').bind(m.event_id, m.player_id).first();
+      const isEligible = currentRsvp && (
+        currentRsvp.status === 'in' ||
+        (currentRsvp.role === 'roster' && currentRsvp.status === 'pending')
+      );
+      if (!isEligible) { const d = drop('no longer confirmed in'); if (d) return d; }
+      if (currentRsvp && currentRsvp.team) playerTeam = currentRsvp.team;
+    }
+
+    if (m.kind === 'invite' || m.kind === 'chase' || m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
+      payload.yes = `${link}&v=in`;
+      payload.no  = `${link}&v=out`;
+
+      const rsvpRow = await env.DB.prepare(
+        'SELECT team, role FROM rsvp WHERE event_id=? AND player_id=?').bind(m.event_id, m.player_id).first();
+      if (rsvpRow && rsvpRow.team) playerTeam = rsvpRow.team;
+
+      const isSub = Boolean(payload.is_sub || (rsvpRow && rsvpRow.role === 'sub') || (c && c.is_sub === 1 && (!rsvpRow || rsvpRow.role !== 'roster')));
+
+      if (m.kind === 'invite' && isSub) {
+        payload.isSubInvite = true;
+        const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
+        const need = isGoalie ? 'goalie' : 'skater';
+        const at = await hmac(env.RSVP_SECRET, `a:${m.event_id}:${m.player_id}:${need}:${c.token_salt}`);
+        const q = `e=${encodeURIComponent(m.event_id)}&p=${m.player_id}&n=${need}&t=${at}`;
+        payload.yes = `${base}/avail?${q}&a=yes`;
+        payload.no  = `${base}/avail?${q}&a=no`;
+      }
+
+      let pricing = pricingCache.get(ev.season);
+      if (!pricing && ev.season) {
+        pricing = await env.DB.prepare('SELECT * FROM season_pricing WHERE season = ?').bind(ev.season).first();
+        if (pricing) pricingCache.set(ev.season, pricing);
+      }
+      const phone = (pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '');
+
+      if (m.kind === 'gameday') {
+        if (isSub) {
+          const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
+          const perGame = isGoalie ? Number(pricing?.price_sub_goalie || 0) : Number(pricing?.price_sub_player ?? 5);
+          // Tonight's fee: games per night from the season config (2 for
+          // SMBHL unless its season sets otherwise; 1 for any other league).
+          const totalFee = perGame * gamesPerNight(seasonCfg, m.league_id || SMBHL_LEAGUE_ID);
+          if (totalFee > 0) {
+            payload.subFee = { perGame, total: totalFee, phone };
+          }
+        }
+      }
+
+      if (m.kind === 'invite') {
+        const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
+        const duesRow = await env.DB.prepare(
+          'SELECT custom_due, amount_paid FROM player_dues WHERE season = ? AND player_id = ?'
+        ).bind(ev.season, m.player_id).first();
+
+        let totalDue;
+        if (duesRow && duesRow.custom_due !== null && duesRow.custom_due !== undefined) {
+          totalDue = Math.max(0, Number(duesRow.custom_due));
+        } else if (!isSub) {
+          totalDue = isGoalie ? Number(pricing?.price_goalie ?? 0) : Number(pricing?.price_player ?? 170);
+        } else {
+          // Sub player: sub goalies are free ($0). Sub skaters pay per game for completed/past events.
+          if (isGoalie) {
+            totalDue = Number(pricing?.price_sub_goalie ?? 0);
+          } else {
+            let gamesPlayed = 0;
+            const dj = await getDataJson();
+            if (dj && dj.players) {
+              const pData = dj.players.find(p => p.id === m.player_id);
+              gamesPlayed = Number(pData?.seasons?.[ev.season]?.gp || 0);
+            }
+            // Games on published scoresheets only (data.json season
+            // stats, in games) -- same rule as the finance page.
+
+            const priceSub = Number(pricing?.price_sub_player ?? 5);
+            totalDue = gamesPlayed * priceSub;
+          }
+        }
+
+        const amountPaid = Number(duesRow?.amount_paid || 0);
+        const balance = totalDue - amountPaid;
+        if (balance > 0) {
+          payload.duesReminder = { balance, phone };
+        }
+      }
+
+      if (playerTeam) {
+        const matches = await getTeamFixtures(env, ev, playerTeam, loadSiteData);
+        payload.fixtureText = formatFixtureText(matches, playerTeam, c.is_goalie === 1);
+        payload.fixtureTextEn = formatFixtureText(matches, playerTeam, c.is_goalie === 1, 'en');
+        if (m.kind === 'invite' || m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
+          const salt = await teamSalt(env.DB, ev.season, playerTeam);
+          const tt = await hmac(env.RSVP_SECRET, teamMsg(ev.season, playerTeam, salt));
+          payload.teamLink = `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${playerTeam}&t=${tt}&p=${m.player_id}`;
+          payload.websiteTeamLink = `${leagueCfg.siteUrl}/#/team/${encodeURIComponent(ev.season)}/${encodeURIComponent(playerTeam)}`;
+
+          if (m.kind === 'gameday' || m.kind === 'friday_board') {
+            payload.teamMessages = await getTeamMessages(env.DB, m.event_id, playerTeam, 5);
+          } else if (m.kind === 'gameday_morning') {
+            const st = eventStart(ev);
+            const cutoff24 = st ? new Date(st.getTime() - 24 * 3600000).toISOString() : new Date(Date.now() - 24 * 3600000).toISOString();
+            payload.teamMessages = await getTeamMessages(env.DB, m.event_id, playerTeam, 10, cutoff24);
+          }
+        }
+      }
+
+      if (m.kind === 'invite') {
+        const wKey = ev.week;
+        const cacheKey = `${ev.season || ''}:${wKey}`;
+        if (!highlightsCache.has(cacheKey)) {
+          highlightsCache.set(cacheKey, await getWeeklyHighlights(env, wKey, ev.season));
+        }
+        payload.highlights = highlightsCache.get(cacheKey);
+
+        const leagueMsgRow = await env.DB.prepare(
+          "SELECT value FROM settings WHERE key = ?"
+        ).bind(`league_message:${ev.id}`).first();
+        if (leagueMsgRow && leagueMsgRow.value) {
+          payload.leagueMessage = leagueMsgRow.value;
+        }
+      }
+    }
+    if (m.kind === 'sub_call') {
+      const at = await hmac(env.RSVP_SECRET,
+        `a:${m.event_id}:${m.player_id}:${payload.need}:${c.token_salt}`);
+      const q = `e=${encodeURIComponent(m.event_id)}&p=${m.player_id}&n=${payload.need}&t=${at}`;
+      payload.yes = `${base}/avail?${q}&a=yes`;
+      payload.no  = `${base}/avail?${q}&a=no`;
+    }
+    if (m.kind === 'team_short') {
+      const salt = await teamSalt(env.DB, ev.season, m.team);
+      const tt = await hmac(env.RSVP_SECRET, teamMsg(ev.season, m.team, salt));
+      payload.teamLink =
+        `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${m.team}&t=${tt}&p=${m.player_id}`;
+    }
+  }
+
+  // Invite limit (sub-call rework, Part 4), enforced here at send time
+  // so no trigger -- a cancellation, a shortfall, a late-added sub, a
+  // reminder -- can ever deliver more: at most SUB_INVITES_PER_EVENT
+  // automatic invites per sub per event (the first invite and one
+  // follow-up), plus at most ONE manual extra an admin sends on
+  // purpose (payload.manual_extra, sendExtraSubInvite).
+  if (m.kind === 'sub_call' && m.player_id) {
+    const prior = await env.DB.prepare(
+      `SELECT SUM(CASE WHEN json_extract(payload, '$.manual_extra') = 1 THEN 0 ELSE 1 END) AS auto,
+              SUM(CASE WHEN json_extract(payload, '$.manual_extra') = 1 THEN 1 ELSE 0 END) AS extra
+         FROM outbox WHERE event_id = ? AND player_id = ? AND kind = 'sub_call' AND sent_at IS NOT NULL`
+    ).bind(m.event_id, m.player_id).first();
+    const limitReason = payload.manual_extra
+      ? ((prior && prior.extra > 0) ? 'manual extra invite already sent for this event' : null)
+      : ((prior && prior.auto >= SUB_INVITES_PER_EVENT) ? `invite limit reached (${SUB_INVITES_PER_EVENT} per sub per event)` : null);
+    if (limitReason) { const d = drop(limitReason); if (d) return d; }
+  }
+  if (m.kind === 'sub_call' && hoursOut(ev) < CUTOFF_HOURS) {
+    const d = drop('too close to game time'); if (d) return d;
+  }
+  const msg = body(m.kind, { ev, name, team: playerTeam || m.team, link, payload, leagueCfg });
+  if (!msg) throw new Error('unknown kind ' + m.kind);
+  return { action: 'send', to, msg, leagueCfg, ev, notes };
+}
+
 async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = null, filterLeagueId = null, budget = null) {
   budget = budget || createSendBudget();
   const batch = Math.min(limit, budget.remaining);
@@ -11076,22 +11385,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
     }
     return daily;
   };
-  let siteDataPromise = null;
-  const loadSiteData = () => (siteDataPromise ||= fetchSiteDataJson(env).catch(() => null));
-  const highlightsCache = new Map();
-  const pricingCache = new Map();
-  let dataJsonCache = null;
-  const getDataJson = async () => {
-    if (dataJsonCache !== null) return dataJsonCache;
-    if (!env.SHEETS_KV) return null;
-    try {
-      const raw = await env.SHEETS_KV.get('data_json');
-      dataJsonCache = raw ? JSON.parse(raw) : null;
-    } catch (_) {
-      dataJsonCache = null;
-    }
-    return dataJsonCache;
-  };
+  const rctx = createOutboxRenderContext(env);
   // Quiet hours at SEND time too, in the row's league's local time: a row
   // laid out before a settings change, a retry, or anything else that
   // comes due inside the window waits for its end (quiet_exempt rows --
@@ -11126,239 +11420,17 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
         sent++;
         continue;
       }
-      let ev = await getEvent(env.DB, m.event_id);
-      if (!ev && (m.kind === 'season_recap' || m.kind === 'season_recap_prompt')) {
-        ev = {
-          id: m.event_id,
-          season: payload.season || 'Fall 2026',
-          week: 14,
-          date: 'Playoffs',
-          state: 'locked'
-        };
-      } else if (!ev) {
-        throw new Error('event gone');
-      }
-      // Part P: an outbox row tagged with a league other than SMBHL's
-      // resolves its send identity from THAT league's own data_json/
-      // branding (getLeagueSeasonConfig) instead of getDataJson(), which
-      // always reads the literal 'data_json' key — SMBHL's, unconditionally
-      // — and so is never correct for any other league's mail. Every
-      // existing SMBHL outbox row (m.league_id === SMBHL_LEAGUE_ID, the
-      // column's own DEFAULT) takes the exact same path as before this
-      // change, byte for byte.
-      const seasonCfg = (m.league_id && m.league_id !== SMBHL_LEAGUE_ID)
-        ? await getLeagueSeasonConfig(env, m.league_id, ev.season)
-        : getSeasonConfig(await getDataJson(), ev.season);
-      const leagueCfg = getLeagueConfig(seasonCfg);
-      if ((m.kind === 'season_recap' || m.kind === 'season_recap_prompt') && !tracksStats(seasonCfg)) {
-        await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
-          .bind('season does not track stats (tracksStats: false)', m.id).run();
+      const prep = await prepareOutboxMessage(env, m, rctx);
+      if (prep.action === 'cancel') {
+        await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?').bind(prep.reason, m.id).run();
         continue;
       }
-      if (m.kind === 'holdcall') {
+      if (prep.action === 'holdcall') {
         await runHoldCall(env, m);
         await recordSendSuccess(env.DB, m.id);
         sent++; continue;
       }
-
-      let to, name = '', link = '', playerTeam = m.team;
-      // Admin mail: any row with no player (the 'created' notice, the
-      // summary, the season-recap prompt -- and any future admin kind) goes
-      // to the admin. It used to be a list of two kinds, so 'created' fell
-      // through to the player lookup and failed as "contact gone".
-      if (m.kind === 'summary' || m.kind === 'season_recap_prompt' || !m.player_id) {
-        to = (payload && payload.to) || (env.ADMIN_EMAIL || ADMIN_EMAIL);
-        name = 'Roberto';
-        payload.base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
-      } else {
-        const c = await getContact(env.DB, m.player_id);
-        if (!c) throw new Error('contact gone');
-        if (!c.email) {
-          await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
-            .bind('no email on file', m.id).run();
-          continue;
-        }
-        if (c.opted_out) {
-          await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
-            .bind('opted out', m.id).run();
-          continue;
-        }
-        to = c.email; name = c.name.split(' ')[0];
-        const t = await hmac(env.RSVP_SECRET, playerMsg(m.event_id, m.player_id, c.token_salt));
-        const base = env.PUBLIC_URL || 'https://smbhl-rsvp.emailrobertosantana.workers.dev';
-        link = `${base}/rsvp?e=${encodeURIComponent(m.event_id)}&p=${m.player_id}&t=${t}`;
-
-        playerTeam = m.team;
-        if (m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
-          const currentRsvp = await env.DB.prepare(
-            'SELECT status, role, team FROM rsvp WHERE event_id=? AND player_id=?').bind(m.event_id, m.player_id).first();
-          const isEligible = currentRsvp && (
-            currentRsvp.status === 'in' || 
-            (currentRsvp.role === 'roster' && currentRsvp.status === 'pending')
-          );
-          if (!isEligible) {
-            await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
-              .bind('no longer confirmed in', m.id).run();
-            continue;
-          }
-          if (currentRsvp.team) playerTeam = currentRsvp.team;
-        }
-
-        if (m.kind === 'invite' || m.kind === 'chase' || m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
-          payload.yes = `${link}&v=in`;
-          payload.no  = `${link}&v=out`;
-
-          const rsvpRow = await env.DB.prepare(
-            'SELECT team, role FROM rsvp WHERE event_id=? AND player_id=?').bind(m.event_id, m.player_id).first();
-          if (rsvpRow && rsvpRow.team) playerTeam = rsvpRow.team;
-
-          const isSub = Boolean(payload.is_sub || (rsvpRow && rsvpRow.role === 'sub') || (c && c.is_sub === 1 && (!rsvpRow || rsvpRow.role !== 'roster')));
-
-          if (m.kind === 'invite' && isSub) {
-            payload.isSubInvite = true;
-            const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
-            const need = isGoalie ? 'goalie' : 'skater';
-            const at = await hmac(env.RSVP_SECRET, `a:${m.event_id}:${m.player_id}:${need}:${c.token_salt}`);
-            const q = `e=${encodeURIComponent(m.event_id)}&p=${m.player_id}&n=${need}&t=${at}`;
-            payload.yes = `${base}/avail?${q}&a=yes`;
-            payload.no  = `${base}/avail?${q}&a=no`;
-          }
-
-          let pricing = pricingCache.get(ev.season);
-          if (!pricing && ev.season) {
-            pricing = await env.DB.prepare('SELECT * FROM season_pricing WHERE season = ?').bind(ev.season).first();
-            if (pricing) pricingCache.set(ev.season, pricing);
-          }
-          const phone = (pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '');
-
-          if (m.kind === 'gameday') {
-            if (isSub) {
-              const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
-              const perGame = isGoalie ? Number(pricing?.price_sub_goalie || 0) : Number(pricing?.price_sub_player ?? 5);
-              // Tonight's fee: games per night from the season config (2 for
-              // SMBHL unless its season sets otherwise; 1 for any other league).
-              const totalFee = perGame * gamesPerNight(seasonCfg, m.league_id || SMBHL_LEAGUE_ID);
-              if (totalFee > 0) {
-                payload.subFee = { perGame, total: totalFee, phone };
-              }
-            }
-          }
-
-          if (m.kind === 'invite') {
-            const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
-            const duesRow = await env.DB.prepare(
-              'SELECT custom_due, amount_paid FROM player_dues WHERE season = ? AND player_id = ?'
-            ).bind(ev.season, m.player_id).first();
-
-            let totalDue;
-            if (duesRow && duesRow.custom_due !== null && duesRow.custom_due !== undefined) {
-              totalDue = Math.max(0, Number(duesRow.custom_due));
-            } else if (!isSub) {
-              totalDue = isGoalie ? Number(pricing?.price_goalie ?? 0) : Number(pricing?.price_player ?? 170);
-            } else {
-              // Sub player: sub goalies are free ($0). Sub skaters pay per game for completed/past events.
-              if (isGoalie) {
-                totalDue = Number(pricing?.price_sub_goalie ?? 0);
-              } else {
-                let gamesPlayed = 0;
-                const dj = await getDataJson();
-                if (dj && dj.players) {
-                  const pData = dj.players.find(p => p.id === m.player_id);
-                  gamesPlayed = Number(pData?.seasons?.[ev.season]?.gp || 0);
-                }
-                // Games on published scoresheets only (data.json season
-                // stats, in games) -- same rule as the finance page.
-
-                const priceSub = Number(pricing?.price_sub_player ?? 5);
-                totalDue = gamesPlayed * priceSub;
-              }
-            }
-
-            const amountPaid = Number(duesRow?.amount_paid || 0);
-            const balance = totalDue - amountPaid;
-            if (balance > 0) {
-              payload.duesReminder = { balance, phone };
-            }
-          }
-
-          if (playerTeam) {
-            const matches = await getTeamFixtures(env, ev, playerTeam, loadSiteData);
-            payload.fixtureText = formatFixtureText(matches, playerTeam, c.is_goalie === 1);
-            payload.fixtureTextEn = formatFixtureText(matches, playerTeam, c.is_goalie === 1, 'en');
-            if (m.kind === 'invite' || m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
-              const salt = await teamSalt(env.DB, ev.season, playerTeam);
-              const tt = await hmac(env.RSVP_SECRET, teamMsg(ev.season, playerTeam, salt));
-              payload.teamLink = `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${playerTeam}&t=${tt}&p=${m.player_id}`;
-              payload.websiteTeamLink = `${leagueCfg.siteUrl}/#/team/${encodeURIComponent(ev.season)}/${encodeURIComponent(playerTeam)}`;
-
-              if (m.kind === 'gameday' || m.kind === 'friday_board') {
-                payload.teamMessages = await getTeamMessages(env.DB, m.event_id, playerTeam, 5);
-              } else if (m.kind === 'gameday_morning') {
-                const st = eventStart(ev);
-                const cutoff24 = st ? new Date(st.getTime() - 24 * 3600000).toISOString() : new Date(Date.now() - 24 * 3600000).toISOString();
-                payload.teamMessages = await getTeamMessages(env.DB, m.event_id, playerTeam, 10, cutoff24);
-              }
-            }
-          }
-
-          if (m.kind === 'invite') {
-            const wKey = ev.week;
-            const cacheKey = `${ev.season || ''}:${wKey}`;
-            if (!highlightsCache.has(cacheKey)) {
-              highlightsCache.set(cacheKey, await getWeeklyHighlights(env, wKey, ev.season));
-            }
-            payload.highlights = highlightsCache.get(cacheKey);
-
-            const leagueMsgRow = await env.DB.prepare(
-              "SELECT value FROM settings WHERE key = ?"
-            ).bind(`league_message:${ev.id}`).first();
-            if (leagueMsgRow && leagueMsgRow.value) {
-              payload.leagueMessage = leagueMsgRow.value;
-            }
-          }
-        }
-        if (m.kind === 'sub_call') {
-          const at = await hmac(env.RSVP_SECRET,
-            `a:${m.event_id}:${m.player_id}:${payload.need}:${c.token_salt}`);
-          const q = `e=${encodeURIComponent(m.event_id)}&p=${m.player_id}&n=${payload.need}&t=${at}`;
-          payload.yes = `${base}/avail?${q}&a=yes`;
-          payload.no  = `${base}/avail?${q}&a=no`;
-        }
-        if (m.kind === 'team_short') {
-          const salt = await teamSalt(env.DB, ev.season, m.team);
-          const tt = await hmac(env.RSVP_SECRET, teamMsg(ev.season, m.team, salt));
-          payload.teamLink =
-            `${base}/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${m.team}&t=${tt}&p=${m.player_id}`;
-        }
-      }
-
-      // Invite limit (sub-call rework, Part 4), enforced here at send time
-      // so no trigger -- a cancellation, a shortfall, a late-added sub, a
-      // reminder -- can ever deliver more: at most SUB_INVITES_PER_EVENT
-      // automatic invites per sub per event (the first invite and one
-      // follow-up), plus at most ONE manual extra an admin sends on
-      // purpose (payload.manual_extra, sendExtraSubInvite).
-      if (m.kind === 'sub_call' && m.player_id) {
-        const prior = await env.DB.prepare(
-          `SELECT SUM(CASE WHEN json_extract(payload, '$.manual_extra') = 1 THEN 0 ELSE 1 END) AS auto,
-                  SUM(CASE WHEN json_extract(payload, '$.manual_extra') = 1 THEN 1 ELSE 0 END) AS extra
-             FROM outbox WHERE event_id = ? AND player_id = ? AND kind = 'sub_call' AND sent_at IS NOT NULL`
-        ).bind(m.event_id, m.player_id).first();
-        const limitReason = payload.manual_extra
-          ? ((prior && prior.extra > 0) ? 'manual extra invite already sent for this event' : null)
-          : ((prior && prior.auto >= SUB_INVITES_PER_EVENT) ? `invite limit reached (${SUB_INVITES_PER_EVENT} per sub per event)` : null);
-        if (limitReason) {
-          await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?').bind(limitReason, m.id).run();
-          continue;
-        }
-      }
-      if (m.kind === 'sub_call' && hoursOut(ev) < CUTOFF_HOURS) {
-        await env.DB.prepare('UPDATE outbox SET cancelled=1, error=? WHERE id=?')
-          .bind('too close to game time', m.id).run();
-        continue;
-      }
-      const msg = body(m.kind, { ev, name, team: playerTeam || m.team, link, payload, leagueCfg });
-      if (!msg) throw new Error('unknown kind ' + m.kind);
+      const { to, msg, leagueCfg } = prep;
       // Sub calls only get what today's budget has left after reserving
       // room for roster mail; otherwise they wait for tomorrow -- queued,
       // never dropped. Everything else always sends.
@@ -12122,6 +12194,17 @@ async function notifyEventCreated(env, made) {
   try {
     const ev = await getEvent(env.DB, made.id);
     if (!ev) return;
+    await enqueue(env, { kind: 'created', event_id: made.id,
+      dedup_key: `created:${made.id}`,
+      payload: { text: await buildCreatedNoticeText(env, ev, made.players) } });
+  } catch (err) {
+    console.error('Error in notifyEventCreated:', err);
+  }
+}
+
+// The admin's "week N created" notice text (team links to share).
+async function buildCreatedNoticeText(env, ev, players) {
+  {
     const cfg = await getSeasonConfigFromEnv(env, ev.season);
     const cfgTeams = getTeamNames(cfg);
     const links = [];
@@ -12131,14 +12214,9 @@ async function notifyEventCreated(env, made) {
       links.push(`${team} (${tFR(team, cfg)}):\n${env.PUBLIC_URL}` +
         `/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${team}&t=${tk}`);
     }
-    await enqueue(env, { kind: 'created', event_id: made.id,
-      dedup_key: `created:${made.id}`,
-      payload: { text:
-        `Semaine ${ev.week} — ${dateFR(ev.date)}${ev.start_time ? ' ' + ev.start_time : ''}` +
-        `${ev.venue ? ' — ' + ev.venue : ''}\n${made.players} joueurs au dossier.\n\n` +
-        `Liens d'équipe (à partager sur WhatsApp) :\n\n${links.join('\n\n')}\n` } });
-  } catch (err) {
-    console.error('Error in notifyEventCreated:', err);
+    return `Semaine ${ev.week} — ${dateFR(ev.date)}${ev.start_time ? ' ' + ev.start_time : ''}` +
+      `${ev.venue ? ' — ' + ev.venue : ''}\n${players} joueurs au dossier.\n\n` +
+      `Liens d'équipe (à partager sur WhatsApp) :\n\n${links.join('\n\n')}\n`;
   }
 }
 
@@ -17833,22 +17911,31 @@ function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, tea
 // dashboard's own co-admin list already reads) -- never just the
 // league's creator, since a co-admin invited later should hear about
 // this too.
-async function sendLateReversalAdminAlert(env, leagueId, ev, contact) {
-  const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
-  if (!leagueRow) return;
-  const admins = (await env.DB.prepare(
-    `SELECT u.email FROM league_admins la JOIN users u ON u.id = la.user_id WHERE la.league_id = ?`
-  ).bind(leagueId).all()).results || [];
-  if (!admins.length) return;
-
+// The late-reversal alert for one player and event, rendered and not sent
+// (the Comms preview shows it), and who it goes to.
+function renderLateReversalForLeague(env, leagueRow, ev, contact) {
   const languageMode = leagueRow.language_mode || 'both';
   const dayLabelFr = reminderDayLabel(ev.date, 'fr');
   const dayLabelEn = reminderDayLabel(ev.date, 'en');
   const dashboardLink = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
-  const mail = renderLateReversalAdminAlert({
+  return renderLateReversalAdminAlert({
     leagueName: leagueRow.name, leagueColor: leagueRow.color,
     playerName: contact.name, team: contact.preferred_team || '', dayLabelFr, dayLabelEn, ev, dashboardLink, languageMode
   });
+}
+async function leagueAdminEmails(env, leagueId) {
+  return (await env.DB.prepare(
+    `SELECT u.email FROM league_admins la JOIN users u ON u.id = la.user_id WHERE la.league_id = ?`
+  ).bind(leagueId).all()).results || [];
+}
+
+async function sendLateReversalAdminAlert(env, leagueId, ev, contact) {
+  const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) return;
+  const admins = await leagueAdminEmails(env, leagueId);
+  if (!admins.length) return;
+
+  const mail = renderLateReversalForLeague(env, leagueRow, ev, contact);
   for (const admin of admins) {
     try {
       await sendMail(env, admin.email, mail.subject, mail.text, mail.html);
@@ -17990,11 +18077,7 @@ async function maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, 
   // outbox now owns delivery, including retries, so the log's "already
   // handled" gate can no longer strand a failed send.
   try {
-    const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
-    const dayLabel = { fr: reminderDayLabel(ev.date, 'fr'), en: reminderDayLabel(ev.date, 'en') };
-    const firstName = (contact.name || '').split(' ')[0] || contact.name;
-    const { optOutLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
-    const mail = renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team, optOutLink, forcedLang });
+    const mail = await renderLeagueReminderForContact(env, leagueRow, ev, contact, 'team_assigned', team);
     await enqueuePrerenderedMail(env, {
       kind: 'team_assigned', leagueId: leagueRow.id, eventId: ev.id, playerId, team,
       dedupKey: `team_assigned:${ev.id}:${playerId}`, to: contact.email, mail, identity: cfg.league
@@ -18047,8 +18130,21 @@ async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId =
 // 0, sent === 0), which used to be indistinguishable and, combined
 // with Bug 1's from-address rejection, made every league's reminders
 // silently fail while the admin saw a success-shaped message.
-async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false, drainNow = false, budget = null, quietHours = false } = {}) {
+// One league reminder email for one contact, rendered and NOT sent:
+// reminder_72h / reminder_24h ask; logistics_12h and team_assigned (the
+// same "you're confirmed" email once the team is known) inform. The
+// senders queue it; the Comms preview shows it.
+async function renderLeagueReminderForContact(env, leagueRow, ev, contact, kind, team = null) {
   const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
+  const dayLabel = { fr: reminderDayLabel(ev.date, 'fr'), en: reminderDayLabel(ev.date, 'en') };
+  const firstName = (contact.name || '').split(' ')[0] || contact.name;
+  const { inLink, outLink, optOutLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
+  return (kind === 'reminder_72h' || kind === 'reminder_24h')
+    ? renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang })
+    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team, optOutLink, forcedLang });
+}
+
+async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false, drainNow = false, budget = null, quietHours = false } = {}) {
   const recipients = kind === 'logistics_12h'
     ? await getConfirmedPlayers(env, leagueRow.id, ev.id)
     : await getNonResponders(env, leagueRow.id, ev.id, ev.season);
@@ -18071,12 +18167,7 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
   let failedToQueue = 0;
   for (const contact of recipients) {
     try {
-      const dayLabel = { fr: reminderDayLabel(ev.date, 'fr'), en: reminderDayLabel(ev.date, 'en') };
-      const firstName = (contact.name || '').split(' ')[0] || contact.name;
-      const { inLink, outLink, optOutLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
-      const mail = kind === 'logistics_12h'
-        ? renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: contact.rsvp_team, optOutLink, forcedLang })
-        : renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang });
+      const mail = await renderLeagueReminderForContact(env, leagueRow, ev, contact, kind, contact.rsvp_team);
       await enqueuePrerenderedMail(env, {
         kind, leagueId: leagueRow.id, eventId: ev.id, playerId: contact.player_id, team: contact.rsvp_team || null,
         dedupKey: `${writeLog ? 'lrem' : 'lrem-manual'}:${ev.id}:${kind}:${contact.player_id}`,
@@ -19040,7 +19131,7 @@ async function sheetData(env, url) {
 async function seasonRecapPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const showStatsTabs = await currentSeasonTracksStats(env);
-  return page('Bilan de fin de saison', `
+  return page('Bilan de fin de saison', `${EMAIL_PREVIEW_ASSETS}
   ${adminTabs('recap', isAuthed, showStatsTabs)}
   <h1 data-i18n="title">Bilan de fin de saison</h1>
   ${renderKeyGate(isAuthed)}
@@ -19127,6 +19218,7 @@ async function seasonRecapPage(env = null, isAuthed = false) {
         <button id="btnPreview" class="btn" style="background:var(--blue); padding:10px 18px; font-size:14px;" data-i18n="btnPreview">
           👁️ Prévisualiser courriel
         </button>
+        ${emailPreviewBtn('season_recap', { cls: 'btn', i18n: 'epRecapReal', text: '📧 Courriel tel qu’envoyé (brouillon enregistré)', fields: 'season=seasonSelect' })}
       </div>
       <button id="btnSendLeague" class="btn" style="background:var(--green); padding:10px 22px; font-size:15px; font-weight:700;" data-i18n="btnSendLeague">
         🚀 Confirmer et envoyer à toute la ligue
@@ -19202,6 +19294,7 @@ const I18N_RECAP = {
     btnResetAuto: "↺ Rétablir calcul automatique",
     btnSaveDraft: "💾 Sauvegarder brouillon",
     btnPreview: "👁️ Prévisualiser courriel",
+    epRecapReal: "📧 Courriel tel qu’envoyé (brouillon enregistré)",
     btnSendLeague: "🚀 Confirmer et envoyer à toute la ligue",
     savingDraft: "Sauvegarde...",
     draftSaved: "✅ Brouillon enregistré avec succès!",
@@ -19246,6 +19339,7 @@ const I18N_RECAP = {
     btnResetAuto: "↺ Reset to auto-calculated",
     btnSaveDraft: "💾 Save Draft",
     btnPreview: "👁️ Preview Email",
+    epRecapReal: "📧 Email as sent (saved draft)",
     btnSendLeague: "🚀 Confirm and Send to League",
     savingDraft: "Saving...",
     draftSaved: "✅ Draft saved successfully!",
@@ -21328,6 +21422,28 @@ SMBHL · smbhl.com`;
   }
 
   // Live launch:
+  const recipients = await pollRecipients(env, poll);
+
+  let sentCount = 0;
+  let deferredCount = 0;
+  let failedCount = 0;
+
+  for (const p of recipients) {
+    try {
+      const mail = await renderPollEmail(env, poll, p);
+      await sendMail(env, p.email, mail.subject, mail.text, mail.html);
+      sentCount++;
+    } catch (e) {
+      if (isMailDeferred(e)) deferredCount++; else failedCount++;
+    }
+  }
+
+  return finishPollSend(env, poll, recipients, sentCount, deferredCount, failedCount);
+}
+
+// Who a poll goes to: roster players, plus subs who played this season
+// when the poll allows subs.
+async function pollRecipients(env, poll) {
   const rosterPlayers = (await env.DB.prepare(
     `SELECT player_id, name, email, token_salt, preferred_team, role
        FROM contacts
@@ -21350,14 +21466,14 @@ SMBHL · smbhl.com`;
   for (const p of [...rosterPlayers, ...subPlayers]) {
     if (!map.has(p.player_id)) map.set(p.player_id, p);
   }
-  const recipients = [...map.values()];
+  return [...map.values()];
+}
 
-  let sentCount = 0;
-  let deferredCount = 0;
-  let failedCount = 0;
-
-  for (const p of recipients) {
-    try {
+// One player's poll email, rendered and not sent (the Comms preview shows it).
+async function renderPollEmail(env, poll, p) {
+  const base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+  {
+    {
       const tok = await hmac(env.RSVP_SECRET, pollMsg(poll.id, p.player_id, p.token_salt));
       const voteUrl = `${base}/poll?id=${poll.id}&p=${encodeURIComponent(p.player_id)}&t=${tok}`;
 
@@ -21392,14 +21508,12 @@ SMBHL · smbhl.com`;
            Ce lien de vote t'est réservé. Tu peux modifier ton choix en tout temps tant que le scrutin est ouvert.
          </p>`
       );
-
-      await sendMail(env, p.email, subj, text, html);
-      sentCount++;
-    } catch (e) {
-      if (isMailDeferred(e)) deferredCount++; else failedCount++;
+      return { subject: subj, text, html };
     }
   }
+}
 
+async function finishPollSend(env, poll, recipients, sentCount, deferredCount, failedCount) {
   const now = new Date().toISOString();
   await env.DB.prepare(`UPDATE polls SET last_sent_at = ?, sent_count = sent_count + ? WHERE id = ?`)
     .bind(now, sentCount, poll.id).run();
@@ -21418,7 +21532,7 @@ SMBHL · smbhl.com`;
 async function pollsPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const showStatsTabs = await currentSeasonTracksStats(env);
-  return page('Sondages', `
+  return page('Sondages', `${EMAIL_PREVIEW_ASSETS}
   ${adminTabs('polls', isAuthed, showStatsTabs)}
   <h1 data-i18n="title">Sondages & Trophées</h1>
   ${renderKeyGate(isAuthed)}
@@ -21531,6 +21645,7 @@ const I18N_POLLS = {
     sendPanelTitle: "✉️ Lancement officiel du sondage par courriel",
     sendPanelDesc: "Destinataires éligibles pour <b>{season}</b> : <b>{total} joueurs</b> ({roster} réguliers + {subs} substituts actifs). Chaque joueur recevra une invitation avec son bouton de vote sécurisé en 1 clic.",
     btnSendTest: "Envoyer un test à l'admin 🧪",
+    btnPreviewEmail: "👁 Aperçu du courriel",
     btnSendAll: "🚀 Lancer & envoyer à tous ({total})",
     btnCancelSend: "Annuler",
     sendingTest: "Envoi du test à l'admin...",
@@ -21593,6 +21708,7 @@ const I18N_POLLS = {
     sendPanelTitle: "✉️ Official Poll Email Launch",
     sendPanelDesc: "Eligible recipients for <b>{season}</b>: <b>{total} players</b> ({roster} regular + {subs} active subs). Each player receives an invitation with their secure 1-click voting button.",
     btnSendTest: "Send test to admin 🧪",
+    btnPreviewEmail: "👁 Email preview",
     btnSendAll: "🚀 Launch & send to all ({total})",
     btnCancelSend: "Cancel",
     sendingTest: "Sending test to admin...",
@@ -21722,6 +21838,7 @@ function renderPolls(d) {
         '<div style="font-weight:700;color:#1e40af;margin-bottom:4px;font-size:14px;">' + esc(t('sendPanelTitle')) + '</div>' +
         '<p style="font-size:13px;color:#1e293b;margin:0 0 10px;line-height:1.4;">' + panelDesc + '</p>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">' +
+          '<button class="mini" data-email-preview="poll" data-preview-poll="' + p.id + '" style="background:#fff;color:var(--ink);border:1px solid var(--rule2);">' + esc(t('btnPreviewEmail')) + '</button>' +
           '<button class="mini" data-do-test="' + p.id + '" style="background:#fff;color:var(--ink);border:1px solid var(--rule2);">' + esc(t('btnSendTest')) + '</button>' +
           '<button class="mini" data-do-send="' + p.id + '" style="background:#2563eb;color:#fff;border-color:#1d4ed8;font-weight:700;">' + esc(t('btnSendAll').replace('{total}', recTotal)) + '</button>' +
           '<button class="mini" data-cancel-send="' + p.id + '" style="background:transparent;border:none;color:var(--soft);cursor:pointer;">' + esc(t('btnCancelSend')) + '</button>' +
@@ -21995,7 +22112,7 @@ async function seasonPage(env = null, isAuthed = false) {
 async function schedulePage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const showStatsTabs = await currentSeasonTracksStats(env);
-  return page('Calendrier', `
+  return page('Calendrier', `${EMAIL_PREVIEW_ASSETS}
   <style>
     .wrap { max-width: 1100px !important; }
     .sch-top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
@@ -22236,6 +22353,7 @@ async function schedulePage(env = null, isAuthed = false) {
       btnOpenState: "Ouvrir",
       btnReopenState: "Rouvrir",
       btnNotifyCancelled: "✉️ Avis joueurs",
+      btnPreviewEmail: "👁 Aperçu de l'avis",
       btnImportArchive: "📥 Importer (Archive)",
       btnImportActive: "🚀 Importer & Activer",
       btnImporting: "Importation...",
@@ -22310,6 +22428,7 @@ async function schedulePage(env = null, isAuthed = false) {
       btnOpenState: "Open",
       btnReopenState: "Reopen",
       btnNotifyCancelled: "✉️ Notify Players",
+      btnPreviewEmail: "👁 Preview the notice",
       btnImportArchive: "📥 Import (Archive)",
       btnImportActive: "🚀 Import & Activate",
       btnImporting: "Importing...",
@@ -22454,6 +22573,7 @@ async function schedulePage(env = null, isAuthed = false) {
           quickBtns += '<button class="act-btn danger" data-set-state="' + esc(e.id) + '" data-st="cancelled">' + esc(t('btnCancelState')) + '</button>';
         } else if (e.state === 'cancelled') {
           quickBtns += '<button class="act-btn success" data-set-state="' + esc(e.id) + '" data-st="open">' + esc(t('btnReopenState')) + '</button>';
+          quickBtns += '<button class="act-btn" data-email-preview="cancellation" data-preview-event="' + esc(e.id) + '">' + esc(t('btnPreviewEmail')) + '</button>';
           quickBtns += '<button class="act-btn danger" data-notify-cancelled="' + esc(e.id) + '">' + esc(t('btnNotifyCancelled')) + '</button>';
         }
 
@@ -23568,50 +23688,10 @@ async function handleEmailsBroadcast(req, env) {
     return new Response(JSON.stringify({ error: 'Sujet et message requis' }), { status: 400 });
   }
 
-  let recipients = [];
-  if (target === 'all') {
-    recipients = (await env.DB.prepare(
-      `SELECT player_id, name, email FROM contacts WHERE email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
-    ).all()).results || [];
-  } else if (target === 'roster') {
-    recipients = (await env.DB.prepare(
-      `SELECT player_id, name, email FROM contacts WHERE role = 'roster' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
-    ).all()).results || [];
-  } else if (target === 'subs') {
-    recipients = (await env.DB.prepare(
-      `SELECT player_id, name, email FROM contacts WHERE role LIKE 'sub_%' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
-    ).all()).results || [];
-  } else if (isTeamValid(await getSeasonConfigFromEnv(env), target)) {
-    recipients = (await env.DB.prepare(
-      `SELECT player_id, name, email FROM contacts WHERE preferred_team = ? AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
-    ).bind(target).all()).results || [];
-  } else if (target === 'pending' || target === 'in') {
-    if (!event_id) {
-      return new Response(JSON.stringify({ error: 'event_id requis pour cibler selon le statut' }), { status: 400 });
-    }
-    recipients = (await env.DB.prepare(`
-      SELECT DISTINCT c.player_id, c.name, c.email
-        FROM rsvp r
-        JOIN contacts c ON c.player_id = r.player_id
-       WHERE r.event_id = ? AND r.status = ?
-         AND c.email IS NOT NULL AND c.email != '' AND c.opted_out = 0
-       ORDER BY c.name
-    `).bind(event_id, target).all()).results || [];
-  } else {
-    return new Response(JSON.stringify({ error: 'Cible de destinataires invalide' }), { status: 400 });
-  }
-
-  const plain = `${msg}\n\n—\nSMBHL · Ligue de Dek Hockey / Ball Hockey League\nscores@smbhl.com · https://smbhl.com`;
-  const formattedHtmlMsg = msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
-  const html = emailWrap(
-    subj,
-    `<div style="font-size:15px;color:#1e293b;line-height:1.6;margin-bottom:20px;">
-       ${formattedHtmlMsg}
-     </div>
-     <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding-top:14px;margin-top:20px;font-size:12px;color:#64748b;">
-       Ce message a été envoyé par l'administration de la SMBHL. / Sent by SMBHL league administration.
-     </div>`
-  );
+  const picked = await smbhlBroadcastRecipients(env, target, event_id);
+  if (picked.error) return new Response(JSON.stringify({ error: picked.error }), { status: 400 });
+  const recipients = picked.recipients;
+  const { text: plain, html } = renderSmbhlBroadcastEmail(subj, msg);
 
   if (test_only) {
     const adminEmail = env.ADMIN_EMAIL || ADMIN_EMAIL;
@@ -23638,10 +23718,73 @@ async function handleEmailsBroadcast(req, env) {
   return Response.json({ ok: true, sent_count: sent, failed_count: failed, deferred_count: deferred, total: recipients.length });
 }
 
+// Who an SMBHL broadcast goes to. { recipients } or { error }.
+async function smbhlBroadcastRecipients(env, target, event_id) {
+  let recipients = [];
+  if (target === 'all') {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).all()).results || [];
+  } else if (target === 'roster') {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE role = 'roster' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).all()).results || [];
+  } else if (target === 'subs') {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE role LIKE 'sub_%' AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).all()).results || [];
+  } else if (isTeamValid(await getSeasonConfigFromEnv(env), target)) {
+    recipients = (await env.DB.prepare(
+      `SELECT player_id, name, email FROM contacts WHERE preferred_team = ? AND email IS NOT NULL AND email != '' AND opted_out = 0 ORDER BY name`
+    ).bind(target).all()).results || [];
+  } else if (target === 'pending' || target === 'in') {
+    if (!event_id) {
+      return { error: 'event_id requis pour cibler selon le statut' };
+    }
+    recipients = (await env.DB.prepare(`
+      SELECT DISTINCT c.player_id, c.name, c.email
+        FROM rsvp r
+        JOIN contacts c ON c.player_id = r.player_id
+       WHERE r.event_id = ? AND r.status = ?
+         AND c.email IS NOT NULL AND c.email != '' AND c.opted_out = 0
+       ORDER BY c.name
+    `).bind(event_id, target).all()).results || [];
+  } else {
+    return { error: 'Cible de destinataires invalide' };
+  }
+  return { recipients };
+}
+
+// An SMBHL broadcast's text and HTML (the subject is the admin's own).
+function renderSmbhlBroadcastEmail(subj, msg) {
+  const plain = `${msg}\n\n—\nSMBHL · Ligue de Dek Hockey / Ball Hockey League\nscores@smbhl.com · https://smbhl.com`;
+  const formattedHtmlMsg = msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+  const html = emailWrap(
+    subj,
+    `<div style="font-size:15px;color:#1e293b;line-height:1.6;margin-bottom:20px;">
+       ${formattedHtmlMsg}
+     </div>
+     <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding-top:14px;margin-top:20px;font-size:12px;color:#64748b;">
+       Ce message a été envoyé par l'administration de la SMBHL. / Sent by SMBHL league administration.
+     </div>`
+  );
+  return { subject: subj, text: plain, html };
+}
+
+// A preview button (src/email_preview.js): shows the email as it would go
+// out now, sending nothing. Its label is the page's own i18n key.
+function emailPreviewBtn(kind, { i18n = 'btnPreview', text = '👁 Aperçu', endpoint = null, params = null, fields = null, cls = 'ep-btn' } = {}) {
+  return `<button type="button" class="${cls}" data-email-preview="${esc(kind)}"` +
+    (endpoint ? ` data-preview-endpoint="${esc(endpoint)}"` : '') +
+    (params ? ` data-preview-params="${esc(JSON.stringify(params))}"` : '') +
+    (fields ? ` data-preview-fields="${esc(fields)}"` : '') +
+    ` data-i18n="${esc(i18n)}">${esc(text)}</button>`;
+}
+
 async function emailsPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
   const showStatsTabs = await currentSeasonTracksStats(env);
-  return page('Comms', `
+  return page('Comms', `${EMAIL_PREVIEW_ASSETS}
   <style>
     .wrap { max-width: 1150px !important; }
     .email-top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
@@ -23738,6 +23881,7 @@ async function emailsPage(env = null, isAuthed = false) {
           <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <label style="margin:0;" data-i18n="card1Title">🚀 1. Invitation initiale</label>
+              <span style="display:flex; gap:4px; flex-wrap:wrap;">${emailPreviewBtn('invite', { i18n: 'btnPreview', text: '👁 Aperçu' })}${emailPreviewBtn('invite_sub', { i18n: 'epInviteSub', text: '👁 Substituts' })}</span>
             </div>
             <div style="font-size:12px; margin-bottom:8px;">
               <span class="badge badge-invite" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
@@ -23761,6 +23905,7 @@ async function emailsPage(env = null, isAuthed = false) {
           <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <label style="margin:0;" data-i18n="card2Title">⏳ 2. Rappel 72h (Indécis)</label>
+              <span style="display:flex; gap:4px; flex-wrap:wrap;">${emailPreviewBtn('chase_72', { i18n: 'btnPreview', text: '👁 Aperçu' })}</span>
             </div>
             <div style="font-size:12px; margin-bottom:8px;">
               <span class="badge badge-reminder" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
@@ -23784,6 +23929,7 @@ async function emailsPage(env = null, isAuthed = false) {
           <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <label style="margin:0;" data-i18n="card3Title">⚡ 3. Rappel 49h (Dernière chance)</label>
+              <span style="display:flex; gap:4px; flex-wrap:wrap;">${emailPreviewBtn('chase_49', { i18n: 'btnPreview', text: '👁 Aperçu' })}</span>
             </div>
             <div style="font-size:12px; margin-bottom:8px;">
               <span class="badge badge-reminder" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
@@ -23802,6 +23948,7 @@ async function emailsPage(env = null, isAuthed = false) {
           <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <label style="margin:0;" data-i18n="card4Title">👥 4. Alerte effectif incomplet</label>
+              <span style="display:flex; gap:4px; flex-wrap:wrap;">${emailPreviewBtn('team_short', { i18n: 'btnPreview', text: '👁 Aperçu' })}</span>
             </div>
             <div style="font-size:12px; margin-bottom:8px;">
               <span class="badge badge-alert" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
@@ -23820,6 +23967,7 @@ async function emailsPage(env = null, isAuthed = false) {
           <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <label style="margin:0;" data-i18n="card5Title">🧤 5. Convocations substituts (Pool)</label>
+              <span style="display:flex; gap:4px; flex-wrap:wrap;">${emailPreviewBtn('sub_call', { i18n: 'btnPreview', text: '👁 Aperçu' })}${emailPreviewBtn('sub_call_reminder', { i18n: 'epSubReminder', text: '👁 Rappel' })}</span>
             </div>
             <div style="font-size:12px; margin-bottom:8px;">
               <span class="badge badge-pool" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
@@ -23838,6 +23986,7 @@ async function emailsPage(env = null, isAuthed = false) {
           <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <label style="margin:0;" data-i18n="card6Title">🚨 6. Veille de match (Rappel 24h)</label>
+              <span style="display:flex; gap:4px; flex-wrap:wrap;">${emailPreviewBtn('chase_24', { i18n: 'epChase24', text: '👁 Rappel 24 h' })}${emailPreviewBtn('gameday', { i18n: 'epGameday', text: '👁 Veille' })}${emailPreviewBtn('gameday_sub', { i18n: 'epGamedaySub', text: '👁 Veille (substitut)' })}</span>
             </div>
             <div style="font-size:12px; margin-bottom:8px;">
               <span class="badge badge-alert" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
@@ -23861,6 +24010,7 @@ async function emailsPage(env = null, isAuthed = false) {
           <div class="form-group" style="background:#f8fafc; padding:12px; border-radius:4px; border:1px solid var(--rule);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <label style="margin:0;" data-i18n="card7Title">🌅 7. Matin du match</label>
+              <span style="display:flex; gap:4px; flex-wrap:wrap;">${emailPreviewBtn('gameday_morning', { i18n: 'btnPreview', text: '👁 Aperçu' })}</span>
             </div>
             <div style="font-size:12px; margin-bottom:8px;">
               <span class="badge badge-morning" style="font-weight:700;" data-i18n="badgeRecipients">🎯 Destinataires</span>
@@ -23905,6 +24055,20 @@ async function emailsPage(env = null, isAuthed = false) {
           <span id="cadence-msg" style="font-size:14px;"></span>
         </div>
       </form>
+
+      <div style="margin-top:20px; padding:12px; background:#f8fafc; border:1px solid var(--rule); border-radius:4px;">
+        <div style="font-weight:700; margin-bottom:4px;" data-i18n="epOtherTitle">📬 Autres courriels automatiques</div>
+        <p style="font-size:12px; color:var(--soft); margin:0 0 8px;" data-i18n="epOtherDesc">Sans réglage de cadence. L'aperçu utilise les vraies données du prochain match; rien n'est envoyé.</p>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          ${emailPreviewBtn('friday_board', { i18n: 'epFriday', text: '👁 Tableau du vendredi' })}
+          ${emailPreviewBtn('notice', { i18n: 'epNotice', text: '👁 Statut modifié' })}
+          ${emailPreviewBtn('released', { i18n: 'epReleased', text: '👁 Substitut libéré' })}
+          ${emailPreviewBtn('summary', { i18n: 'epSummary', text: '👁 Sommaire (admin)' })}
+          ${emailPreviewBtn('created', { i18n: 'epCreated', text: '👁 Semaine créée (admin)' })}
+          ${emailPreviewBtn('goalie_cancel', { i18n: 'epGoalie', text: '👁 Alerte gardien (admin)' })}
+          ${emailPreviewBtn('season_recap_prompt', { i18n: 'epRecapPrompt', text: '👁 Rappel du bilan (admin)' })}
+        </div>
+      </div>
 
       <!-- Sub-card: League Message for Weekly Invite -->
       <div style="margin-top:24px; padding-top:20px; border-top:1px solid var(--rule);">
@@ -24043,6 +24207,7 @@ async function emailsPage(env = null, isAuthed = false) {
         <div id="bc-feedback" style="font-size:14px; margin-bottom:14px; display:none;"></div>
 
         <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          ${emailPreviewBtn('broadcast', { cls: 'act-btn', fields: 'subject=bc-subject,message=bc-msg,target=bc-target,event_id=bc-event' })}
           <button type="button" class="act-btn" id="btn-bc-test" style="border-color:var(--blue); color:var(--blue); padding:8px 16px; font-size:14px;" data-i18n="btnBcTest">🧪 Tester (Aperçu admin)</button>
           <button type="submit" class="act-btn primary" id="btn-bc-send" style="padding:8px 20px; font-size:14px;" data-i18n="btnBcSend">🚀 Diffuser aux destinataires</button>
         </div>
@@ -24119,6 +24284,13 @@ async function emailsPage(env = null, isAuthed = false) {
       lblQuietEnd: "h00",
       quietInfoHtml: '<b style="color:var(--ink);">ℹ️ À quoi sert cette option ?</b><br>• <b>Décoché (Inactif) :</b> Les courriels et rappels partent à toute heure (24h/24) dès qu’ils arrivent à échéance.<br>• <b>Coché (Actif) :</b> Les courriels dus la nuit sont mis en pause et expédiés le matin dès l’heure de réveil.',
       btnSaveCadence: "💾 Enregistrer la cadence",
+      btnPreview: "👁 Aperçu", epInviteSub: "👁 Substituts", epSubReminder: "👁 Rappel", epChase24: "👁 Rappel 24 h",
+      epGameday: "👁 Veille", epGamedaySub: "👁 Veille (substitut)",
+      epOtherTitle: "📬 Autres courriels automatiques",
+      epOtherDesc: "Sans réglage de cadence. L'aperçu utilise les vraies données du prochain match; rien n'est envoyé.",
+      epFriday: "👁 Tableau du vendredi", epNotice: "👁 Statut modifié", epReleased: "👁 Substitut libéré",
+      epSummary: "👁 Sommaire (admin)", epCreated: "👁 Semaine créée (admin)", epGoalie: "👁 Alerte gardien (admin)",
+      epRecapPrompt: "👁 Rappel du bilan (admin)",
       lmTitle: "📢 Message de la ligue (Invitation initiale)",
       lmSubtitle: "Ajoutez une annonce spéciale ou note pour la semaine. Elle apparaîtra en haut du courriel d'invitation initiale pour tous les réguliers et substituts invités.",
       lblLmEvent: "Semaine / Match ciblé :",
@@ -24224,6 +24396,13 @@ async function emailsPage(env = null, isAuthed = false) {
       lblQuietEnd: ":00",
       quietInfoHtml: '<b style="color:var(--ink);">ℹ️ What does this setting do?</b><br>• <b>Unchecked (Disabled):</b> Emails and reminders fire around the clock (24/7) as soon as due.<br>• <b>Checked (Active):</b> Emails due overnight are held in queue and dispatched in the morning upon wake-up time.',
       btnSaveCadence: "💾 Save Cadence Settings",
+      btnPreview: "👁 Preview", epInviteSub: "👁 Subs", epSubReminder: "👁 Reminder", epChase24: "👁 24 h reminder",
+      epGameday: "👁 Game day", epGamedaySub: "👁 Game day (sub)",
+      epOtherTitle: "📬 Other automatic emails",
+      epOtherDesc: "No cadence setting. The preview uses the next game's real data; nothing is sent.",
+      epFriday: "👁 Friday board", epNotice: "👁 Status changed", epReleased: "👁 Sub released",
+      epSummary: "👁 Summary (admin)", epCreated: "👁 Week created (admin)", epGoalie: "👁 Goalie alert (admin)",
+      epRecapPrompt: "👁 Recap prompt (admin)",
       lmTitle: "📢 Message from the League (Initial Invitation)",
       lmSubtitle: "Add a special announcement or note for the week. It will appear at the top of the initial invite email for all regular players and invited substitutes.",
       lblLmEvent: "Target Week / Game:",
@@ -26710,6 +26889,13 @@ installReminderHost({
   enqueue, teamState, remindSubs, callSubs, getTeamMessages, callSubsForShortfall, ensureNextEvent, getEvent,
   drain, deadMan, ADMIN_EMAIL, sendLeagueReminderKind, getLeagueSeasonConfig, randomAssignEventTeams, dateFR
 });
+installEmailPreviewHost({
+  prepareOutboxMessage, createOutboxRenderContext, dateFR, teamState, ADMIN_EMAIL, computeSeasonAwards, formatEventDate,
+  renderCancellationEmail, cancellationRecipients, renderGoalieCancelEmail, smbhlBroadcastRecipients, renderSmbhlBroadcastEmail,
+  pollRecipients, renderPollEmail, buildCreatedNoticeText,
+  renderLeagueReminderForContact, getNonResponders, getConfirmedPlayers, renderLateReversalForLeague, leagueAdminEmails,
+  leagueBroadcastRecipients, renderLeagueBroadcastEmail
+});
 
 export default {
   // Both products' reminder passes go through the one shared module
@@ -27034,6 +27220,9 @@ async function handleFetch(req, env, ctx) {
       // Live-testing task (batch 4), Part 4: broadcast/compose, shared.
       if (url.pathname === '/league/comms/broadcast' && req.method === 'POST')
         return await handleLeagueCommsBroadcast(req, env, url);
+      // Email preview: what an email would look like now, sending nothing.
+      if (url.pathname === '/league/comms/preview' && req.method === 'POST')
+        return await handleLeagueCommsPreview(req, env, url);
 
       // Live-testing task (batch 2), Part 12: hard delete (privacy/Law
       // 25). Status is read-only (for the settings page's own gate UI --
@@ -27450,6 +27639,8 @@ async function handleFetch(req, env, ctx) {
           return await handleEmailsCancelOutbox(req, env);
         if (sub === '/broadcast' && req.method === 'POST')
           return await handleEmailsBroadcast(req, env);
+        if (sub === '/preview' && req.method === 'POST')
+          return await handleEmailsPreview(req, env);
         if (sub === '/league-message' && req.method === 'GET')
           return await handleLeagueMessageGet(req, env, url);
         if (sub === '/league-message' && req.method === 'POST')

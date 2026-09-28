@@ -42,7 +42,10 @@ function realSchemaFiles() {
   return [base, gap021.sql, ...migrations.filter(m => m.num !== 21).map(m => m.sql)];
 }
 
-export async function startPublicPageWorker() {
+// extraVars: more worker vars for a test that needs them (the every-page
+// script test sets ADMIN_KEY and RSVP_SECRET; no RESEND_API_KEY is ever
+// set here, so nothing this harness runs can send an email).
+export async function startPublicPageWorker({ extraVars = {} } = {}) {
   // No network needed: skip Miniflare's download of a real Request.cf
   // object (the page never reads one).
   process.env.CLOUDFLARE_CF_FETCH_ENABLED = 'false';
@@ -55,12 +58,14 @@ export async function startPublicPageWorker() {
       name: 'nl-rendered-public-page', main: 'src/index.js', compatibility_date: '2026-09-11',
       d1_databases: [{ binding: 'DB', database_name: 'rendered-test-db', database_id: 'rendered-test-db-local-only' }],
       kv_namespaces: [{ binding: 'SHEETS_KV', id: 'rendered-test-kv-local-only' }],
-      vars: { AUTH_SECRET: 'rendered-public-page-secret', PUBLIC_URL: 'http://localhost', LEAGUE_PRODUCT: 'true' }
+      vars: { AUTH_SECRET: 'rendered-public-page-secret', PUBLIC_URL: 'http://localhost', LEAGUE_PRODUCT: 'true', ...extraVars }
     } }]
   });
   const { url } = await server.listen();
   const baseUrl = url.toString().replace(/\/$/, '');
-  const db = (await server.getWorker().getEnv()).DB;
+  const workerEnv = await server.getWorker().getEnv();
+  const db = workerEnv.DB;
+  const kv = workerEnv.SHEETS_KV;
   for (const sql of realSchemaFiles()) {
     const stmts = splitStatements(sql);
     if (stmts.length) await db.batch(stmts.map(s => db.prepare(s)));
@@ -82,7 +87,7 @@ export async function startPublicPageWorker() {
     return { cookie, csrf: csrfC ? csrfC.split(';')[0].split('=')[1] : '' };
   }
   return {
-    baseUrl, db, api, signup,
+    baseUrl, db, kv, api, signup,
     async dispose() { await server.close(); }
   };
 }

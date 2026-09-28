@@ -39,6 +39,29 @@ function reminderHost() {
 }
 
 // ---------------------------------------------------------------------
+// The admin's weekly summary (24 h before the game): each team's count and
+// the sub waitlist. Its own function so the Comms preview shows exactly it.
+export async function buildSummaryText(env, ev) {
+  const { teamState, dateFR } = reminderHost();
+  const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+  const cfgTeams = getTeamNames(cfg);
+  const lines = [];
+  for (const team of cfgTeams) {
+    const st = await teamState(env.DB, ev.id, team, cfg);
+    lines.push(`${team}: ${st.skaters} joueurs, ${st.goalies} gardien(s)` +
+      (st.short ? '   <-- SHORT' : ''));
+  }
+  const wait = (await env.DB.prepare(
+    `SELECT c.name, a.need FROM availability a JOIN contacts c ON c.player_id=a.player_id
+      WHERE a.event_id=? AND a.status='yes'
+        AND a.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id=? AND player_id IS NOT NULL)
+      ORDER BY a.answered_at`).bind(ev.id, ev.id).all()).results || [];
+  return `Semaine ${ev.week} — ${dateFR(ev.date)}\n\n` + lines.join('\n') +
+    (wait.length ? `\n\nListe d'attente: ` +
+      wait.map(w => `${w.name} (${w.need === 'goalie' ? 'G' : 'J'})`).join(', ') : '');
+}
+
+// ---------------------------------------------------------------------
 // Time helper (moved from index.js, which imports it back).
 export const reached = (p, h, m = 0) => p.hour > h || (p.hour === h && p.minute >= m);
 
@@ -196,7 +219,7 @@ export async function getEmailSettings(db, leagueId = null) {
 }
 
 export async function runSchedule(env) {
-  const { enqueue, teamState, remindSubs, callSubs, getTeamMessages, callSubsForShortfall, ensureNextEvent, getEvent, drain, deadMan, ADMIN_EMAIL, dateFR } = reminderHost();
+  const { enqueue, teamState, remindSubs, callSubs, getTeamMessages, callSubsForShortfall, ensureNextEvent, getEvent, drain, deadMan, ADMIN_EMAIL } = reminderHost();
   const log = [];
   const now = new Date();
   const emailSettings = await getEmailSettings(env.DB);
@@ -374,24 +397,9 @@ export async function runSchedule(env) {
     });
 
     await fire('summary', cadenceStepDue(hrs, 24, 20, p), async () => {
-      const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
-      const cfgTeams = getTeamNames(cfg);
-      const lines = [];
-      for (const team of cfgTeams) {
-        const st = await teamState(env.DB, ev.id, team, cfg);
-        lines.push(`${team}: ${st.skaters} joueurs, ${st.goalies} gardien(s)` +
-          (st.short ? '   <-- SHORT' : ''));
-      }
-      const wait = (await env.DB.prepare(
-        `SELECT c.name, a.need FROM availability a JOIN contacts c ON c.player_id=a.player_id
-          WHERE a.event_id=? AND a.status='yes'
-            AND a.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id=? AND player_id IS NOT NULL)
-          ORDER BY a.answered_at`).bind(ev.id, ev.id).all()).results || [];
       await enqueue(env, { kind: 'summary', event_id: ev.id,
         dedup_key: `summary:${ev.id}`,
-        payload: { text: `Semaine ${ev.week} — ${dateFR(ev.date)}\n\n` + lines.join('\n') +
-          (wait.length ? `\n\nListe d'attente: ` +
-            wait.map(w => `${w.name} (${w.need === 'goalie' ? 'G' : 'J'})`).join(', ') : '') } });
+        payload: { text: await buildSummaryText(env, ev) } });
     });
 
     await fire('lock', hrs <= 0 && reached(p, 13), async () => {
