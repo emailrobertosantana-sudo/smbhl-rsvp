@@ -117,7 +117,9 @@ describe('Onboarding polish, B4: roster readiness respects the league\'s own rea
     await applyRealSchema(env);
   });
 
-  it('with a real minimum set, ONE player in a league that needs 10 shows progress ("1 of 10"), not a premature "ready" claim', async () => {
+  // Item 3: for fixed teams the minimum is PER TEAM ("these numbers apply
+  // to each team"), so 4 teams x 10 = 40 players before the league is ready.
+  it('with a real minimum set, ONE player in a 4-team league needing 10 per team shows progress ("1 of 40"), not a premature "ready" claim', async () => {
     const { cookie, csrfToken } = await signup('b4.progress@example.com', '203.0.222.001');
     await createLeague(cookie, csrfToken, { name: 'B4 Progress League', teamNames: ['A', 'B', 'C', 'D'] });
     await setStructure(cookie, csrfToken, { min_players: 10, max_players: 20 });
@@ -126,7 +128,7 @@ describe('Onboarding polish, B4: roster readiness respects the league\'s own rea
     const html = await fetchRoster(cookie);
     expect(html).not.toContain('data-i18n="rosterNudgeTitle"'); // no premature "ready"
     expect(html).toContain('>1</span>'); // real count
-    expect(html).toContain('>10</span>'); // real minimum
+    expect(html).toContain('>40</span>'); // real minimum: 10 on each of 4 teams
     expect(html).toContain('data-i18n="rosterProgressOfWord"');
     expect(html).toContain('data-i18n="rosterProgressLabel"');
   });
@@ -134,9 +136,10 @@ describe('Onboarding polish, B4: roster readiness respects the league\'s own rea
   it('once the real roster count reaches the configured minimum, the "ready, create your schedule" nudge appears instead of the progress message', async () => {
     const { cookie, csrfToken } = await signup('b4.ready@example.com', '203.0.222.002');
     await createLeague(cookie, csrfToken, { name: 'B4 Ready League', teamNames: ['A', 'B'] });
-    await setStructure(cookie, csrfToken, { min_players: 2, max_players: 10 });
+    await setStructure(cookie, csrfToken, { min_players: 1, max_players: 10 });
     await addContact(cookie, csrfToken, 'Player One');
 
+    // 1 per team on 2 teams: one player is not enough, two are.
     const before = await fetchRoster(cookie);
     expect(before).not.toContain('data-i18n="rosterNudgeTitle"');
 

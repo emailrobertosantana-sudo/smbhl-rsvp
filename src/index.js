@@ -2657,7 +2657,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
     stepHtml = `
   <div class="su-title">
     <h1 data-i18n="remindersTitle">Rappels automatiques</h1>
-    <p class="nl-help" data-i18n="remindersSub">Déjà activés par défaut — désactive ceux que tu ne veux pas.</p>
+    <p class="nl-help" data-i18n="remindersSub">Désactivés par défaut. Active ceux que tu veux — tu peux changer ça n'importe quand dans les réglages.</p>
   </div>
   <div id="formErr" class="nl-error" style="display:none"></div>
   <div class="nl-toggle">
@@ -6732,7 +6732,7 @@ async function handleLeagueRosterPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name, team_colors, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, min_players FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT name, team_colors, team_names, team_structure, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, min_players FROM leagues WHERE id = ?').bind(leagueId).first();
 
   const allContacts = (await env.DB.prepare(
     'SELECT player_id, name, email, phone, role, preferred_team, is_goalie, is_backup_goalie, is_active FROM contacts WHERE league_id = ? ORDER BY name'
@@ -6767,7 +6767,17 @@ async function handleLeagueRosterPage(req, env, url) {
   // minimum yet (min_players still null) has nothing to count
   // against -- falls back to the original "any player at all" signal
   // rather than blocking the nudge on a number nobody has entered.
-  const rosterMinimum = leagueRow.min_players;
+  // Item 3: for FIXED teams min_players is per team (onboarding's roster
+  // step says "these numbers apply to each team"; season publish uses it
+  // per team), so the league needs it on every team -- a 4-team league with
+  // a 10-per-team minimum is not ready at 10 players. weekly_draw's pool and
+  // headcount's total are already whole-league numbers.
+  let rosterMinimum = leagueRow.min_players;
+  if (rosterMinimum != null && (leagueRow.team_structure || 'fixed') === 'fixed') {
+    let fixedTeams = [];
+    try { fixedTeams = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
+    rosterMinimum = rosterMinimum * Math.max(1, fixedTeams.length);
+  }
   const rosterMeetsMinimum = rosterMinimum != null ? contacts.length >= rosterMinimum : contacts.length > 0;
   const showScheduleNudge = rosterMeetsMinimum && eventCount === 0;
   const showRosterProgress = !rosterMeetsMinimum && rosterMinimum != null && eventCount === 0;
