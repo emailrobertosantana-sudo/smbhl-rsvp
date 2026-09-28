@@ -23613,7 +23613,9 @@ async function handleEmailsData(req, env, url) {
     counts.failed = (counts.failed_permanent || 0) + (counts.retrying || 0);
 
     const openEvents = (await env.DB.prepare(
-      `SELECT id, season, week, date, venue FROM events WHERE state = 'open' ORDER BY week`
+      // SMBHL's own games only: on a database shared with the league product
+      // (demo), this listed every league's open events in SMBHL's pickers.
+      `SELECT id, season, week, date, venue FROM events WHERE state = 'open' AND COALESCE(league_id, 'smbhl') = 'smbhl' ORDER BY week`
     ).all()).results || [];
 
     const firstOpenEvent = openEvents[0];
