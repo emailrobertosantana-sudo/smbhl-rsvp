@@ -2501,7 +2501,7 @@ describe("SMBHL Worker", () => {
 			const afterRes = await worker.fetch(new Request(`http://example.com/poll?id=${pollId}&p=V002&t=${pollTok}`), env);
 			expect(afterRes.status).toBe(200);
 			const afterHtml = await afterRes.text();
-			expect(afterHtml).toContain('Ton vote enregistré : <b>Arber Xhekaj</b>');
+			expect(afterHtml).toContain('Ton vote enregistré / Your vote : <b>Arber Xhekaj</b>');
 			expect(afterHtml).toContain('Résultats en direct (1 vote)');
 			expect(afterHtml).toContain('MODIFIER MON VOTE ✎');
 		});
@@ -2823,7 +2823,7 @@ describe("SMBHL Worker", () => {
 			const rsvpRes3 = await worker.fetch(new Request(`http://example.com/rsvp?e=ev-rsvp-poll&p=REG1&t=${tok1}`), env);
 			expect(rsvpRes3.status).toBe(200);
 			const html3 = await rsvpRes3.text();
-			expect(html3).toContain("Ton vote enregistré : <b>Scott Stevens</b>");
+			expect(html3).toContain("Ton vote enregistré / Your vote : <b>Scott Stevens</b>");
 			expect(html3).toContain("Scrutin secret");
 			expect(html3).not.toContain("Résultats en direct");
 			expect(html3).toContain("MODIFIER MON VOTE");

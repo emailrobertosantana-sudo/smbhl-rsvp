@@ -10177,7 +10177,7 @@ function renderTeam(rows, counts, team, teamNames = TEAMS) {
     const name = r.name || r.guest_name || '?';
     const by = r.status !== 'pending' && r.status_by !== 'self'
       ? `<span class="by">réglé par ${esc(r.status_by === 'manager' ? 'admin' : 'un coéquipier')}</span>` : '';
-    const extra = r.role === 'guest' ? '<span class="by">invité</span>' : '';
+    const extra = r.role === 'guest' ? '<span class="by">invité / guest</span>' : '';
     return `<tr><td>${esc(name)}${extra}${by}</td>
       <td class="s ${r.status === 'pending' ? 'pend' : r.status}">${label[r.status]}</td></tr>`;
   }).join('');
@@ -12908,12 +12908,12 @@ async function pollGet(req, env, url) {
           <div style="background:#8b5cf6;width:${c.pct}%;height:100%;border-radius:4px;transition:width 0.4s ease;"></div>
         </div>
       </div>
-    `).join('') || '<p style="font-size:13px;color:var(--soft);margin:4px 0;">Aucun vote enregistré pour l\\u2019instant.</p>';
+    `).join('') || '<p style="font-size:13px;color:var(--soft);margin:4px 0;">Aucun vote enregistré pour l\\u2019instant. / No votes yet.</p>';
 
     resultsHtml = `
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid #e9d5ff;">
         <div style="font-size:14px;font-weight:700;color:#6b21a8;margin-bottom:10px;">
-          📊 Résultats ${isClosed ? 'finaux' : 'en direct'} (${total} vote${total > 1 ? 's' : ''}) :
+          📊 Résultats ${isClosed ? 'finaux' : 'en direct'} (${total} vote${total > 1 ? 's' : ''}) / ${isClosed ? 'Final' : 'Live'} results :
         </div>
         ${bars}
       </div>`;
@@ -12955,13 +12955,14 @@ async function pollGet(req, env, url) {
 
   const statusBadge = hasVoted
     ? `<div style="background:#f3e8ff;border:1px solid #d8b4fe;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:14px;color:#6b21a8;">
-        ✓ Ton vote enregistré : <b>${esc(myVote.candidate_name)}</b>
+        ✓ Ton vote enregistré / Your vote : <b>${esc(myVote.candidate_name)}</b>
       </div>`
     : '';
 
   const norrisHint = (poll.category === 'norris' || poll.target_position === 'D')
     ? `<div style="font-size:12px;color:var(--soft);margin-top:14px;line-height:1.4;">
         💡 <i>Note : Seuls les joueurs identifiés comme Défenseurs (D) apparaissent sur le bulletin.</i>
+        <span class="en" style="font-size:12px;"><i>Only players marked as defense (D) appear on the ballot.</i></span>
        </div>`
     : '';
 
@@ -13014,7 +13015,7 @@ async function pollGet(req, env, url) {
         return;
       }
       pollVoteBtn.disabled = true;
-      if (msg) { msg.textContent = 'Enregistrement...'; msg.style.color = 'var(--soft)'; msg.style.display = 'block'; }
+      if (msg) { msg.textContent = 'Enregistrement... / Saving...'; msg.style.color = 'var(--soft)'; msg.style.display = 'block'; }
       try {
         const res = await fetch('/api/poll/vote', {
           method: 'POST',
@@ -13080,9 +13081,9 @@ async function teamGet(req, env, url) {
   const list = rows.map(r => {
     const name = r.name || r.guest_name || '?';
     const by = r.status !== 'pending' && r.status_by !== 'self'
-      ? `<span class="by">${esc(r.status_by === 'manager' ? 'admin' : 'coéquipier')}</span>` : '';
+      ? `<span class="by">${esc(r.status_by === 'manager' ? 'admin' : 'coéquipier / teammate')}</span>` : '';
     const g = isGoalie(r) ? '<span class="by">G</span>' : '';
-    const guest = r.role === 'guest' ? '<span class="by">invité</span>' : '';
+    const guest = r.role === 'guest' ? '<span class="by">invité / guest</span>' : '';
     const who = r.player_id ? `p=${encodeURIComponent(r.player_id)}` : `g=${encodeURIComponent(r.guest_name)}`;
 
     const canUndo = r.status !== 'pending' && r.role === 'roster' && r.player_id && r.status_by === 'teammate';
@@ -13112,10 +13113,10 @@ async function teamGet(req, env, url) {
   const addable = pool.filter(p => !p.placed && p.said !== 'no');
   const unavailable = pool.filter(p => (p.placed && p.placed !== team) || p.said === 'no');
 
-  const kind = p => p.role === 'sub_goalie' ? 'gardien' : 'joueur';
-  const state = p => p.said === 'yes' ? 'a confirmé disponible'
-    : p.said === 'no' ? 'a dit non'
-    : 'pas encore répondu';
+  const kind = p => p.role === 'sub_goalie' ? 'gardien / goalie' : 'joueur / skater';
+  const state = p => p.said === 'yes' ? 'a confirmé disponible / confirmed available'
+    : p.said === 'no' ? 'a dit non / said no'
+    : 'pas encore répondu / no answer yet';
 
   const onTeamRows = onTeam.map(p =>
     `<tr><td>${esc(p.name)}<span class="by">${esc(kind(p))}</span></td>
@@ -13128,7 +13129,7 @@ async function teamGet(req, env, url) {
 
   const unavailRows = unavailable.map(p =>
     `<tr><td style="opacity:.55">${esc(p.name)}<span class="by">${
-      p.placed ? 'déjà avec ' + esc(p.placed) : 'a dit non'}</span></td>
+      p.placed ? 'déjà avec / already with ' + esc(p.placed) : 'a dit non / said no'}</span></td>
       <td class="s">—</td></tr>`).join('');
 
   const messages = await getTeamMessages(env.DB, ev.id, team, 20);
@@ -13171,7 +13172,7 @@ async function teamGet(req, env, url) {
             <span style="background:var(--blue); color:#fff; font-size:11px; padding:1px 7px; border-radius:10px; font-weight:700;">${messages.length}</span>
           </div>
           <a href="#team-board" class="jump-to-board" style="font-size:13px; font-weight:600; color:var(--blue); text-decoration:none; white-space:nowrap;">
-            + Écrire / Voir tout ⬇
+            + Écrire · voir tout / Write · see all ⬇
           </a>
         </div>
         <div style="font-size:14px; color:var(--soft); line-height:1.4;">
@@ -13184,7 +13185,7 @@ async function teamGet(req, env, url) {
           <span>💬</span> <span>Aucune note d'équipe pour l'instant / No notes yet</span>
         </span>
         <a href="#team-board" class="jump-to-board" style="color:var(--blue); font-weight:600; text-decoration:none; font-size:13px; white-space:nowrap; margin-left:8px;">
-          + Laisser une note ⬇
+          + Laisser une note / Leave a note ⬇
         </a>
       </div>`;
 
@@ -13204,7 +13205,8 @@ async function teamGet(req, env, url) {
         shortGoalie ? ', no goalie yet' : ', goalie confirmed'}</span></h2>
     <div style="font-size:12px;color:var(--soft);margin-bottom:8px;line-height:1.3;display:flex;align-items:center;gap:6px">
       <span>💡</span>
-      <span><b>Positions :</b> Identifiez vos attaquants (<b style="color:var(--ink)">A</b>) et défenseurs (<b style="color:var(--ink)">D</b>) pour les stats et le trophée Norris !</span>
+      <span><b>Positions :</b> Identifiez vos attaquants (<b style="color:var(--ink)">A</b>) et défenseurs (<b style="color:var(--ink)">D</b>) pour les stats et le trophée Norris !
+        <span class="en" style="font-size:12px;">Mark your forwards (A) and defense (D) for the stats and the Norris trophy.</span></span>
     </div>
     <table>${list}</table>
     <p class="state" id="msg"></p>
@@ -17343,7 +17345,7 @@ async function rsvpGet(req, env, url) {
         `<div><b>${esc(m.time)}</b> : vs <b>${esc(m.oppFR)}</b> <span class="en">(${esc(m.opp)})</span>${m.venue ? ' · ' + esc(m.venue) : ''}</div>`
       ).join('');
       const shirtDesc = contact.is_goalie
-        ? 'Équipement de gardien (pas de chandail d\u2019équipe requis)'
+        ? 'Équipement de gardien (pas de chandail d\u2019équipe requis) / Goalie gear, no team shirt needed'
         : `Chandail ${esc(SHIRT_FR[team] || team.toLowerCase())} requis / ${esc(team)} shirt`;
 
       matchBoxHtml = `
@@ -17382,7 +17384,7 @@ async function rsvpGet(req, env, url) {
     } catch (_) {}
   if (futureFixtures.length) {
     const countChecked = futureFixtures.filter(f => playerAbsences.has(f.id) || playerAbsences.has(f.date)).length;
-    const badgeText = countChecked > 0 ? ' (' + countChecked + ' déclarée' + (countChecked > 1 ? 's' : '') + ')' : '';
+    const badgeText = countChecked > 0 ? ' (' + countChecked + ' déclarée' + (countChecked > 1 ? 's' : '') + ' / planned)' : '';
 
     const fixtureCheckboxes = futureFixtures.map(f => {
       const isChecked = playerAbsences.has(f.id) || playerAbsences.has(f.date);
@@ -17407,12 +17409,13 @@ async function rsvpGet(req, env, url) {
       <div id="absences-drawer" style="display:none; margin-top:12px; border-top:1px solid var(--rule); padding-top:12px;">
         <p style="font-size:13px; color:var(--soft); margin:0 0 10px;">
           Tu sais déjà que tu manqueras un match plus tard cette saison ? Coche les dates où tu seras absent pour aider ton équipe à prévoir les remplaçants à l'avance.
+          <span class="en" style="font-size:13px;">Already know you will miss a game later this season? Tick the dates you will be away so your team can line up subs ahead of time.</span>
         </p>
         <div id="absence-list" style="display:flex; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto; padding-right:4px;">
           ${fixtureCheckboxes}
         </div>
         <div style="margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-          <button type="button" class="btn" id="save-absences-btn" style="font-size:15px; padding:10px 16px; width:auto; flex:none;">Enregistrer mes absences 💾</button>
+          <button type="button" class="btn" id="save-absences-btn" style="font-size:15px; padding:10px 16px; width:auto; flex:none;">Enregistrer mes absences / Save my absences 💾</button>
           <span id="absence-msg" style="font-size:13px; font-weight:600;"></span>
         </div>
       </div>
@@ -17430,6 +17433,7 @@ async function rsvpGet(req, env, url) {
       </div>
       <div style="font-size:12px;color:var(--soft);margin-bottom:8px">
         Aide à équilibrer les alignements et pour les trophées (ex. Trophée Norris) !
+        <span class="en" style="font-size:12px;">Helps balance the lineups and counts for the trophies (e.g. the Norris Trophy).</span>
       </div>
       <div style="display:flex;gap:8px" id="self-pos-picker">
         <button type="button" class="btn self-pos-btn ${contact.position === 'F' ? 'on' : ''}" data-pos="F" style="flex:1;font-size:13px;padding:8px;background:${contact.position === 'F' ? 'var(--blue)' : 'var(--card)'};color:${contact.position === 'F' ? '#fff' : 'var(--ink)'};border:1px solid var(--rule2);font-weight:700">
@@ -17469,12 +17473,12 @@ async function rsvpGet(req, env, url) {
             <div style="background:#8b5cf6;width:${c.pct}%;height:100%;border-radius:4px;transition:width 0.4s ease;"></div>
           </div>
         </div>
-      `).join('') || '<p style="font-size:13px;color:var(--soft);margin:4px 0;">Aucun autre vote enregistré pour l\\u2019instant.</p>';
+      `).join('') || '<p style="font-size:13px;color:var(--soft);margin:4px 0;">Aucun autre vote enregistré pour l\\u2019instant. / No other votes yet.</p>';
 
       resultsHtml = `
         <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e9d5ff;">
           <div style="font-size:13px;font-weight:700;color:#6b21a8;margin-bottom:8px;">
-            📊 Résultats en direct (${total} vote${total > 1 ? 's' : ''}) :
+            📊 Résultats en direct / Live results (${total} vote${total > 1 ? 's' : ''}) :
           </div>
           ${bars}
         </div>`;
@@ -17496,7 +17500,7 @@ async function rsvpGet(req, env, url) {
 
     const statusBadge = hasVoted
       ? `<div style="background:#f3e8ff;border:1px solid #d8b4fe;border-radius:6px;padding:9px 12px;margin-bottom:12px;font-size:13px;color:#6b21a8;">
-          ✓ Ton vote enregistré : <b>${esc(myRsvpVote.candidate_name)}</b>
+          ✓ Ton vote enregistré / Your vote : <b>${esc(myRsvpVote.candidate_name)}</b>
         </div>`
       : '';
 
@@ -17504,7 +17508,7 @@ async function rsvpGet(req, env, url) {
     <div class="card" style="margin-top:14px;border-top:4px solid #8b5cf6;padding:16px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
         <span class="by" style="background:#f3e8ff;color:#6b21a8;font-weight:700;margin:0;">${esc(categoryLabel)}</span>
-        <span class="by" style="background:#8b5cf6;color:#fff;font-weight:700;margin:0;">${rsvpPoll.show_results === 1 ? 'VOTE EN DIRECT' : '🔒 SCRUTIN SECRET'}</span>
+        <span class="by" style="background:#8b5cf6;color:#fff;font-weight:700;margin:0;">${rsvpPoll.show_results === 1 ? 'VOTE EN DIRECT / LIVE' : '🔒 SCRUTIN SECRET / PRIVATE'}</span>
       </div>
       <h2 style="font-size:17px;margin:6px 0 4px;line-height:1.3;color:var(--ink);">${esc(rsvpPoll.title)}</h2>
       ${rsvpPoll.description ? `<p style="font-size:13px;color:var(--soft);margin:0 0 10px;line-height:1.4;">${esc(rsvpPoll.description)}</p>` : ''}
@@ -17552,7 +17556,7 @@ async function rsvpGet(req, env, url) {
       }
       pollVoteBtn.disabled = true;
       if (msg) {
-        msg.textContent = 'Enregistrement de ton vote...';
+        msg.textContent = 'Enregistrement de ton vote... / Saving your vote...';
         msg.style.color = 'var(--soft)';
         msg.style.display = 'block';
       }
@@ -17663,7 +17667,7 @@ async function rsvpGet(req, env, url) {
       saveBtn.addEventListener('click', async () => {
         saveBtn.disabled = true;
         const msg = document.getElementById('absence-msg');
-        msg.textContent = 'Enregistrement...';
+        msg.textContent = 'Enregistrement... / Saving...';
         msg.style.color = 'var(--soft)';
         const dates = [...document.querySelectorAll('.absence-cb:checked')].map(c => c.dataset.date);
         try {
@@ -17679,10 +17683,10 @@ async function rsvpGet(req, env, url) {
             })
           });
           if (!res.ok) throw new Error(await res.text());
-          msg.textContent = '✓ Absences enregistrées !';
+          msg.textContent = '✓ Absences enregistrées ! / Absences saved!';
           msg.style.color = 'var(--green)';
           const b = document.getElementById('absence-badge');
-          if (b) b.textContent = dates.length ? ' (' + dates.length + ' déclarée' + (dates.length > 1 ? 's' : '') + ')' : '';
+          if (b) b.textContent = dates.length ? ' (' + dates.length + ' déclarée' + (dates.length > 1 ? 's' : '') + ' / planned)' : '';
         } catch (e) {
           msg.textContent = 'Erreur: ' + e.message;
           msg.style.color = 'var(--red)';
@@ -17722,7 +17726,7 @@ async function rsvpGet(req, env, url) {
       });
       if (!r.ok) throw new Error(await r.text());
       if (msg) {
-        msg.textContent = newPos ? '✓ Position enregistrée : ' + (newPos === 'D' ? 'Défenseur' : 'Attaquant') : '✓ Position réinitialisée';
+        msg.textContent = newPos ? '✓ Position enregistrée / saved : ' + (newPos === 'D' ? 'Défenseur / Defense' : 'Attaquant / Forward') : '✓ Position réinitialisée / cleared';
         msg.style.display = 'block';
       }
     } catch (e) {
