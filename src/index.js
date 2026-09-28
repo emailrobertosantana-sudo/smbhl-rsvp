@@ -12281,8 +12281,26 @@ async function weeklyDrawHasAssigned(env, eventId) {
   return !!row;
 }
 
+// The teams one game involves. A league's fixed-teams game WITH a matchup
+// involves its two teams only; everything else -- SMBHL (a night where
+// every team plays), a game with no matchup yet, weekly-draw and headcount
+// -- involves every team of the season, as before. Same rule as the
+// reminder audience (leagueGameTeams): the shortage check, sub placement,
+// wave stopping and the status displays used to loop over every team in
+// the league for a single game, so a team not playing looked short (it
+// has nobody in the game) and could get subs called or placed on it.
+function gameTeamNames(ev, cfg) {
+  const all = getTeamNames(cfg);
+  const leagueId = (ev && ev.league_id) || SMBHL_LEAGUE_ID;
+  if (leagueId !== SMBHL_LEAGUE_ID && (cfg.teamStructure || 'fixed') === 'fixed'
+      && ev.home_team && ev.away_team && all.includes(ev.home_team) && all.includes(ev.away_team)) {
+    return [ev.home_team, ev.away_team];
+  }
+  return all;
+}
+
 async function eventWeekStatus(env, leagueId, ev, cfg) {
-  const teamNames = getTeamNames(cfg);
+  const teamNames = gameTeamNames(ev, cfg);
   const teamStructure = cfg.teamStructure || 'fixed';
 
   const rows = (await env.DB.prepare(
@@ -12404,7 +12422,7 @@ async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
   const structure = cfg.teamStructure || 'fixed';
   if (structure === 'weekly_draw') return 0; // teams are drawn per game: no team to be short until the draw
   const isHeadcount = structure === 'headcount';
-  const teams = isHeadcount ? [HEADCOUNT_TEAM_NAME] : getTeamNames(cfg);
+  const teams = isHeadcount ? [HEADCOUNT_TEAM_NAME] : gameTeamNames(ev, cfg);
   const isLeague = leagueId !== SMBHL_LEAGUE_ID;
   const usesIndependentGoalieAxis = isLeague && sportHasGoalie(cfg.sportType);
   const hasGoalies = !isLeague || sportHasGoalie(cfg.sportType);
@@ -12493,7 +12511,7 @@ async function sendExtraSubInvite(env, ev, playerId) {
   let team = lastInvite ? lastInvite.team : null;
   if (!team) {
     const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
-    const teams = getTeamNames(cfg);
+    const teams = gameTeamNames(ev, cfg);
     for (const t of teams) if (await openSpots(env.DB, ev.id, t, need, cfg) > 0) { team = t; break; }
     team = team || teams[0] || null;
   }
@@ -12636,15 +12654,20 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
 }
 
 async function stopWaves(env, eventId, need, cfg) {
-  const teamsToCheck = cfg ? getTeamNames(cfg) : TEAMS;
+  const ev = cfg ? await getEvent(env.DB, eventId) : null;
+  const teamsToCheck = cfg ? (ev ? gameTeamNames(ev, cfg) : getTeamNames(cfg)) : TEAMS;
   for (const team of teamsToCheck) {
     if (await openSpots(env.DB, eventId, team, need, cfg) > 0) return;
   }
+  // A prefix range, not LIKE: D1 refuses a LIKE pattern over 50 bytes, and
+  // a league's event id alone is longer than that -- so for league games
+  // this cancel used to throw instead of stopping the waves.
+  const prefix = `call:${eventId}:${need}:`;
   await env.DB.prepare(
     `UPDATE outbox SET cancelled = 1
       WHERE event_id = ? AND sent_at IS NULL AND cancelled = 0
-        AND dedup_key LIKE ?`
-  ).bind(eventId, `call:${eventId}:${need}:%`).run();
+        AND dedup_key >= ? AND dedup_key < ?`
+  ).bind(eventId, prefix, prefix + '\uffff').run();
 }
 
 const TARGET_SKATERS = 8;
@@ -12710,7 +12733,8 @@ export async function acceptAvailability(env, ev, playerId, need) {
 
   // Resolve config for this event's season to get the right team list and thresholds
   const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
-  const cfgTeams = getTeamNames(cfg);
+  // Only a team that is playing this game can take the sub.
+  const cfgTeams = gameTeamNames(ev, cfg);
 
   // Find all teams with open spots and score them by shortage severity
   const candidateTeams = [];
@@ -12777,7 +12801,7 @@ async function fillFromWaitlist(env, ev, team, need, cfg) {
 
 async function remindSubs(env, ev) {
   const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
-  const cfgTeams = getTeamNames(cfg);
+  const cfgTeams = gameTeamNames(ev, cfg);
   const anyOpen = await (async () => {
     for (const team of cfgTeams)
       for (const need of ['goalie', 'skater'])
@@ -18320,6 +18344,8 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
   const need = (contact.is_goalie === 1 || contact.role === 'sub_goalie') ? 'goalie' : 'skater';
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
   if (!getTeamNames(cfg).includes(team)) return { invited: 0, reason: 'unknown-team' };
+  // A player out on a game their team isn't in leaves no spot to fill.
+  if (!gameTeamNames(ev, cfg).includes(team)) return { invited: 0, reason: 'team-not-in-game' };
 
   const spots = await openSpots(env.DB, ev.id, team, need, cfg);
   if (spots < 1) return { invited: 0, reason: 'not-short' };
@@ -19516,7 +19542,7 @@ async function handleLeagueEventStatus(req, env, url) {
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
   const teams = [];
-  for (const team of getTeamNames(cfg)) {
+  for (const team of gameTeamNames(ev, cfg)) {
     const st = await teamState(env.DB, ev.id, team, cfg);
     const openGoalies = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
     const openSkaters = await openSpots(env.DB, ev.id, team, 'skater', cfg);
@@ -19599,6 +19625,8 @@ async function handleLeagueInviteSubs(req, env, url) {
     inviteTeamLabel = (leagueRow && leagueRow.name) || team;
   } else if (!team || !getTeamNames(cfg).includes(team)) {
     return Response.json({ ok: false, error: 'Unknown team for this league.', errorKey: 'TEAM_UNKNOWN' }, { status: 400 });
+  } else if (!gameTeamNames(ev, cfg).includes(team)) {
+    return Response.json({ ok: false, error: "That team isn't playing this game.", errorKey: 'TEAM_NOT_IN_GAME' }, { status: 400 });
   }
 
   // Live-testing task, Part 2 (bug fix): every non-SMBHL league now
@@ -28760,6 +28788,12 @@ export {
   runLeagueReminders,
   // Failure alerting: the whole cron pass (heartbeat, reminders, health).
   runCronPass,
+  // The game-team rule (gameTeamNames), exercised directly by part148.
+  callSubsForShortfall,
+  stopWaves,
+  remindSubs,
+  maybeInviteSubsForShortage,
+  gameTeamNames,
   healthHost,
   sendLeagueReminderWave,
   sendLeagueReminderKind,

@@ -105,6 +105,7 @@ export const ERROR_I18N = {
   GAME_NOT_STARTED: { fr: "Ce match n'a pas encore commencé. Le résultat et les statistiques s'entrent une fois le match commencé.", en: "This game hasn't started yet. The result and stats can be entered once it has." },
   EVENT_LOCKED: { fr: "Ce match n'accepte plus de changements.", en: 'This event is locked.' },
   // The Schedule list's in-place matchup editor (/league/events/matchup).
+  TEAM_NOT_IN_GAME: { fr: 'Cette équipe ne joue pas ce match.', en: "That team isn't playing this game." },
   MATCHUP_TEAMS_REQUIRED: { fr: 'Choisis les deux équipes.', en: 'Choose both teams.' },
   MATCHUP_TEAMS_SAME: { fr: 'Choisis deux équipes différentes.', en: 'Choose two different teams.' },
   MATCHUP_TEAM_UNKNOWN: { fr: "Cette équipe n'est pas dans la saison.", en: 'That team is not in this season.' },
