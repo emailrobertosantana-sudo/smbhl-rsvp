@@ -123,3 +123,28 @@ describe('5. "Nommer les équipes" waits for a season', () => {
     expect(html).toContain('data-i18n="nsNameTeams"');
   });
 });
+
+describe('6. Fixed-teams roster labels say "per team" themselves', () => {
+  it('fixed: "Minimum/Maximum de joueurs par équipe"; pickup and no teams keep "total"', async () => {
+    for (const [structure, extra, fr, en] of [
+      ['fixed', { teamNames: ['A', 'B'] }, 'Minimum de joueurs par équipe', 'Minimum players per team'],
+      ['weekly_draw', { teamNames: ['A', 'B'] }, 'Minimum total de joueurs', 'Minimum total players'],
+      ['headcount', {}, 'Minimum total de joueurs', 'Minimum total players']
+    ]) {
+      const s = await signup(`p140.labels.${structure}@example.com`);
+      await post(s, '/leagues/create', { name: `P140 Labels ${structure}`, teamStructure: structure, ...extra });
+      await post(s, '/league/season/publish', { season_name: 'S1' });
+      for (const path of ['/onboarding/season?step=1', '/league/settings']) {
+        const html = await page(s, path);
+        expect(html, `${structure} ${path}`).toContain(`>${fr}</label>`);
+      }
+      expect(await page(s, '/onboarding/season?step=1')).toContain(en);
+    }
+    const s = await signup('p140.labels.max@example.com');
+    await post(s, '/leagues/create', { name: 'P140 Labels Max', teamNames: ['A', 'B'] });
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    const html = await page(s, '/onboarding/season?step=1');
+    expect(html).toContain('>Maximum de joueurs par équipe</label>');
+    expect(html).toContain('"lblMaxPlayersTeam":"Maximum players per team"');
+  });
+});

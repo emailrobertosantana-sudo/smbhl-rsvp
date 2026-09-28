@@ -464,8 +464,9 @@ describe('B1: settings roster-size wording matches onboarding, in both cards, fo
 
   it('fixed-teams league: all three cards show "each team" wording (matching onboarding\'s rosterSubTeam) for the min/max labels and the help text', async () => {
     const html = await settingsHtmlFor({ teamNames: ['A', 'B'] });
-    expect(html).toContain('data-i18n="lblMinPlayers">Minimum total de joueurs<');
-    expect(html).toContain('data-i18n="lblMaxPlayers">Maximum total de joueurs<');
+    // Onboarding item 6: per team, said by the label itself.
+    expect(html).toContain('data-i18n="lblMinPlayersTeam">Minimum de joueurs par équipe<');
+    expect(html).toContain('data-i18n="lblMaxPlayersTeam">Maximum de joueurs par équipe<');
     // Three cards render this key for a fixed-structure league --
     // "Cette saison", "Par défaut pour les nouvelles saisons", and
     // (E1/E2, season-model polish task) "Démarrer une nouvelle saison".

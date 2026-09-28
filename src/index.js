@@ -2600,6 +2600,7 @@ function buildOnboardingI18n() {
     rosterSubPool: "Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l'ensemble du bassin.",
     rosterSubHeadcount: "Tous les joueurs confirmés comptent dans ce total — cette ligue n'a pas d'équipes.",
     lblMinPlayers: 'Minimum total de joueurs', lblMaxPlayers: 'Maximum total de joueurs',
+    lblMinPlayersTeam: 'Minimum de joueurs par équipe', lblMaxPlayersTeam: 'Maximum de joueurs par équipe',
     lblMinGoalies: 'Minimum de gardiens (optionnel)', lblMaxGoalies: 'Maximum de gardiens (optionnel)',
     teamsTitle: 'Confirme les noms des équipes', teamsSubDefault: 'Choisis les vrais noms de tes équipes — tu pourras les changer plus tard dans Paramètres.',
     teamsSubWeekly: 'Ces équipes changent à chaque match, mais leurs noms restent les mêmes toute la saison. Tu peux garder « Équipe 1, 2… » et revenir plus tard.',
@@ -2637,6 +2638,7 @@ function buildOnboardingI18n() {
     rosterSubPool: 'Everyone who confirms goes into one pool and gets drawn into teams. These numbers cover the whole pool.',
     rosterSubHeadcount: "Everyone who confirms counts toward this total — this league has no teams.",
     lblMinPlayers: 'Minimum total players', lblMaxPlayers: 'Maximum total players',
+    lblMinPlayersTeam: 'Minimum players per team', lblMaxPlayersTeam: 'Maximum players per team',
     lblMinGoalies: 'Minimum goalies (optional)', lblMaxGoalies: 'Maximum goalies (optional)',
     teamsTitle: 'Confirm your team names', teamsSubDefault: 'Pick the real names of your teams — you can change them later in Settings.',
     teamsSubWeekly: 'These teams change every game, but their names stay the same all season. You can keep "Team 1, 2…" and come back later.',
@@ -2724,11 +2726,11 @@ async function handleOnboardingSeasonPage(req, env, url) {
   <div id="formErr" class="nl-error" style="display:none"></div>
   <div class="su-two">
     <div class="nl-field">
-      <label class="nl-label" for="ob_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
+      <label class="nl-label" for="ob_min_players" data-i18n="${isTeamShaped ? 'lblMinPlayersTeam' : 'lblMinPlayers'}">${isTeamShaped ? 'Minimum de joueurs par équipe' : 'Minimum total de joueurs'}</label>
       <input class="nl-input" id="ob_min_players" type="number" min="1" value="${esc(leagueRow.min_players != null ? String(leagueRow.min_players) : '')}">
     </div>
     <div class="nl-field">
-      <label class="nl-label" for="ob_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
+      <label class="nl-label" for="ob_max_players" data-i18n="${isTeamShaped ? 'lblMaxPlayersTeam' : 'lblMaxPlayers'}">${isTeamShaped ? 'Maximum de joueurs par équipe' : 'Maximum total de joueurs'}</label>
       <input class="nl-input" id="ob_max_players" type="number" min="1" value="${esc(leagueRow.max_players != null ? String(leagueRow.max_players) : '')}">
     </div>
   </div>
@@ -5591,6 +5593,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       // old two-way fixed-vs-"every-other-structure" text that lumped
       // pool and headcount together inaccurately.
       lblMinPlayers: 'Minimum total de joueurs', lblMaxPlayers: 'Maximum total de joueurs',
+      lblMinPlayersTeam: 'Minimum de joueurs par équipe', lblMaxPlayersTeam: 'Maximum de joueurs par équipe',
       lblMinGoalies: 'Minimum de gardiens (optionnel)', minGoaliesHelp: 'Laisse à 0 si tu ne veux pas suivre les gardiens séparément.',
       lblMaxGoalies: 'Maximum de gardiens (optionnel)', maxGoaliesHelp: "Laisse vide pour utiliser le même nombre que le minimum.",
       rosterLimitsTitle: 'Effectif de l\'équipe',
@@ -5711,6 +5714,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       structureWeeklyTitle: 'Pickup with teams', structureWeeklyDesc: 'Pickup, but split into teams each game — drawn automatically or set by you.',
       structureHeadcountTitle: 'No teams', structureHeadcountDesc: "Just a list of who's in. You sort out sides at the venue.",
       lblMinPlayers: 'Minimum total players', lblMaxPlayers: 'Maximum total players',
+      lblMinPlayersTeam: 'Minimum players per team', lblMaxPlayersTeam: 'Maximum players per team',
       lblMinGoalies: 'Minimum goalies (optional)', minGoaliesHelp: "Leave at 0 if you don't want to track goalies separately.",
       lblMaxGoalies: 'Maximum goalies (optional)', maxGoaliesHelp: 'Leave blank to use the same number as the minimum.',
       rosterLimitsTitle: 'Roster size',
@@ -6020,11 +6024,11 @@ async function handleLeagueSettingsPage(req, env, url) {
       <p class="nl-help" id="season_roster_limits_help" data-i18n="${seasonStructureForDisplay === 'fixed' ? 'rosterSubTeam' : (seasonStructureForDisplay === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${seasonStructureForDisplay === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : seasonStructureForDisplay === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total — cette ligue n\'a pas d\'équipes.'}</p>
       <div class="su-two">
         <div class="nl-field">
-          <label class="nl-label" for="season_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
+          <label class="nl-label" for="season_min_players" data-i18n="${seasonStructureForDisplay === 'fixed' ? 'lblMinPlayersTeam' : 'lblMinPlayers'}">${seasonStructureForDisplay === 'fixed' ? 'Minimum de joueurs par équipe' : 'Minimum total de joueurs'}</label>
           <input class="nl-input" id="season_min_players" type="number" min="1" value="${esc(seasonMinPlayersDisplay != null ? String(seasonMinPlayersDisplay) : (seasonStructureForDisplay === 'headcount' ? '8' : ''))}" ${isViewingClosedSeason ? 'disabled' : ''}>
         </div>
         <div class="nl-field">
-          <label class="nl-label" for="season_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
+          <label class="nl-label" for="season_max_players" data-i18n="${seasonStructureForDisplay === 'fixed' ? 'lblMaxPlayersTeam' : 'lblMaxPlayers'}">${seasonStructureForDisplay === 'fixed' ? 'Maximum de joueurs par équipe' : 'Maximum total de joueurs'}</label>
           <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(seasonMaxPlayersDisplay != null ? String(seasonMaxPlayersDisplay) : (seasonStructureForDisplay === 'headcount' ? '12' : ''))}" ${isViewingClosedSeason ? 'disabled' : ''}>
         </div>
       </div>
@@ -6073,11 +6077,11 @@ async function handleLeagueSettingsPage(req, env, url) {
       <p class="nl-help" id="se_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : teamStructure === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total — cette ligue n\'a pas d\'équipes.'}</p>
       <div class="su-two">
         <div class="nl-field">
-          <label class="nl-label" for="se_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
+          <label class="nl-label" for="se_min_players" data-i18n="${teamStructure === 'fixed' ? 'lblMinPlayersTeam' : 'lblMinPlayers'}">${teamStructure === 'fixed' ? 'Minimum de joueurs par équipe' : 'Minimum total de joueurs'}</label>
           <input class="nl-input" id="se_min_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.min_players) : (isHeadcount ? '8' : ''))}">
         </div>
         <div class="nl-field">
-          <label class="nl-label" for="se_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
+          <label class="nl-label" for="se_max_players" data-i18n="${teamStructure === 'fixed' ? 'lblMaxPlayersTeam' : 'lblMaxPlayers'}">${teamStructure === 'fixed' ? 'Maximum de joueurs par équipe' : 'Maximum total de joueurs'}</label>
           <input class="nl-input" id="se_max_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.max_players) : (isHeadcount ? '12' : ''))}">
         </div>
       </div>
@@ -6150,11 +6154,11 @@ async function handleLeagueSettingsPage(req, env, url) {
         <p class="nl-help" id="new_season_roster_limits_help" data-i18n="${teamStructure === 'fixed' ? 'rosterSubTeam' : (teamStructure === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount')}">${teamStructure === 'fixed' ? 'Ces nombres s\'appliquent à chaque équipe. Laisse vide si tu n\'es pas prêt à décider.' : teamStructure === 'weekly_draw' ? 'Tous les joueurs confirmés forment un seul bassin et sont répartis en équipes. Ces nombres couvrent l\'ensemble du bassin.' : 'Tous les joueurs confirmés comptent dans ce total — cette ligue n\'a pas d\'équipes.'}</p>
         <div class="su-two">
           <div class="nl-field">
-            <label class="nl-label" for="new_season_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
+            <label class="nl-label" for="new_season_min_players" data-i18n="${teamStructure === 'fixed' ? 'lblMinPlayersTeam' : 'lblMinPlayers'}">${teamStructure === 'fixed' ? 'Minimum de joueurs par équipe' : 'Minimum total de joueurs'}</label>
             <input class="nl-input" id="new_season_min_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.min_players) : (isHeadcount ? '8' : ''))}">
           </div>
           <div class="nl-field">
-            <label class="nl-label" for="new_season_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
+            <label class="nl-label" for="new_season_max_players" data-i18n="${teamStructure === 'fixed' ? 'lblMaxPlayersTeam' : 'lblMaxPlayers'}">${teamStructure === 'fixed' ? 'Maximum de joueurs par équipe' : 'Maximum total de joueurs'}</label>
             <input class="nl-input" id="new_season_max_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.max_players) : (isHeadcount ? '12' : ''))}">
           </div>
         </div>
@@ -6518,6 +6522,16 @@ async function removeVenueRow(id, btn) {
     window.location.reload();
   } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
 }
+// Onboarding item 6: fixed teams read "par équipe / per team", the others "total".
+function setRosterLimitLabels(prefix, structure) {
+  ['Min', 'Max'].forEach(function (w) {
+    var el = document.querySelector('label[for="' + prefix + w.toLowerCase() + '_players"]');
+    if (!el) return;
+    var k = 'lbl' + w + 'Players' + (structure === 'fixed' ? 'Team' : '');
+    el.setAttribute('data-i18n', k);
+    el.textContent = window.__pageDict()[k];
+  });
+}
 document.querySelectorAll('#se_structure_radio label').forEach(function(l) {
   l.addEventListener('click', function() {
     document.querySelectorAll('#se_structure_radio label').forEach(function(x) { x.classList.remove('on'); });
@@ -6532,6 +6546,7 @@ document.querySelectorAll('#se_structure_radio label').forEach(function(l) {
     var helpEl = document.getElementById('se_roster_limits_help');
     helpEl.setAttribute('data-i18n', helpKey);
     helpEl.textContent = window.__pageDict()[helpKey];
+    setRosterLimitLabels('se_', val);
   });
 });
 async function submitStructure() {
@@ -6587,7 +6602,8 @@ document.querySelectorAll('#season_structure_radio label').forEach(function(l) {
     var val = l.getAttribute('data-value');
     var helpKey = val === 'fixed' ? 'rosterSubTeam' : (val === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount');
     var helpEl = document.getElementById('season_roster_limits_help');
-    if (helpEl) { helpEl.setAttribute('data-i18n', helpKey); helpEl.textContent = window.__pageDict()[helpKey]; }
+    if (helpEl) { helpEl.setAttribute('data-i18n', helpKey); helpEl.textContent = window.__pageDict()[helpKey];
+    setRosterLimitLabels('season_', val); }
   });
 });
 // E1/E2 (season-model polish task): "Démarrer une nouvelle saison"'s
@@ -6601,7 +6617,8 @@ document.querySelectorAll('#new_season_structure_radio label').forEach(function(
     var val = l.getAttribute('data-value');
     var helpKey = val === 'fixed' ? 'rosterSubTeam' : (val === 'weekly_draw' ? 'rosterSubPool' : 'rosterSubHeadcount');
     var helpEl = document.getElementById('new_season_roster_limits_help');
-    if (helpEl) { helpEl.setAttribute('data-i18n', helpKey); helpEl.textContent = window.__pageDict()[helpKey]; }
+    if (helpEl) { helpEl.setAttribute('data-i18n', helpKey); helpEl.textContent = window.__pageDict()[helpKey];
+    setRosterLimitLabels('new_season_', val); }
   });
 });
 // E1 (season-model polish task): "Enregistrer la saison" now ONLY
