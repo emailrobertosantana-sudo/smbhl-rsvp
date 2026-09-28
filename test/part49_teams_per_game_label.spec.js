@@ -96,7 +96,7 @@ describe('Part 5 (live-testing task, batch 2): dashboard team-count label is cle
     await createLeague(cookie, csrfToken, { name: 'Team Label Headcount League', teamStructure: 'headcount', minPlayers: 6, maxPlayers: 12, tracksStats: true });
     await publishSeason(cookie, csrfToken, 'Team Label Headcount Season');
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
-    expect(html).toContain('data-i18n="noFixedTeams">Aucune équipe fixe');
+    expect(html).not.toContain('data-i18n="noFixedTeams"'); // item 8b: the tile is gone for headcount
   });
 
   // B1 bug fix (dashboard/schedule/events polish task): before a

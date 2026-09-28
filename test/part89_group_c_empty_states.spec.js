@@ -156,7 +156,7 @@ describe('C2: the "Pickup with teams" dashboard tile explains its own number', (
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
-    expect(html).toContain('data-i18n="noFixedTeams">Aucune équipe fixe<');
+    expect(html).not.toContain('data-i18n="noFixedTeams"'); // item 8b: the tile is gone for headcount
     expect(html).not.toContain('data-i18n="teamsPerGameCount"');
   });
 

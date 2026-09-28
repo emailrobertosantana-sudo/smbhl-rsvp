@@ -1716,12 +1716,12 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // own comment); that prompt now lives in the unified next-steps
       // checklist as nsCreateSchedule instead.
       Object.assign(fr, {
-        weekStatusTitle: 'Cette semaine', weekStatusDetailBtn: 'Voir le match',
+        weekStatusTitle: 'Prochain match', weekStatusTitleMany: 'Prochains matchs', weekStatusDetailBtn: 'Voir le match',
         weekStatusConfirmed: 'confirmés', weekStatusOut: 'absents', weekStatusNoResponse: 'sans réponse',
         weekStatusShort: 'Manque de joueurs'
       });
       Object.assign(en, {
-        weekStatusTitle: 'This week', weekStatusDetailBtn: 'View the game',
+        weekStatusTitle: 'Next game', weekStatusTitleMany: 'Next games', weekStatusDetailBtn: 'View the game',
         weekStatusConfirmed: 'confirmed', weekStatusOut: 'out', weekStatusNoResponse: 'no reply',
         weekStatusShort: 'Short players'
       });
@@ -2033,7 +2033,9 @@ async function handleDashboardPage(req, env, url) {
     // "create the schedule" prompt instead -- see nextStepsItems).
     const weekStatusHtml = (needsSeason || !nextDateEvents.length) ? '' : `
     <section class="nl-card nl-card--pad-lg">
-      <div class="h3" data-i18n="weekStatusTitle">Cette semaine</div>
+      <!-- Item 8a: the next game(s), whenever they are -- it said "this week"
+           above a game months away. -->
+      ${nextDateEvents.length > 1 ? '<div class="h3" data-i18n="weekStatusTitleMany">Prochains matchs</div>' : '<div class="h3" data-i18n="weekStatusTitle">Prochain match</div>'}
       ${nextDateEvents.map(({ event: nextEvent, status: weekStatus }) => `
       <div class="dash-week-when">${dateTimeSpanHtml('span', nextEvent.date, nextEvent.start_time, 'short')}${nextEvent.venue ? `<span class="dash-week-venue">${esc(nextEvent.venue)}</span>` : ''}</div>
       <div class="dash-week-counts">
@@ -2184,11 +2186,9 @@ async function handleDashboardPage(req, env, url) {
          own do-not-revert comment; this only hides the tile earlier
          than it used to show, never touches what it says. -->
     ${needsSeason ? '' : `
-    <section class="nl-card nl-card--pad-lg dash-tile">
+    ${dashIsHeadcount ? '' : `<section class="nl-card nl-card--pad-lg dash-tile">
       <div class="overline" data-i18n="${dashIsWeeklyDraw ? 'teamsPerGame' : 'teams'}">${dashIsWeeklyDraw ? 'Sans équipes fixes' : 'Équipes'}</div>
-      ${dashIsHeadcount
-        ? `<div class="stat tnum" style="font-size:20px" data-i18n="noFixedTeams">Aucune équipe fixe</div>`
-        : `<div class="stat tnum">${teamNames.length}</div>`}
+      <div class="stat tnum">${teamNames.length}</div>
       <!-- C2 (empty-states polish task): "Pickup with teams" describes
            the league's STRUCTURE, not literally "teams" the way the
            fixed-mode tile's own "Équipes" label does -- a bare count
@@ -2197,7 +2197,7 @@ async function handleDashboardPage(req, env, url) {
            label already says exactly what the number is, no caption
            needed there. -->
       ${dashIsWeeklyDraw ? `<p class="nl-help" style="margin-top:2px" data-i18n="teamsPerGameCount">équipes disponibles</p>` : ''}
-    </section>
+    </section>`}
     <section class="nl-card nl-card--pad-lg dash-tile"><div class="overline" data-i18n="navRoster">Joueurs</div><div class="stat tnum">${playerCount}</div><a href="/league/roster" data-i18n="navRoster">Joueurs</a></section>`}
     <section class="nl-card nl-card--pad-lg dash-tile">
       <div class="overline" data-i18n="publicPage">Page publique</div>

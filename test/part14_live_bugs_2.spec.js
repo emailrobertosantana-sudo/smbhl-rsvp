@@ -139,7 +139,8 @@ describe('Live-testing issues, round 2', () => {
       await createLeague(cookie, csrfToken, { name: 'Tile Headcount League', tracksStats: true, teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 });
       const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
       const html = await res.text();
-      expect(html).toContain('data-i18n="noFixedTeams"');
+      // Item 8b: no Teams tile at all for a no-teams league; the Teams section explains it.
+      expect(html).not.toContain('data-i18n="noFixedTeams"');
       expect(html).toContain('data-i18n="noFixedTeamsDesc"');
       expect(html).not.toContain('>Tous<');
       expect(html).not.toContain('<div class="nl-row"><span class="grow">Tous</span></div>');

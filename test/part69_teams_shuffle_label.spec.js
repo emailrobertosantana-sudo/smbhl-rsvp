@@ -118,7 +118,7 @@ describe('Part 5 (live-testing task, batch 5): the weekly_draw team-count tile l
     await publishSeason(cookie, csrfToken, 'Headcount Season');
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
     expect(html).toContain('data-i18n="teams">Équipes<');
-    expect(html).toContain('data-i18n="noFixedTeams">Aucune équipe fixe<');
+    expect(html).not.toContain('data-i18n="noFixedTeams"'); // item 8b: the tile is gone for headcount
     expect(html).not.toContain('data-i18n="teamsPerGame"');
   });
 });
