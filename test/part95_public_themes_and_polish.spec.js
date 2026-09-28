@@ -300,9 +300,9 @@ describe('Public-page themes, Part 2: Classique and Quartier', () => {
     expect(html).toContain('value="classique"');
     expect(html).toContain('value="quartier"');
     expect(html).toContain('Classique (couleurs de la ligue, gras)');
-    expect(html).toContain('Classique (bold, league colours)');
+    expect(html).toContain('Classic (bold, league colours)');
     expect(html).toContain('Quartier (chaleureux, arrondi)');
-    expect(html).toContain('Quartier (warm, rounded)');
+    expect(html).toContain('Neighbourhood (warm, rounded)');
   });
 });
 

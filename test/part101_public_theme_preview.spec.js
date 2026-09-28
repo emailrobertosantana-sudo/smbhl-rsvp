@@ -65,7 +65,7 @@ describe('Theme preview (?theme=) on the public page', () => {
     const html = await page(slug, '?theme=quartier');
     expect(html).toContain('class="pb-preview-banner"');
     expect(html).toContain('Aperçu du thème Quartier — non enregistré. Les visiteurs voient toujours ton thème actuel.');
-    expect(html).toContain('Preview of the Quartier theme — not saved. Visitors still see your current theme.');
+    expect(html).toContain('Preview of the Neighbourhood theme — not saved. Visitors still see your current theme.');
     expect(await page(slug, '?theme=arene')).not.toContain('class="pb-preview-banner"');
     const plain = await page(slug);
     expect(plain).not.toContain('class="pb-preview-banner"');

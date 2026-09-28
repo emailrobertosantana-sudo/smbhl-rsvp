@@ -4370,10 +4370,12 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   ].filter(n => n.show);
   const navHtml = `<nav class="pb-nav" aria-label="Sections">${NAV_ITEMS.map(n => `<a href="#${n.id}" class="pb-nav-link" data-section="${n.id}" data-i18n="${n.key}">${esc(t[n.key])}</a>`).join('')}</nav>`;
 
+  // Descriptive names, not brands: each language its own.
   const THEME_DISPLAY_NAMES = { arene: 'Arène', clean: 'Épuré', classique: 'Classique', quartier: 'Quartier' };
+  const THEME_DISPLAY_NAMES_EN = { arene: 'Arena', clean: 'Clean', classique: 'Classic', quartier: 'Neighbourhood' };
   const previewBannerHtml = isThemePreview ? (() => {
     const fr = I18N_PUBLIC.fr.themePreviewBanner.split('{theme}').join(THEME_DISPLAY_NAMES[theme]);
-    const en = I18N_PUBLIC.en.themePreviewBanner.split('{theme}').join(THEME_DISPLAY_NAMES[theme]);
+    const en = I18N_PUBLIC.en.themePreviewBanner.split('{theme}').join(THEME_DISPLAY_NAMES_EN[theme]);
     return `
   <div class="pb-preview-banner" role="status"><span data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(lang === 'en' ? en : fr)}</span></div>`;
   })() : '';
@@ -5654,8 +5656,8 @@ async function handleLeagueSettingsPage(req, env, url) {
       colorPresetHelp: 'Every colour is verified legible on both public page themes.',
       lblPublicPageEnabled: 'Public page',
       publicPageEnabledHelp: "When this is off, no one can see your public page — not even with the direct link.",
-      lblPublicTheme: 'Public page theme', themeArene: 'Arène (dark, current)', themeClean: 'Épuré (white, minimal)',
-      themeClassique: 'Classique (bold, league colours)', themeQuartier: 'Quartier (warm, rounded)',
+      lblPublicTheme: 'Public page theme', themeArene: 'Arena (dark, current)', themeClean: 'Clean (white, minimal)',
+      themeClassique: 'Classic (bold, league colours)', themeQuartier: 'Neighbourhood (warm, rounded)',
       themeHelp: 'Four themes are available.',
       themePreview: 'Preview this theme (without saving)',
       lblOrganizerNote: "Organizer's note",

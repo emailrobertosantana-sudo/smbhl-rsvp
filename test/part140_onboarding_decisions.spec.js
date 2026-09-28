@@ -201,3 +201,26 @@ describe('7 (continued). The per-event shortfall is unchanged', () => {
     expect((await teamState(env.DB, ev.id, 'Otters', cfg)).short).toBe(true);
   });
 });
+
+describe('8. Theme names are translated', () => {
+  it('all four theme names switch with the language (Settings picker and the preview banner)', async () => {
+    const s = await signup('p140.themes@example.com');
+    const league = (await (await post(s, '/leagues/create', { name: 'P140 Themes', teamNames: ['A', 'B'] })).json()).league;
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    const html = await page(s, '/league/settings');
+    for (const [key, fr, en] of [
+      ['themeArene', 'Arène (sombre, actuel)', 'Arena (dark, current)'],
+      ['themeClean', 'Épuré (blanc, minimal)', 'Clean (white, minimal)'],
+      ['themeClassique', 'Classique (couleurs de la ligue, gras)', 'Classic (bold, league colours)'],
+      ['themeQuartier', 'Quartier (chaleureux, arrondi)', 'Neighbourhood (warm, rounded)']
+    ]) {
+      expect(html).toContain(`data-i18n="${key}"`);
+      expect(html).toContain(`"${key}":"${fr}"`);
+      expect(html).toContain(`"${key}":"${en}"`);
+    }
+    await post(s, '/league/settings/identity', { publicPageEnabled: true });
+    const pub = await (await SELF.fetch(`http://example.com/league/public?league=${league.id}&theme=clean`)).text();
+    expect(pub).toContain('Épuré');
+    expect(pub).toContain('Preview of the Clean theme');
+  });
+});
