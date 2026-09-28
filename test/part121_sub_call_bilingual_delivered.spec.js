@@ -36,15 +36,19 @@ async function deliver(payload, dedup) {
   return sent[0];
 }
 
+// Sam has no stored team preference, so the call is generic -- no team
+// named (sub calls follow-up): the team is decided when a sub accepts.
 describe('SMBHL sub call, as delivered to Resend', () => {
   it('subject is "FR / EN"; the text AND the HTML part carry the whole English half after the French', async () => {
     const m = await deliver({ need: 'skater' }, 'p121-call');
-    expect(m.subject).toBe('Bleu cherche un joueur / Blue needs a skater');
+    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a skater');
     for (const [part, body] of [['text', m.text], ['html', visibleText(m.html)]]) {
-      const fr = body.indexOf('Bleu cherche un joueur'), en = body.indexOf('Blue needs a skater');
+      const fr = body.indexOf('SMBHL cherche un joueur'), en = body.indexOf('SMBHL needs a skater');
       expect(fr, `${part}: French`).toBeGreaterThanOrEqual(0);
       expect(en, `${part}: English after French`).toBeGreaterThan(fr);
-      expect(body, `${part}: English waitlist line`).toContain('If the spot is taken you stay on the waitlist for the other teams.');
+      expect(body, `${part}: English team line`).toMatch(/The team isn.t decided yet: if you.re available, we place you on a team, and you get your final team before the game\./);
+      expect(body, `${part}: English waitlist line`).toContain('If every spot is taken, you stay on the waitlist.');
+      expect(body, `${part}: no team named`).not.toContain('Blue');
       expect(body, `${part}: English opt-out line`).toContain('Want off the sub list? Just reply to this email.');
     }
     const html = visibleText(m.html);
@@ -54,7 +58,7 @@ describe('SMBHL sub call, as delivered to Resend', () => {
 
   it('the reminder too: "(rappel) / (reminder)" and both languages', async () => {
     const m = await deliver({ need: 'skater', reminder: true }, 'p121-remind');
-    expect(m.subject).toBe('Bleu cherche un joueur (rappel) / Blue needs a skater (reminder)');
-    expect(visibleText(m.html)).toContain('Blue needs a skater');
+    expect(m.subject).toBe('SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)');
+    expect(visibleText(m.html)).toContain('SMBHL needs a skater');
   });
 });

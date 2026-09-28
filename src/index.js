@@ -11334,6 +11334,40 @@ Not right? Change it: ${link}${sign}`;
       return { subject: subj, text, html };
     }
 
+    // A sub placed on a team BY HAND (the admin, or a captain on the team
+    // page) more than 24 h out: told their team straight away, with the
+    // caveat that teams may still change -- the game-day email at 24 h
+    // carries the final team. (Inside 24 h the game-day email itself goes.)
+    case 'sub_placed': {
+      const subj = `Tu joues avec ${tFR(team)} / You're playing with ${team}`;
+      const cavFr = "Les équipes peuvent encore changer d'ici le match : tu recevras ton équipe finale par courriel 24 h avant.";
+      const cavEn = "Teams may still change before the game: you'll get your final team by email 24 hours before.";
+      const text =
+`Salut ${name},
+
+Tu es inscrit avec ${tFR(team)} ${w.fr}.
+${cavFr}
+Tes détails : ${link}
+
+—
+
+You're signed up with ${team} ${w.en}.
+${cavEn}
+Your details: ${link}${sign}`;
+      const html = wrapEmail(
+        subj,
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
+        <p style="font-size:15px; margin:0 0 10px;">Tu es inscrit avec <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>.</p>
+        <p style="font-size:14px; margin:0 0 16px; color:#64748b;">${esc(cavFr)}</p>
+        <p style="margin:0 0 20px;">${emailBtn(link, 'Voir mes détails', '#17457f', '#ffffff')}</p>
+        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
+        <p style="font-size:15px; margin:0 0 10px; color:#334155;">You're signed up with <b>${esc(team)}</b> <b>${esc(w.en)}</b>.</p>
+        <p style="font-size:14px; margin:0 0 16px; color:#64748b;">${esc(cavEn)}</p>
+        <p style="margin:0 0 20px;">${emailBtn(link, 'See my details', '#17457f', '#ffffff')}</p>`
+      );
+      return { subject: subj, text: text, html };
+    }
+
     case 'released': {
       const subj = `Plus besoin de toi ${dateFR(ev.date)} / Not needed`;
       const text =
@@ -11359,51 +11393,67 @@ We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}
     case 'sub_call': {
       const g = payload.need === 'goalie';
       const again = payload.reminder ? ' (rappel)' : '';
+      // A call names a team only for a sub whose own preferred team is the
+      // one short (prepareOutboxMessage decides, at send time). Everyone
+      // else gets a GENERIC call: which team they play for is decided when
+      // they accept, and may change before the game.
+      const generic = !team;
+      const who = { fr: generic ? league.name : tFR(team), en: generic ? league.name : team };
 
-      const subjFr = `${tFR(team)} cherche ${g ? 'un gardien' : 'un joueur'}${again}`;
-      const subjEn = `${team} needs ${g ? 'a goalie' : 'a skater'}${payload.reminder ? ' (reminder)' : ''}`;
+      const subjFr = `${who.fr} cherche ${g ? 'un gardien' : 'un joueur'}${again}`;
+      const subjEn = `${who.en} needs ${g ? 'a goalie' : 'a skater'}${payload.reminder ? ' (reminder)' : ''}`;
+      const teamNoteFr = generic
+        ? "L'équipe n'est pas encore décidée : si tu es disponible, on te place dans une équipe, et tu reçois ton équipe finale avant le match."
+        : '';
+      const teamNoteEn = generic
+        ? "The team isn't decided yet: if you're available, we place you on a team, and you get your final team before the game."
+        : '';
+      const waitFr = generic ? "Si toutes les places sont prises, tu restes sur la liste d'attente." : "Si la place est déjà prise, tu restes sur la liste d'attente pour les autres équipes.";
+      const waitEn = generic ? 'If every spot is taken, you stay on the waitlist.' : 'If the spot is taken you stay on the waitlist for the other teams.';
 
       const textFr =
-`${tFR(team)} cherche ${g ? 'un gardien' : 'un joueur'} ${w.fr}.
+`${who.fr} cherche ${g ? 'un gardien' : 'un joueur'} ${w.fr}.${teamNoteFr ? '\n' + teamNoteFr : ''}
 
 Disponible ?   OUI : ${payload.yes}
                NON : ${payload.no}
 
-Si la place est déjà prise, tu restes sur la liste d'attente pour les autres équipes.
+${waitFr}
 Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.`;
       const textEn =
-`${team} needs ${g ? 'a goalie' : 'a skater'} ${w.en}.
+`${who.en} needs ${g ? 'a goalie' : 'a skater'} ${w.en}.${teamNoteEn ? '\n' + teamNoteEn : ''}
 
 Available?   YES: ${payload.yes}
              NO:  ${payload.no}
 
-If the spot is taken you stay on the waitlist for the other teams.
+${waitEn}
 Want off the sub list? Just reply to this email.`;
 
       const htmlFr = `<p style="font-size:16px; margin:0 0 16px;">
-          <b>${esc(tFR(team))}</b> cherche ${g ? 'un gardien' : 'un joueur'} <b>${esc(w.fr)}</b>.
+          <b>${esc(who.fr)}</b> cherche ${g ? 'un gardien' : 'un joueur'} <b>${esc(w.fr)}</b>.
         </p>
+        ${teamNoteFr ? `<p style="font-size:14px; margin:0 0 16px;">${esc(teamNoteFr)}</p>` : ''}
         <p style="font-size:15px; font-weight:600; margin:0 0 10px;">Disponible ?</p>
         <div style="margin:0 0 20px;">
           ${emailBtn(payload.yes, '✅ OUI — Je suis disponible', '#15803d', '#ffffff')}
           ${emailBtn(payload.no, 'NON', '#f1f5f9', '#475569', '1px solid #cbd5e1')}
         </div>
         <p style="font-size:13px; color:#64748b; margin:0 0 4px;">
-          Si la place est déjà prise, tu restes sur la liste d'attente pour les autres équipes.
+          ${esc(waitFr)}
         </p>
         <p style="font-size:12px; color:#94a3b8; margin:0 0 16px;">
           Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.
         </p>`;
       const htmlEn = `<p style="font-size:15px; margin:0 0 16px; color:#334155;">
-          <b>${esc(team)}</b> needs ${g ? 'a goalie' : 'a skater'} <b>${esc(w.en)}</b>.
+          <b>${esc(who.en)}</b> needs ${g ? 'a goalie' : 'a skater'} <b>${esc(w.en)}</b>.
         </p>
+        ${teamNoteEn ? `<p style="font-size:14px; margin:0 0 16px; color:#334155;">${esc(teamNoteEn)}</p>` : ''}
         <p style="font-size:14px; font-weight:600; margin:0 0 10px; color:#334155;">Available?</p>
         <div style="margin:0 0 20px;">
           ${emailBtn(payload.yes, '✅ YES — Available', '#15803d', '#ffffff')}
           ${emailBtn(payload.no, 'NO', '#f1f5f9', '#475569', '1px solid #cbd5e1')}
         </div>
         <p style="font-size:13px; color:#64748b; margin:0 0 4px;">
-          If the spot is taken you stay on the waitlist for the other teams.
+          ${esc(waitEn)}
         </p>
         <p style="font-size:12px; color:#94a3b8; margin:0;">
           Want off the sub list? Just reply to this email.
@@ -11748,6 +11798,23 @@ async function prepareOutboxMessage(env, m, rctx, opts = {}) {
     link = `${base}/rsvp?e=${encodeURIComponent(m.event_id)}&p=${m.player_id}&t=${t}`;
 
     playerTeam = m.team;
+    // A sub call names a team only when the sub has a stored preferred
+    // team AND that team is short for their position right now. The row's
+    // own team is just whichever team triggered the call; naming it told
+    // every sub "Blue is looking" when nobody knew where they'd play.
+    if (m.kind === 'sub_call') {
+      const pref = c.preferred_team;
+      const prefShort = pref && getTeamNames(seasonCfg).includes(pref)
+        && await openSpots(env.DB, m.event_id, pref, payload.need || 'skater', seasonCfg) > 0;
+      playerTeam = prefShort ? pref : null;
+    }
+    if (m.kind === 'sub_placed') {
+      // Told their CURRENT team (a move before sending wins); dropped if
+      // they are no longer placed.
+      const cur = await env.DB.prepare("SELECT team, status FROM rsvp WHERE event_id=? AND player_id=? AND role='sub'").bind(m.event_id, m.player_id).first();
+      if (!cur || cur.status !== 'in' || !cur.team) { const d = drop('no longer placed'); if (d) return d; }
+      else playerTeam = cur.team;
+    }
     if (m.kind === 'gameday' || m.kind === 'friday_board' || m.kind === 'gameday_morning') {
       const currentRsvp = await env.DB.prepare(
         'SELECT status, role, team FROM rsvp WHERE event_id=? AND player_id=?').bind(m.event_id, m.player_id).first();
@@ -11912,7 +11979,8 @@ async function prepareOutboxMessage(env, m, rctx, opts = {}) {
   if (m.kind === 'sub_call' && hoursOut(ev) < CUTOFF_HOURS) {
     const d = drop('too close to game time'); if (d) return d;
   }
-  const msg = body(m.kind, { ev, name, team: playerTeam || m.team, link, payload, leagueCfg });
+  // A sub call's team is exactly what was decided above (null = generic).
+  const msg = body(m.kind, { ev, name, team: m.kind === 'sub_call' ? playerTeam : (playerTeam || m.team), link, payload, leagueCfg });
   if (!msg) throw new Error('unknown kind ' + m.kind);
   return { action: 'send', to, msg, leagueCfg, ev, notes };
 }
@@ -12672,12 +12740,9 @@ export async function acceptAvailability(env, ev, playerId, need) {
       `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at,league_id)
        VALUES (?,?,?, 'in','sub','self',?,?)`
     ).bind(ev.id, playerId, team, now, leagueId).run();
-    // Do not send an automated email right away if > 24 hours out.
-    // Subs will receive their final reminder (gameday) at 24h before game time.
-    if (hoursOut(ev) <= 24) {
-      await enqueue(env, { kind: 'gameday', event_id: ev.id, player_id: playerId, team,
-        dedup_key: `gameday24:${ev.id}:${playerId}` });
-    }
+    // Placed by the system: provisional more than 24 h out (the page says
+    // it may change; nothing is emailed), the game-day email at once inside.
+    await tellSubOfPlacement(env, ev, playerId, team);
     if (await openSpots(env.DB, ev.id, team, need, cfg) < 1) {
       await stopWaves(env, ev.id, need, cfg);
       await cancelPending(env, `hold:${ev.id}:${team}:${need}`);
@@ -12704,12 +12769,8 @@ async function fillFromWaitlist(env, ev, team, need, cfg) {
     `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at,league_id)
      VALUES (?,?,?, 'in','sub','auto',?,?)`
   ).bind(ev.id, next.player_id, team, now, ev.league_id || SMBHL_LEAGUE_ID).run();
-  // Do not send an automated email right away if > 24 hours out.
-  // Subs will receive their final reminder (gameday) at 24h before game time.
-  if (hoursOut(ev) <= 24) {
-    await enqueue(env, { kind: 'gameday', event_id: ev.id, player_id: next.player_id, team,
-      dedup_key: `gameday24:${ev.id}:${next.player_id}` });
-  }
+  // Placed by the system from the waitlist: same rule as an accept.
+  await tellSubOfPlacement(env, ev, next.player_id, team);
   await stopWaves(env, ev.id, need, cfg);
   return true;
 }
@@ -12738,7 +12799,11 @@ async function remindSubs(env, ev) {
   let n = 0;
   for (const r of rows) {
     const need = (JSON.parse(r.payload || '{}').need) || 'skater';
-    if (await openSpots(env.DB, ev.id, r.team, need, cfg) < 1) continue;
+    // A call is for the pool, not for the team that triggered it: remind
+    // while any team still needs this position.
+    let open = false;
+    for (const t of cfgTeams) if (await openSpots(env.DB, ev.id, t, need, cfg) > 0) { open = true; break; }
+    if (!open) continue;
     await enqueue(env, { kind: 'sub_call', event_id: ev.id, player_id: r.player_id,
       team: r.team, dedup_key: `remind:${ev.id}:${need}:${r.player_id}`,
       payload: { need, reminder: true } });
@@ -13766,13 +13831,9 @@ async function subChange(env, ev, team, player_id, action) {
       `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at)
        VALUES (?,?,?, 'in','sub','teammate',?)`
     ).bind(ev.id, player_id, team, now).run();
-    // Do not send an automated email right away if > 24 hours out.
-    // Subs will receive their final reminder (gameday) at 24h before game time.
-    if (hoursOut(ev) <= 24) {
-      await enqueue(env, { kind: 'gameday', event_id: ev.id, player_id, team,
-        dedup_key: `gameday24:${ev.id}:${player_id}` });
-    }
     await cancelPending(env, `hold:${ev.id}:${team}`);
+    // A manual add: always told their team (tellSubOfPlacement).
+    await tellSubOfPlacement(env, ev, player_id, team, { manual: true });
     return new Response('ok');
   }
 
@@ -13807,6 +13868,18 @@ async function subPool(db, eventId) {
       WHERE c.role IN ('sub_skater','sub_goalie') AND c.opted_out = 0
       ORDER BY c.role, c.name`
   ).bind(eventId, eventId).all()).results || [];
+}
+
+// Wherever a sub sees their team before the game: more than 24 h out a
+// placement is provisional (reshuffles send no email), so say so. Inside
+// 24 h the team shown is the one the game-day email carries.
+const SUB_TEAM_CAVEAT = {
+  fr: "Ton équipe peut encore changer d'ici le match. Tu recevras ton équipe finale par courriel 24 h avant.",
+  en: "Your team may still change before the game. You'll get your final team by email 24 hours before."
+};
+function subTeamCaveatHtml(ev) {
+  if (hoursOut(ev) <= 24) return '';
+  return `<p class="state" id="sub_team_caveat">${esc(SUB_TEAM_CAVEAT.fr)}<span class="en">${esc(SUB_TEAM_CAVEAT.en)}</span></p>`;
 }
 
 async function availRoute(req, env, url) {
@@ -13849,6 +13922,7 @@ async function availRoute(req, env, url) {
     return page('Confirmé', `<h1>Tu joues avec ${esc(TEAM_FR[r.placed] || r.placed)}
       <span class="en">You are with ${esc(r.placed)}</span></h1>
       <p class="when">${esc(w.fr)}</p>
+      ${subTeamCaveatHtml(ev)}
       <div class="card"><p>${shirt.fr}<span class="en">${shirt.en}</span></p></div>`, logoTooltip);
   }
   return page('Liste d\u2019attente', `<h1>Sur la liste d'attente
@@ -17819,6 +17893,7 @@ async function rsvpGet(req, env, url) {
   <div class="card">
     <h2>Tu joues ${esc(day.fr)} ?<span class="en">Playing ${esc(day.en)}?</span></h2>
     ${matchBoxHtml}
+    ${row && row.role === 'sub' && team ? subTeamCaveatHtml(ev) : ''}
     <div class="btns">
       <button class="btn in ${status === 'in' ? 'on' : ''}" data-v="in" ${locked ? 'disabled' : ''}>PRÉSENT<span class="en">IN</span></button>
       <button class="btn out ${status === 'out' ? 'on' : ''}" data-v="out" ${locked ? 'disabled' : ''}>ABSENT<span class="en">OUT</span></button>
@@ -19070,8 +19145,12 @@ async function leagueRsvpGet(req, env, url) {
   // pending/unassigned weekly_draw player correctly sees no team yet.
   // 'fixed' is unchanged.
   const teamStructure = cfg.teamStructure || 'fixed';
+  // A sub placed for this game plays for the team they were placed on,
+  // not their stored preference.
+  const placedSub = !!(row && row.role === 'sub' && row.team);
   const team = teamStructure === 'weekly_draw' ? ((row && row.team) || null)
     : teamStructure === 'headcount' ? null
+    : placedSub ? row.team
     : (contact.preferred_team || null);
   let confirmed = 0, target = 0;
   if (team) {
@@ -19083,6 +19162,7 @@ async function leagueRsvpGet(req, env, url) {
   const teamMeterHtml = team ? `<div class="rv-team">
       <div class="rv-team-top"><span class="nl-label">${esc(team)}</span><span class="small" style="color:var(--ink-muted)">${confirmed}/${target || confirmed}</span></div>
       <div class="nl-meter">${Array.from({ length: meterSpots }, (_, s) => `<i class="${s < confirmed ? 'in' : 'open'}"></i>`).join('')}</div>
+      ${placedSub && hoursOut(ev) > 24 ? `<p class="nl-help" id="sub_team_caveat" style="margin:6px 0 0" data-date-fr="${esc(SUB_TEAM_CAVEAT.fr)}" data-date-en="${esc(SUB_TEAM_CAVEAT.en)}">${esc(SUB_TEAM_CAVEAT.fr)}</p>` : ''}
     </div>` : '';
 
   const firstName = (contact.name || '').split(' ')[0] || contact.name;
@@ -19559,6 +19639,32 @@ async function teamLinksRoute(req, env, url) {
   return Response.json({ season, links: out });
 }
 
+// What a sub is told when they are placed on a team, or moved:
+//   inside 24 h of the game: the game-day email, straight away, every time
+//     -- it carries the (new) team, and the scheduled one has gone or is
+//     about to;
+//   more than 24 h out, placed by the system or MOVED: nothing -- the
+//     placement is provisional, reshuffles are expected, and the game-day
+//     email at 24 h carries the final team;
+//   more than 24 h out, added BY HAND (manual): the "you're playing with
+//     X" email, with the caveat that teams may still change.
+// Sent now (no quiet-hours hold): these follow a person's own action.
+async function tellSubOfPlacement(env, ev, playerId, team, { manual = false } = {}) {
+  const inside24 = hoursOut(ev) <= 24;
+  if (inside24) {
+    await cancelPending(env, `placed:${ev.id}:${playerId}`);
+    await enqueue(env, { kind: 'gameday', event_id: ev.id, player_id: playerId, team,
+      dedup_key: `gameday24:${ev.id}:${playerId}`, league_id: ev.league_id || SMBHL_LEAGUE_ID, skipQuietHours: true });
+  } else if (manual) {
+    await enqueue(env, { kind: 'sub_placed', event_id: ev.id, player_id: playerId, team,
+      dedup_key: `placed:${ev.id}:${playerId}`, league_id: ev.league_id || SMBHL_LEAGUE_ID, skipQuietHours: true });
+  } else {
+    return false;
+  }
+  await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id);
+  return true;
+}
+
 async function reassignSub(req, env) {
   const { event_id, player_id, team } = await req.json().catch(() => ({}));
   if (!event_id || !player_id) {
@@ -19569,7 +19675,7 @@ async function reassignSub(req, env) {
     return new Response('invalid params', { status: 400 });
   }
   const existing = await env.DB.prepare(
-    `SELECT role FROM rsvp WHERE event_id = ? AND player_id = ?`
+    `SELECT role, team, status FROM rsvp WHERE event_id = ? AND player_id = ?`
   ).bind(event_id, player_id).first();
   if (existing && existing.role === 'roster') {
     return new Response('player is on regular roster', { status: 400 });
@@ -19598,21 +19704,13 @@ async function reassignSub(req, env) {
 
   // Cancel any pending outbox entry for this sub
   await cancelPending(env, `place:${event_id}:${player_id}`);
-  await cancelPending(env, `gameday24:${event_id}:${player_id}`);
-
-  // Do not send an automated email right away if > 24 hours out.
-  // Only send if late reassignment within 24h of game time.
   const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(event_id).first();
-  if (ev && hoursOut(ev) <= 24) {
-    await enqueue(env, {
-      kind: 'gameday',
-      event_id,
-      player_id,
-      team,
-      dedup_key: `gameday24:${event_id}:${player_id}`
-    });
+  // A MOVE (already placed) vs a MANUAL ADD (from the pool / waitlist):
+  // see tellSubOfPlacement for what each sends, and when.
+  const wasPlaced = !!(existing && existing.role === 'sub' && existing.status === 'in' && existing.team);
+  if (ev && !(wasPlaced && existing.team === team)) {
+    await tellSubOfPlacement(env, ev, player_id, team, { manual: !wasPlaced });
   }
-
   return Response.json({ ok: true });
 }
 
