@@ -39,7 +39,7 @@ describe('Game-day sub fee follows games per night', () => {
     await drain(env);
     expect(sent).toHaveLength(2);
     const [smbhl, oneGame] = sent;
-    expect(smbhl.text).toContain('Frais de substitut / Sub Fee : 10,00 $');
-    expect(oneGame.text).toContain('Frais de substitut / Sub Fee : 5,00 $');
+    expect(smbhl.text).toContain('Frais de substitut : 10,00 $ / Sub fee: $10.00');
+    expect(oneGame.text).toContain('Frais de substitut : 5,00 $ / Sub fee: $5.00');
   });
 });

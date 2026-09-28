@@ -196,7 +196,7 @@ export async function getEmailSettings(db, leagueId = null) {
 }
 
 export async function runSchedule(env) {
-  const { enqueue, teamState, remindSubs, callSubs, getTeamMessages, callSubsForShortfall, ensureNextEvent, getEvent, drain, deadMan, ADMIN_EMAIL } = reminderHost();
+  const { enqueue, teamState, remindSubs, callSubs, getTeamMessages, callSubsForShortfall, ensureNextEvent, getEvent, drain, deadMan, ADMIN_EMAIL, dateFR } = reminderHost();
   const log = [];
   const now = new Date();
   const emailSettings = await getEmailSettings(env.DB);
@@ -389,7 +389,7 @@ export async function runSchedule(env) {
           ORDER BY a.answered_at`).bind(ev.id, ev.id).all()).results || [];
       await enqueue(env, { kind: 'summary', event_id: ev.id,
         dedup_key: `summary:${ev.id}`,
-        payload: { text: `Semaine ${ev.week} — ${ev.date}\n\n` + lines.join('\n') +
+        payload: { text: `Semaine ${ev.week} — ${dateFR(ev.date)}\n\n` + lines.join('\n') +
           (wait.length ? `\n\nListe d'attente: ` +
             wait.map(w => `${w.name} (${w.need === 'goalie' ? 'G' : 'J'})`).join(', ') : '') } });
     });

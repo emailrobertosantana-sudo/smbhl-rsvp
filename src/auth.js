@@ -11,7 +11,7 @@
 // command was not run as part of this task (see the final report).
 
 import { hmac, same } from './crypto_utils.js';
-import { nlEmailWrap, nlEmailButton, nlDocument, assembleBilingualEmail } from './design_system.js';
+import { nlEmailWrap, nlEmailButton, nlDocument, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
 import { ERROR_I18N } from './error_i18n.js';
 
 /* ---------- password hashing ---------- */
@@ -356,7 +356,7 @@ This link expires in 24 hours. If you didn't create an account, you can ignore t
     brandName: 'Notre Ligue',
     barColor: '#16181d',
     bodyHtml: assembled.html,
-    footerHtml: lang === 'en' ? 'Sent by Notre Ligue' : 'Envoyé par Notre Ligue'
+    footerHtml: nlSentByFooter(lang)
   });
   return { subject: assembled.subject, text: assembled.text, html };
 }
@@ -436,30 +436,22 @@ async function verifyPasswordResetToken(env, token) {
   return { ok: true, userId };
 }
 
-// Live-testing task (batch 3), Part 1: password reset (and any other
-// "admin account" email not already tied to one specific league at
-// send time, per the task's explicit "including admin account emails
-// ... NOT the admin's personal signup_lang" instruction) uses the
-// language_mode of the league this account most recently administers
-// -- the SAME "most recently created league" convention
-// resolveSessionLeagueId (leagues.js) already uses for "which league
-// is this session acting on" when no explicit league_id is given, so
-// an admin of several leagues gets a predictable, consistent answer
-// rather than an arbitrary one. An account that administers no league
-// yet (or ever -- a genuinely possible state for a brand-new signup
-// who verified but never created one) falls back to 'fr', matching
-// every other Quebec-first default in this app (e.g.
-// buildVerificationEmail's own lang='fr' default) -- never signup_lang,
-// which the task explicitly rules out for this class of email.
+// ONE RULE for every account email (verification, its resend, password
+// reset): the league the account administers decides once there is one;
+// before that, the language the account signed up in (users.signup_lang);
+// neither known -> both languages. An account with no league used to get
+// French only, and the verification resend ignored the league.
 async function resolveAccountEmailLanguageMode(env, userId) {
   try {
     const row = await env.DB.prepare(
       `SELECT l.language_mode FROM league_admins la JOIN leagues l ON l.id = la.league_id
         WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
     ).bind(userId).first();
-    return (row && row.language_mode) || 'fr';
+    if (row && row.language_mode) return row.language_mode;
+    const u = await env.DB.prepare('SELECT signup_lang FROM users WHERE id = ?').bind(userId).first();
+    return (u && (u.signup_lang === 'fr' || u.signup_lang === 'en')) ? u.signup_lang : 'both';
   } catch (_) {
-    return 'fr';
+    return 'both';
   }
 }
 
@@ -500,7 +492,7 @@ This link expires in 1 hour. If you didn't request this, you can ignore this ema
     brandName: 'Notre Ligue',
     barColor: '#16181d',
     bodyHtml: assembled.html,
-    footerHtml: languageMode === 'en' ? 'Sent by Notre Ligue' : 'Envoyé par Notre Ligue'
+    footerHtml: nlSentByFooter(languageMode)
   });
   return { subject: assembled.subject, text: assembled.text, html };
 }
@@ -999,6 +991,6 @@ export async function handleResendVerification(req, env, sendMailFunc = null) {
     return Response.json({ ok: true, alreadyVerified: true });
   }
 
-  await sendVerificationEmail(env, sendMailFunc, user.email, session.userId, user.signup_lang || 'fr');
+  await sendVerificationEmail(env, sendMailFunc, user.email, session.userId, await resolveAccountEmailLanguageMode(env, session.userId));
   return Response.json({ ok: true, alreadyVerified: false });
 }

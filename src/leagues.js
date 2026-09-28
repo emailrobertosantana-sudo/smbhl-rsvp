@@ -22,7 +22,7 @@ import { sanitizeAndValidateEmail } from './validation.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie, generateRoundRobinRounds } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
-import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail } from './design_system.js';
+import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
 import { hasCapability } from './super_admin.js';
 import { applyReminderWindowSkipRule } from './reminder_scheduling.js';
 import { usesAdvancedReminders, getEmailSettings, emailSettingsKey } from './reminders.js';
@@ -3089,9 +3089,7 @@ This link expires in 48 hours. If you don't recognize this league, you can ignor
     <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 48 hours. If you don't recognize this league, you can ignore this email.</p>`
   };
   const assembled = assembleBilingualEmail(languageMode, { fr, en });
-  const footerHtml = languageMode === 'en'
-    ? `Sent by Notre Ligue for ${nlEmailWrapEsc(leagueName)}`
-    : `Envoyé par Notre Ligue pour ${nlEmailWrapEsc(leagueName)}`;
+  const footerHtml = nlSentByFooter(languageMode, { forName: nlEmailWrapEsc(leagueName) });
   const html = nlEmailWrap({ brandName: leagueName, barColor, bodyHtml: assembled.html, footerHtml });
   return { subject: assembled.subject, text: assembled.text, html };
 }

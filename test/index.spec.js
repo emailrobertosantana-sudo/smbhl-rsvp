@@ -816,7 +816,7 @@ describe("SMBHL Worker", () => {
 			link: 'https://rsvp.smbhl.com/rsvp?e=2026-09-20&p=P0001&t=xyz',
 			payload
 		});
-		expect(friEmail.subject).toContain("Notes d'équipe : Red");
+		expect(friEmail.subject).toBe("Notes d'équipe : Rouge / Team board update: Red");
 		expect(friEmail.text).toContain("Running 10 mins late");
 		expect(friEmail.html).toContain("Voir l&#39;alignement et répondre");
 
@@ -827,7 +827,7 @@ describe("SMBHL Worker", () => {
 			link: 'https://rsvp.smbhl.com/rsvp?e=2026-09-20&p=P0001&t=xyz',
 			payload
 		});
-		expect(morningEmail.subject).toContain("Notes de dernière minute : Red");
+		expect(morningEmail.subject).toBe("Notes de dernière minute : Rouge / Last-minute team update: Red");
 		expect(morningEmail.text).toContain("Running 10 mins late");
 		expect(morningEmail.html).toContain("Voir le tableau d&#39;équipe");
 	});
@@ -1114,14 +1114,14 @@ describe("SMBHL Worker", () => {
 		};
 
 		const msg = body("season_recap", { ev, name: "Alex", team: "Blue", payload });
-		expect(msg.subject).toContain("Félicitations aux Champions (Blue) & Bilan Fall 2026");
-		expect(msg.text).toContain("FÉLICITATIONS AUX CHAMPIONS DE LA SAISON FALL 2026 : TEAM BLUE");
+		expect(msg.subject).toContain("Félicitations aux Champions (Bleu) & Bilan Fall 2026");
+		expect(msg.text).toContain("FÉLICITATIONS AUX CHAMPIONS DE LA SAISON FALL 2026 : ÉQUIPE BLEU");
 		expect(msg.text).toContain("Rocket Richard (Meilleur buteur, Top Goal Scorer)");
 		expect(msg.text).toContain("Roberto Santana with 15 goals");
 		expect(msg.text).toContain("Bill Masterton (Persévérance & esprit sportif, Perseverance & Sportsmanship)");
 		expect(msg.text).toContain("Yanick Audet for dedication");
 		expect(msg.html).toContain("Champions Fall 2026");
-		expect(msg.html).toContain("Team Blue");
+		expect(msg.html).toContain("Équipe Bleu / Team Blue");
 		expect(msg.html).toContain("https://rsvp.smbhl.com/api/champion-photo?s=Fall%202026");
 		expect(msg.html).toContain("Georges Vézina");
 		expect(msg.html).toContain("Star Goalie (2.00 GAA)");
@@ -1882,10 +1882,10 @@ describe("SMBHL Worker", () => {
 					subFee: { perGame: 5, total: 10, phone: "514-555-7890" }
 				}
 			});
-			expect(resSkater.text).toContain("💵 Frais de substitut / Sub Fee : 10,00 $");
+			expect(resSkater.text).toContain("💵 Frais de substitut : 10,00 $ / Sub fee: $10.00");
 			expect(resSkater.text).not.toContain("2 matchs");
-			expect(resSkater.text).toContain("Paiement en argent comptant sur place ou par virement Interac au 514-555-7890.");
-			expect(resSkater.text).toContain("Please bring cash to the gym or send an Interac e-Transfer to 514-555-7890.");
+			expect(resSkater.text).toContain("Paiement de 10,00 $ en argent comptant sur place ou par virement Interac au 514-555-7890.");
+			expect(resSkater.text).toContain("Please bring $10.00 in cash to the gym or send it by Interac e-Transfer to 514-555-7890.");
 			expect(resSkater.html).toContain("10,00 $");
 			expect(resSkater.html).not.toContain("2 matchs");
 			expect(resSkater.html).toContain("514-555-7890");
@@ -1920,9 +1920,9 @@ describe("SMBHL Worker", () => {
 					teamLink: 'https://rsvp.smbhl.com/team-rsvp?s=2026&team=Red&t=tok999'
 				}
 			});
-			expect(resUnpaid.text).toContain("Montant dû / Amount due : 170,00 $");
-			expect(resUnpaid.text).toContain("Paiement en argent comptant sur place ou par virement Interac au 514-555-7890.");
-			expect(resUnpaid.text).toContain("Please bring cash to the gym or send an Interac e-Transfer to 514-555-7890.");
+			expect(resUnpaid.text).toContain("Montant dû : 170,00 $ / Amount due: $170.00");
+			expect(resUnpaid.text).toContain("Paiement de 170,00 $ en argent comptant sur place ou par virement Interac au 514-555-7890.");
+			expect(resUnpaid.text).toContain("Please bring $170.00 in cash to the gym or send it by Interac e-Transfer to 514-555-7890.");
 			expect(resUnpaid.html).toContain("170,00 $");
 			expect(resUnpaid.html).toContain("514-555-7890");
 			expect(resUnpaid.text).toContain("Gérer l'équipe Rouge / Manage Red roster & subs");
@@ -4637,7 +4637,7 @@ describe("SMBHL Worker", () => {
 					}
 				});
 
-				expect(res.text).toContain("Montant dû / Amount due : 10,00 $");
+				expect(res.text).toContain("Montant dû : 10,00 $ / Amount due: $10.00");
 				expect(res.text).toContain("514-575-5251");
 				expect(res.html).toContain("10,00 $");
 				expect(res.html).toContain("514-575-5251");

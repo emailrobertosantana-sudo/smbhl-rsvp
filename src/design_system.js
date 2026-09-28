@@ -449,6 +449,17 @@ export function nlEmailButton(url, label, color = '#16181d') {
 // buildPasswordResetEmail, renderLeagueReminderEmail/
 // renderLeagueLogisticsEmail's own convention); body()'s legacy
 // sub_call case uses a bare em dash instead and passes its own.
+// The "sent by" footer in the email's own language(s): 'fr', 'en', or both
+// joined (it was French-only in 'both' mode, and "Powered by ... pour X" in
+// English mode). `forName` is already HTML-escaped by the caller, or omitted.
+export function nlSentByFooter(languageMode, { forName = '', fr = 'Envoyé par Notre Ligue', en = 'Sent by Notre Ligue' } = {}) {
+  const frLine = forName ? `${fr} pour ${forName}` : fr;
+  const enLine = forName ? `${en} for ${forName}` : en;
+  if (languageMode === 'fr') return frLine;
+  if (languageMode === 'en') return enLine;
+  return `${frLine} · ${enLine}`;
+}
+
 export function assembleBilingualEmail(languageMode, { fr, en, bothSubject, htmlSeparator, textSeparator }) {
   if (languageMode === 'fr') return { subject: fr.subject, text: fr.text, html: fr.html };
   if (languageMode === 'en') return { subject: en.subject, text: en.text, html: en.html };

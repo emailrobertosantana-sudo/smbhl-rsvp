@@ -765,61 +765,56 @@ export const TEAM_FR = { Red: 'Rouge', Blue: 'Bleu', White: 'Blanc', Black: 'Noi
 export const tFR = (t, cfg) => cfg ? getTeamNameFr(cfg, t) : (TEAM_FR[t] || t);
 
 /**
- * Formats milestone stat concisely without duplicate FR/EN sentences
- * e.g. "500 pts", "300 passes / assists"
+ * Formats milestone stat concisely, in both languages where the words
+ * differ: the highlights box sits in the bilingual invite, read by French
+ * and English readers alike.
+ * e.g. "500 pts", "300 passes / assists", "9e rang historique / 9th all-time · 915 pts"
  */
+// Units that differ between the languages carry both ("buts / goals");
+// "pt"/"pts" reads the same in both.
+const STAT_UNITS = {
+  pts: ['pt', 'pts', 'pt', 'pts'],
+  g: ['but', 'buts', 'goal', 'goals'],
+  a: ['passe', 'passes', 'assist', 'assists'],
+  gp: ['match', 'matchs', 'game', 'games'],
+  gw: ['victoire', 'victoires', 'win', 'wins']
+};
+function statUnit(type, n) {
+  const u = STAT_UNITS[type] || STAT_UNITS.pts;
+  const fr = n === 1 ? u[0] : u[1], en = n === 1 ? u[2] : u[3];
+  return fr === en ? fr : `${fr} / ${en}`;
+}
+const ordinalEn = n => n % 100 >= 11 && n % 100 <= 13 ? `${n}th` : `${n}${['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
+
 export function formatMilestoneStat(a) {
   if (a.statType === 'rank') {
     const rank = a.rank;
-    const rankLabel = rank === 1 ? '1er rang historique' : `${rank}e rang historique`;
-    const passedStr = a.passedNames && a.passedNames.length > 0 ? ` (dépasse ${a.passedNames.join(', ')})` : '';
-    if (a.subType === 'goalie_wins') {
-      const val = a.currentVal;
-      const unit = val === 1 ? 'victoire' : 'victoires';
-      return `${rankLabel} · ${val} ${unit}${passedStr}`;
-    } else {
-      const val = a.currentVal;
-      const unit = val === 1 ? 'pt' : 'pts';
-      return `${rankLabel} · ${val} ${unit}${passedStr}`;
-    }
+    const rankLabel = `${rank === 1 ? '1er' : `${rank}e`} rang historique / ${ordinalEn(rank)} all-time`;
+    const passedStr = a.passedNames && a.passedNames.length > 0 ? ` (dépasse / passes ${a.passedNames.join(', ')})` : '';
+    const val = a.currentVal;
+    return `${rankLabel} · ${val} ${statUnit(a.subType === 'goalie_wins' ? 'gw' : 'pts', val)}${passedStr}`;
   }
 
   const mark = a.mark;
   const st = a.statType || a.stat;
-  if (st === 'pts') return `${mark} ${mark === 1 ? 'pt' : 'pts'}`;
-  if (st === 'g') return `${mark} ${mark === 1 ? 'but' : 'buts'}`;
-  if (st === 'a') return `${mark} ${mark === 1 ? 'passe' : 'passes'}`;
-  if (st === 'gp') return `${mark} ${mark === 1 ? 'match' : 'matchs'}`;
-  if (st === 'gw') return `${mark} ${mark === 1 ? 'victoire' : 'victoires'}`;
+  if (STAT_UNITS[st]) return `${mark} ${statUnit(st, mark)}`;
 
   const txt = `${a.fr || ''} ${a.en || ''}`;
-  if (/point/i.test(txt)) return `${mark} ${mark === 1 ? 'pt' : 'pts'}`;
-  if (/but/i.test(txt) || /goal/i.test(txt)) return `${mark} ${mark === 1 ? 'but' : 'buts'}`;
-  if (/passe/i.test(txt) || /assist/i.test(txt)) return `${mark} ${mark === 1 ? 'passe' : 'passes'}`;
-  if (/match/i.test(txt) || /game/i.test(txt)) return `${mark} ${mark === 1 ? 'match' : 'matchs'}`;
-  if (/victoire/i.test(txt) || /win/i.test(txt)) return `${mark} ${mark === 1 ? 'victoire' : 'victoires'}`;
+  if (/point/i.test(txt)) return `${mark} ${statUnit('pts', mark)}`;
+  if (/but/i.test(txt) || /goal/i.test(txt)) return `${mark} ${statUnit('g', mark)}`;
+  if (/passe/i.test(txt) || /assist/i.test(txt)) return `${mark} ${statUnit('a', mark)}`;
+  if (/match/i.test(txt) || /game/i.test(txt)) return `${mark} ${statUnit('gp', mark)}`;
+  if (/victoire/i.test(txt) || /win/i.test(txt)) return `${mark} ${statUnit('gw', mark)}`;
 
-  return `${mark} ${mark === 1 ? 'pt' : 'pts'}`;
+  return `${mark} ${statUnit('pts', mark)}`;
 }
 
 /**
  * Formats closing in line concisely with target plus distance
- * e.g. "Chase Brunetti : 75 passes (-1)"
+ * e.g. "Chase Brunetti : 75 passes / assists (-1)"
  */
 export function formatClosingInLine(c, isHtml = false) {
-  let unit = 'pts';
-  if (c.type === 'a') {
-    unit = c.target === 1 ? 'passe' : 'passes';
-  } else if (c.type === 'g') {
-    unit = c.target === 1 ? 'but' : 'buts';
-  } else if (c.type === 'pts') {
-    unit = c.target === 1 ? 'pt' : 'pts';
-  } else if (c.type === 'gp') {
-    unit = c.target === 1 ? 'match' : 'matchs';
-  } else {
-    unit = c.target === 1 ? 'pt' : 'pts';
-  }
-
+  const unit = statUnit(STAT_UNITS[c.type] ? c.type : 'pts', c.target);
   const namePart = isHtml ? `<b>${c.name}</b>` : c.name;
   return `${namePart} : ${c.target} ${unit} (-${c.need})`;
 }
@@ -861,7 +856,7 @@ export function renderHighlightsHtml(highlights, leagueCfg = null) {
   }
   if (highlights.goalieOfTheWeek) {
     const g = highlights.goalieOfTheWeek;
-    const stat = `${Number(g.gaa).toFixed(2)} MOY`;
+    const stat = `${Number(g.gaa).toFixed(2)} MOY / GAA`;
     starRows.push(`
       <tr>
         <td style="font-size:12px; font-weight:normal; color:#64748b; white-space:nowrap; padding:2px 14px 2px 0; vertical-align:baseline;">Gardien / Goalie</td>
@@ -1000,7 +995,7 @@ export function renderHighlightsText(highlights, leagueCfg = null) {
   }
   if (highlights.goalieOfTheWeek) {
     const g = highlights.goalieOfTheWeek;
-    const stat = `${Number(g.gaa).toFixed(2)} MOY`;
+    const stat = `${Number(g.gaa).toFixed(2)} MOY / GAA`;
     starLinesText.push(`Gardien / Goalie : ${g.name}, ${stat}`);
   }
   let sub = highlights.subOfTheWeek;

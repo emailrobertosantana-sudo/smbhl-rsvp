@@ -306,22 +306,22 @@ describe('Weekly Highlights & Honors Engine', () => {
     expect(html).toContain('Joueur / Player');
     expect(html).toContain('<b>Brad Mackenzie</b>, 8 pts');
     expect(html).toContain('Gardien / Goalie');
-    expect(html).toContain('<b>Sean Pichette</b>, 3.50 MOY');
+    expect(html).toContain('<b>Sean Pichette</b>, 3.50 MOY / GAA');
     expect(html).toContain('Substitut / Sub');
     expect(html).toContain('<b>Sam Cartwright</b>, 5 pts');
     expect(html).toContain('But / Goal');
     expect(html).toContain('<b>Max Latreille</b>');
-    expect(html).toContain('<b>Jerry Lalli</b> : 300 passes (-2)');
+    expect(html).toContain('<b>Jerry Lalli</b> : 300 passes / assists (-2)');
     expect(html).toContain('Tout voir sur smbhl.com / See all on smbhl.com');
 
     const text = renderHighlightsText(highlights);
     expect(text).toContain('Faits saillants / Highlights · Sem. / Wk 1-2');
     expect(text).toContain('Guillaume Thibault : 500 pts');
     expect(text).toContain('Joueur / Player : Brad Mackenzie, 8 pts');
-    expect(text).toContain('Gardien / Goalie : Sean Pichette, 3.50 MOY');
+    expect(text).toContain('Gardien / Goalie : Sean Pichette, 3.50 MOY / GAA');
     expect(text).toContain('Substitut / Sub : Sam Cartwright, 5 pts');
     expect(text).toContain('But / Goal\nMax Latreille');
-    expect(text).toContain('Jerry Lalli : 300 passes (-2)');
+    expect(text).toContain('Jerry Lalli : 300 passes / assists (-2)');
     expect(text).toContain('Tout voir sur smbhl.com / See all on smbhl.com : https://smbhl.com');
   });
 
@@ -495,8 +495,8 @@ describe('Weekly Highlights & Honors Engine', () => {
       closingIn: []
     });
     expect(html).toContain('Plateaux / Milestones');
-    expect(html).toContain('<b>Nicola Tiberio</b> : 9e rang historique · 915 pts (dépasse Carlo Mirarchi)');
-    expect(html).toContain('<b>Fabio Russo</b> : 10e rang historique · 31 victoires (dépasse Michael Pacheco)');
+    expect(html).toContain('<b>Nicola Tiberio</b> : 9e rang historique / 9th all-time · 915 pts (dépasse / passes Carlo Mirarchi)');
+    expect(html).toContain('<b>Fabio Russo</b> : 10e rang historique / 10th all-time · 31 victoires / wins (dépasse / passes Michael Pacheco)');
 
     // Plain text Rendering test
     const text = renderHighlightsText({
@@ -506,8 +506,8 @@ describe('Weekly Highlights & Honors Engine', () => {
       closingIn: []
     });
     expect(text).toContain('Plateaux / Milestones');
-    expect(text).toContain('Nicola Tiberio : 9e rang historique · 915 pts (dépasse Carlo Mirarchi)');
-    expect(text).toContain('Fabio Russo : 10e rang historique · 31 victoires (dépasse Michael Pacheco)');
+    expect(text).toContain('Nicola Tiberio : 9e rang historique / 9th all-time · 915 pts (dépasse / passes Carlo Mirarchi)');
+    expect(text).toContain('Fabio Russo : 10e rang historique / 10th all-time · 31 victoires / wins (dépasse / passes Michael Pacheco)');
   });
 
   it('handles goal tiebreaker for skaters and games-played tiebreaker for goalies', () => {

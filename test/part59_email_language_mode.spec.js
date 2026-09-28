@@ -211,7 +211,8 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
       });
     }
 
-    it('password reset for an account with NO league falls back to fr (never signup_lang)', async () => {
+    // B9's one rule: no league -> the language the account signed up in.
+    it('password reset for an account with NO league follows the language it signed up in', async () => {
       const { userId } = await signup('langmode.reset.noleague@example.com', '203.0.176.099', 'en');
       const { sentMails } = await withMailMock(() =>
         SELF.fetch('http://example.com/auth/request-password-reset', {
@@ -220,8 +221,8 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
         })
       );
       expect(sentMails.length).toBe(1);
-      expect(sentMails[0].html).toContain('Réinitialise ton mot de passe');
-      expect(sentMails[0].html).not.toContain('Reset your password');
+      expect(sentMails[0].html).toContain('Reset your password');
+      expect(sentMails[0].html).not.toContain('Réinitialise ton mot de passe');
     });
   });
 
