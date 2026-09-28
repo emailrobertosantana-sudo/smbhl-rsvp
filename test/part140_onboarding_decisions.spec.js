@@ -2,6 +2,8 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { teamState } from '../src/index.js';
+import { getLeagueSeasonConfig } from '../src/leagues.js';
 
 let ip = 0;
 async function signup(email) {
@@ -146,5 +148,56 @@ describe('6. Fixed-teams roster labels say "per team" themselves', () => {
     const html = await page(s, '/onboarding/season?step=1');
     expect(html).toContain('>Maximum de joueurs par équipe</label>');
     expect(html).toContain('"lblMaxPlayersTeam":"Maximum players per team"');
+  });
+});
+
+describe('7. Roster readiness: subs count, and the season minimum is the one in force', () => {
+  const setup = async (email, perTeam) => {
+    const s = await signup(email);
+    const league = (await (await post(s, '/leagues/create', { name: `P140 ${email}`, teamNames: ['Otters', 'Bears'] })).json()).league;
+    await post(s, '/league/settings/structure', { min_players: perTeam, max_players: 20 });
+    return { s, league };
+  };
+  it('regulars AND subs count toward "your players are ready"', async () => {
+    const { s } = await setup('p140.ready.subs@example.com', 2); // 2 per team x 2 teams = 4
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    await post(s, '/league/contacts', { name: 'Reg One', role: 'roster', team: 'Otters' });
+    for (const n of ['Sub One', 'Sub Two']) await post(s, '/league/contacts', { name: n, role: 'sub_skater' });
+    let html = await page(s, '/league/roster');
+    expect(html).not.toContain('data-i18n="rosterNudgeTitle"');
+    expect(html).toContain('<span class="tnum">3</span> <span data-i18n="rosterProgressOfWord">sur</span> <span class="tnum">4</span>');
+    await post(s, '/league/contacts', { name: 'Sub Three', role: 'sub_skater' });
+    html = await page(s, '/league/roster');
+    expect(html).toContain('data-i18n="rosterNudgeTitle"');
+  });
+  it('the season\'s minimum wins over the league default', async () => {
+    const { s } = await setup('p140.ready.season@example.com', 1); // league default: 1 per team
+    await post(s, '/league/season/publish', { season_name: 'S1', min_players: 3, max_players: 20 }); // this season: 3 per team
+    for (const n of ['Reg One', 'Reg Two']) await post(s, '/league/contacts', { name: n, role: 'roster', team: 'Otters' });
+    const html = await page(s, '/league/roster');
+    expect(html).not.toContain('data-i18n="rosterNudgeTitle"'); // 2 would satisfy the league default of 2
+    expect(html).toContain('<span class="tnum">2</span> <span data-i18n="rosterProgressOfWord">sur</span> <span class="tnum">6</span>');
+  });
+});
+
+describe('7 (continued). The per-event shortfall is unchanged', () => {
+  it('counts only the people available for that game -- subs on file do not fill a team', async () => {
+    const s = await signup('p140.shortfall@example.com');
+    const league = (await (await post(s, '/leagues/create', { name: 'P140 Shortfall', teamNames: ['Otters', 'Bears'] })).json()).league;
+    await post(s, '/league/settings/structure', { min_players: 3, max_players: 10 });
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    const ev = (await (await post(s, '/league/events', { date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' })).json()).event;
+    const reg = (await (await post(s, '/league/contacts', { name: 'Reg One', role: 'roster', team: 'Otters' })).json()).contact;
+    for (const n of ['Sub One', 'Sub Two', 'Sub Three', 'Sub Four']) await post(s, '/league/contacts', { name: n, role: 'sub_skater' });
+    await post(s, '/league/rsvp/admin', { event_id: ev.id, player_id: reg.player_id, status: 'in' });
+    const cfg = await getLeagueSeasonConfig(env, league.id);
+    const st = await teamState(env.DB, ev.id, 'Otters', cfg);
+    expect(st.skaters).toBe(1);
+    expect(st.short).toBe(true);
+    // Six people on file (3 per team x 2 teams): the setup step is done --
+    // and the game is still short, because only one of them is in.
+    await post(s, '/league/contacts', { name: 'Sub Five', role: 'sub_skater' });
+    expect(await page(s, '/league/roster')).not.toContain('data-i18n="rosterProgressLabel"');
+    expect((await teamState(env.DB, ev.id, 'Otters', cfg)).short).toBe(true);
   });
 });

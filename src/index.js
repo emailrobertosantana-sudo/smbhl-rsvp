@@ -6973,6 +6973,39 @@ async function submitDeactivate() {
   });
 }
 
+// ONBOARDING READINESS -- "have you added your people?", a setup
+// milestone (the Players page's "ready, create your schedule" / "N of M
+// added"). NOT whether a game can be fielded:
+//   - every active person counts, regulars AND subs (6 regulars and 8 subs
+//     have done the step);
+//   - the minimum is the CURRENT SEASON's when it sets one (the number in
+//     force), else the league default. For fixed teams it is per team, so
+//     times the number of teams; pickup's per-team share times the teams is
+//     its pool; no-teams is already a total.
+// The PER-EVENT SHORTFALL is a different question with a different answer
+// and must stay separate: teamState() / openSpots() / callSubsForShortfall()
+// count only the people available for ONE game and call subs. Do not merge
+// the two.
+async function onboardingRosterReadiness(env, leagueRow, contacts) {
+  const people = contacts.filter(c => c.is_active !== 0).length;
+  const data = await getLeagueDataJson(env, leagueRow.id);
+  const season = data && Array.isArray(data.seasons) ? data.seasons.find(x => x && x.name === data.current_season) : null;
+  const raw = (season && season.config) || {};
+  const structure = raw.teamStructure || leagueRow.team_structure || 'fixed';
+  let leagueTeams = [];
+  try { leagueTeams = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
+  const teamCount = Math.max(1, (Array.isArray(raw.teamNames) && raw.teamNames.length) || (Array.isArray(raw.teams) && raw.teams.length) || leagueTeams.length);
+  let minimum = null;
+  if (Number.isFinite(Number(raw.minSkaters)) && raw.minSkaters !== null && raw.minSkaters !== undefined) {
+    // The season's own number (stored per team for fixed and pickup).
+    minimum = structure === 'headcount' ? Number(raw.minSkaters) : Number(raw.minSkaters) * teamCount;
+  } else if (leagueRow.min_players != null) {
+    // The league default (per team for fixed; a pool or total otherwise).
+    minimum = structure === 'fixed' ? leagueRow.min_players * teamCount : leagueRow.min_players;
+  }
+  return { people, minimum };
+}
+
 async function handleLeagueRosterPage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
@@ -7023,13 +7056,8 @@ async function handleLeagueRosterPage(req, env, url) {
   // per team), so the league needs it on every team -- a 4-team league with
   // a 10-per-team minimum is not ready at 10 players. weekly_draw's pool and
   // headcount's total are already whole-league numbers.
-  let rosterMinimum = leagueRow.min_players;
-  if (rosterMinimum != null && (leagueRow.team_structure || 'fixed') === 'fixed') {
-    let fixedTeams = [];
-    try { fixedTeams = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
-    rosterMinimum = rosterMinimum * Math.max(1, fixedTeams.length);
-  }
-  const rosterMeetsMinimum = rosterMinimum != null ? contacts.length >= rosterMinimum : contacts.length > 0;
+  const { people: rosterPeople, minimum: rosterMinimum } = await onboardingRosterReadiness(env, leagueRow, contacts);
+  const rosterMeetsMinimum = rosterMinimum != null ? rosterPeople >= rosterMinimum : rosterPeople > 0;
   const showScheduleNudge = rosterMeetsMinimum && eventCount === 0;
   // Item 1: Players is the last setup step -- once it completes the setup,
   // this page (manual add and import alike, both reload here) says so.
@@ -7374,7 +7402,7 @@ async function handleLeagueRosterPage(req, env, url) {
     <div style="margin-top:var(--space-2)"><a class="nl-btn nl-btn--primary" href="/league/schedule" data-i18n="rosterNudgeBtn">Créer l'horaire</a></div>
   </section>` : ''}
   ${showRosterProgress ? `<section class="nl-card nl-card--pad-lg">
-    <h2><span class="tnum">${contacts.length}</span> <span data-i18n="rosterProgressOfWord">sur</span> <span class="tnum">${rosterMinimum}</span> <span data-i18n="rosterProgressLabel">joueurs ajoutés</span></h2>
+    <h2><span class="tnum">${rosterPeople}</span> <span data-i18n="rosterProgressOfWord">sur</span> <span class="tnum">${rosterMinimum}</span> <span data-i18n="rosterProgressLabel">joueurs ajoutés</span></h2>
     <p class="nl-help" data-i18n="rosterProgressDesc">Ton horaire pourra être créé une fois le minimum atteint.</p>
   </section>` : ''}
   <div class="ro-filters">${filterPills}</div>
