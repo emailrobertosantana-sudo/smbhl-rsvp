@@ -622,7 +622,22 @@ export async function runLeagueReminders(env, budget = createSendBudget(), failu
     `SELECT * FROM leagues WHERE id != ? AND deactivated_at IS NULL`
   ).bind(SMBHL_LEAGUE_ID).all()).results || [];
 
+  // CPU (Workers Free plan, 10 ms a pass): a league with nothing that can
+  // happen this pass is skipped outright -- no timed open game inside the
+  // longest window any step looks at (the shortfall check's, 8 days), no
+  // mail waiting to go out, and not on the advanced model (whose own
+  // hours-before could reach further). For it, runOneLeague would read
+  // its rows and do nothing, a few queries each, for every idle league.
+  const { SHORTFALL_HORIZON_HOURS } = reminderHost();
+  const busy = new Set(((await env.DB.prepare(
+    `SELECT DISTINCT league_id FROM events
+      WHERE state = 'open' AND start_time IS NOT NULL AND date >= ? AND date <= ?
+     UNION SELECT DISTINCT league_id FROM outbox WHERE sent_at IS NULL AND cancelled = 0 AND failed_at IS NULL
+     UNION SELECT league_id FROM league_capability_flags WHERE flag_key = 'advanced_reminders' AND enabled = 1`
+  ).bind(localDateInDays(-1), localDateInDays(Math.ceil(SHORTFALL_HORIZON_HOURS / 24) + 1)).all()).results || []).map(r => r.league_id));
+
   for (const leagueRow of leagues) {
+    if (!busy.has(leagueRow.id)) continue;
     try {
       await runOneLeague(env, leagueRow, budget, log);
     } catch (e) {
@@ -639,7 +654,12 @@ export async function runLeagueReminders(env, budget = createSendBudget(), failu
   return log;
 }
 
-// One league's pass (the body of runLeagueReminders' loop, unchanged).
+// The league-local date `days` from now (YYYY-MM-DD), for date windows.
+export function localDateInDays(days, now = Date.now()) {
+  return localParts(new Date(now + days * 86400000)).date;
+}
+
+// One league's pass (the body of runLeagueReminders' loop).
 async function runOneLeague(env, leagueRow, budget, log) {
   const { getLeagueSeasonConfig, randomAssignEventTeams, callSubsForShortfall, drain } = reminderHost();
   {
@@ -653,9 +673,15 @@ async function runOneLeague(env, leagueRow, budget, log) {
     // -- the per-event opt-out this part adds. Every pre-existing event
     // defaults to 1 (migrate-042.sql), so this filter changes nothing
     // for an event nobody has ever opted out.
+    // CPU (Workers Free plan, 10 ms a pass): only the games whose date can
+    // fall inside the horizon are read at all -- the loop below skipped
+    // every other one anyway (hoursUntil <= 0 or > horizon), after
+    // computing its start time. A day of margin on each side (dates are
+    // league-local).
     const events = (await env.DB.prepare(
-      `SELECT * FROM events WHERE league_id = ? AND state = 'open' AND start_time IS NOT NULL AND auto_reminders_enabled = 1`
-    ).bind(leagueRow.id).all()).results || [];
+      `SELECT * FROM events WHERE league_id = ? AND state = 'open' AND start_time IS NOT NULL AND auto_reminders_enabled = 1
+         AND date >= ? AND date <= ?`
+    ).bind(leagueRow.id, localDateInDays(-1), localDateInDays(Math.ceil(horizon / 24) + 1)).all()).results || [];
 
     for (const ev of events) {
       const start = eventStart(ev);
@@ -704,7 +730,12 @@ async function runOneLeague(env, leagueRow, budget, log) {
     // Sub-call rework, Part 3: every pass, a team that can no longer
     // reach its minimum calls subs (queued here, delivered just below).
     try {
-      const openEvents = (await env.DB.prepare(`SELECT * FROM events WHERE league_id = ? AND state = 'open'`).bind(leagueRow.id).all()).results || [];
+      // Only games callSubsForShortfall would look at: it returns at once
+      // for one with no start time or more than SHORTFALL_HORIZON_HOURS out.
+      const { SHORTFALL_HORIZON_HOURS } = reminderHost();
+      const openEvents = (await env.DB.prepare(
+        `SELECT * FROM events WHERE league_id = ? AND state = 'open' AND start_time IS NOT NULL AND date >= ? AND date <= ?`
+      ).bind(leagueRow.id, localDateInDays(-1), localDateInDays(Math.ceil(SHORTFALL_HORIZON_HOURS / 24) + 1)).all()).results || [];
       for (const ev of openEvents) {
         const n = await callSubsForShortfall(env, ev);
         if (n) log.push(`${leagueRow.id}:${ev.id} shortfall: ${n} sub call(s) queued`);

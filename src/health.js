@@ -172,31 +172,64 @@ export async function recordClientError(env, body, now = new Date()) {
 
 /* ---------- collecting the problems ---------- */
 
+// CPU: this pass runs inside the cron's Workers Free budget (10 ms), so
+// it reads in bulk -- a handful of queries for ALL leagues, not several
+// per league plus one per game per reminder kind -- and only the games
+// whose date can matter (upcoming inside the reminder horizon, or started
+// less than a day ago). What it detects is unchanged.
+const localDate = ms => localParts(new Date(ms)).date;
+async function inChunks(env, sqlFor, ids, size = 90) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += size) {
+    const part = ids.slice(i, i + size);
+    out.push(...((await env.DB.prepare(sqlFor(part.map(() => '?').join(','))).bind(...part).all()).results || []));
+  }
+  return out;
+}
+
 // 1b: steps that should have gone out and did not. Evaluated at t0 = the
 // grace period ago (or just before the game, if it has started since):
 // was the step due then?
-async function missedReminders(env, leagueRow, now) {
+async function missedReminders(env, leagues, now) {
   const out = [];
-  const advanced = (await usesAdvancedReminders(env, leagueRow.id)) ? await getEmailSettings(env.DB, leagueRow.id) : null;
-  const events = (await env.DB.prepare(
-    `SELECT * FROM events WHERE league_id = ? AND state = 'open' AND start_time IS NOT NULL AND auto_reminders_enabled = 1`
-  ).bind(leagueRow.id).all()).results || [];
+  if (!leagues.length) return out;
+  const byId = new Map(leagues.map(l => [l.id, l]));
+  // Which leagues are on the advanced model (hasCapability: no row = off).
+  const advancedIds = new Set(((await env.DB.prepare(
+    "SELECT league_id FROM league_capability_flags WHERE flag_key = 'advanced_reminders' AND enabled = 1"
+  ).all()).results || []).map(r => r.league_id).filter(id => byId.has(id)));
+  const advancedById = new Map();
+  for (const id of advancedIds) {
+    if (await usesAdvancedReminders(env, id)) advancedById.set(id, await getEmailSettings(env.DB, id));
+  }
+  let horizon = Math.max(...Object.values(REMINDER_WINDOW_THRESHOLD_HOURS));
+  for (const st of advancedById.values()) for (const kind of Object.keys(REMINDER_WINDOW_THRESHOLD_HOURS)) horizon = Math.max(horizon, advancedStepHours(st, kind));
+  const events = ((await env.DB.prepare(
+    `SELECT * FROM events WHERE league_id != ? AND state = 'open' AND start_time IS NOT NULL AND auto_reminders_enabled = 1
+       AND date >= ? AND date <= ?`
+  ).bind(SMBHL_LEAGUE_ID, localDate(now.getTime() - 2 * 86400000), localDate(now.getTime() + (horizon + 24) * 3600000)).all()).results || [])
+    .filter(ev => byId.has(ev.league_id));
+  const logged = new Set((await inChunks(env, q => `SELECT event_id, kind FROM league_reminder_log WHERE event_id IN (${q})`, events.map(ev => ev.id)))
+    .map(r => `${r.event_id}\u0000${r.kind}`));
   for (const ev of events) {
+    const leagueRow = byId.get(ev.league_id);
+    const advanced = advancedById.get(ev.league_id) || null;
     const start = eventStart(ev);
     if (!start) continue;
     // A day after the game, a missed step is history, not an alert.
     if (now.getTime() - start.getTime() > 24 * 3600000) continue;
     const t0 = new Date(Math.min(now.getTime() - MISSED_GRACE_MINUTES * 60000, start.getTime() - 60000));
     const hoursThen = (start.getTime() - t0.getTime()) / 3600000;
+    const partsThen = localParts(t0);
     for (const kind of Object.keys(REMINDER_WINDOW_THRESHOLD_HOURS)) {
       if (!leagueRow[ENABLED_COLUMN[kind]]) continue;
       const hours = advanced ? advancedStepHours(advanced, kind) : REMINDER_WINDOW_THRESHOLD_HOURS[kind];
       const hod = advanced ? advancedStepHourOfDay(advanced, kind) : null;
-      if (!cadenceStepDue(hoursThen, hours, hod, localParts(t0))) continue;
-      const logged = await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(ev.id, kind).first();
-      if (logged) continue;
+      if (!cadenceStepDue(hoursThen, hours, hod, partsThen)) continue;
+      if (logged.has(`${ev.id}\u0000${kind}`)) continue;
       const k = KIND_LABEL[kind];
       out.push({
+        scope: ev.league_id,
         key: `reminder_missed:${ev.id}:${kind}`,
         fr: `Le ${k.fr} du match du ${gameLabel(ev)} aurait dû partir et n'est pas parti.`,
         en: `The ${k.en} for the ${gameLabel(ev)} game should have gone out and has not.`
@@ -206,40 +239,53 @@ async function missedReminders(env, leagueRow, now) {
   return out;
 }
 
-async function outboxProblems(env, leagueId, now) {
+// leagueIds: the leagues to report for (a Set). afterStartOnly: SMBHL,
+// whose failed and stuck mail deadMan already covers.
+async function outboxProblems(env, leagueIds, now, { afterStartOnly = false } = {}) {
   const out = [];
-  const dayAgo = new Date(now.getTime() - 24 * 3600000).toISOString();
-  const failed = await env.DB.prepare('SELECT COUNT(*) AS n FROM outbox WHERE league_id = ? AND failed_at IS NOT NULL AND failed_at >= ?').bind(leagueId, dayAgo).first();
-  if (failed && failed.n > 0) out.push({
-    key: 'outbox_failed',
-    fr: `${failed.n} courriel(s) n'ont pas pu être envoyés dans les dernières 24 h (adresse refusée ou essais épuisés).`,
-    en: `${failed.n} email(s) could not be sent in the last 24 hours (address rejected or retries used up).`
-  });
-  const hourAgo = new Date(now.getTime() - STUCK_MINUTES * 60000).toISOString();
-  const stuck = await env.DB.prepare(`SELECT COUNT(*) AS n FROM outbox WHERE league_id = ? AND ${OUTBOX_DUE_WHERE}`).bind(leagueId, hourAgo, hourAgo).first();
-  if (stuck && stuck.n > 0) out.push({
-    key: 'outbox_stuck',
-    fr: `${stuck.n} courriel(s) attendent depuis plus d'une heure sans partir.`,
-    en: `${stuck.n} email(s) have been waiting more than an hour without going out.`
-  });
+  if (!afterStartOnly) {
+    const dayAgo = new Date(now.getTime() - 24 * 3600000).toISOString();
+    const hourAgo = new Date(now.getTime() - STUCK_MINUTES * 60000).toISOString();
+    const rows = (await env.DB.prepare(
+      `SELECT league_id,
+              SUM(CASE WHEN failed_at IS NOT NULL AND failed_at >= ? THEN 1 ELSE 0 END) AS failed,
+              SUM(CASE WHEN ${OUTBOX_DUE_WHERE} THEN 1 ELSE 0 END) AS stuck
+         FROM outbox WHERE failed_at >= ? OR sent_at IS NULL GROUP BY league_id`
+    ).bind(dayAgo, hourAgo, hourAgo, dayAgo).all()).results || [];
+    for (const r of rows) {
+      if (!leagueIds.has(r.league_id)) continue;
+      if (r.failed > 0) out.push({
+        scope: r.league_id, key: 'outbox_failed',
+        fr: `${r.failed} courriel(s) n'ont pas pu être envoyés dans les dernières 24 h (adresse refusée ou essais épuisés).`,
+        en: `${r.failed} email(s) could not be sent in the last 24 hours (address rejected or retries used up).`
+      });
+      if (r.stuck > 0) out.push({
+        scope: r.league_id, key: 'outbox_stuck',
+        fr: `${r.stuck} courriel(s) attendent depuis plus d'une heure sans partir.`,
+        en: `${r.stuck} email(s) have been waiting more than an hour without going out.`
+      });
+    }
+  }
   // Pre-game mail scheduled past the game's start: queued before the game,
   // not sent, and not due until after it begins.
   const rows = (await env.DB.prepare(
-    `SELECT o.event_id, o.send_after, o.next_attempt_at, o.created_at, e.id AS eid, e.date, e.start_time
+    `SELECT o.league_id, o.event_id, o.send_after, o.next_attempt_at, o.created_at, e.id AS eid, e.date, e.start_time
        FROM outbox o JOIN events e ON e.id = o.event_id
-      WHERE o.league_id = ? AND o.sent_at IS NULL AND o.cancelled = 0 AND o.failed_at IS NULL AND e.start_time IS NOT NULL`
-  ).bind(leagueId).all()).results || [];
+      WHERE o.sent_at IS NULL AND o.cancelled = 0 AND o.failed_at IS NULL AND e.start_time IS NOT NULL`
+  ).all()).results || [];
   const late = new Map();
   for (const r of rows) {
+    if (!leagueIds.has(r.league_id)) continue;
     const start = eventStart({ id: r.eid, start_time: r.start_time });
     if (!start || now.getTime() - start.getTime() > 24 * 3600000) continue;
     const sendAt = Math.max(Date.parse(r.send_after) || 0, Date.parse(r.next_attempt_at || '') || 0);
     if (Date.parse(r.created_at) < start.getTime() && sendAt > start.getTime()) {
-      const v = late.get(r.eid) || { ev: { date: r.date, start_time: r.start_time }, n: 0 };
+      const v = late.get(r.eid) || { league: r.league_id, ev: { date: r.date, start_time: r.start_time }, n: 0 };
       v.n++; late.set(r.eid, v);
     }
   }
   for (const [eid, v] of late) out.push({
+    scope: v.league,
     key: `outbox_after_start:${eid}`,
     fr: `${v.n} courriel(s) pour le match du ${gameLabel(v.ev)} sont prévus après le début du match.`,
     en: `${v.n} email(s) for the ${gameLabel(v.ev)} game are scheduled to go out after it starts.`
@@ -252,20 +298,18 @@ async function outboxProblems(env, leagueId, now) {
 export async function collectProblems(env, { failures = [] } = {}, now = new Date()) {
   const problems = [];
   const add = (scope, list) => { for (const p of list) problems.push({ scope, ...p }); };
+  const addScoped = list => { for (const p of list) problems.push(p); };
   if (productOf(env) === 'leagues') {
     const leagues = (await env.DB.prepare('SELECT * FROM leagues WHERE id != ? AND deactivated_at IS NULL').bind(SMBHL_LEAGUE_ID).all()).results || [];
-    for (const lg of leagues) {
-      try {
-        add(lg.id, await missedReminders(env, lg, now));
-        add(lg.id, await outboxProblems(env, lg.id, now));
-      } catch (e) {
-        add('system', [{ key: `check_failed:${lg.id}`, fr: `La vérification de la ligue ${lg.name} a échoué : ${e.message}`, en: `Checking league ${lg.name} failed: ${e.message}` }]);
-      }
+    try {
+      addScoped(await missedReminders(env, leagues, now));
+      addScoped(await outboxProblems(env, new Set(leagues.map(l => l.id)), now));
+    } catch (e) {
+      add('system', [{ key: 'check_failed', fr: `La vérification des ligues a échoué : ${e.message}`, en: `Checking the leagues failed: ${e.message}` }]);
     }
   } else {
     // SMBHL: deadMan already covers its steps, stuck and failed mail.
-    const late = (await outboxProblems(env, SMBHL_LEAGUE_ID, now)).filter(p => p.key.startsWith('outbox_after_start:'));
-    add(SMBHL_LEAGUE_ID, late);
+    addScoped(await outboxProblems(env, new Set([SMBHL_LEAGUE_ID]), now, { afterStartOnly: true }));
   }
   for (const f of failures) {
     const scope = f.leagueId || 'system';

@@ -27578,7 +27578,7 @@ async function handleChampionPhoto(req, env, url) {
 // The shared reminder module (src/reminders.js) calls back into these.
 installReminderHost({
   enqueue, teamState, remindSubs, callSubs, getTeamMessages, callSubsForShortfall, ensureNextEvent, getEvent,
-  drain, deadMan, ADMIN_EMAIL, sendLeagueReminderKind, getLeagueSeasonConfig, randomAssignEventTeams, dateFR
+  drain, deadMan, ADMIN_EMAIL, sendLeagueReminderKind, getLeagueSeasonConfig, randomAssignEventTeams, dateFR, SHORTFALL_HORIZON_HOURS
 });
 installEmailPreviewHost({
   prepareOutboxMessage, createOutboxRenderContext, dateFR, teamState, ADMIN_EMAIL, computeSeasonAwards, formatEventDate,

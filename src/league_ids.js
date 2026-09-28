@@ -175,17 +175,46 @@ export const RESERVED_SLUGS = new Set([
  * definition.
  */
 export const TZ = 'America/Toronto';
+// CPU: the cron pass calls this for nearly every date it checks, and
+// building a timezone formatter is the costly part (~60 µs each, most of
+// a pass's CPU on the Workers Free plan's 10 ms budget). So: ONE shared
+// formatter, and the zone's UTC offset remembered per UTC hour -- Toronto's
+// offset only ever changes on an hour boundary (DST, 2 am local), so
+// within one UTC hour every instant has the same offset, and the local
+// fields are plain arithmetic on (instant + offset).
+let tzFormatter = null;
+const tzOffsetByHour = new Map();
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function tzOffsetMs(ms) {
+  const hourKey = Math.floor(ms / 3600000);
+  let off = tzOffsetByHour.get(hourKey);
+  if (off === undefined) {
+    if (!tzFormatter) {
+      tzFormatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: TZ, hour: '2-digit', minute: '2-digit',
+        year: 'numeric', month: '2-digit', day: '2-digit', hour12: false
+      });
+    }
+    const probe = hourKey * 3600000;
+    const f = tzFormatter.formatToParts(new Date(probe));
+    const g = t => parseInt((f.find(p => p.type === t) || {}).value, 10);
+    // hour12:false can print midnight as "24" in some ICU builds: it is 0.
+    const asUtc = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour') % 24, g('minute'));
+    off = asUtc - probe;
+    if (tzOffsetByHour.size > 20000) tzOffsetByHour.clear();
+    tzOffsetByHour.set(hourKey, off);
+  }
+  return off;
+}
 export function localParts(d = new Date()) {
-  const f = new Intl.DateTimeFormat('en-CA', {
-    timeZone: TZ, weekday: 'short', hour: '2-digit', minute: '2-digit',
-    year: 'numeric', month: '2-digit', day: '2-digit', hour12: false
-  }).formatToParts(d);
-  const g = t => (f.find(p => p.type === t) || {}).value;
+  const ms = d instanceof Date ? d.getTime() : new Date(d).getTime();
+  const local = new Date(ms + tzOffsetMs(ms));
+  const pad = n => String(n).padStart(2, '0');
   return {
-    weekday: g('weekday'),
-    hour: parseInt(g('hour'), 10),
-    minute: parseInt(g('minute'), 10),
-    date: `${g('year')}-${g('month')}-${g('day')}`
+    weekday: WEEKDAYS[local.getUTCDay()],
+    hour: local.getUTCHours(),
+    minute: local.getUTCMinutes(),
+    date: `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`
   };
 }
 
@@ -216,12 +245,19 @@ export function eventStart(ev) {
   // for old ids and correctly for new ones.
   const dateStr = eventDateFromId(ev.id);
   const [hh, mm] = ev.start_time.split(':').map(Number);
-  for (const off of [4, 5]) {
+  // CPU: the same two guesses (EDT, EST) as before, checked by arithmetic
+  // -- "does this instant read back as that local wall-clock time" is
+  // (instant + zone offset) === the wall-clock time taken as UTC.
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!dm || !Number.isInteger(hh) || !Number.isInteger(mm) || hh > 23 || mm > 59) {
     const guess = new Date(`${dateStr}T${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00Z`);
     if (isNaN(guess.getTime())) return null;
-    const utc = new Date(guess.getTime() + off * 3600000);
-    const p = localParts(utc);
-    if (p.date === dateStr && p.hour === hh && p.minute === mm) return utc;
+  } else {
+    const wall = Date.UTC(+dm[1], +dm[2] - 1, +dm[3], hh, mm);
+    for (const off of [4, 5]) {
+      const utc = wall + off * 3600000;
+      if (utc + tzOffsetMs(utc) === wall) return new Date(utc);
+    }
   }
   const fallback = new Date(`${dateStr}T${ev.start_time}:00-05:00`);
   return isNaN(fallback.getTime()) ? null : fallback;
