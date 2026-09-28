@@ -301,6 +301,26 @@ describe('Schedule', () => {
     await close();
   }, 120000);
 
+  // Item 4 (follow-up): the same scroll-into-view as Assign matchups, for
+  // the other panels -- bulk create, and a row's Duplicate.
+  it('Create multiple games and Duplicate open IN VIEW too, focused', async () => {
+    const { page, errors, close } = await open('/league/schedule');
+    await page.setViewportSize({ width: 1200, height: 700 });
+    const inView = sel => page.waitForFunction(q => { const el = document.querySelector(q); if (!el) return false; const r = el.getBoundingClientRect(); return r.height > 0 && r.top >= 0 && r.bottom <= window.innerHeight + 1; }, sel, { timeout: 5000 });
+    await page.click('.sc-top [onclick="openBulkPanel()"]');
+    await inView('#be_start_date');
+    expect(await page.evaluate(() => document.activeElement && document.activeElement.id)).toBe('be_start_date');
+    // The last row's Duplicate, from the top of the page.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const last = await page.$$eval('[id^="dup_date_"]', els => els[els.length - 1].id);
+    const evId = last.slice('dup_date_'.length);
+    await page.evaluate(id => window.toggleDuplicateRow(id), evId);
+    await inView('[id="' + last + '"]');
+    expect(await page.evaluate(() => document.activeElement && document.activeElement.id)).toBe(last);
+    expect(errors).toEqual([]);
+    await close();
+  }, 120000);
+
   it('Assign matchups opens its panel IN VIEW, even below a long list', async () => {
     for (let i = 0; i < 16; i++) {
       const d = new Date(Date.UTC(2099, 1, 1 + i * 7)).toISOString().slice(0, 10);
