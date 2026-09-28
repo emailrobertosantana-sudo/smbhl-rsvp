@@ -310,6 +310,16 @@ function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = 
     if (document.documentElement) document.documentElement.lang = l === 'en' ? 'en-CA' : 'fr-CA';
     var titlesEl = document.querySelector('meta[name="nl-titles"]');
     if (titlesEl) document.title = titlesEl.getAttribute(l === 'en' ? 'data-title-en' : 'data-title-fr');
+    // Player pages (tx / txAttr): one language at a time, switched here.
+    document.querySelectorAll('[data-t-fr]').forEach(function(el) {
+      var v = el.getAttribute(l === 'en' ? 'data-t-en' : 'data-t-fr');
+      if (v != null) el.textContent = v;
+    });
+    ['placeholder', 'title'].forEach(function(a) {
+      document.querySelectorAll('[data-t-' + a + '-fr]').forEach(function(el) {
+        el.setAttribute(a, el.getAttribute('data-t-' + a + '-' + l));
+      });
+    });
     document.querySelectorAll('.langbtn').forEach(function(b) {
       b.classList.toggle('on', b.dataset.l === l);
     });
@@ -461,7 +471,17 @@ if (window.__currentLang) {
 </body></html>`;
 }
 
-const notice = (fr, en, logoTooltip = '') => page(fr, `<h1>${esc(fr)}<span class="en">${esc(en)}</span></h1>`, logoTooltip);
+// Player-facing pages (SMBHL's rsvp, team, sub availability, poll, notices):
+// text in the player's language, one at a time -- French rendered first,
+// then switched by page()'s FR/EN toggle, which is visible in the header and
+// remembered (localStorage). They used to stack French over an English
+// subtitle, with a toggle that switched nothing.
+const tx = (fr, en) => `<span data-t-fr="${esc(fr)}" data-t-en="${esc(en)}">${esc(fr)}</span>`;
+// An attribute (placeholder, title) in both languages.
+const txAttr = (attr, fr, en) => `${attr}="${esc(fr)}" data-t-${attr}-fr="${esc(fr)}" data-t-${attr}-en="${esc(en)}"`;
+// An <option> (it cannot hold a span): the swap goes on the option itself.
+const txOption = (value, fr, en, extra = '') => `<option value="${esc(value)}"${extra} data-t-fr="${esc(fr)}" data-t-en="${esc(en)}">${esc(fr)}</option>`;
+const notice = (fr, en, logoTooltip = '') => page({ fr, en }, `<h1>${tx(fr, en)}</h1>`, logoTooltip);
 
 /* ---------- root marketing homepage (non-SMBHL hostnames) ----------
  * Design system Part 2 (overnight follow-up task): rebuilt to match
@@ -3096,16 +3116,16 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
   const result = await verifyInviteToken(env, token);
 
   if (!result.ok) {
-    return new Response(page('Invitation invalide', `
-      <h1>Invitation invalide ou expirée<span class="en">Invalid or expired invitation</span></h1>
-      <p class="state">Demandez à l'administrateur de la ligue de vous envoyer une nouvelle invitation.<span class="en" style="display:block;">Ask the league admin to send you a new invitation.</span></p>
+    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation' }, `
+      <h1>${tx('Invitation invalide ou expirée', 'Invalid or expired invitation')}</h1>
+      <p class="state">${tx("Demandez à l'administrateur de la ligue de vous envoyer une nouvelle invitation.", 'Ask the league admin to send you a new invitation.')}</p>
     `), { status: result.error === 'expired' ? 410 : 400, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
 
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(result.leagueId).first();
   if (!leagueRow) {
-    return new Response(page('Invitation invalide', `
-      <h1>Cette ligue n'existe plus<span class="en">This league no longer exists</span></h1>
+    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation' }, `
+      <h1>${tx("Cette ligue n'existe plus", 'This league no longer exists')}</h1>
     `), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
 
@@ -10186,11 +10206,11 @@ function renderTeam(rows, counts, team, teamNames = TEAMS) {
     `<li><b>${counts[t].in}</b>${esc(t)}</li>`).join('');
 
   return `<div class="card">
-    <h2>${esc(team)}<span class="en">Ton équipe / Your team</span></h2>
+    <h2>${esc(team)} <span class="en">${tx('Ton équipe', 'Your team')}</span></h2>
     <table>${list || '<tr><td>—</td></tr>'}</table>
   </div>
   <div class="card">
-    <h2>Les autres équipes<span class="en">Other teams — confirmed</span></h2>
+    <h2>${tx('Les autres équipes — confirmés', 'Other teams — confirmed')}</h2>
     <ul class="counts">${others}</ul>
   </div>`;
 }
@@ -12908,26 +12928,24 @@ async function pollGet(req, env, url) {
           <div style="background:#8b5cf6;width:${c.pct}%;height:100%;border-radius:4px;transition:width 0.4s ease;"></div>
         </div>
       </div>
-    `).join('') || '<p style="font-size:13px;color:var(--soft);margin:4px 0;">Aucun vote enregistré pour l\\u2019instant.</p>';
+    `).join('') || `<p style="font-size:13px;color:var(--soft);margin:4px 0;">${tx('Aucun vote enregistré pour l’instant.', 'No votes yet.')}</p>`;
 
     resultsHtml = `
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid #e9d5ff;">
         <div style="font-size:14px;font-weight:700;color:#6b21a8;margin-bottom:10px;">
-          📊 Résultats ${isClosed ? 'finaux' : 'en direct'} (${total} vote${total > 1 ? 's' : ''}) :
+          📊 ${tx(`Résultats ${isClosed ? 'finaux' : 'en direct'} (${total} vote${total > 1 ? 's' : ''}) :`, `${isClosed ? 'Final' : 'Live'} results (${total} vote${total > 1 ? 's' : ''}):`)}
         </div>
         ${bars}
       </div>`;
   } else if (hasVoted) {
     resultsHtml = `
       <div style="margin-top:16px;padding:12px 14px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:6px;font-size:13px;color:#6b21a8;">
-        🔒 <b>Scrutin secret</b> : ton vote est strictement confidentiel. Les résultats restent privés.
-        <span class="en" style="display:block;font-size:12px;color:var(--soft);margin-top:2px;">Private ballot: your vote is confidential and results are hidden.</span>
+        🔒 ${tx('Scrutin secret : ton vote est strictement confidentiel. Les résultats restent privés.', 'Private ballot: your vote is confidential and results are hidden.')}
       </div>`;
   } else if (isClosed) {
     resultsHtml = `
       <div style="margin-top:16px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;color:var(--soft);">
-        🔒 <b>Scrutin fermé</b> : les résultats de ce vote sont confidentiels.
-        <span class="en" style="display:block;font-size:12px;color:var(--soft);margin-top:2px;">Poll closed: results are private.</span>
+        🔒 ${tx('Scrutin fermé : les résultats de ce vote sont confidentiels.', 'Poll closed: results are private.')}
       </div>`;
   }
 
@@ -12938,56 +12956,56 @@ async function pollGet(req, env, url) {
   const voteForm = !isClosed ? `
     <div style="margin-bottom:12px;">
       <label style="display:block;font-size:13px;font-weight:600;color:var(--soft);margin-bottom:5px;">
-        ${myVote ? 'Changer mon vote pour / Change vote to :' : 'Mon choix / My choice :'}
+        ${myVote ? tx('Changer mon vote pour :', 'Change my vote to:') : tx('Mon choix :', 'My choice:')}
       </label>
       <select id="poll-candidate-id" style="width:100%;font:inherit;font-size:15px;padding:10px;border:1px solid var(--rule2);border-radius:4px;background:#fff;">
-        <option value="">— Choisis un candidat / Select a candidate —</option>
+        ${txOption('', '— Choisis un candidat —', '— Select a candidate —')}
         ${candOpts}
       </select>
     </div>
     <div class="btns">
       <button type="button" class="btn" id="poll-vote-btn" style="background:#8b5cf6;border-color:#7c3aed;color:#fff;font-size:15px;padding:12px 18px;width:100%;">
-        ${myVote ? 'MODIFIER MON VOTE ✎' : 'SOUMETTRE MON VOTE 🗳️'}
+        ${myVote ? tx('MODIFIER MON VOTE ✎', 'CHANGE MY VOTE ✎') : tx('SOUMETTRE MON VOTE 🗳️', 'SUBMIT MY VOTE 🗳️')}
       </button>
     </div>
     <p id="poll-vote-msg" style="font-size:13px;font-weight:600;margin-top:8px;display:none;"></p>
-  ` : `<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;padding:10px;font-size:13px;color:var(--soft);">Ce sondage est maintenant terminé. Merci d'avoir voté !<span class="en">This poll is now closed. Thank you for participating!</span></div>`;
+  ` : `<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;padding:10px;font-size:13px;color:var(--soft);">${tx("Ce sondage est maintenant terminé. Merci d'avoir voté !", 'This poll is now closed. Thank you for voting!')}</div>`;
 
   const statusBadge = hasVoted
     ? `<div style="background:#f3e8ff;border:1px solid #d8b4fe;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:14px;color:#6b21a8;">
-        ✓ Ton vote enregistré : <b>${esc(myVote.candidate_name)}</b>
+        ✓ ${tx('Ton vote enregistré :', 'Your recorded vote:')} <b>${esc(myVote.candidate_name)}</b>
       </div>`
     : '';
 
   const norrisHint = (poll.category === 'norris' || poll.target_position === 'D')
     ? `<div style="font-size:12px;color:var(--soft);margin-top:14px;line-height:1.4;">
-        💡 <i>Note : Seuls les joueurs identifiés comme Défenseurs (D) apparaissent sur le bulletin.</i>
+        💡 <i>${tx('Note : seuls les joueurs identifiés comme défenseurs (D) apparaissent sur le bulletin.', 'Note: only players marked as defense (D) appear on the ballot.')}</i>
        </div>`
     : '';
 
-  const categoryLabel = poll.category === 'norris' ? '🏆 Trophée Norris'
-    : poll.category === 'mvp' ? '👑 Trophée MVP / Hart'
-    : '🗳️ Sondage officiel';
+  const categoryLabel = poll.category === 'norris' ? { fr: '🏆 Trophée Norris', en: '🏆 Norris Trophy' }
+    : poll.category === 'mvp' ? { fr: '👑 Trophée MVP / Hart', en: '👑 MVP / Hart Trophy' }
+    : { fr: '🗳️ Sondage officiel', en: '🗳️ Official poll' };
 
   const body = `
   <div style="max-width:540px;margin:0 auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <span style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:20px;color:var(--ink);text-transform:uppercase;">SMBHL</span>
       <span style="font-size:12px;font-weight:700;background:${!isClosed ? '#8b5cf6' : 'var(--soft)'};color:#fff;padding:3px 10px;border-radius:12px;">
-        ${!isClosed ? (poll.show_results === 1 ? 'SCRUTIN OUVERT / OPEN' : '🔒 SCRUTIN SECRET / PRIVATE') : 'SCRUTIN FERMÉ / CLOSED'}
+        ${!isClosed ? (poll.show_results === 1 ? tx('SCRUTIN OUVERT', 'OPEN') : tx('🔒 SCRUTIN SECRET', '🔒 PRIVATE')) : tx('SCRUTIN FERMÉ', 'CLOSED')}
       </span>
     </div>
 
     <div class="card" style="border-top:4px solid #8b5cf6;padding:18px;">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
-        <span class="by" style="background:#f3e8ff;color:#6b21a8;font-weight:700;margin:0;">${esc(categoryLabel)}</span>
+        <span class="by" style="background:#f3e8ff;color:#6b21a8;font-weight:700;margin:0;">${tx(categoryLabel.fr, categoryLabel.en)}</span>
         <span class="by" style="margin:0;">${esc(poll.season)}</span>
       </div>
       <h1 style="font-size:22px;margin:8px 0 6px;line-height:1.2;color:var(--ink);">${esc(poll.title)}</h1>
       ${poll.description ? `<p style="font-size:14px;color:var(--soft);margin:0 0 14px;line-height:1.4;">${esc(poll.description)}</p>` : ''}
       
       <div style="font-size:13px;color:var(--soft);margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--rule);">
-        Votant / Voter : <b style="color:var(--ink);">${esc(contact.name)}</b> <span style="font-size:12px;color:var(--faint);font-weight:normal;">(confidentiel / private)</span>
+        ${tx('Votant :', 'Voter:')} <b style="color:var(--ink);">${esc(contact.name)}</b> <span style="font-size:12px;color:var(--faint);font-weight:normal;">(${tx('confidentiel', 'private')})</span>
       </div>
 
       ${statusBadge}
@@ -12997,11 +13015,12 @@ async function pollGet(req, env, url) {
     </div>
 
     <p style="text-align:center;font-size:12px;color:var(--faint);margin-top:20px;">
-      SMBHL · Ligue amicale de hockey balle · <a href="https://smbhl.com" target="_blank" style="color:var(--blue);text-decoration:none;">smbhl.com</a>
+      SMBHL · ${tx('Ligue amicale de hockey balle', 'Friendly ball hockey league')} · <a href="https://smbhl.com" target="_blank" style="color:var(--blue);text-decoration:none;">smbhl.com</a>
     </p>
   </div>
 
   <script>
+  const L = (fr, en) => window.__currentLang === 'en' ? en : fr;
   const pollVoteBtn = document.getElementById('poll-vote-btn');
   if (pollVoteBtn) {
     pollVoteBtn.addEventListener('click', async () => {
@@ -13010,11 +13029,11 @@ async function pollGet(req, env, url) {
       const candId = candSel ? candSel.value : '';
       const candName = candSel && candSel.selectedOptions[0] ? candSel.selectedOptions[0].dataset.name : '';
       if (!candId) {
-        if (msg) { msg.textContent = 'Choisis un candidat svp / Select a candidate'; msg.style.color = 'var(--red)'; msg.style.display = 'block'; }
+        if (msg) { msg.textContent = L('Choisis un candidat, svp', 'Please select a candidate'); msg.style.color = 'var(--red)'; msg.style.display = 'block'; }
         return;
       }
       pollVoteBtn.disabled = true;
-      if (msg) { msg.textContent = 'Enregistrement...'; msg.style.color = 'var(--soft)'; msg.style.display = 'block'; }
+      if (msg) { msg.textContent = L('Enregistrement...', 'Saving...'); msg.style.color = 'var(--soft)'; msg.style.display = 'block'; }
       try {
         const res = await fetch('/api/poll/vote', {
           method: 'POST',
@@ -13030,14 +13049,14 @@ async function pollGet(req, env, url) {
         if (!res.ok) throw new Error(await res.text());
         location.reload();
       } catch (err) {
-        if (msg) { msg.textContent = 'Erreur: ' + err.message; msg.style.color = 'var(--red)'; }
+        if (msg) { msg.textContent = L('Erreur : ', 'Error: ') + err.message; msg.style.color = 'var(--red)'; }
         pollVoteBtn.disabled = false;
       }
     });
   }
   </script>`;
 
-  return page('Sondage · ' + poll.title, body);
+  return page({ fr: 'Sondage · ' + poll.title, en: 'Poll · ' + poll.title }, body);
 }
 
 async function teamGet(req, env, url) {
@@ -13080,17 +13099,17 @@ async function teamGet(req, env, url) {
   const list = rows.map(r => {
     const name = r.name || r.guest_name || '?';
     const by = r.status !== 'pending' && r.status_by !== 'self'
-      ? `<span class="by">${esc(r.status_by === 'manager' ? 'admin' : 'coéquipier')}</span>` : '';
+      ? `<span class="by">${r.status_by === 'manager' ? 'admin' : tx('coéquipier', 'teammate')}</span>` : '';
     const g = isGoalie(r) ? '<span class="by">G</span>' : '';
-    const guest = r.role === 'guest' ? '<span class="by">invité</span>' : '';
+    const guest = r.role === 'guest' ? `<span class="by">${tx('invité', 'guest')}</span>` : '';
     const who = r.player_id ? `p=${encodeURIComponent(r.player_id)}` : `g=${encodeURIComponent(r.guest_name)}`;
 
     const canUndo = r.status !== 'pending' && r.role === 'roster' && r.player_id && r.status_by === 'teammate';
 
     const posToggle = !isGoalie(r) && r.player_id
       ? `<span class="pos-toggle" data-pid="${esc(r.player_id)}" style="margin-left:6px;display:inline-flex;gap:2px;vertical-align:middle;">
-          <button type="button" class="pos-btn ${r.position === 'F' ? 'on' : ''}" data-pos="F" title="Attaquant / Forward" style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;cursor:pointer;line-height:1.2;border:1px solid var(--rule2);background:${r.position === 'F' ? 'var(--blue)' : 'var(--card)'};color:${r.position === 'F' ? '#fff' : 'var(--soft)'}">A</button>
-          <button type="button" class="pos-btn ${r.position === 'D' ? 'on' : ''}" data-pos="D" title="Défenseur / Defense" style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;cursor:pointer;line-height:1.2;border:1px solid var(--rule2);background:${r.position === 'D' ? 'var(--blue)' : 'var(--card)'};color:${r.position === 'D' ? '#fff' : 'var(--soft)'}">D</button>
+          <button type="button" class="pos-btn ${r.position === 'F' ? 'on' : ''}" data-pos="F" ${txAttr('title', 'Attaquant', 'Forward')} style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;cursor:pointer;line-height:1.2;border:1px solid var(--rule2);background:${r.position === 'F' ? 'var(--blue)' : 'var(--card)'};color:${r.position === 'F' ? '#fff' : 'var(--soft)'}">${tx('A', 'F')}</button>
+          <button type="button" class="pos-btn ${r.position === 'D' ? 'on' : ''}" data-pos="D" ${txAttr('title', 'Défenseur', 'Defense')} style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;cursor:pointer;line-height:1.2;border:1px solid var(--rule2);background:${r.position === 'D' ? 'var(--blue)' : 'var(--card)'};color:${r.position === 'D' ? '#fff' : 'var(--soft)'}">D</button>
         </span>`
       : '';
 
@@ -13100,7 +13119,7 @@ async function teamGet(req, env, url) {
         <button class="mini out ${r.status === 'out' ? 'on' : ''}" data-who="${who}" data-v="out">OUT</button>${
           canUndo
             ? `<button class="mini" data-who="${who}" data-v="pending"
-                 title="remettre sans réponse / undo">↺</button>` : ''}
+                 ${txAttr('title', 'remettre sans réponse', 'undo')}>↺</button>` : ''}
       </td></tr>`;
   }).join('');
 
@@ -13112,23 +13131,23 @@ async function teamGet(req, env, url) {
   const addable = pool.filter(p => !p.placed && p.said !== 'no');
   const unavailable = pool.filter(p => (p.placed && p.placed !== team) || p.said === 'no');
 
-  const kind = p => p.role === 'sub_goalie' ? 'gardien' : 'joueur';
-  const state = p => p.said === 'yes' ? 'a confirmé disponible'
-    : p.said === 'no' ? 'a dit non'
-    : 'pas encore répondu';
+  const kind = p => p.role === 'sub_goalie' ? { fr: 'gardien', en: 'goalie' } : { fr: 'joueur', en: 'skater' };
+  const state = p => p.said === 'yes' ? { fr: 'a confirmé disponible', en: 'confirmed available' }
+    : p.said === 'no' ? { fr: 'a dit non', en: 'said no' }
+    : { fr: 'pas encore répondu', en: 'no answer yet' };
 
   const onTeamRows = onTeam.map(p =>
-    `<tr><td>${esc(p.name)}<span class="by">${esc(kind(p))}</span></td>
+    `<tr><td>${esc(p.name)}<span class="by">${tx(kind(p).fr, kind(p).en)}</span></td>
       <td class="s"><button class="mini out" data-sub="${esc(p.player_id)}"
-        data-act="remove">RETIRER</button></td></tr>`).join('');
+        data-act="remove">${tx('RETIRER', 'REMOVE')}</button></td></tr>`).join('');
 
   const options = addable.map(p =>
-    `<option value="${esc(p.player_id)}">${esc(p.name)} — ${esc(kind(p))}, ${esc(state(p))}</option>`
+    txOption(p.player_id, `${p.name} — ${kind(p).fr}, ${state(p).fr}`, `${p.name} — ${kind(p).en}, ${state(p).en}`)
   ).join('');
 
   const unavailRows = unavailable.map(p =>
     `<tr><td style="opacity:.55">${esc(p.name)}<span class="by">${
-      p.placed ? 'déjà avec ' + esc(p.placed) : 'a dit non'}</span></td>
+      p.placed ? tx('déjà avec ' + p.placed, 'already with ' + p.placed) : tx('a dit non', 'said no')}</span></td>
       <td class="s">—</td></tr>`).join('');
 
   const messages = await getTeamMessages(env.DB, ev.id, team, 20);
@@ -13142,7 +13161,7 @@ async function teamGet(req, env, url) {
           <div style="color:var(--soft);">« ${esc(m.message)} »</div>
         </div>
       `).join('')
-    : `<p class="state" style="font-style:italic; margin:8px 0 12px;">Aucun message pour l'instant.<span class="en">No messages yet.</span></p>`;
+    : `<p class="state" style="font-style:italic; margin:8px 0 12px;">${tx("Aucun message pour l'instant.", 'No messages yet.')}</p>`;
 
   const authorOptions = rows.map(r => {
     const n = r.name || r.guest_name || '';
@@ -13154,24 +13173,24 @@ async function teamGet(req, env, url) {
 
   const authorHtml = me
     ? `<div style="font-size:15px; font-weight:600; color:var(--ink); margin-bottom:10px; padding:4px 0;">
-         De / From : <b style="color:var(--blue); font-size:16px;">${esc(me.name)}</b>
+         ${tx('De :', 'From:')} <b style="color:var(--blue); font-size:16px;">${esc(me.name)}</b>
          <input type="hidden" id="msgauthor" value="${esc(me.player_id)}" data-name="${esc(me.name)}">
        </div>`
     : `<select id="msgauthor" style="width:100%; font:inherit; font-size:15px; padding:10px; border:1px solid var(--rule2); border-radius:3px; background:var(--card); margin-bottom:8px;">
-         <option value="">— Choisis ton nom / Select your name —</option>
+         ${txOption('', '— Choisis ton nom —', '— Select your name —')}
          ${authorOptions}
-         <option value="other" data-name="Autre">Autre joueur / Other</option>
+         ${txOption('other', 'Autre joueur', 'Other player', ' data-name="Autre"')}
        </select>`;
 
   const topBoardWidget = messages.length > 0
     ? `<div class="card" style="border-left:4px solid var(--blue); padding:12px 14px; margin-bottom:14px; background:#fafbfc;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
           <div style="font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:16px; color:var(--ink); display:flex; align-items:center; gap:6px;">
-            <span>💬 Notes d'équipe / Team Notes</span>
+            <span>💬 ${tx("Notes d'équipe", 'Team notes')}</span>
             <span style="background:var(--blue); color:#fff; font-size:11px; padding:1px 7px; border-radius:10px; font-weight:700;">${messages.length}</span>
           </div>
           <a href="#team-board" class="jump-to-board" style="font-size:13px; font-weight:600; color:var(--blue); text-decoration:none; white-space:nowrap;">
-            + Écrire / Voir tout ⬇
+            ${tx('+ Écrire / voir tout ⬇', '+ Write / see all ⬇')}
           </a>
         </div>
         <div style="font-size:14px; color:var(--soft); line-height:1.4;">
@@ -13181,96 +13200,92 @@ async function teamGet(req, env, url) {
       </div>`
     : `<div style="display:flex; justify-content:space-between; align-items:center; background:#fafbfc; border:1px dashed var(--rule2); border-radius:4px; padding:8px 12px; margin-bottom:14px; font-size:13px;">
         <span style="color:var(--soft); display:flex; align-items:center; gap:6px;">
-          <span>💬</span> <span>Aucune note d'équipe pour l'instant / No notes yet</span>
+          <span>💬</span> ${tx("Aucune note d'équipe pour l'instant", 'No team notes yet')}
         </span>
         <a href="#team-board" class="jump-to-board" style="color:var(--blue); font-weight:600; text-decoration:none; font-size:13px; white-space:nowrap; margin-left:8px;">
-          + Laisser une note ⬇
+          ${tx('+ Laisser une note ⬇', '+ Leave a note ⬇')}
         </a>
       </div>`;
 
 
   const body = `
   <h1>${esc(team)}</h1>
-  <p class="when">Semaine ${esc(ev.week)} · ${esc(ev.date)}${
+  <p class="when">${tx(`Semaine ${ev.week} · ${dateFR(ev.date)}`, `Week ${ev.week} · ${ev.date}`)}${
     ev.start_time ? ' · ' + esc(ev.start_time) + (ev.end_time ? '–' + esc(ev.end_time) : '') : ''}${
     ev.venue ? ' · ' + esc(ev.venue) : ''}</p>
 
   ${topBoardWidget}
 
   <div class="card">
-    <h2>${c.in} confirmés${
-      shortGoalie || shortSkaters ? ' <span class="short">· équipe incomplète</span>' : ''}
-      <span class="en">${skaters} skater${skaters === 1 ? '' : 's'}${
-        shortGoalie ? ', no goalie yet' : ', goalie confirmed'}</span></h2>
+    <h2>${tx(`${c.in} confirmés`, `${c.in} confirmed`)}${
+      shortGoalie || shortSkaters ? ` <span class="short">· ${tx('équipe incomplète', 'team short')}</span>` : ''}
+      <span class="en">${tx(`${skaters} joueur${skaters === 1 ? '' : 's'}${shortGoalie ? ', pas encore de gardien' : ', gardien confirmé'}`,
+        `${skaters} skater${skaters === 1 ? '' : 's'}${shortGoalie ? ', no goalie yet' : ', goalie confirmed'}`)}</span></h2>
     <div style="font-size:12px;color:var(--soft);margin-bottom:8px;line-height:1.3;display:flex;align-items:center;gap:6px">
       <span>💡</span>
-      <span><b>Positions :</b> Identifiez vos attaquants (<b style="color:var(--ink)">A</b>) et défenseurs (<b style="color:var(--ink)">D</b>) pour les stats et le trophée Norris !</span>
+      ${tx('Positions : identifiez vos attaquants (A) et défenseurs (D) pour les stats et le trophée Norris !', 'Positions: mark your forwards (F) and defense (D) for the stats and the Norris trophy!')}
     </div>
     <table>${list}</table>
     <p class="state" id="msg"></p>
   </div>
 
   <div class="card" id="team-board">
-    <h2>Tableau d'équipe<span class="en">Team Message Board</span></h2>
-    <p class="state">Laisse une note pour tes coéquipiers (décision d'avant-match, retard, covoiturage).
-      <span class="en">Leave a note for your teammates (gametime decision, late arrival, carpool).</span></p>
+    <h2>${tx("Tableau d'équipe", 'Team message board')}</h2>
+    <p class="state">${tx("Laisse une note pour tes coéquipiers (décision d'avant-match, retard, covoiturage).", 'Leave a note for your teammates (game-time decision, late arrival, carpool).')}</p>
 
     <div style="margin:12px 0 16px; max-height:220px; overflow-y:auto; border:1px solid var(--rule); border-radius:4px; padding:10px 12px; background:#fafafa;">
       ${msgItems}
     </div>
 
     ${authorHtml}
-    <input id="msgtext" maxlength="160" placeholder="Écris une note (ex: retard de 10 min, décision d'avant-match)..." style="width:100%; font:inherit; padding:10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:10px;">
+    <input id="msgtext" maxlength="160" ${txAttr('placeholder', "Écris une note (ex. : retard de 10 min, décision d'avant-match)...", 'Write a note (e.g. 10 min late, game-time decision)...')} style="width:100%; font:inherit; padding:10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:10px;">
     <div class="btns">
-      <button class="btn" id="msgsend" style="padding:12px 10px;">PUBLIER<span class="en">POST NOTE</span></button>
+      <button class="btn" id="msgsend" style="padding:12px 10px;">${tx('PUBLIER', 'POST NOTE')}</button>
     </div>
     <p class="state" id="msgerr" style="color:var(--red); font-size:14px; margin-top:6px; display:none;"></p>
   </div>
 
   <div class="card">
-    <h2>Substituts sur l'équipe<span class="en">Subs already on this team</span></h2>
+    <h2>${tx("Substituts sur l'équipe", 'Subs already on this team')}</h2>
     <table>${onTeamRows || '<tr><td>—</td></tr>'}</table>
   </div>
 
   <div class="card">
-    <h2>Ajouter un substitut qui a confirmé
-      <span class="en">Add a sub who has already confirmed with you</span></h2>
-    <p class="state">N'ajoute quelqu'un que si tu lui as parlé. Il recevra un courriel
-      lui disant qu'il joue avec ${esc(team)}.
-      <span class="en">Only add someone you have actually spoken to. They will be emailed
-      that they are playing for ${esc(team)}.</span></p>
+    <h2>${tx('Ajouter un substitut qui a confirmé', 'Add a sub who has already confirmed with you')}</h2>
+    <p class="state">${tx(`N'ajoute quelqu'un que si tu lui as parlé. Il recevra un courriel lui disant qu'il joue avec ${team}.`, `Only add someone you have actually spoken to. They will be emailed that they are playing for ${team}.`)}</p>
     <select id="subsel" style="width:100%;font:inherit;font-size:15px;padding:11px;
       border:1px solid var(--rule2);border-radius:3px;background:var(--card)">
-      <option value="">— choisir / choose —</option>
+      ${txOption('', '— choisir —', '— choose —')}
       ${options}
     </select>
     <div class="btns" style="margin-top:10px">
-      <button class="btn" id="subadd">AJOUTER<span class="en">ADD</span></button>
+      <button class="btn" id="subadd">${tx('AJOUTER', 'ADD')}</button>
     </div>
     ${unavailRows ? `<details style="margin-top:16px;border-top:1px solid var(--rule);padding-top:12px">
       <summary style="cursor:pointer;font-size:14px;color:var(--soft);user-select:none;font-weight:600">
-        Pas disponibles / Not available this week &#x25BE;
+        ${tx('Pas disponibles cette semaine ▾', 'Not available this week ▾')}
       </summary>
       <table style="margin-top:8px">${unavailRows}</table>
     </details>` : ''}
   </div>
 
   <div class="card">
-    <h2>Ajouter un invité<span class="en">Add a guest — someone not in the pool</span></h2>
-    <input id="gname" placeholder="Prénom Nom" style="width:100%;font:inherit;padding:11px;
+    <h2>${tx('Ajouter un invité', 'Add a guest — someone not in the pool')}</h2>
+    <input id="gname" ${txAttr('placeholder', 'Prénom Nom', 'First Last')} style="width:100%;font:inherit;padding:11px;
       border:1px solid var(--rule2);border-radius:3px">
     <div class="btns" style="margin-top:10px">
-      <button class="btn" id="gadd">AJOUTER<span class="en">ADD</span></button>
+      <button class="btn" id="gadd">${tx('AJOUTER', 'ADD')}</button>
     </div>
   </div>
 
   <div class="card">
-    <h2>Les autres équipes<span class="en">Other teams — confirmed</span></h2>
+    <h2>${tx('Les autres équipes — confirmés', 'Other teams — confirmed')}</h2>
     <ul class="counts">${others}</ul>
   </div>
 
   <script>
   const q = location.search;
+  const L = (fr, en) => window.__currentLang === 'en' ? en : fr;
   async function send(payload, btns) {
     btns.forEach(b => b.disabled = true);
     document.getElementById('msg').textContent = '…';
@@ -13280,7 +13295,7 @@ async function teamGet(req, env, url) {
       if (!r.ok) throw new Error(await r.text());
       location.reload();
     } catch (e) {
-      document.getElementById('msg').textContent = 'Erreur / Error: ' + e.message;
+      document.getElementById('msg').textContent = L('Erreur : ', 'Error: ') + e.message;
       btns.forEach(b => b.disabled = false);
     }
   }
@@ -13297,13 +13312,13 @@ async function teamGet(req, env, url) {
   document.getElementById('subadd').addEventListener('click', () => {
     const v = document.getElementById('subsel').value;
     if (!v) { document.getElementById('msg').textContent =
-      'Choisis un substitut / pick a sub'; return; }
+      L('Choisis un substitut', 'Pick a sub'); return; }
     send({ player_id: v, sub_action: 'add', status: 'in' }, all());
   });
   document.getElementById('gadd').addEventListener('click', () => {
     const n = document.getElementById('gname').value.trim();
     if (n.split(' ').filter(Boolean).length < 2) {
-      document.getElementById('msg').textContent = 'Prénom et nom, svp / First and last name, please';
+      document.getElementById('msg').textContent = L('Prénom et nom, svp', 'First and last name, please');
       return;
     }
     send({ guest_name: n, status: 'in', add: true }, all());
@@ -13320,14 +13335,14 @@ async function teamGet(req, env, url) {
 
     if (!authorName) {
       if (err) {
-        err.textContent = 'Sélectionne ton nom svp / Please select your name';
+        err.textContent = L('Sélectionne ton nom, svp', 'Please select your name');
         err.style.display = 'block';
       }
       return;
     }
     if (!text) {
       if (err) {
-        err.textContent = 'Écris un message svp / Please enter a message';
+        err.textContent = L('Écris un message, svp', 'Please enter a message');
         err.style.display = 'block';
       }
       return;
@@ -13376,7 +13391,7 @@ async function teamGet(req, env, url) {
       });
       if (!res.ok) throw new Error(await res.text());
     } catch (err) {
-      alert('Erreur: ' + err.message);
+      alert(L('Erreur : ', 'Error: ') + err.message);
       location.reload();
     }
   }));
@@ -13623,17 +13638,12 @@ async function availRoute(req, env, url) {
       ? { fr: 'Pas besoin de chandail d\u2019équipe.', en: 'No team shirt needed.' }
       : { fr: `Apporte un chandail ${SHIRT_FR[r.placed] || r.placed.toLowerCase()}.`,
           en: `Bring a ${r.placed.toLowerCase()} shirt.` };
-    return page('Confirmé', `<h1>Tu joues avec ${esc(TEAM_FR[r.placed] || r.placed)}
-      <span class="en">You are with ${esc(r.placed)}</span></h1>
-      <p class="when">${esc(w.fr)}</p>
-      <div class="card"><p>${shirt.fr}<span class="en">${shirt.en}</span></p></div>`, logoTooltip);
+    return page({ fr: 'Confirmé', en: 'Confirmed' }, `<h1>${tx(`Tu joues avec ${TEAM_FR[r.placed] || r.placed}`, `You are with ${r.placed}`)}</h1>
+      <p class="when">${tx(w.fr, w.en)}</p>
+      <div class="card"><p>${tx(shirt.fr, shirt.en)}</p></div>`, logoTooltip);
   }
-  return page('Liste d\u2019attente', `<h1>Sur la liste d'attente
-    <span class="en">On the waitlist</span></h1>
-    <div class="card"><p>La place est comblée, mais si une autre équipe a besoin
-    de toi d'ici ${esc(w.fr)}, on te place automatiquement et on t'écrit.
-    <span class="en">That spot is filled. If another team needs you before the
-    game we place you automatically and email you.</span></p></div>`, logoTooltip);
+  return page({ fr: 'Liste d\u2019attente', en: 'Waitlist' }, `<h1>${tx("Sur la liste d'attente", 'On the waitlist')}</h1>
+    <div class="card"><p>${tx(`La place est comblée, mais si une autre équipe a besoin de toi d'ici ${w.fr}, on te place automatiquement et on t'écrit.`, 'That spot is filled. If another team needs you before the game, we place you automatically and email you.')}</p></div>`, logoTooltip);
 }
 
 // Resolves whether the CURRENT season tracks stats, for hiding stats-only admin
@@ -17328,9 +17338,9 @@ async function rsvpGet(req, env, url) {
 
   let setBy = '';
   if (row && status !== 'pending' && row.status_by !== 'self') {
-    setBy = `<p class="state">Ce statut a été réglé par ${
-      esc(row.status_by === 'manager' ? 'l\u2019admin' : 'un coéquipier')}.
-      Tu peux le corriger.<span class="en">Someone else set this. You can change it.</span></p>`;
+    setBy = `<p class="state">${row.status_by === 'manager'
+      ? tx('Ce statut a été réglé par l’admin. Tu peux le corriger.', 'The admin set this. You can change it.')
+      : tx('Ce statut a été réglé par un coéquipier. Tu peux le corriger.', 'A teammate set this. You can change it.')}</p>`;
   }
 
   const day = dayNames(ev.date);
@@ -17340,15 +17350,15 @@ async function rsvpGet(req, env, url) {
     const matches = await getTeamFixtures(env, ev, team);
     if (matches && matches.length) {
       const matchItems = matches.map(m =>
-        `<div><b>${esc(m.time)}</b> : vs <b>${esc(m.oppFR)}</b> <span class="en">(${esc(m.opp)})</span>${m.venue ? ' · ' + esc(m.venue) : ''}</div>`
+        `<div><b>${esc(m.time)}</b> : vs <b>${tx(m.oppFR, m.opp)}</b>${m.venue ? ' · ' + esc(m.venue) : ''}</div>`
       ).join('');
       const shirtDesc = contact.is_goalie
-        ? 'Équipement de gardien (pas de chandail d\u2019équipe requis)'
-        : `Chandail ${esc(SHIRT_FR[team] || team.toLowerCase())} requis / ${esc(team)} shirt`;
+        ? tx('Équipement de gardien (pas de chandail d’équipe requis)', 'Goalie gear (no team shirt needed)')
+        : tx(`Chandail ${SHIRT_FR[team] || team.toLowerCase()} requis`, `${team} shirt required`);
 
       matchBoxHtml = `
       <div class="matchbox">
-        <div style="font-weight:700;margin-bottom:4px">Horaire des matchs / Schedule :</div>
+        <div style="font-weight:700;margin-bottom:4px">${tx('Horaire des matchs :', 'Schedule:')}</div>
         ${matchItems}
         <div style="color:var(--soft);margin-top:6px;font-size:14px">${shirtDesc}</div>
       </div>`;
@@ -17363,7 +17373,7 @@ async function rsvpGet(req, env, url) {
     teamMgmtLink = `
       <div style="margin-top:14px; text-align:center;">
         <a href="${tUrl}" class="tabbtn" style="display:block; text-align:center; padding:11px 16px; font-weight:700;">
-          Gérer l'équipe ${esc(team)} / Manage ${esc(team)} roster & subs
+          ${tx(`Gérer l'équipe ${team} et ses substituts`, `Manage ${team} roster & subs`)}
         </a>
       </div>`;
   }
@@ -17382,15 +17392,15 @@ async function rsvpGet(req, env, url) {
     } catch (_) {}
   if (futureFixtures.length) {
     const countChecked = futureFixtures.filter(f => playerAbsences.has(f.id) || playerAbsences.has(f.date)).length;
-    const badgeText = countChecked > 0 ? ' (' + countChecked + ' déclarée' + (countChecked > 1 ? 's' : '') + ')' : '';
+    const badgeText = countChecked > 0 ? tx(' (' + countChecked + ' déclarée' + (countChecked > 1 ? 's' : '') + ')', ' (' + countChecked + ' planned)') : '';
 
     const fixtureCheckboxes = futureFixtures.map(f => {
       const isChecked = playerAbsences.has(f.id) || playerAbsences.has(f.date);
       return '<label style="display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:4px; cursor:pointer; background:' + (isChecked ? '#fef2f2' : '#f8fafc') + '; border:1px solid ' + (isChecked ? '#fecaca' : '#e2e8f0') + '; font-size:14px;">' +
         '<input type="checkbox" class="absence-cb" data-date="' + esc(f.id || f.date) + '" ' + (isChecked ? 'checked' : '') + ' style="transform:scale(1.2); cursor:pointer;">' +
         '<div>' +
-          '<b>Semaine ' + esc(f.week) + '</b> · ' + esc(f.date) +
-          '<span style="display:block; font-size:12px; color:' + (isChecked ? '#dc2626' : 'var(--soft)') + '">' + (isChecked ? '❌ Absent(e) / Out' : '✅ Disponible / Available') + '</span>' +
+          '<b>' + tx('Semaine ' + f.week, 'Week ' + f.week) + '</b> · ' + tx(dateFR(f.date), f.date) +
+          '<span class="absence-state" style="display:block; font-size:12px; color:' + (isChecked ? '#dc2626' : 'var(--soft)') + '">' + (isChecked ? tx('❌ Absent(e)', '❌ Out') : tx('✅ Disponible', '✅ Available')) + '</span>' +
         '</div>' +
       '</label>';
     }).join('');
@@ -17399,20 +17409,19 @@ async function rsvpGet(req, env, url) {
     <div class="card" style="margin-top:16px;">
       <div id="toggle-absences" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
         <div>
-          <h2 style="margin:0; font-size:18px;">✈️ Vacances & absences futures<span id="absence-badge" style="font-size:14px; font-weight:normal; color:#dc2626;">${badgeText}</span></h2>
-          <span class="en" style="font-size:13px; color:var(--soft);">Planned future absences (vacations / travel)</span>
+          <h2 style="margin:0; font-size:18px;">✈️ ${tx('Vacances et absences futures', 'Planned future absences (vacations, travel)')}<span id="absence-badge" style="font-size:14px; font-weight:normal; color:#dc2626;">${badgeText}</span></h2>
         </div>
         <span id="absence-chevron" style="font-size:18px; color:var(--soft);">▼</span>
       </div>
       <div id="absences-drawer" style="display:none; margin-top:12px; border-top:1px solid var(--rule); padding-top:12px;">
         <p style="font-size:13px; color:var(--soft); margin:0 0 10px;">
-          Tu sais déjà que tu manqueras un match plus tard cette saison ? Coche les dates où tu seras absent pour aider ton équipe à prévoir les remplaçants à l'avance.
+          ${tx("Tu sais déjà que tu manqueras un match plus tard cette saison ? Coche les dates où tu seras absent pour aider ton équipe à prévoir les remplaçants à l'avance.", 'Already know you will miss a game later this season? Tick the dates you will be away so your team can line up subs ahead of time.')}
         </p>
         <div id="absence-list" style="display:flex; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto; padding-right:4px;">
           ${fixtureCheckboxes}
         </div>
         <div style="margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-          <button type="button" class="btn" id="save-absences-btn" style="font-size:15px; padding:10px 16px; width:auto; flex:none;">Enregistrer mes absences 💾</button>
+          <button type="button" class="btn" id="save-absences-btn" style="font-size:15px; padding:10px 16px; width:auto; flex:none;">${tx('Enregistrer mes absences 💾', 'Save my absences 💾')}</button>
           <span id="absence-msg" style="font-size:13px; font-weight:600;"></span>
         </div>
       </div>
@@ -17426,17 +17435,17 @@ async function rsvpGet(req, env, url) {
     selfPosHtml = `
     <div class="card" style="margin-top:14px;padding:12px 14px">
       <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:2px">
-        🎯 Ma position habituelle <span class="en" style="font-weight:normal;color:var(--soft)">/ My usual position</span>
+        🎯 ${tx('Ma position habituelle', 'My usual position')}
       </div>
       <div style="font-size:12px;color:var(--soft);margin-bottom:8px">
-        Aide à équilibrer les alignements et pour les trophées (ex. Trophée Norris) !
+        ${tx('Aide à équilibrer les alignements et pour les trophées (ex. Trophée Norris) !', 'Helps balance the lineups and counts for the trophies (e.g. the Norris Trophy)!')}
       </div>
       <div style="display:flex;gap:8px" id="self-pos-picker">
         <button type="button" class="btn self-pos-btn ${contact.position === 'F' ? 'on' : ''}" data-pos="F" style="flex:1;font-size:13px;padding:8px;background:${contact.position === 'F' ? 'var(--blue)' : 'var(--card)'};color:${contact.position === 'F' ? '#fff' : 'var(--ink)'};border:1px solid var(--rule2);font-weight:700">
-          ⚡ Attaquant / Forward (A)
+          ⚡ ${tx('Attaquant (A)', 'Forward (F)')}
         </button>
         <button type="button" class="btn self-pos-btn ${contact.position === 'D' ? 'on' : ''}" data-pos="D" style="flex:1;font-size:13px;padding:8px;background:${contact.position === 'D' ? 'var(--blue)' : 'var(--card)'};color:${contact.position === 'D' ? '#fff' : 'var(--ink)'};border:1px solid var(--rule2);font-weight:700">
-          🛡️ Défenseur / Defenseman (D)
+          🛡️ ${tx('Défenseur (D)', 'Defense (D)')}
         </button>
       </div>
       <p id="self-pos-msg" style="font-size:12px;color:var(--green);margin:6px 0 0;display:none;font-weight:600"></p>
@@ -17469,20 +17478,19 @@ async function rsvpGet(req, env, url) {
             <div style="background:#8b5cf6;width:${c.pct}%;height:100%;border-radius:4px;transition:width 0.4s ease;"></div>
           </div>
         </div>
-      `).join('') || '<p style="font-size:13px;color:var(--soft);margin:4px 0;">Aucun autre vote enregistré pour l\\u2019instant.</p>';
+      `).join('') || `<p style="font-size:13px;color:var(--soft);margin:4px 0;">${tx('Aucun autre vote enregistré pour l’instant.', 'No other votes yet.')}</p>`;
 
       resultsHtml = `
         <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e9d5ff;">
           <div style="font-size:13px;font-weight:700;color:#6b21a8;margin-bottom:8px;">
-            📊 Résultats en direct (${total} vote${total > 1 ? 's' : ''}) :
+            📊 ${tx(`Résultats en direct (${total} vote${total > 1 ? 's' : ''}) :`, `Live results (${total} vote${total > 1 ? 's' : ''}):`)}
           </div>
           ${bars}
         </div>`;
     } else if (hasVoted) {
       resultsHtml = `
         <div style="margin-top:12px;padding:10px 12px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:6px;font-size:12px;color:#6b21a8;">
-          🔒 <b>Scrutin secret</b> : ton vote est strictement confidentiel. Les résultats restent privés.
-          <span class="en" style="display:block;font-size:11px;color:var(--soft);margin-top:2px;">Private ballot: your vote is confidential and tallies are hidden.</span>
+          🔒 ${tx('Scrutin secret : ton vote est strictement confidentiel. Les résultats restent privés.', 'Private ballot: your vote is confidential and results are hidden.')}
         </div>`;
     }
 
@@ -17490,43 +17498,43 @@ async function rsvpGet(req, env, url) {
       `<option value="${esc(c.player_id)}" data-name="${esc(c.name)}"${myRsvpVote?.candidate_id === c.player_id ? ' selected' : ''}>${esc(c.name)}${c.position ? ' (' + c.position + ')' : ''}</option>`
     ).join('');
 
-    const categoryLabel = rsvpPoll.category === 'norris' ? '🏆 Trophée Norris'
-      : rsvpPoll.category === 'mvp' ? '👑 Trophée MVP / Hart'
-      : '🗳️ Sondage de la ligue';
+    const categoryLabel = rsvpPoll.category === 'norris' ? { fr: '🏆 Trophée Norris', en: '🏆 Norris Trophy' }
+      : rsvpPoll.category === 'mvp' ? { fr: '👑 Trophée MVP / Hart', en: '👑 MVP / Hart Trophy' }
+      : { fr: '🗳️ Sondage de la ligue', en: '🗳️ League poll' };
 
     const statusBadge = hasVoted
       ? `<div style="background:#f3e8ff;border:1px solid #d8b4fe;border-radius:6px;padding:9px 12px;margin-bottom:12px;font-size:13px;color:#6b21a8;">
-          ✓ Ton vote enregistré : <b>${esc(myRsvpVote.candidate_name)}</b>
+          ✓ ${tx('Ton vote enregistré :', 'Your recorded vote:')} <b>${esc(myRsvpVote.candidate_name)}</b>
         </div>`
       : '';
 
     pollCardHtml = `
     <div class="card" style="margin-top:14px;border-top:4px solid #8b5cf6;padding:16px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <span class="by" style="background:#f3e8ff;color:#6b21a8;font-weight:700;margin:0;">${esc(categoryLabel)}</span>
-        <span class="by" style="background:#8b5cf6;color:#fff;font-weight:700;margin:0;">${rsvpPoll.show_results === 1 ? 'VOTE EN DIRECT' : '🔒 SCRUTIN SECRET'}</span>
+        <span class="by" style="background:#f3e8ff;color:#6b21a8;font-weight:700;margin:0;">${tx(categoryLabel.fr, categoryLabel.en)}</span>
+        <span class="by" style="background:#8b5cf6;color:#fff;font-weight:700;margin:0;">${rsvpPoll.show_results === 1 ? tx('VOTE EN DIRECT', 'LIVE VOTE') : tx('🔒 SCRUTIN SECRET', '🔒 PRIVATE')}</span>
       </div>
       <h2 style="font-size:17px;margin:6px 0 4px;line-height:1.3;color:var(--ink);">${esc(rsvpPoll.title)}</h2>
       ${rsvpPoll.description ? `<p style="font-size:13px;color:var(--soft);margin:0 0 10px;line-height:1.4;">${esc(rsvpPoll.description)}</p>` : ''}
       
       <div style="font-size:12px;color:var(--soft);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--rule);">
-        Votant / Voter : <b style="color:var(--ink);">${esc(contact.name)}</b> <span style="font-size:11px;color:var(--faint);font-weight:normal;">(confidentiel / private)</span>
+        ${tx('Votant :', 'Voter:')} <b style="color:var(--ink);">${esc(contact.name)}</b> <span style="font-size:11px;color:var(--faint);font-weight:normal;">(${tx('confidentiel', 'private')})</span>
       </div>
 
       ${statusBadge}
 
       <div style="margin-bottom:10px;">
         <label style="display:block;font-size:12px;font-weight:600;color:var(--soft);margin-bottom:4px;">
-          ${hasVoted ? 'Modifier mon vote pour / Change vote to :' : 'Mon choix / My choice :'}
+          ${hasVoted ? tx('Modifier mon vote pour :', 'Change my vote to:') : tx('Mon choix :', 'My choice:')}
         </label>
         <select id="poll-candidate-id" style="width:100%;font:inherit;font-size:14px;padding:9px;border:1px solid var(--rule2);border-radius:4px;background:var(--card);color:var(--ink);">
-          <option value="">— Choisis un candidat / Select a candidate —</option>
+          ${txOption('', '— Choisis un candidat —', '— Select a candidate —')}
           ${candOpts}
         </select>
       </div>
       <div class="btns">
         <button type="button" class="btn" id="poll-vote-btn" style="background:#8b5cf6;border-color:#7c3aed;color:#fff;font-size:14px;padding:10px 14px;width:100%;">
-          ${hasVoted ? 'MODIFIER MON VOTE ✎' : 'SOUMETTRE MON VOTE 🗳️'}
+          ${hasVoted ? tx('MODIFIER MON VOTE ✎', 'CHANGE MY VOTE ✎') : tx('SOUMETTRE MON VOTE 🗳️', 'SUBMIT MY VOTE 🗳️')}
         </button>
       </div>
       <p id="poll-vote-msg" style="font-size:12px;font-weight:600;margin-top:6px;display:none;"></p>
@@ -17544,7 +17552,7 @@ async function rsvpGet(req, env, url) {
       const msg = document.getElementById('poll-vote-msg');
       if (!candId && !candName) {
         if (msg) {
-          msg.textContent = 'Choisis un candidat avant de voter / Please select a candidate';
+          msg.textContent = L('Choisis un candidat avant de voter', 'Please select a candidate');
           msg.style.color = 'var(--red)';
           msg.style.display = 'block';
         }
@@ -17552,7 +17560,7 @@ async function rsvpGet(req, env, url) {
       }
       pollVoteBtn.disabled = true;
       if (msg) {
-        msg.textContent = 'Enregistrement de ton vote...';
+        msg.textContent = L('Enregistrement de ton vote...', 'Saving your vote...');
         msg.style.color = 'var(--soft)';
         msg.style.display = 'block';
       }
@@ -17571,13 +17579,13 @@ async function rsvpGet(req, env, url) {
         });
         if (!r.ok) throw new Error(await r.text());
         if (msg) {
-          msg.textContent = '✓ Vote enregistré avec succès ! / Vote recorded!';
+          msg.textContent = L('✓ Vote enregistré avec succès !', '✓ Vote recorded!');
           msg.style.color = 'var(--green)';
         }
         setTimeout(() => location.reload(), 1000);
       } catch (e) {
         if (msg) {
-          msg.textContent = 'Erreur: ' + e.message;
+          msg.textContent = L('Erreur : ', 'Error: ') + e.message;
           msg.style.color = 'var(--red)';
         }
         pollVoteBtn.disabled = false;
@@ -17588,27 +17596,28 @@ async function rsvpGet(req, env, url) {
 
   const body = `
   <h1>${esc(contact.name)}</h1>
-  <p class="when">Semaine ${esc(ev.week)} · ${esc(ev.date)}${
+  <p class="when">${tx(`Semaine ${ev.week} · ${dateFR(ev.date)}`, `Week ${ev.week} · ${ev.date}`)}${
     ev.start_time ? ' · ' + esc(ev.start_time) + (ev.end_time ? '–' + esc(ev.end_time) : '') : ''}${
     ev.venue ? ' · ' + esc(ev.venue) : ''}</p>
   <div class="card">
-    <h2>Tu joues ${esc(day.fr)} ?<span class="en">Playing ${esc(day.en)}?</span></h2>
+    <h2>${tx(`Tu joues ${day.fr} ?`, `Playing ${day.en}?`)}</h2>
     ${matchBoxHtml}
     <div class="btns">
-      <button class="btn in ${status === 'in' ? 'on' : ''}" data-v="in" ${locked ? 'disabled' : ''}>PRÉSENT<span class="en">IN</span></button>
-      <button class="btn out ${status === 'out' ? 'on' : ''}" data-v="out" ${locked ? 'disabled' : ''}>ABSENT<span class="en">OUT</span></button>
+      <button class="btn in ${status === 'in' ? 'on' : ''}" data-v="in" ${locked ? 'disabled' : ''}>${tx('PRÉSENT', 'IN')}</button>
+      <button class="btn out ${status === 'out' ? 'on' : ''}" data-v="out" ${locked ? 'disabled' : ''}>${tx('ABSENT', 'OUT')}</button>
     </div>
     ${setBy}
     ${ev.state === 'cancelled'
-      ? `<div style="background:#fee2e2;border:1px solid #f87171;border-radius:4px;padding:10px 12px;margin-top:12px;color:#991b1b;font-weight:700;">⚠️ Ce match a été annulé.<span class="en" style="display:block;font-weight:normal;font-size:13px;color:#7f1d1d;">This game has been cancelled.</span></div>`
-      : (locked ? '<p class="state">Les réponses sont fermées.<span class="en">Responses are closed.</span></p>' : '')}
-    <p class="state" id="msg">${autoVal ? 'Réponse enregistrée avec succès! / Response recorded!' : ''}</p>
+      ? `<div style="background:#fee2e2;border:1px solid #f87171;border-radius:4px;padding:10px 12px;margin-top:12px;color:#991b1b;font-weight:700;">⚠️ ${tx('Ce match a été annulé.', 'This game has been cancelled.')}</div>`
+      : (locked ? `<p class="state">${tx('Les réponses sont fermées.', 'Responses are closed.')}</p>` : '')}
+    <p class="state" id="msg">${autoVal ? tx('Réponse enregistrée avec succès !', 'Response recorded!') : ''}</p>
   </div>
   ${selfPosHtml}
   ${pollCardHtml}
   ${absencesHtml}
   ${team ? renderTeam(await teamRows(env.DB, eventId, team), await allCounts(env.DB, eventId), team) + teamMgmtLink : ''}
   <script>
+  const L = (fr, en) => window.__currentLang === 'en' ? en : fr;
   document.querySelectorAll('.btn[data-v]').forEach(b => b.addEventListener('click', async () => {
     const v = b.dataset.v;
     document.querySelectorAll('.btn[data-v]').forEach(x => x.disabled = true);
@@ -17621,7 +17630,7 @@ async function rsvpGet(req, env, url) {
       if (!r.ok) throw new Error(await r.text());
       location.href = location.pathname + location.search.replace(/&v=[^&]*/, '');
     } catch (e) {
-      document.getElementById('msg').textContent = 'Erreur / Error: ' + e.message;
+      document.getElementById('msg').textContent = L('Erreur : ', 'Error: ') + e.message;
       document.querySelectorAll('.btn[data-v]').forEach(x => x.disabled = false);
     }
   }));
@@ -17643,16 +17652,16 @@ async function rsvpGet(req, env, url) {
     document.querySelectorAll('.absence-cb').forEach(cb => {
       cb.addEventListener('change', () => {
         const p = cb.closest('label');
-        const desc = p.querySelector('span');
+        const desc = p.querySelector('.absence-state');
         if (cb.checked) {
           p.style.background = '#fef2f2';
           p.style.borderColor = '#fecaca';
-          desc.textContent = '❌ Absent(e) / Out';
+          desc.textContent = L('❌ Absent(e)', '❌ Out');
           desc.style.color = '#dc2626';
         } else {
           p.style.background = '#f8fafc';
           p.style.borderColor = '#e2e8f0';
-          desc.textContent = '✅ Disponible / Available';
+          desc.textContent = L('✅ Disponible', '✅ Available');
           desc.style.color = 'var(--soft)';
         }
       });
@@ -17663,7 +17672,7 @@ async function rsvpGet(req, env, url) {
       saveBtn.addEventListener('click', async () => {
         saveBtn.disabled = true;
         const msg = document.getElementById('absence-msg');
-        msg.textContent = 'Enregistrement...';
+        msg.textContent = L('Enregistrement...', 'Saving...');
         msg.style.color = 'var(--soft)';
         const dates = [...document.querySelectorAll('.absence-cb:checked')].map(c => c.dataset.date);
         try {
@@ -17679,12 +17688,12 @@ async function rsvpGet(req, env, url) {
             })
           });
           if (!res.ok) throw new Error(await res.text());
-          msg.textContent = '✓ Absences enregistrées !';
+          msg.textContent = L('✓ Absences enregistrées !', '✓ Absences saved!');
           msg.style.color = 'var(--green)';
           const b = document.getElementById('absence-badge');
-          if (b) b.textContent = dates.length ? ' (' + dates.length + ' déclarée' + (dates.length > 1 ? 's' : '') + ')' : '';
+          if (b) b.textContent = dates.length ? L(' (' + dates.length + ' déclarée' + (dates.length > 1 ? 's' : '') + ')', ' (' + dates.length + ' planned)') : '';
         } catch (e) {
-          msg.textContent = 'Erreur: ' + e.message;
+          msg.textContent = L('Erreur : ', 'Error: ') + e.message;
           msg.style.color = 'var(--red)';
         } finally {
           saveBtn.disabled = false;
@@ -17722,11 +17731,13 @@ async function rsvpGet(req, env, url) {
       });
       if (!r.ok) throw new Error(await r.text());
       if (msg) {
-        msg.textContent = newPos ? '✓ Position enregistrée : ' + (newPos === 'D' ? 'Défenseur' : 'Attaquant') : '✓ Position réinitialisée';
+        msg.textContent = newPos
+          ? L('✓ Position enregistrée : ' + (newPos === 'D' ? 'Défenseur' : 'Attaquant'), '✓ Position saved: ' + (newPos === 'D' ? 'Defense' : 'Forward'))
+          : L('✓ Position réinitialisée', '✓ Position cleared');
         msg.style.display = 'block';
       }
     } catch (e) {
-      alert('Erreur: ' + e.message);
+      alert(L('Erreur : ', 'Error: ') + e.message);
     }
   }));
 
