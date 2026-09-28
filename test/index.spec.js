@@ -4836,9 +4836,10 @@ describe("SMBHL Worker", () => {
 						await env.SHEETS_KV.put('data_json', JSON.stringify(dj));
 					}
 
+					env.ADMIN_KEY = "sample-invites-admin";
 					const req = new Request("http://example.com/api/send-sample-invites", {
 						method: "POST",
-						headers: { "content-type": "application/json" },
+						headers: { "content-type": "application/json", "x-admin": "sample-invites-admin" },
 						body: JSON.stringify({
 							event_id: "2026-09-27",
 							recipients: ["emailrobertosantana@gmail.com", "rsantana@live.ca"]

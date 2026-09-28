@@ -23335,14 +23335,13 @@ async function handleScheduleSendCancellation(req, env) {
     return new Response(JSON.stringify({ error: 'Événement introuvable' }), { status: 404 });
   }
 
-  // Cancel any pending outbox items for this event
-  await env.DB.prepare('UPDATE outbox SET cancelled = 1 WHERE event_id = ? AND sent_at IS NULL').bind(eventId).run();
-
   // Find recipients: roster players and active subs confirmed 'in' for this event
   const recipients = await cancellationRecipients(env, eventId);
 
   const { subject: subj, text: plain, html } = renderCancellationEmail(ev);
 
+  // A test goes to the admin only and touches nothing else -- above all not
+  // the event's queued mail (it used to cancel it before checking).
   if (testOnly) {
     const adminEmail = env.ADMIN_EMAIL || ADMIN_EMAIL;
     // A test send refused for the daily limit is queued, not sent: say so.
@@ -23354,6 +23353,9 @@ async function handleScheduleSendCancellation(req, env) {
     }
     return Response.json({ ok: true, test: true, sent_to: adminEmail, total_recipients: recipients.length });
   }
+
+  // The real notice: the game is off, so its queued mail goes with it.
+  await env.DB.prepare('UPDATE outbox SET cancelled = 1 WHERE event_id = ? AND sent_at IS NULL').bind(eventId).run();
 
   let sent = 0, failed = 0, deferred = 0;
   for (const r of recipients) {
@@ -23369,6 +23371,10 @@ async function handleScheduleSendCancellation(req, env) {
 }
 
 async function handleSendSampleInvites(req, env) {
+  // Admin only, like every other admin route: it sends real mail and spends
+  // the day's Resend budget (shared with production).
+  const auth = checkAdminAuth(req, env);
+  if (auth !== 'ok') return adminAuthResponse(auth);
   const b = await req.json().catch(() => ({}));
   const defaultRecipients = ['emailrobertosantana@gmail.com', 'rsantana@live.ca'];
   let recipients = defaultRecipients;
