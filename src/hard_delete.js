@@ -223,12 +223,24 @@ export async function handleLeagueHardDelete(req, env, url) {
 // POST /super-admin/leagues/hard-delete -- body: { leagueId, confirmPhrase }.
 // Caller (index.js route) has already run checkAdminAuth; this function
 // assumes that's done, matching every other super-admin handler's shape.
+// Super-admin cleanup: no deactivation first and no 15-day wait -- those
+// guard a league admin deleting their OWN league (handleLeagueHardDelete
+// keeps both); the platform operator removing a league is the case
+// scripts/demo_league_cleanup.js already bypassed them for. SMBHL stays
+// protected; the confirmation phrase and the audit log stay.
+export async function checkSuperAdminHardDelete(env, leagueId) {
+  if (!leagueId) return { status: 'not_found' };
+  if (leagueId === SMBHL_LEAGUE_ID) return { status: 'protected' };
+  const league = await env.DB.prepare('SELECT id, name, deactivated_at FROM leagues WHERE id = ?').bind(leagueId).first();
+  return league ? { status: 'eligible', league } : { status: 'not_found' };
+}
+
 export async function handleSuperAdminLeagueHardDelete(req, env) {
   const body = await req.json().catch(() => ({}));
   const leagueId = String(body.leagueId || '');
   if (!leagueId) return Response.json({ ok: false, error: 'leagueId is required.', errorKey: 'LEAGUE_ID_REQUIRED' }, { status: 400 });
 
-  const elig = await checkHardDeleteEligibility(env, leagueId);
+  const elig = await checkSuperAdminHardDelete(env, leagueId);
   const eligErr = eligibilityResponse(elig);
   if (eligErr) return eligErr;
 

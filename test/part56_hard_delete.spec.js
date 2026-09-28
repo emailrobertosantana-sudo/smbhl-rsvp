@@ -267,6 +267,21 @@ describe('Part 12 (live-testing task, batch 2): hard delete (privacy/Law 25)', (
     expect(leagueTwoAdmin.n).toBe(1);
   });
 
+  // Item 6: the super-admin skips deactivation and the 15-day wait; the
+  // league admin's own path keeps both (the two tests above).
+  it('the super-admin deletes an ACTIVE league outright -- no deactivation, no wait -- still confirmed and logged', async () => {
+    const { cookie, csrfToken } = await signup('harddelete.superadmin.active@example.com', '203.0.172.040');
+    const league = await createLeague(cookie, csrfToken, { name: 'Active League', teamNames: ['A', 'B'], tracksStats: true });
+    expect((await hardDelete(cookie, csrfToken, `SUPPRIMER ${league.name}`)).status).toBe(409);
+    const status = await (await SELF.fetch(`http://example.com/super-admin/leagues/hard-delete/status?leagueId=${league.id}`, { headers: { 'x-admin': ADMIN_KEY } })).json();
+    expect(status.status).toBe('eligible');
+    expect((await superHardDelete(league.id, 'wrong phrase')).status).toBe(400);
+    const res = await superHardDelete(league.id, `SUPPRIMER ${league.name}`);
+    expect(res.status).toBe(200);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM leagues WHERE id = ?').bind(league.id).first()).n).toBe(0);
+    expect((await env.DB.prepare('SELECT deleted_via FROM league_hard_delete_log WHERE league_id = ?').bind(league.id).first()).deleted_via).toBe('super_admin');
+  });
+
   it('the super-admin entry point accepts the English confirmation phrase too, and logs deleted_via=super_admin', async () => {
     const { cookie, csrfToken } = await signup('harddelete.superadmin.en@example.com', '203.0.172.030');
     const league = await createLeague(cookie, csrfToken, { name: 'English Confirm League', teamNames: ['A', 'B'], tracksStats: true });

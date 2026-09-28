@@ -12,7 +12,7 @@ import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OU
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
-import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
+import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
   cleanupOldReviews,
   handleScoresheetEmail,
@@ -13459,8 +13459,6 @@ $('sa-tbody').addEventListener('click', async e => {
   try {
     const statusRes = await fetch('/super-admin/leagues/hard-delete/status?leagueId=' + encodeURIComponent(leagueId), { headers: { 'x-admin': K } });
     const statusData = await statusRes.json();
-    if (statusData.status === 'not_deactivated') { alert('Cette ligue doit être désactivée d\\'abord. / This league must be deactivated first.'); return; }
-    if (statusData.status === 'locked') { alert('Verrouillé jusqu\\'au / Locked until: ' + statusData.unlockAt); return; }
     if (statusData.status === 'protected') { alert('Cette ligue ne peut pas être supprimée. / This league cannot be deleted.'); return; }
     const phrase = prompt('Tape "SUPPRIMER ' + leagueName + '" pour confirmer / Type "DELETE ' + leagueName + '" to confirm:');
     if (!phrase) return;
@@ -27254,8 +27252,8 @@ async function handleFetch(req, env, ctx) {
         const auth = checkAdminAuth(req, env);
         if (auth !== 'ok') return adminAuthResponse(auth);
         const leagueId = url.searchParams.get('leagueId') || '';
-        const elig = await checkHardDeleteEligibility(env, leagueId);
-        return Response.json({ ok: true, status: elig.status, unlockAt: elig.unlockAt || null, unlockDays: HARD_DELETE_UNLOCK_DAYS });
+        const elig = await checkSuperAdminHardDelete(env, leagueId);
+        return Response.json({ ok: true, status: elig.status, unlockAt: null, unlockDays: 0 });
       }
       if (url.pathname === '/super-admin/leagues/hard-delete' && req.method === 'POST') {
         const auth = checkAdminAuth(req, env);
