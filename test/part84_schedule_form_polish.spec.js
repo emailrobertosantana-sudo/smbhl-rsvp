@@ -85,20 +85,22 @@ describe('D2/D3/D4 (forms polish task): schedule create/bulk/edit forms', () => 
     expect(html).toContain('id="e_start" type="time"');
   });
 
-  it('D3: both languages carry the midnight-crossing warning copy, and the check is wired into both submit paths', async () => {
+  // Follow-up: the warning fired on a normal 23:30-00:30 game. It now asks
+  // only when the length is implausible (over 6 h), crossing midnight or not.
+  it('D3: both languages carry the long-game warning copy, and the check is wired into both submit paths', async () => {
     const { cookie, csrfToken } = await signup('d3.copy@example.com', '203.0.200.002');
     await createLeague(cookie, csrfToken, { name: 'D3 Copy League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.crossMidnightWarning).toBe("L'heure de fin est avant l'heure de début, donc ce match se terminerait après minuit (le lendemain). Continuer quand même?");
-    expect(dict.en.crossMidnightWarning).toBe('The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?');
-    // Wired into both the single-event and bulk-create submit paths,
-    // gated by end_time < start_time, and it's a warning (confirm),
-    // never a hard block (no early return without the confirm check).
-    expect(html).toMatch(/function submitEvent\(\)[\s\S]*?end_time < start_time[\s\S]*?window\.confirm/);
-    expect(html).toMatch(/function submitBulkEvents\(\)[\s\S]*?end_time < start_time[\s\S]*?window\.confirm/);
+    expect(dict.fr.longGameWarning).toBe('Ce match durerait {d} ({start} à {end}). Continuer quand même?');
+    expect(dict.en.longGameWarning).toBe('This game would last {d} ({start} to {end}). Continue anyway?');
+    // Wired into both submit paths; a warning (confirm), never a block.
+    expect(html).toMatch(/function submitEvent\(\)[\s\S]*?confirmGameLength\(start_time, end_time\)/);
+    expect(html).toMatch(/function submitBulkEvents\(\)[\s\S]*?confirmGameLength\(start_time, end_time\)/);
+    expect(html).toMatch(/function confirmGameLength\([\s\S]*?window\.confirm/);
+    expect(html).not.toContain('end_time < start_time');
   });
 
   it('D3: inline scripts stay syntactically valid with the new warning logic', async () => {

@@ -208,6 +208,43 @@ describe('Schedule', () => {
   // create panels.
   // Item 4: what a real time picker sends for 10:30 in the morning is
   // what gets stored -- the browser's 24-hour value, no conversion.
+  // Item 2 (follow-up): 23:30 to 00:30 is a one-hour game -- no warning,
+  // and it is stored as ending at 00:30. More than 6 hours still asks.
+  it('bulk create 11:30 PM to 12:30 AM: no warning, end stored as 00:30', async () => {
+    const { page, errors, close } = await open('/league/schedule');
+    const dialogs = [];
+    page.on('dialog', d => dialogs.push(d.message()));
+    await page.click('.sc-top [onclick="openBulkPanel()"]');
+    await page.fill('#be_start_date', '2099-10-04');
+    await page.fill('#be_occurrences', '1');
+    await page.fill('#be_start', '23:30');
+    await page.fill('#be_end', '00:30');
+    const answered = page.waitForResponse(r => r.url().endsWith('/league/events/bulk'));
+    await page.click('#be_submit');
+    expect((await answered).status()).toBe(200);
+    await page.waitForLoadState('load');
+    expect(dialogs).toEqual([]);
+    const row = await h.db.prepare("SELECT start_time, end_time FROM events WHERE league_id = ? AND date = '2099-10-04'").bind(league.league.id).first();
+    expect([row.start_time, row.end_time]).toEqual(['23:30', '00:30']);
+    expect(errors).toEqual([]);
+    await close();
+  }, 120000);
+
+  for (const [lang, want] of [['fr', 'Ce match durerait 7 h (18:00 à 01:00). Continuer quand même?'], ['en', 'This game would last 7h (18:00 to 01:00). Continue anyway?']]) it(`an implausible length still warns, with the length (${lang}): 18:00 to 01:00 is 7 h`, async () => {
+    const { page, close } = await open('/league/schedule', { lang });
+    const dialogs = [];
+    page.on('dialog', d => dialogs.push(d.message()));
+    await page.click('.sc-top [onclick="openSchedulePanel()"]');
+    await page.fill('#e_date', lang === 'fr' ? '2099-10-11' : '2099-10-18');
+    await page.fill('#e_start', '18:00');
+    await page.fill('#e_end', '01:00');
+    await page.click('#e_submit');
+    await page.waitForFunction(() => true);
+    await page.waitForTimeout(300);
+    expect(dialogs).toEqual([want]);
+    await close();
+  }, 120000);
+
   it('bulk create: 10:30 AM typed in the picker is sent and stored as 10:30', async () => {
     const { page, errors, close } = await open('/league/schedule');
     await page.click('.sc-top [onclick="openBulkPanel()"]');

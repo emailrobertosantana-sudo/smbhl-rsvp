@@ -8234,7 +8234,9 @@ async function handleLeagueSchedulePage(req, env, url) {
       // D3 (forms polish task): a 10h00 start / 00h30 end used to be
       // accepted silently -- almost always a typo, but a late game can
       // genuinely cross midnight, so this warns rather than blocks.
-      crossMidnightWarning: "L'heure de fin est avant l'heure de début, donc ce match se terminerait après minuit (le lendemain). Continuer quand même?",
+      // A game that crosses midnight (23:30 to 00:30) is normal; only an
+      // implausible length warns (gameMinutes / confirmGameLength).
+      longGameWarning: 'Ce match durerait {d} ({start} à {end}). Continuer quand même?',
       // Part 2 (fixed-teams scheduling task): only shown for a 'fixed'
       // league with more than 2 teams (see showMatchupPicker's own
       // comment) -- home/away is stored but never LABELLED "home"/
@@ -8317,7 +8319,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       cancelEventBtn: 'Cancel game', deleteEventBtn: 'Delete',
       deleteConfirmPlain: 'Delete this game?', deleteConfirmBtn: 'Delete permanently',
       bulkCreateResultSummary: '{created} event(s) created, {skipped} skipped (already existed).',
-      crossMidnightWarning: "The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?",
+      longGameWarning: 'This game would last {d} ({start} to {end}). Continue anyway?',
       matchupLabel: "Who's playing?", matchupOptional: '(optional — can be set later)',
       matchupTeam1: 'Team 1', matchupTeam2: 'Team 2', matchupVsWord: 'vs',
       matchupsGenBtn: 'Assign matchups', matchupsGenTitle: 'Assign matchups',
@@ -8718,13 +8720,9 @@ async function submitEvent() {
   var homeTeam = homeTeamEl ? homeTeamEl.value : '';
   var awayTeam = awayTeamEl ? awayTeamEl.value : '';
   if (!date) { showErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
-  // D3 (forms polish task): an end time before the start time almost
-  // always means a typo, but a genuinely late game can cross midnight
-  // -- warn (don't block) so the admin can confirm it's intentional.
-  if (start_time && end_time && end_time < start_time) {
-    var dict = window.__pageDict ? window.__pageDict() : {};
-    if (!window.confirm(dict.crossMidnightWarning || 'The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?')) return;
-  }
+  // A late game crossing midnight is normal; an implausible length is
+  // usually a typo -- warn (don't block).
+  if (!confirmGameLength(start_time, end_time)) return;
   var btn = document.getElementById('e_submit');
   btn.disabled = true;
   try {
@@ -8836,6 +8834,25 @@ function renderBulkReminderNotice() {
 window.addEventListener('nl_lang_changed', function() { renderSingleReminderNotice(); renderBulkReminderNotice(); });
 renderSingleReminderNotice();
 renderBulkReminderNotice();
+// How long a game runs, in minutes, from its start and end clock times --
+// an end at or before the start is the next day (23:30 to 00:30 is 60).
+function gameMinutes(start, end) {
+  var s = start.split(':'), e = end.split(':');
+  var m = (Number(e[0]) * 60 + Number(e[1])) - (Number(s[0]) * 60 + Number(s[1]));
+  return m <= 0 ? m + 1440 : m;
+}
+// Asks only when the length is implausible: more than 6 hours.
+var GAME_LENGTH_WARN_MINUTES = 360;
+function confirmGameLength(start, end) {
+  if (!start || !end) return true;
+  var m = gameMinutes(start, end);
+  if (m <= GAME_LENGTH_WARN_MINUTES) return true;
+  var dict = window.__pageDict ? window.__pageDict() : {};
+  var h = Math.floor(m / 60), mm = m % 60, pad = mm < 10 ? '0' + mm : String(mm);
+  var d = window.__currentLang === 'en' ? (h + 'h' + (mm ? pad : '')) : (h + ' h' + (mm ? ' ' + pad : ''));
+  var msg = (dict.longGameWarning || 'This game would last {d} ({start} to {end}). Continue anyway?').split('{d}').join(d).split('{start}').join(start).split('{end}').join(end);
+  return window.confirm(msg);
+}
 async function submitBulkEvents() {
   document.getElementById('bulkEventErr').style.display = 'none';
   document.getElementById('bulkEventOk').style.display = 'none';
@@ -8857,12 +8874,8 @@ async function submitBulkEvents() {
   var suppressEl = document.getElementById('be_suppress_soon');
   var suppressDates = (suppressEl && suppressEl.checked) ? bulkSoonGames().map(function(g) { return g.date; }) : [];
   if (!startDate) { showBulkErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
-  // D3 (forms polish task): same non-blocking midnight-crossing warning
-  // as the single-event form -- applies to every event the series creates.
-  if (start_time && end_time && end_time < start_time) {
-    var dict = window.__pageDict ? window.__pageDict() : {};
-    if (!window.confirm(dict.crossMidnightWarning || 'The end time is before the start time, so this game would end after midnight (the next day). Continue anyway?')) return;
-  }
+  // Same check as the single-event form, for every game in the series.
+  if (!confirmGameLength(start_time, end_time)) return;
   var btn = document.getElementById('be_submit');
   btn.disabled = true;
   try {
