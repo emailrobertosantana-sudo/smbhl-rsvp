@@ -2816,12 +2816,17 @@ export async function handleLeagueCreate(req, env) {
       // No team concept at all -- a single minimum/maximum player
       // count instead (reuses the exact same min/max PATTERN fixed-mode
       // teams already use -- see getSeasonConfig's own comment).
-      minPlayers = Number(body.minPlayers);
-      maxPlayers = Number(body.maxPlayers);
-      if (!Number.isFinite(minPlayers) || !Number.isFinite(maxPlayers) || minPlayers < 1) {
+      // Item 2: optional at creation -- signup no longer asks; onboarding's
+      // roster step sets them (the one place every structure is asked).
+      // A caller that sends them is still validated as before.
+      const given = v => v !== undefined && v !== null && String(v).trim() !== '';
+      const limitsGiven = given(body.minPlayers) || given(body.maxPlayers);
+      minPlayers = limitsGiven ? Number(body.minPlayers) : null;
+      maxPlayers = limitsGiven ? Number(body.maxPlayers) : null;
+      if (limitsGiven && (!Number.isFinite(minPlayers) || !Number.isFinite(maxPlayers) || minPlayers < 1)) {
         return Response.json({ ok: false, error: 'A minimum and maximum player count are required.', errorKey: 'HEADCOUNT_LIMITS_REQUIRED' }, { status: 400 });
       }
-      if (maxPlayers < minPlayers) {
+      if (limitsGiven && maxPlayers < minPlayers) {
         return Response.json({ ok: false, error: 'The maximum must be at least the minimum.', errorKey: 'HEADCOUNT_MAX_TOO_LOW' }, { status: 400 });
       }
       // Part 5 (headcount goalie minimum): optional, unlike min/max
@@ -2847,7 +2852,7 @@ export async function handleLeagueCreate(req, env) {
         if (!Number.isFinite(minGoalies) || minGoalies < 0) {
           return Response.json({ ok: false, error: 'Minimum goalies must be zero or more.', errorKey: 'HEADCOUNT_MIN_GOALIES_INVALID' }, { status: 400 });
         }
-        if (minGoalies > maxPlayers) {
+        if (maxPlayers != null && minGoalies > maxPlayers) {
           return Response.json({ ok: false, error: "Minimum goalies can't be more than the maximum player count.", errorKey: 'HEADCOUNT_MIN_GOALIES_TOO_HIGH' }, { status: 400 });
         }
       }

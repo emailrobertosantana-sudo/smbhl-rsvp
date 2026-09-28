@@ -118,14 +118,23 @@ describe('Team structure, Part 1: schema + signup', () => {
       expect(JSON.parse(row.team_names)).toEqual(['Tous']);
     });
 
-    it('rejects creation with no min/max at all', async () => {
+    // Item 2: signup no longer asks; onboarding's roster step sets them.
+    it('creates with no min/max at all (left unset for the roster step), but rejects only one of the two', async () => {
       const { cookie, csrfToken } = await signup('ts.headcount.nolimits@example.com', '203.0.113.976');
       const res = await SELF.fetch('http://example.com/leagues/create', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
         body: JSON.stringify({ name: 'Headcount No Limits League', tracksStats: true, teamStructure: 'headcount' })
       });
-      expect(res.status).toBe(400);
-      expect((await res.json()).errorKey).toBe('HEADCOUNT_LIMITS_REQUIRED');
+      expect(res.status).toBe(200);
+      const league = (await res.json()).league;
+      const row = await env.DB.prepare('SELECT min_players, max_players FROM leagues WHERE id = ?').bind(league.id).first();
+      expect(row).toEqual({ min_players: null, max_players: null });
+      const half = await SELF.fetch('http://example.com/leagues/create', {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+        body: JSON.stringify({ name: 'Headcount Half League', tracksStats: true, teamStructure: 'headcount', minPlayers: 8 })
+      });
+      expect(half.status).toBe(400);
+      expect((await half.json()).errorKey).toBe('HEADCOUNT_LIMITS_REQUIRED');
     });
 
     it('rejects a max below the min', async () => {
@@ -215,14 +224,13 @@ describe('Team structure, Part 1: schema + signup', () => {
       expect(html).not.toContain('>headcount<');
     });
 
-    it('step 3 ships both the team-names UI and the headcount min/max UI, switched client-side by the stored choice', async () => {
+    it('step 3 is the team count only; a headcount draft is sent back to step 2 (created there)', async () => {
       const { cookie } = await signup('ts.wizard.step3@example.com', '203.0.113.983');
       const res = await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie } });
       const html = await res.text();
       expect(html).toContain('id="su_teams_section"');
-      expect(html).toContain('id="su_headcount_section"');
-      expect(html).toContain('id="su_min_players"');
-      expect(html).toContain('id="su_max_players"');
+      expect(html).not.toContain('id="su_headcount_section"');
+      expect(html).not.toContain('id="su_min_players"');
       expect(html).toContain("leagueDraft.teamStructure === 'headcount'");
     });
   });

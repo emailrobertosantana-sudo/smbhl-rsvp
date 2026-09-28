@@ -1144,14 +1144,17 @@ async function submitStep2() {
   // per-language toggle logic needed for a name that reads fine in
   // either language), and the team-names step (3) is skipped entirely
   // -- league creation happens right here, straight to the done page.
-  if (teamStructure === 'weekly_draw') {
+  // Item 2: a no-teams (headcount) league is created here too. Its player
+  // count used to be asked on step 3 AND again at onboarding's roster step;
+  // it is now asked once, at the roster step, like every structure.
+  if (teamStructure === 'weekly_draw' || teamStructure === 'headcount') {
     var btn = document.getElementById('su_submit');
     btn.disabled = true;
     try {
       var res = await fetch('/leagues/create', {
         method: 'POST', credentials: 'same-origin',
         headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-        body: JSON.stringify({ name: name, tracksStats: tracksStats, slug: slug || undefined, teamStructure: teamStructure, teamNames: [(window.__pageDict().teamPlaceholder) + '1', (window.__pageDict().teamPlaceholder) + '2'] })
+        body: JSON.stringify({ name: name, tracksStats: tracksStats, slug: slug || undefined, teamStructure: teamStructure, teamNames: teamStructure === 'headcount' ? undefined : [(window.__pageDict().teamPlaceholder) + '1', (window.__pageDict().teamPlaceholder) + '2'] })
       });
       // A4 bug fix (signup/recovery task): same distinction as
       // submitStep1 -- an unparseable body no longer silently becomes
@@ -1213,24 +1216,6 @@ function renderSignupStep3(langParam) {
          are generated at submit time; see submitStep3). -->
     <p class="nl-help" data-i18n="teamCountHelp">${esc(i18nStep3.teamCountHelp)}</p>
   </div>
-  <div id="su_headcount_section" style="display:none">
-    <div class="su-two">
-      <div class="nl-field">
-        <label class="nl-label" for="su_min_players" data-i18n="lblMinPlayers">Minimum total de joueurs</label>
-        <input class="nl-input" id="su_min_players" type="number" min="1" value="8">
-      </div>
-      <div class="nl-field">
-        <label class="nl-label" for="su_max_players" data-i18n="lblMaxPlayers">Maximum total de joueurs</label>
-        <input class="nl-input" id="su_max_players" type="number" min="1" value="12">
-      </div>
-    </div>
-    <p class="nl-help" data-i18n="minMaxHelp">On invite des remplaçants automatiquement quand tu es sous le minimum.</p>
-    <div class="nl-field">
-      <label class="nl-label" for="su_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
-      <input class="nl-input" id="su_min_goalies" type="number" min="0" value="0">
-      <p class="nl-help" data-i18n="minGoaliesHelp">Laisse à 0 si tu ne veux pas suivre les gardiens séparément.</p>
-    </div>
-  </div>
 </main>
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="createLeague" onclick="submitStep3()">Créer la ligue</button>
@@ -1246,54 +1231,19 @@ if (!leagueDraft || !leagueDraft.name) { window.__navWithLang('/signup?step=2');
 // from before this fix, or any unexpected way of landing here, sends
 // the user back to step 2 rather than showing a team-names UI that
 // doesn't apply to weekly_draw.
-if (leagueDraft && leagueDraft.teamStructure === 'weekly_draw') { window.__navWithLang('/signup?step=2'); }
-var isHeadcount = leagueDraft && leagueDraft.teamStructure === 'headcount';
-if (isHeadcount) {
-  document.getElementById('su_teams_section').style.display = 'none';
-  document.getElementById('su_headcount_section').style.display = '';
-  document.getElementById('su_step3_title').setAttribute('data-i18n', 'title3Headcount');
-  // B1: headcount's real total is 6 (no onboarding "teams" step, and
-  // -- playoff extension -- no 'playoffs' step either, that's fixed-
-  // teams only), not fixed's 8 -- server-rendered with 8 as the honest
-  // default (team structure isn't known until this exact draft loads
-  // client-side). data-i18n removed so a later FR/EN toggle's
-  // [data-i18n] sweep doesn't clobber this back to the shared dict's
-  // "of 8" -- kept in sync on toggle via applyHeadcountStepLabel below
-  // instead.
-  document.getElementById('su_step3_label').removeAttribute('data-i18n');
-  var prog = document.getElementById('su_step3_prog').querySelector('.nl-steps');
-  prog.setAttribute('aria-valuemax', '6');
-  while (prog.children.length > 6) prog.removeChild(prog.lastElementChild);
-}
-function applyHeadcountStepLabel() {
-  if (!isHeadcount) return;
-  document.getElementById('su_step3_title').textContent = window.__pageDict().title3Headcount;
-  document.getElementById('su_step3_label').textContent = window.__currentLang === 'en' ? 'Step 3 of 6' : 'Étape 3 sur 6';
-}
-applyHeadcountStepLabel();
+if (leagueDraft && (leagueDraft.teamStructure === 'weekly_draw' || leagueDraft.teamStructure === 'headcount')) { window.__navWithLang('/signup?step=2'); }
 var teamCount = 4;
 function changeCount(delta) {
   teamCount = Math.max(2, Math.min(16, teamCount + delta));
   document.getElementById('su_team_count_out').textContent = String(teamCount);
 }
-window.__onLangApplied = function() { applyHeadcountStepLabel(); };
 function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 function clearError() { document.getElementById('formErr').style.display = 'none'; }
 async function submitStep3() {
   clearError();
   if (!leagueDraft) { window.__navWithLang('/signup?step=2'); return; }
   var payload = { name: leagueDraft.name, tracksStats: leagueDraft.tracksStats, slug: leagueDraft.slug || undefined, teamStructure: leagueDraft.teamStructure };
-  if (isHeadcount) {
-    var minPlayers = Number(document.getElementById('su_min_players').value);
-    var maxPlayers = Number(document.getElementById('su_max_players').value);
-    if (!minPlayers || !maxPlayers) { showError(window.__errorText('HEADCOUNT_LIMITS_REQUIRED')); return; }
-    if (maxPlayers < minPlayers) { showError(window.__errorText('HEADCOUNT_MAX_TOO_LOW')); return; }
-    payload.minPlayers = minPlayers;
-    payload.maxPlayers = maxPlayers;
-    var minGoaliesEl = document.getElementById('su_min_goalies');
-    var minGoalies = minGoaliesEl ? Number(minGoaliesEl.value) : 0;
-    if (minGoalies > 0) { payload.minGoalies = minGoalies; }
-  } else {
+  {
     // Onboarding polish task (B1): this step only ever asks for the
     // COUNT now (see su_teams_section's own comment) -- real names are
     // asked once, at onboarding's own "Confirm your team names" step.
@@ -2135,7 +2085,7 @@ async function handleDashboardPage(req, env, url) {
                original comment below) -- it's a different question
                (player count, not team names) that genuinely is decided
                up front. -->
-          <div class="dash-ck${dashIsHeadcount || !stillDefaultTeamNames ? ' done' : ''}"><span class="b ${dashIsHeadcount || !stillDefaultTeamNames ? 'y">' + DASH_ICON_CHECK : 'n">'}</span><span data-i18n="${dashIsHeadcount ? 'ckPlayerCount' : 'ckTeams'}">${dashIsHeadcount ? 'Choisir le nombre de joueurs' : 'Nommer les équipes'}</span></div>
+          <div class="dash-ck${(dashIsHeadcount ? dashHasRosterLimits : !stillDefaultTeamNames) ? ' done' : ''}"><span class="b ${(dashIsHeadcount ? dashHasRosterLimits : !stillDefaultTeamNames) ? 'y">' + DASH_ICON_CHECK : 'n">'}</span><span data-i18n="${dashIsHeadcount ? 'ckPlayerCount' : 'ckTeams'}">${dashIsHeadcount ? 'Choisir le nombre de joueurs' : 'Nommer les équipes'}</span></div>
           <!-- Live-testing bug fix (Bug 5): season, not players, is the
                real blocking prerequisite (Bug 4 -- POST /league/events
                fails without one) for the next real step (creating
@@ -2177,7 +2127,7 @@ async function handleDashboardPage(req, env, url) {
       !hasAnyEvents ? { key: 'nsCreateSchedule', href: '/league/schedule', fr: "Créer l'horaire" } : null,
       playerCount === 0 ? { key: 'nsAddPlayers', href: '/league/roster', fr: 'Ajouter des joueurs' } : null,
       stillDefaultTeamNames ? { key: 'nsNameTeams', href: '/onboarding/season?step=2', fr: 'Nommer tes équipes' } : null,
-      (!dashIsHeadcount && !dashHasRosterLimits) ? { key: 'nsRosterLimits', href: '/onboarding/season?step=1', fr: "Définir l'effectif" } : null
+      !dashHasRosterLimits ? { key: 'nsRosterLimits', href: '/onboarding/season?step=1', fr: "Définir l'effectif" } : null
     ].filter(Boolean) : [];
     const nextStepsHtml = nextStepsItems.length ? `
     <section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
@@ -2438,7 +2388,7 @@ function onboardingStepsFor(teamStructure) {
 // Total varies by team structure, only known once it's actually
 // chosen on step 2:
 //   fixed:       signup 1,2,3 + onboarding roster,teams,playoffs,reminders,stats = 8
-//   headcount:   signup 1,2,3 + onboarding roster,reminders,stats                = 6
+//   headcount:   signup 1,2   + onboarding roster,reminders,stats                = 5
 //   weekly_draw: signup 1,2   + onboarding roster,teams,reminders,stats          = 6
 // Steps 1/2 render before a structure is chosen -- they show the
 // pre-selected 'fixed' structure's total (8) as the honest current
@@ -2451,10 +2401,10 @@ function onboardingStepsFor(teamStructure) {
 // 'teams' and 'reminders') -- fixed's total goes from 7 to 8;
 // headcount/weekly_draw are completely untouched (neither structure
 // ever sees a playoffs step, so neither total number changes).
-const FLOW_TOTAL_STEPS = { fixed: 8, headcount: 6, weekly_draw: 6 };
+const FLOW_TOTAL_STEPS = { fixed: 8, headcount: 5, weekly_draw: 6 };
 const FLOW_STEP_NUMBER = {
   fixed: { signup3: 3, roster: 4, teams: 5, playoffs: 6, reminders: 7, stats: 8 },
-  headcount: { signup3: 3, roster: 4, reminders: 5, stats: 6 },
+  headcount: { roster: 3, reminders: 4, stats: 5 },
   weekly_draw: { roster: 3, teams: 4, reminders: 5, stats: 6 }
 };
 function flowStepLabel(lang, current, total) {

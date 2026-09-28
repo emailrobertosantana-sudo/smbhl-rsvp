@@ -247,12 +247,12 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const step1 = await getOnboarding(cookie, 1);
-    // B1: headcount's real flow-wide total is 6 (signup 1,2,3 +
-    // onboarding roster,reminders,stats -- no "teams" step), and this
-    // onboarding roster step is #4 in that count.
-    expect(step1).toContain('aria-valuemax="6"');
-    expect(step1).toContain('aria-valuenow="4"');
-    expect(step1).toMatch(/Étape 4 sur 6|Step 4 of 6/);
+    // Item 2: headcount's flow-wide total is 5 (signup 1,2 + onboarding
+    // roster,reminders,stats), and this roster step -- where the player
+    // count is asked, once -- is #3.
+    expect(step1).toContain('aria-valuemax="5"');
+    expect(step1).toContain('aria-valuenow="3"');
+    expect(step1).toMatch(/Étape 3 sur 5|Step 3 of 5/);
 
     // step=2 for headcount is 'reminders' (teams was skipped), not 'teams'
     const step2 = await getOnboarding(cookie, 2);

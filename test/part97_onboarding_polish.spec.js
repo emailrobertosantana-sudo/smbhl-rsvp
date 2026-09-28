@@ -97,8 +97,10 @@ describe('Onboarding polish, B1: team names asked once, not twice', () => {
 
   it('headcount and weekly_draw are unaffected -- headcount never had team names at step 3 to begin with, and weekly_draw skips step 3 entirely', async () => {
     const { cookie: hcCookie } = await signup('b1.headcount@example.com', '203.0.221.003');
+    // Item 2: the headcount player count is no longer on step 3 either --
+    // asked once, at onboarding's roster step.
     const hcHtml = await getSignup(hcCookie, 3);
-    expect(hcHtml).toContain('id="su_headcount_section"');
+    expect(hcHtml).not.toContain('id="su_headcount_section"');
     expect(hcHtml).not.toContain('id="su_teams"');
 
     const { cookie: wdCookie, csrfToken: wdCsrf } = await signup('b1.weeklydraw@example.com', '203.0.221.004');

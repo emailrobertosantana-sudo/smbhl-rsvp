@@ -509,15 +509,17 @@ describe('B1: settings roster-size wording matches onboarding, in both cards, fo
     expect(occurrences).toBe(3);
   });
 
-  it('B1 sweep, third location: the signup wizard\'s own step-3 headcount labels also say "total" now', async () => {
+  // Item 2: signup step 3 no longer asks a no-teams league for its player
+  // count (onboarding's roster step does, the one place for every structure).
+  it('B1 sweep, third location: signup step 3 no longer carries a player-count question at all', async () => {
     const res = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.134.202' },
       body: JSON.stringify({ email: 'b1.signupstep3@example.com', password: 'a-strong-password-1' })
     });
     const cookie = (res.headers.get('set-cookie') || '').split(';')[0];
     const html = await (await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie } })).text();
-    expect(html).toContain('data-i18n="lblMinPlayers">Minimum total de joueurs<');
-    expect(html).toContain('data-i18n="lblMaxPlayers">Maximum total de joueurs<');
+    expect(html).not.toContain('data-i18n="lblMinPlayers"');
+    expect(html).not.toContain('su_min_players');
   });
 });
 

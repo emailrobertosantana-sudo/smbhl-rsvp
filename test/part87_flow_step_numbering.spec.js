@@ -131,29 +131,24 @@ describe('B1: one continuous "STEP n OF m" count, signup through onboarding', ()
     expect(obStats).toContain('data-i18n="finish"');
   });
 
-  it('headcount structure: real total is 6 (no team-names step, and -- playoffs are fixed-teams only -- no playoffs step either); the flow numbers 1,2,3,4,5,6', async () => {
+  // Item 2: headcount skips signup step 3 (its player count was asked there
+  // AND at the roster step); like weekly_draw, the league is created at
+  // step 2 and onboarding numbers from 3. Total 5.
+  it('headcount structure: signup skips step 3, onboarding numbers 3,4,5; real total is 5', async () => {
     const { cookie, csrfToken } = await signup('flow.headcount@example.com', '203.0.210.003');
-    // Step 3's server-rendered default still claims 7 (structure isn't
-    // known until the client reads sessionStorage) -- the client-side
-    // correction to 6 is covered by the inline-script test below,
-    // since this suite can't execute that script.
-    const step3 = await getSignup(cookie, 3);
-    expect(step3).toContain('id="su_step3_label"');
-    expect(step3).toContain("headcount's real total is 6");
-
     await createLeague(cookie, csrfToken, { name: 'Flow Headcount League', teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 });
     await publishSeason(cookie, csrfToken, { season_name: 'Flow Headcount Season' });
 
     const obRoster = await getOnboarding(cookie, 1);
-    expect(stepAttrs(obRoster)).toEqual({ now: '4', max: '6' });
-    expect(obRoster).toMatch(/Étape 4 sur 6/);
+    expect(stepAttrs(obRoster)).toEqual({ now: '3', max: '5' });
+    expect(obRoster).toMatch(/Étape 3 sur 5/);
 
     const obReminders = await getOnboarding(cookie, 2);
-    expect(stepAttrs(obReminders)).toEqual({ now: '5', max: '6' });
+    expect(stepAttrs(obReminders)).toEqual({ now: '4', max: '5' });
     expect(obReminders).not.toContain('id="ob_teams"');
 
     const obStats = await getOnboarding(cookie, 3);
-    expect(stepAttrs(obStats)).toEqual({ now: '6', max: '6' });
+    expect(stepAttrs(obStats)).toEqual({ now: '5', max: '5' });
     expect(obStats).toContain('data-i18n="finish"');
   });
 
@@ -178,14 +173,12 @@ describe('B1: one continuous "STEP n OF m" count, signup through onboarding', ()
     expect(obStats).toContain('data-i18n="finish"');
   });
 
-  it('the client-side headcount correction (server default 8 -> real 6) is wired into both initial render and the FR/EN toggle', async () => {
+  it('signup step 2 creates a headcount league directly (like weekly_draw), and step 3 sends a headcount draft back', async () => {
     const { cookie } = await signup('flow.headcount.client@example.com', '203.0.210.005');
+    const step2 = await getSignup(cookie, 2);
+    expect(step2).toContain("if (teamStructure === 'weekly_draw' || teamStructure === 'headcount') {");
     const step3 = await getSignup(cookie, 3);
-    expect(step3).toContain("prog.setAttribute('aria-valuemax', '6')");
-    expect(step3).toContain("while (prog.children.length > 6) prog.removeChild(prog.lastElementChild)");
-    expect(step3).toContain('function applyHeadcountStepLabel()');
-    // Onboarding polish task (B1): renderTeams() (the per-team name
-    // input renderer) was removed along with the name-input UI itself.
-    expect(step3).toContain('window.__onLangApplied = function() { applyHeadcountStepLabel(); }');
+    expect(step3).toContain("leagueDraft.teamStructure === 'weekly_draw' || leagueDraft.teamStructure === 'headcount'");
+    expect(step3).not.toContain('applyHeadcountStepLabel');
   });
 });
