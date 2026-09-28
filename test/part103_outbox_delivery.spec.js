@@ -12,15 +12,18 @@
 // new sent_at, so Comms counted it as sent and never as failed.
 //
 // These tests drive the real drain()/runSchedule()/runLeagueReminders()
-// against a fetch stand-in that enforces the Free plan's 50-subrequest
-// limit the way Cloudflare does (the 51st fetch throws the real error).
+// against a fetch stand-in that enforces a per-invocation subrequest
+// limit the way Cloudflare does (one past it throws the real error).
+// Since 2026-09-29 the account is on Workers Paid (10,000); the cap per
+// pass is now set by Resend's day and time, not by subrequests
+// (src/mail_queue.js, sendsPerInvocation).
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, beforeEach, vi, afterEach } from 'vitest';
 import { useDaytimeClock } from './support/daytime_clock.js';
 import { applyRealSchema, getRealMigrationQueries } from './support/real_schema.js';
 import { drain, runSchedule, runLeagueReminders } from '../src/index.js';
 import {
-  MAIL_SENDS_PER_INVOCATION, EXTERNAL_SUBREQUEST_LIMIT, RESERVED_NON_SEND_SUBREQUESTS,
+  MAIL_SENDS_CEILING, DAY_SHARE_PER_PASS, sendsPerInvocation,
   MAX_SEND_ATTEMPTS, RETRY_BACKOFF_MINUTES, classifySendError, createSendBudget
 } from '../src/mail_queue.js';
 
@@ -37,8 +40,9 @@ const SITE_DATA = {
   players: []
 };
 
+const EXTERNAL_SUBREQUEST_LIMIT = 10000; // Workers Paid, per invocation
 // One Worker invocation's worth of fetch: counts every subrequest and,
-// like Cloudflare's Free plan, refuses the 51st. `resend(to)` decides
+// like Cloudflare, refuses the one past the limit. `resend(to)` decides
 // Resend's answer per recipient (default: 200).
 function invocation({ resend = () => 200 } = {}) {
   const state = { fetches: 0, delivered: [], refused: 0 };
@@ -105,10 +109,13 @@ beforeEach(async () => {
 });
 
 describe('Part 1: bounded work per invocation', () => {
-  it('the cap is derived from the Free plan limit minus the measured non-send reserve', () => {
-    expect(EXTERNAL_SUBREQUEST_LIMIT).toBe(50);
-    expect(MAIL_SENDS_PER_INVOCATION).toBe(EXTERNAL_SUBREQUEST_LIMIT - RESERVED_NON_SEND_SUBREQUESTS);
-    expect(MAIL_SENDS_PER_INVOCATION).toBe(45);
+  it('the cap per pass is two thirds of the Resend day, never over the time ceiling', () => {
+    expect(MAIL_SENDS_CEILING).toBe(100);
+    expect(DAY_SHARE_PER_PASS).toBeCloseTo(2 / 3);
+    expect(sendsPerInvocation({ MAIL_DAILY_CAP: '90' })).toBe(60);   // production: was 45
+    expect(sendsPerInvocation({ MAIL_DAILY_CAP: '10' })).toBe(6);    // demo: was 45
+    expect(sendsPerInvocation({ MAIL_DAILY_CAP: '1000' })).toBe(100); // a bigger Resend plan: the ceiling
+    expect(sendsPerInvocation({ MAIL_DAILY_CAP: '' })).toBe(100);    // no cap configured
   });
 
   it('a team email costs ONE external subrequest -- data.json is fetched once per drain, not once per recipient', async () => {
@@ -118,7 +125,8 @@ describe('Part 1: bounded work per invocation', () => {
     expect(inv.fetches).toBe(11); // 10 Resend + 1 shared data.json (was 20)
   });
 
-  it('a queue larger than the cap drains across successive invocations with nothing lost, each within the 50-subrequest limit', async () => {
+  it('a pass sends more than the old 45 (60 at the production cap of 90) with no subrequest error, and a larger queue drains across passes with nothing lost', async () => {
+    env.MAIL_DAILY_CAP = '90';
     const ids = await queueRows(100, { kind: 'gameday' });
     const passes = [];
     for (let pass = 1; pass <= 5; pass++) {
@@ -127,16 +135,20 @@ describe('Part 1: bounded work per invocation', () => {
       passes.push({ pass, fetches: inv.fetches, refused: inv.refused, sent: inv.result.sent, remaining: rows.filter(r => !r.sent_at).length });
       if (!rows.some(r => !r.sent_at)) break;
     }
-    // 100 rows at 45 per pass: 45, 45, 10 -- three passes, nothing refused.
-    expect(passes.map(p => p.sent)).toEqual([45, 45, 10]);
-    expect(passes.map(p => p.remaining)).toEqual([55, 10, 0]);
+    env.MAIL_DAILY_CAP = '';
+    // 100 rows at 60 per pass (two thirds of 90): 60, 40 -- nothing refused.
+    expect(passes.map(p => p.sent)).toEqual([60, 40]);
+    expect(passes.map(p => p.remaining)).toEqual([40, 0]);
     for (const p of passes) { expect(p.refused).toBe(0); expect(p.fetches).toBeLessThanOrEqual(EXTERNAL_SUBREQUEST_LIMIT); }
     const rows = await outboxRows();
     expect(rows.map(r => r.id)).toEqual(ids);
     expect(rows.every(r => r.sent_at && !r.error && !r.failed_at && r.attempts === 1)).toBe(true);
   });
 
-  it('the production scenario: a 60-player invite wave queued and drained by runSchedule in one cron pass stays under the limit and leaves the overflow queued', async () => {
+  it('the production scenario: a 60-player invite wave queued and drained by runSchedule, at most the per-pass cap each pass, the overflow left queued', async () => {
+    env.MAIL_DAILY_CAP = '90';
+    const PER_PASS = sendsPerInvocation(env);
+    expect(PER_PASS).toBe(60);
     for (let i = 0; i < 60; i++) {
       const pid = `W${String(i + 1).padStart(4, '0')}`;
       await env.DB.prepare(`INSERT OR REPLACE INTO contacts (player_id, name, email, role, is_sub, is_goalie, token_salt, preferred_team, league_id) VALUES (?, ?, ?, 'roster', 0, 0, 'salt', ?, 'smbhl')`)
@@ -155,8 +167,8 @@ describe('Part 1: bounded work per invocation', () => {
     expect(first.fetches).toBeLessThanOrEqual(EXTERNAL_SUBREQUEST_LIMIT);
     const afterFirst = await outboxRows();
     const invites = afterFirst.filter(r => r.kind === 'invite');
-    expect(invites.length).toBeGreaterThan(MAIL_SENDS_PER_INVOCATION);
-    expect(invites.filter(r => r.sent_at).length).toBe(MAIL_SENDS_PER_INVOCATION);
+    expect(invites.length).toBeGreaterThan(45); // more than the old cap...
+    expect(invites.filter(r => r.sent_at).length).toBe(Math.min(invites.length, PER_PASS)); // ...in one pass
     expect(invites.filter(r => r.error).length).toBe(0);
     // Later passes deliver the rest, each within the cap and the limit.
     const total = invites.length;
@@ -166,12 +178,13 @@ describe('Part 1: bounded work per invocation', () => {
       passes++;
       expect(next.refused).toBe(0);
       expect(next.fetches).toBeLessThanOrEqual(EXTERNAL_SUBREQUEST_LIMIT);
-      expect(next.delivered.length).toBeLessThanOrEqual(MAIL_SENDS_PER_INVOCATION);
+      expect(next.delivered.length).toBeLessThanOrEqual(PER_PASS);
     }
     const done = (await outboxRows()).filter(r => r.kind === 'invite');
     expect(done.length).toBe(total);
     expect(done.every(r => r.sent_at && !r.error)).toBe(true);
-    expect(passes).toBe(Math.ceil(total / MAIL_SENDS_PER_INVOCATION));
+    expect(passes).toBe(Math.ceil(total / PER_PASS));
+    env.MAIL_DAILY_CAP = '';
     await env.DB.prepare(`DELETE FROM rsvp WHERE player_id LIKE 'W%'`).run();
     await env.DB.prepare(`DELETE FROM settings WHERE key = 'email_cadence_settings'`).run();
   }, 60000);
@@ -198,6 +211,32 @@ describe('Part 1: bounded work per invocation', () => {
     const budget = createSendBudget(20);
     const inv = await asInvocation(async () => [await drain(env, 45, null, null, budget), await drain(env, 45, null, null, budget)]);
     expect(inv.result[0].sent + inv.result[1].sent).toBe(20);
+  });
+
+  it('two drains running at once (a pass that overran, or "send now" during a pass) send each row exactly once', async () => {
+    await queueRows(30, { kind: 'gameday' });
+    const inv = await asInvocation(() => Promise.all([drain(env), drain(env), drain(env)]));
+    expect(inv.delivered.length).toBe(30);
+    expect(new Set(inv.delivered).size).toBe(30);
+    expect(inv.result.reduce((a, r) => a + r.sent, 0)).toBe(30);
+    const rows = await outboxRows();
+    expect(rows.every(r => r.sent_at && r.attempts === 1 && r.next_attempt_at === null)).toBe(true);
+  });
+
+  it('the Resend daily cap still holds: sub calls past the day are deferred, never sent, however big the per-pass cap', async () => {
+    env.MAIL_DAILY_CAP = '90';
+    const day = new Date().toISOString().slice(0, 10);
+    await env.DB.prepare('DELETE FROM mail_daily_count').run();
+    await env.DB.prepare('INSERT INTO mail_daily_count (day, sent, sub_calls) VALUES (?, 80, 0)').bind(day).run();
+    await queueRows(40, { kind: 'sub_call' });
+    const inv = await asInvocation(() => drain(env));
+    const count = await env.DB.prepare('SELECT sent FROM mail_daily_count WHERE day = ?').bind(day).first();
+    expect(count.sent).toBeLessThanOrEqual(90);
+    expect(inv.delivered.length).toBeLessThanOrEqual(10);
+    const rows = await outboxRows();
+    expect(rows.filter(r => r.defer_reason === 'daily_cap').length).toBe(40 - inv.delivered.length);
+    env.MAIL_DAILY_CAP = '';
+    await env.DB.prepare('DELETE FROM mail_daily_count').run();
   });
 });
 
@@ -371,7 +410,7 @@ describe('Part 4: the league product had the same two problems', () => {
     const rows = (await env.DB.prepare(`SELECT * FROM outbox WHERE league_id = ? AND kind = 'reminder_72h'`).bind(leagueId).all()).results;
     expect(rows.length).toBe(60);
     expect(rows.every(r => r.sent_at && !r.error)).toBe(true);
-    expect(passes[0].delivered).toBe(MAIL_SENDS_PER_INVOCATION);
+    expect(passes[0].delivered).toBe(Math.min(60, sendsPerInvocation(env)));
     expect(passes.reduce((a, p) => a + p.delivered, 0)).toBe(60);
     for (const p of passes) { expect(p.refused).toBe(0); expect(p.fetches).toBeLessThanOrEqual(EXTERNAL_SUBREQUEST_LIMIT); }
     const log = await env.DB.prepare(`SELECT recipient_count FROM league_reminder_log WHERE event_id = ? AND kind = 'reminder_72h'`).bind(eventId).first();

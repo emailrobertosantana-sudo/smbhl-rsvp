@@ -9,7 +9,7 @@ import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateT
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart, eventHasStarted } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
-import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
+import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation, claimOutboxRow, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
@@ -11701,8 +11701,10 @@ async function runHoldCall(env, m) {
 // filterEventId alone) produces the exact same SQL as before --
 // filterLeagueId is purely additive.
 // Sends due outbox rows, at most `budget.remaining` of them (see
-// src/mail_queue.js for why the per-invocation cap is 45 and how
-// sent / retrying / failed / skipped are represented). Anything over
+// src/mail_queue.js for how the per-invocation cap is set --
+// sendsPerInvocation -- and how sent / retrying / failed / skipped are
+// represented). Each row is claimed (claimOutboxRow) just before it is
+// sent, so a second drain running at the same time skips it. Anything over
 // the cap stays queued for the next pass -- never dropped. Pass the
 // SAME budget to every drain() in one invocation (the league cron
 // drains once per league); a lone call gets a fresh full budget.
@@ -11986,7 +11988,7 @@ async function prepareOutboxMessage(env, m, rctx, opts = {}) {
 }
 
 async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = null, filterLeagueId = null, budget = null) {
-  budget = budget || createSendBudget();
+  budget = budget || createSendBudget(sendsPerInvocation(env));
   const batch = Math.min(limit, budget.remaining);
   if (batch <= 0) return { due: 0, sent: 0, failed: 0, retrying: 0 };
   const now = new Date().toISOString();
@@ -12043,6 +12045,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       if (payload.prerendered) {
         const pm = payload.prerendered;
         if (!budget.take()) break;
+        if (!(await claimOutboxRow(env.DB, m.id))) { budget.refund(); continue; } // another drain has it
         await sendMail(env, pm.to, pm.subject, pm.text, pm.html, pm.attachments || null, pm.identity || null, { fromQueue: true });
         if (daily) daily.sent++;
         await recordSendSuccess(env.DB, m.id);
@@ -12055,6 +12058,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
         continue;
       }
       if (prep.action === 'holdcall') {
+        if (!(await claimOutboxRow(env.DB, m.id))) continue; // another drain has it
         await runHoldCall(env, m);
         await recordSendSuccess(env.DB, m.id);
         sent++; continue;
@@ -12074,6 +12078,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       // Over this invocation's cap: stop here. This row and every one
       // after it stay queued, untouched, for the next pass.
       if (!budget.take()) break;
+      if (!(await claimOutboxRow(env.DB, m.id))) { budget.refund(); continue; } // another drain has it
       await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg, { subCall: m.kind === 'sub_call', fromQueue: true });
       if (daily) { daily.sent++; if (m.kind === 'sub_call') daily.subCalls++; }
       // Resend accepted it: it is sent, whatever happens next. (The

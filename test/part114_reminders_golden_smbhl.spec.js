@@ -56,6 +56,11 @@ beforeAll(async () => {
   // The recorded passes are the reminder pass alone; the health pass
   // (src/health.js, added after the record) is tested on its own.
   env.HEALTH_ALERTS = 'off';
+  // The recorded passes are hours apart (production's run every 5 minutes),
+  // so how many sends fit in one pass changes what the record shows. It
+  // keeps the 45 a pass it was recorded with (src/mail_queue.js,
+  // sendsPerInvocation); the per-pass cap has its own tests (part103, part107).
+  env.MAIL_SENDS_PER_PASS = '45';
   await applyRealSchema(env);
   // migrate-002.sql seeds three real sub goalies; keep real addresses out of the snapshot.
   await env.DB.prepare(`DELETE FROM contacts`).run();
@@ -119,6 +124,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
+  delete env.MAIL_SENDS_PER_PASS;
   globalThis.fetch = originalFetch;
   logSpy?.mockRestore();
   vi.useRealTimers();

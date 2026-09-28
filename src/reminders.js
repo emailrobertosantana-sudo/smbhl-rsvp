@@ -26,7 +26,7 @@
 // (callSubs / drain in index.js), and stay there.
 import { eventStart, localParts, SMBHL_LEAGUE_ID } from './league_ids.js';
 import { getSeasonConfigForEvent, getTeamNames } from './season_config.js';
-import { MAIL_SENDS_PER_INVOCATION, createSendBudget } from './mail_queue.js';
+import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation } from './mail_queue.js';
 import { hasCapability } from './super_admin.js';
 
 // ---------------------------------------------------------------------
@@ -616,7 +616,7 @@ export async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil
 // -- that league is skipped for this pass and the others still run (one
 // bad league used to stop every league after it). src/health.js alerts on
 // them.
-export async function runLeagueReminders(env, budget = createSendBudget(), failures = []) {
+export async function runLeagueReminders(env, budget = createSendBudget(sendsPerInvocation(env)), failures = []) {
   const log = [];
   const leagues = (await env.DB.prepare(
     `SELECT * FROM leagues WHERE id != ? AND deactivated_at IS NULL`
@@ -745,7 +745,7 @@ async function runOneLeague(env, leagueRow, budget, log) {
     // Delivers this league's outbox: the reminder waves and team-
     // assigned follow-ups queued above (outbox QA batch), plus sub-call
     // invites and retries. Every league shares ONE budget for the whole
-    // invocation (src/mail_queue.js): once it is spent, the remaining
+    // invocation (src/mail_queue.js, sendsPerInvocation): once it is spent, the remaining
     // leagues' mail simply waits for the next pass (every 15 minutes on
     // demo) -- queued, never dropped.
     const leagueDrain = await drain(env, MAIL_SENDS_PER_INVOCATION, null, leagueRow.id, budget);
@@ -766,7 +766,7 @@ async function runOneLeague(env, leagueRow, budget, log) {
 export async function runReminderPass(env) {
   if (env.LEAGUE_PRODUCT === 'true') {
     const failures = [];
-    return { product: 'leagues', log: await runLeagueReminders(env, createSendBudget(), failures), failures };
+    return { product: 'leagues', log: await runLeagueReminders(env, createSendBudget(sendsPerInvocation(env)), failures), failures };
   }
   return { product: 'smbhl', log: await runSchedule(env), failures: [] };
 }

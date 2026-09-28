@@ -115,7 +115,11 @@ describe('Daily send cap', () => {
     for (let i = 1; i <= 8; i++) await queue('sub_call', `S107${i}`);
     const first = await withResend(() => drain(env));
     expect(first.sent.length).toBe(10 - reserve);
-    expect(first.result.deferred).toBe(8 - (10 - reserve));
+    // A pass sends at most two thirds of the day (6 of 10, sendsPerInvocation),
+    // so the last sub calls are looked at -- and deferred -- on the next pass.
+    const second = await withResend(() => drain(env));
+    expect(second.sent.length).toBe(0);
+    expect((await rows('sub_call')).filter(r => r.defer_reason === 'daily_cap').length).toBe(8 - (10 - reserve));
     // The roster mail that arrives later still fits under the cap.
     await queue('gameday', 'R107A');
     await queue('gameday', 'R107B');

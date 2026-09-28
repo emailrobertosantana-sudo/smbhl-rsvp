@@ -6,51 +6,55 @@
 // in the D1 handle and do the actual rendering/sending themselves.
 //
 // ---------------------------------------------------------------------
-// WHY 45 SENDS PER INVOCATION
+// HOW MANY SENDS PER INVOCATION
 // ---------------------------------------------------------------------
-// Cloudflare Workers limits (developers.cloudflare.com/workers/platform/
-// limits, checked 2026-09-26), per invocation -- a cron tick and an HTTP
-// request are each one invocation:
-//   Free plan:  50 subrequests (fetch) + 1,000 to internal services
-//               (D1, KV, R2)
-//   Paid plan:  10,000 by default (configurable up to 10M)
-// Production failed on bursts of 15-30 sends, which only the Free
-// plan's 50 can explain, so the cap is sized for Free (and is therefore
-// safe on any plan).
+// History: until 2026-09-29 the account was on the Workers Free plan, 50
+// external subrequests per invocation, and this was 45 (50 minus 5
+// reserved for the pass's other fetches). Production failed on bursts of
+// 15-30 sends before that (test/part103). The account is now on Workers
+// Paid: 10,000 subrequests per invocation (D1 and KV included), 30 s of
+// CPU. A send costs 1 external fetch (Resend) and ~8 D1 calls, so the
+// subrequest limit no longer binds anything this app can queue.
 //
-// Measured cost, per send (test/part103, instrumented D1/KV/fetch on a
-// realistic 60-player SMBHL week):
-//   - before this change: 2 external fetches for every invite/chase/
-//     gameday/friday_board/gameday_morning to a player with a team --
-//     Resend, plus getTeamFixtures() re-fetching smbhl.com/data.json
-//     for EVERY recipient. 50 / 2 = 25 sends, which is exactly why a
-//     40-row pass failed its last 15 (the Sept 21 cluster: 15 invites).
-//   - after: 1 (Resend). data.json is fetched once per drain and shared.
-//   - ~8 D1 calls per send (worst kind: invite).
-// Other external fetches the same cron invocation can make, worst case:
-//   ensureNextEvent's data.json (1), deadMan's single combined alert
-//   (1), drain's shared data.json (1), weekly-highlights' KV-miss
-//   fallback fetch (1 per distinct week in the batch, 2 at most)
-//   = 5 reserved.
-// 50 - 5 = 45 sends. Internal calls at 45 sends: ~365 for the sends,
-// up to ~360 for queueing a large invite wave in the same pass, ~20 for
-// deadMan -- about 750 of 1,000, so the external limit is the binding
-// one. At one pass every 5 minutes (production) that is 540 sends an
-// hour; every 15 minutes (demo), 180 -- a backlog clears in a few
-// passes and nothing is dropped, because anything over the cap simply
-// stays queued.
-export const EXTERNAL_SUBREQUEST_LIMIT = 50;
-export const RESERVED_NON_SEND_SUBREQUESTS = 5;
-export const MAIL_SENDS_PER_INVOCATION = EXTERNAL_SUBREQUEST_LIMIT - RESERVED_NON_SEND_SUBREQUESTS;
+// What binds now, and sets the number:
+//   1. Resend's day (MAIL_DAILY_CAP; 90 on production, shared with
+//      demo). One pass never sends more than DAY_SHARE_PER_PASS of it,
+//      so a single pass cannot spend the day: at 90 that is 60 -- a
+//      whole SMBHL invite wave (42-44 in September, 60 at most) in one
+//      pass instead of two, with a third of the day left for the chase,
+//      sub calls and alerts. It does not replace the daily-cap deferral
+//      below; it only bounds one pass.
+//   2. Time. Sends are sequential; production's slowest measured burst
+//      ran 2.3 s a send (42 sends, 96 s, Sept 28). MAIL_SENDS_CEILING
+//      keeps a pass at ~4 minutes worst case, inside production's
+//      5-minute cron interval. (A pass that did overrun cannot double-
+//      send: drain() claims each row before sending it -- claimOutboxRow.)
+// With no MAIL_DAILY_CAP configured, the ceiling alone applies.
+export const MAIL_SENDS_CEILING = 100;
+export const DAY_SHARE_PER_PASS = 2 / 3;
+// The per-call `limit` default drain() callers pass; the invocation's
+// budget (sendsPerInvocation) is what actually bounds a pass.
+export const MAIL_SENDS_PER_INVOCATION = MAIL_SENDS_CEILING;
+// MAIL_SENDS_PER_PASS overrides it only for the recorded-behaviour
+// (golden) tests, whose passes are hours apart -- never set on a deployment.
+export function sendsPerInvocation(env) {
+  const pinned = Number(env && env.MAIL_SENDS_PER_PASS);
+  if (Number.isFinite(pinned) && pinned > 0) return Math.floor(pinned);
+  const cap = dailyCapFromEnv(env);
+  if (!cap) return MAIL_SENDS_CEILING;
+  return Math.max(1, Math.min(MAIL_SENDS_CEILING, Math.floor(cap * DAY_SHARE_PER_PASS)));
+}
 
 // One budget per invocation, shared by every drain() in it (the league
 // cron drains once per league; a request may drain after enqueueing).
-export function createSendBudget(max = MAIL_SENDS_PER_INVOCATION) {
+export function createSendBudget(max = MAIL_SENDS_CEILING) {
   let used = 0;
   let halted = false;
   return {
     get remaining() { return halted ? 0 : Math.max(0, max - used); },
     take() { if (halted || used >= max) return false; used++; return true; },
+    // A taken send that did not happen (another drain had claimed the row).
+    refund() { if (used > 0) used--; },
     // After the platform itself refuses a subrequest, every further one
     // in this invocation will fail too -- stop instead of burning
     // attempts on rows that would each record a spurious failure.
@@ -116,6 +120,23 @@ export function classifySendError(err) {
 // success, so history survives without breaking "sent means sent".
 export const OUTBOX_DUE_WHERE =
   'sent_at IS NULL AND cancelled = 0 AND failed_at IS NULL AND send_after <= ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?)';
+
+// Claim: drain() takes a row for itself before sending it, so two drains
+// running at once -- a cron pass that overran, or a manual "send now"
+// during a pass -- never send the same row twice. The claim is the row's
+// next_attempt_at pushed CLAIM_MINUTES ahead, written only if the row is
+// still due and unsent; whichever drain's write lands owns the row. The
+// send then settles it (recordSendSuccess clears next_attempt_at,
+// recordSendFailure/deferToNextDay set their own). A Worker that dies
+// mid-send leaves the row due again after CLAIM_MINUTES. No new column.
+export const CLAIM_MINUTES = 15;
+export async function claimOutboxRow(db, id, now = new Date()) {
+  const iso = now.toISOString();
+  const r = await db.prepare(
+    `UPDATE outbox SET next_attempt_at = ? WHERE id = ? AND ${OUTBOX_DUE_WHERE}`
+  ).bind(new Date(now.getTime() + CLAIM_MINUTES * 60000).toISOString(), id, iso, iso).run();
+  return !!(r && r.meta && r.meta.changes === 1);
+}
 
 export function outboxRowStatus(row) {
   if (row.sent_at) return 'sent';
