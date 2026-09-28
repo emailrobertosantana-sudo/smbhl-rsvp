@@ -167,7 +167,8 @@ describe('Part 5 (live-testing task, batch 6): roster role/goalie are now editab
       expect(html).not.toContain('Independent of Regular/Sub');
     });
 
-    it('POST /league/contacts persists is_backup_goalie=1 for a Player, and the table shows the G badge', async () => {
+    // Item 4: the table row now carries a checkbox (ticked) instead of a G badge.
+    it('POST /league/contacts persists is_backup_goalie=1 for a Player, and the table row shows it ticked', async () => {
       const { cookie, csrfToken } = await signup('rosteredit.e2.create@example.com', '203.0.190.022');
       await createLeague(cookie, csrfToken, { name: 'E2 Create League', teamNames: ['X', 'Y'] });
       const contact = await addContact(cookie, csrfToken, { name: 'Dual Position Player', is_goalie: false, is_backup_goalie: true });
@@ -177,8 +178,7 @@ describe('Part 5 (live-testing task, batch 6): roster role/goalie are now editab
       expect(row.is_backup_goalie).toBe(1);
 
       const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
-      expect(html).toContain('data-i18n="goalieBadge"');
-      expect(html).toContain('title="Peut aussi jouer gardien"');
+      expect(html).toContain(`data-toggle-backup="${contact.player_id}" checked`);
     });
 
     it('is_backup_goalie is never set for an actual goalie, even if a caller sends true for both', async () => {
@@ -368,9 +368,9 @@ describe('Item 2: inline player editing (name, email, phone, can-also-play-goali
     const after = await env.DB.prepare('SELECT is_backup_goalie FROM contacts WHERE player_id = ?').bind(player.player_id).first();
     expect(after.is_backup_goalie).toBe(1);
 
-    // The badge now renders on a fresh load of the same rendered page.
+    // The row's checkbox is ticked on a fresh load of the same rendered page.
     const html2 = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
-    expect(html2).toContain('data-i18n="goalieBadge"');
+    expect(html2).toContain(`data-toggle-backup="${player.player_id}" checked`);
   });
 
   it('the checkbox never renders for a player already flagged as a real goalie (mutually exclusive, matching the add-player form)', async () => {

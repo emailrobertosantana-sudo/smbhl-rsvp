@@ -6997,9 +6997,11 @@ async function handleLeagueRosterPage(req, env, url) {
     // E2 (players polish task): a small "G" badge next to "Joueur" for
     // anyone who can also cover goalie -- never shown for an actual
     // goalie (is_goalie already says "Gardien" on its own).
-    const backupGoalieBadge = (!c.is_goalie && c.is_backup_goalie)
-      ? ` <span class="nl-badge nl-badge--sub" style="padding:1px 6px;font-size:11px;" data-i18n="goalieBadge" title="${esc(I18N_ROSTER.fr.canAlsoGoalie)}">G</span>`
-      : '';
+    // Item 4: "can also play goalie" is settable right in the row (it was
+    // only in the Edit panel, which still has it) -- ticking five after an
+    // import of thirty should not mean opening five panels. Hidden for an
+    // actual goalie, same rule as the Edit panel.
+    const backupGoalieBadge = `<label class="ro-backup" data-backup-wrap="${esc(c.player_id)}" style="display:${c.is_goalie ? 'none' : 'flex'};align-items:center;gap:6px;margin-top:6px;font-size:13px;cursor:pointer;"><input type="checkbox" data-toggle-backup="${esc(c.player_id)}"${c.is_backup_goalie ? ' checked' : ''}><span data-i18n="canAlsoGoalie">${esc(I18N_ROSTER.fr.canAlsoGoalie)}</span></label>`;
     // Item 2: name/email/phone/can-also-play-goalie, expanding this
     // row in place -- Role and Position stay their own inline toggle
     // buttons above, untouched. The checkbox only renders under the
@@ -7559,6 +7561,25 @@ document.querySelectorAll('[data-toggle-role]').forEach(function(btn) {
     }
   });
 });
+// Item 4: the row's own "can also play goalie" checkbox.
+document.querySelectorAll('[data-toggle-backup]').forEach(function(box) {
+  box.addEventListener('change', async function() {
+    var playerId = box.getAttribute('data-toggle-backup');
+    var want = box.checked;
+    box.disabled = true;
+    document.getElementById('formErr').style.display = 'none';
+    try {
+      await toggleRosterField(playerId, { is_backup_goalie: want });
+      var panelBox = document.getElementById('edit_backup_' + playerId);
+      if (panelBox) panelBox.checked = want;
+    } catch (e) {
+      box.checked = !want;
+      showErr(String(e.message));
+    } finally {
+      box.disabled = false;
+    }
+  });
+});
 document.querySelectorAll('[data-toggle-goalie]').forEach(function(btn) {
   btn.addEventListener('click', async function() {
     var playerId = btn.getAttribute('data-toggle-goalie');
@@ -7574,6 +7595,12 @@ document.querySelectorAll('[data-toggle-goalie]').forEach(function(btn) {
       btn.setAttribute('data-next-goalie', nextGoalie ? '0' : '1');
       btn.classList.toggle('nl-btn--primary', nextGoalie);
       btn.classList.toggle('nl-btn--secondary', !nextGoalie);
+      // A real goalie has no "can also play goalie" (the server clears it).
+      var wrap = document.querySelector('[data-backup-wrap="' + playerId + '"]');
+      if (wrap) {
+        wrap.style.display = nextGoalie ? 'none' : 'flex';
+        if (nextGoalie) wrap.querySelector('input').checked = false;
+      }
     } catch (e) {
       showErr(String(e.message));
     } finally {
