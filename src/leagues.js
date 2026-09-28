@@ -16,6 +16,7 @@
 // migration to this pattern is ongoing — see the task reports for exactly
 // which routes have been migrated so far and which remain.
 
+import { passCached } from './pass_cache.js';
 import { checkUserSession, checkCsrfToken, hashPassword, sessionResponseHeaders } from './auth.js';
 import { isMailDeferred } from './mail_queue.js';
 import { sanitizeAndValidateEmail } from './validation.js';
@@ -121,7 +122,10 @@ const EMPTY_LEAGUE_DATA_JSON = Object.freeze({ current_season: null, seasons: []
 export async function getLeagueDataJson(env, leagueId) {
   if (!env.SHEETS_KV) return { ...EMPTY_LEAGUE_DATA_JSON };
   try {
-    const raw = await env.SHEETS_KV.get(dataJsonKeyFor(leagueId));
+    // The raw text is read once per cron pass (src/pass_cache.js) and
+    // parsed on every call, so no two callers share one object.
+    const key = dataJsonKeyFor(leagueId);
+    const raw = await passCached(env, `kv:${key}`, () => env.SHEETS_KV.get(key));
     if (!raw) return { ...EMPTY_LEAGUE_DATA_JSON };
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : { ...EMPTY_LEAGUE_DATA_JSON };
@@ -189,11 +193,12 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
   let leagueRosterLimits = null;
   let leagueTeamStructure = null;
   let leagueSportType = null;
-  const leagueRow = await env.DB.prepare(
+  // Once per cron pass (src/pass_cache.js); read only, below.
+  const leagueRow = await passCached(env, `leaguerow:${leagueId}`, () => env.DB.prepare(
     `SELECT l.id, l.name, l.slug, l.team_names, l.language_mode, l.color, l.team_structure, l.min_players, l.max_players, l.min_goalies, l.max_goalies, l.sport_type, u.email AS admin_email
        FROM leagues l JOIN users u ON u.id = l.created_by
       WHERE l.id = ?`
-  ).bind(leagueId).first();
+  ).bind(leagueId).first());
   if (leagueRow) {
     if (leagueRow.team_names) {
       try {
@@ -3165,6 +3170,7 @@ export async function getOrCreateLeagueSlug(env, leagueRow) {
   const slug = await generateUniqueSlug(env, leagueRow.name, leagueRow.id);
   await env.DB.prepare('UPDATE leagues SET slug = ? WHERE id = ? AND slug IS NULL')
     .bind(slug, leagueRow.id).run();
+  leagueRow.slug = slug; // a row cached for the cron pass (src/pass_cache.js) sees it too
   return slug;
 }
 

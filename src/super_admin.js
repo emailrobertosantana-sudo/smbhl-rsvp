@@ -26,6 +26,7 @@
 // "every league defaults unaffected" true without a backfill: introducing
 // the table, and even introducing new flag keys later, changes nothing
 // until a super-admin explicitly flips a specific league's row.
+import { passCached } from './pass_cache.js';
 
 export const PLAN_TIERS = [
   { key: 'gratuit', label: 'Gratuit' },
@@ -83,9 +84,10 @@ export async function hasCapability(env, leagueId, flagKey) {
   if (leagueId && flagAlwaysOn(flagKey, leagueId)) return true;
   if (!env?.DB || !leagueId || !flagKey) return flagDefault(flagKey);
   try {
-    const row = await env.DB.prepare(
+    // Read once per cron pass (src/pass_cache.js); a request reads it every time.
+    const row = await passCached(env, `cap:${leagueId}:${flagKey}`, () => env.DB.prepare(
       'SELECT enabled FROM league_capability_flags WHERE league_id = ? AND flag_key = ?'
-    ).bind(leagueId, flagKey).first();
+    ).bind(leagueId, flagKey).first());
     if (!row) return flagDefault(flagKey);
     return !!row.enabled;
   } catch (_) {

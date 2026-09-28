@@ -1,3 +1,4 @@
+import { withPassCache } from './pass_cache.js';
 import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
@@ -12438,13 +12439,17 @@ async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
   const skipQuiet = isLeague && !advancedLeague;
   const quietLeagueId = advancedLeague ? leagueId : null;
   let queued = 0;
+  // The sub pool depends on the game and the need, not the team: once it
+  // comes back empty for one team, it is empty for the next one too
+  // (nothing was queued in between), so it is not read again.
+  const emptyPools = new Set();
   for (const team of teams) {
     const a = await availableForTeam(env, ev, team, cfg, isHeadcount);
     if (hasGoalies && a.goalies < (cfg.goaliesPerTeam || 0)) {
-      queued += await callSubs(env, ev, team, 'goalie', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId);
+      queued += await callSubs(env, ev, team, 'goalie', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPools);
     }
     if (a.skaters < shortfallMinSkaters(cfg, leagueId)) {
-      queued += await callSubs(env, ev, team, 'skater', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId);
+      queued += await callSubs(env, ev, team, 'skater', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPools);
     }
   }
   if (queued && drainNow) await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id);
@@ -12625,7 +12630,10 @@ function subPoolOrderBinds(ev) {
   return [season, season];
 }
 
-async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false, requireActive = false, quietLeagueId = null) {
+// emptyPools: needs whose pool already came back empty for this game in
+// the caller's loop (callSubsForShortfall) -- not read again.
+async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false, requireActive = false, quietLeagueId = null, emptyPools = null) {
+  if (emptyPools && emptyPools.has(need)) return 0;
   const poolCondition = usesIndependentGoalieAxis
     ? (need === 'goalie' ? `c.role = 'sub_skater' AND c.is_goalie = 1` : `c.role = 'sub_skater' AND c.is_goalie != 1`)
     : `c.role = ?`;
@@ -12644,7 +12652,7 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
       ORDER BY ${SUB_POOL_ORDER_BY}`
   ).bind(...poolBinds, leagueId, ev.id, ev.id, ev.id, ...subPoolOrderBinds(ev)).all()).results || [];
 
-  if (!pool.length) return 0;
+  if (!pool.length) { if (emptyPools) emptyPools.add(need); return 0; }
   const hrs = hoursOut(ev);
   if (hrs < CUTOFF_HOURS) return 0;
   const gap = hrs < RUSH_HOURS ? 0 : WAVE_GAP_MIN;
@@ -27747,6 +27755,9 @@ function renderLeagueHealthAlert(env, leagueRow, alerts) {
 // health pass, heartbeat out (and the external heartbeat ping). A pass
 // that throws is recorded and alerted on, not just logged.
 async function runCronPass(env) {
+  // One pass reads each league row, flag and league data.json once
+  // (src/pass_cache.js), on its own copy of env.
+  env = withPassCache(env);
   const failures = [];
   let passOk = true, passError = null;
   try { await recordHeartbeat(env, 'start'); } catch (e) { console.error(`[health] heartbeat start: ${e.message}`); }
