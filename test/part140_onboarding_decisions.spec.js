@@ -158,24 +158,23 @@ describe('7. Roster readiness: subs count, and the season minimum is the one in 
     await post(s, '/league/settings/structure', { min_players: perTeam, max_players: 20 });
     return { s, league };
   };
-  it('regulars AND subs count toward "your players are ready"', async () => {
+  it('regulars AND subs count toward roster readiness', async () => {
     const { s } = await setup('p140.ready.subs@example.com', 2); // 2 per team x 2 teams = 4
     await post(s, '/league/season/publish', { season_name: 'S1' });
     await post(s, '/league/contacts', { name: 'Reg One', role: 'roster', team: 'Otters' });
     for (const n of ['Sub One', 'Sub Two']) await post(s, '/league/contacts', { name: n, role: 'sub_skater' });
     let html = await page(s, '/league/roster');
-    expect(html).not.toContain('data-i18n="rosterNudgeTitle"');
     expect(html).toContain('<span class="tnum">3</span> <span data-i18n="rosterProgressOfWord">sur</span> <span class="tnum">4</span>');
     await post(s, '/league/contacts', { name: 'Sub Three', role: 'sub_skater' });
     html = await page(s, '/league/roster');
-    expect(html).toContain('data-i18n="rosterNudgeTitle"');
+    expect(html).not.toContain('data-i18n="rosterProgressLabel"'); // 4 of 4: ready
   });
   it('the season\'s minimum wins over the league default', async () => {
     const { s } = await setup('p140.ready.season@example.com', 1); // league default: 1 per team
     await post(s, '/league/season/publish', { season_name: 'S1', min_players: 3, max_players: 20 }); // this season: 3 per team
     for (const n of ['Reg One', 'Reg Two']) await post(s, '/league/contacts', { name: n, role: 'roster', team: 'Otters' });
     const html = await page(s, '/league/roster');
-    expect(html).not.toContain('data-i18n="rosterNudgeTitle"'); // 2 would satisfy the league default of 2
+    expect(html).toContain('data-i18n="rosterProgressLabel"'); // 2 would satisfy the league default of 2
     expect(html).toContain('<span class="tnum">2</span> <span data-i18n="rosterProgressOfWord">sur</span> <span class="tnum">6</span>');
   });
 });

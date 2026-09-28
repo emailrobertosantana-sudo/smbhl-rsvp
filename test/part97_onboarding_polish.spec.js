@@ -126,14 +126,14 @@ describe('Onboarding polish, B4: roster readiness respects the league\'s own rea
     await addContact(cookie, csrfToken, 'Only Player');
 
     const html = await fetchRoster(cookie);
-    expect(html).not.toContain('data-i18n="rosterNudgeTitle"'); // no premature "ready"
+    expect(html).toContain('data-i18n="rosterNudgeTitle">Crée ton horaire.<'); // schedule first, not a "ready" claim
     expect(html).toContain('>1</span>'); // real count
     expect(html).toContain('>40</span>'); // real minimum: 10 on each of 4 teams
     expect(html).toContain('data-i18n="rosterProgressOfWord"');
     expect(html).toContain('data-i18n="rosterProgressLabel"');
   });
 
-  it('once the real roster count reaches the configured minimum, the "ready, create your schedule" nudge appears instead of the progress message', async () => {
+  it('once the real roster count reaches the configured minimum, the progress message goes away', async () => {
     const { cookie, csrfToken } = await signup('b4.ready@example.com', '203.0.222.002');
     await createLeague(cookie, csrfToken, { name: 'B4 Ready League', teamNames: ['A', 'B'] });
     await setStructure(cookie, csrfToken, { min_players: 1, max_players: 10 });
@@ -141,11 +141,10 @@ describe('Onboarding polish, B4: roster readiness respects the league\'s own rea
 
     // 1 per team on 2 teams: one player is not enough, two are.
     const before = await fetchRoster(cookie);
-    expect(before).not.toContain('data-i18n="rosterNudgeTitle"');
+    expect(before).toContain('data-i18n="rosterProgressLabel"');
 
     await addContact(cookie, csrfToken, 'Player Two');
     const after = await fetchRoster(cookie);
-    expect(after).toContain('data-i18n="rosterNudgeTitle"');
     expect(after).not.toContain('data-i18n="rosterProgressLabel"');
   });
 
@@ -163,8 +162,8 @@ describe('Onboarding polish, B4: roster readiness respects the league\'s own rea
     await setStructure(cookie, csrfToken, { min_players: 5, max_players: 10 });
     await addContact(cookie, csrfToken, 'Copy Player');
     const html = await fetchRoster(cookie);
-    expect(html).toContain('Ton horaire pourra être créé une fois le minimum atteint.');
-    expect(html).toContain("You'll be able to create your schedule once you reach the minimum.");
+    expect(html).toContain('Minimum de la saison, remplaçants compris.');
+    expect(html).toContain("The season's minimum, subs included.");
     expect(html).toContain('joueurs ajoutés');
     expect(html).toContain('players added');
   });

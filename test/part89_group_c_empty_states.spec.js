@@ -57,30 +57,40 @@ async function addContact(cookie, csrfToken, body) {
   return (await res.json()).contact;
 }
 
+
+async function createEventAt(cookie, csrfToken, date) {
+  return SELF.fetch('http://example.com/league/events', {
+    method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify({ date })
+  });
+}
+
+// The schedule comes first (follow-up batch, item 3): with no games the
+// page's own create buttons are the step, so no nudge; with games and no
+// players, a SECONDARY "add your players" nudge.
 describe('C1: Schedule gets a next-step card while the roster is empty', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     await applyRealSchema(env);
   });
 
-  it('a season exists but no players yet: the nudge card shows, both languages, pointing to /league/roster', async () => {
+  it('a season with games but no players: the (secondary) nudge card shows, both languages, pointing to /league/roster', async () => {
     const { cookie, csrfToken } = await signup('c1.empty@example.com', '203.0.212.001');
-    await createLeague(cookie, csrfToken, { name: 'C1 Empty League', teamNames: ['A', 'B'] });
+    await createLeague(cookie, csrfToken, { name: 'C1 Empty League', teamStructure: 'headcount' });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    let html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
+    expect(html).not.toContain('data-i18n="scheduleNudgeTitle"'); // no games yet: the schedule is the step
+    await createEventAt(cookie, csrfToken, '2099-06-15');
 
-    const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
+    html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
     expect(html).toContain('data-i18n="nextStep">Prochaine étape<');
     expect(html).toContain('data-i18n="scheduleNudgeTitle"');
-    expect(html).toContain('href="/league/roster"');
-    expect(html).toContain('data-i18n="scheduleNudgeBtn">Ajouter des joueurs<');
+    expect(html).toContain('<a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/roster" data-i18n="scheduleNudgeBtn">Ajouter des joueurs<');
 
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.scheduleNudgeTitle).toBe("Ajoute d'abord tes joueurs. Prochaine étape : ajoute ton alignement.");
-    expect(dict.en.scheduleNudgeTitle).toBe('Add your players first. Next step: add your roster.');
-    // "No events yet" empty state is still there underneath -- the
-    // nudge is additive, not a replacement.
-    expect(html).toContain('data-i18n="noEvents"');
+    expect(dict.fr.scheduleNudgeTitle).toBe('Ajoute tes joueurs.');
+    expect(dict.en.scheduleNudgeTitle).toBe('Add your players.');
   });
 
   it('once players exist: the nudge is gone, even with zero events', async () => {
@@ -105,9 +115,10 @@ describe('C1: Schedule gets a next-step card while the roster is empty', () => {
 
   it('an inactive (retired) player alone does not count as "players exist" -- the nudge still shows', async () => {
     const { cookie, csrfToken } = await signup('c1.inactive@example.com', '203.0.212.004');
-    await createLeague(cookie, csrfToken, { name: 'C1 Inactive Only League', teamNames: ['A', 'B'] });
+    await createLeague(cookie, csrfToken, { name: 'C1 Inactive Only League', teamStructure: 'headcount' });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const player = await addContact(cookie, csrfToken, { name: 'Retiring Player', role: 'roster', team: 'A' });
+    await createEventAt(cookie, csrfToken, '2099-06-15');
+    const player = await addContact(cookie, csrfToken, { name: 'Retiring Player', role: 'roster' });
     await SELF.fetch('http://example.com/league/contacts/active', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ player_id: player.player_id, is_active: false })

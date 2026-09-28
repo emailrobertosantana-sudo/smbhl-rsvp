@@ -70,11 +70,13 @@ describe('Part 6 (live-testing task, batch 6): the roster page now nudges toward
     await applyRealSchema(env);
   });
 
-  it('an empty roster (no players yet) shows no nudge -- nothing to point toward yet', async () => {
+  // The schedule comes first (follow-up batch, item 3): with no games the
+  // Players page points to Schedule even before any player is added.
+  it('an empty roster with no games also points to the schedule -- it comes first', async () => {
     const { cookie, csrfToken } = await signup('nudge.empty@example.com', '203.0.191.001');
     await createLeague(cookie, csrfToken, { name: 'Nudge Empty League', teamNames: ['X', 'Y'] });
     const html = await fetchRoster(cookie);
-    expect(html).not.toContain('data-i18n="rosterNudgeTitle"');
+    expect(html).toContain('data-i18n="rosterNudgeTitle"');
   });
 
   it('after adding the first player, the roster page shows the schedule nudge -- the exact reported gap', async () => {

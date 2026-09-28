@@ -201,3 +201,26 @@ describe('Create-game form layout at 1450px', () => {
     }, 120000);
   }
 });
+
+describe('Schedule', () => {
+  // Follow-up batch, item 3e: the Assign matchups panel sits below the
+  // whole event list; opening it now scrolls it into view, like the
+  // create panels.
+  it('Assign matchups opens its panel IN VIEW, even below a long list', async () => {
+    for (let i = 0; i < 16; i++) {
+      const d = new Date(Date.UTC(2099, 1, 1 + i * 7)).toISOString().slice(0, 10);
+      await h.api('/league/events', { ...league.session, body: { date: d, season: 'S1' } });
+    }
+    const { page, errors, close } = await open('/league/schedule');
+    const panel = '#sc_matchups_panel';
+    expect(await page.isVisible(panel)).toBe(false);
+    await page.click('.sc-top [onclick="toggleMatchupsPanel()"]');
+    await page.waitForFunction(sel => {
+      const r = document.querySelector(sel).getBoundingClientRect();
+      return r.height > 0 && r.top >= 0 && r.top < window.innerHeight;
+    }, panel, { timeout: 5000 });
+    expect(await page.evaluate(() => document.activeElement && document.activeElement.id)).toBe('mx_preview_btn');
+    expect(errors).toEqual([]);
+    await close();
+  }, 120000);
+});

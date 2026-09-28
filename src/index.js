@@ -7060,11 +7060,16 @@ async function handleLeagueRosterPage(req, env, url) {
   // headcount's total are already whole-league numbers.
   const { people: rosterPeople, minimum: rosterMinimum } = await onboardingRosterReadiness(env, leagueRow, contacts);
   const rosterMeetsMinimum = rosterMinimum != null ? rosterPeople >= rosterMinimum : rosterPeople > 0;
-  const showScheduleNudge = rosterMeetsMinimum && eventCount === 0;
+  // The schedule comes first (dashboard checklist, Schedule, onboarding
+  // agree): with no games yet, this page points to Schedule whatever the
+  // roster count -- a secondary nudge, never outranking Add a player.
+  // Roster readiness (onboardingRosterReadiness) still shows, as progress
+  // toward the season's minimum, until it is reached.
+  const showScheduleNudge = eventCount === 0;
   // Item 1: Players is the last setup step -- once it completes the setup,
   // this page (manual add and import alike, both reload here) says so.
   const rosterSetupDoneHtml = (await leagueSetupComplete(env, leagueRow)) ? await setupCompleteCardHtml(env, url, leagueRow) : '';
-  const showRosterProgress = !rosterMeetsMinimum && rosterMinimum != null && eventCount === 0;
+  const showRosterProgress = !rosterMeetsMinimum && rosterMinimum != null;
 
   // F2 (players/reminders polish task): F1 defaults reminders off, but
   // a league that already turned them on can still walk into the same
@@ -7142,15 +7147,15 @@ async function handleLeagueRosterPage(req, env, url) {
     fr: {
       navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter',
       title: 'Joueurs', addPlayer: 'Ajouter un joueur',
-      nextStep: 'Prochaine étape', rosterNudgeTitle: 'Tes joueurs sont prêts. Prochaine étape : crée ton horaire.',
-      rosterNudgeDesc: 'Ajoute tes premiers matchs pour que tes joueurs puissent commencer à répondre.',
+      nextStep: 'Prochaine étape', rosterNudgeTitle: 'Crée ton horaire.',
+      rosterNudgeDesc: "L'horaire vient en premier : crée tes matchs, puis complète ta liste de joueurs.",
       rosterNudgeBtn: "Créer l'horaire",
       // Onboarding polish task (B4): readiness now respects the
       // league's own real roster minimum instead of claiming "ready"
       // the instant a single player exists -- see showRosterProgress's
       // own comment.
       rosterProgressOfWord: 'sur', rosterProgressLabel: 'joueurs ajoutés',
-      rosterProgressDesc: 'Ton horaire pourra être créé une fois le minimum atteint.',
+      rosterProgressDesc: 'Minimum de la saison, remplaçants compris.',
       // F2 (players/reminders polish task): backstop banner for a
       // mid-season player add close to an already-armed game.
       remindersBannerTitle: 'Rappels automatiques actifs',
@@ -7211,11 +7216,11 @@ async function handleLeagueRosterPage(req, env, url) {
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
       title: 'Players', addPlayer: 'Add a player',
-      nextStep: 'Next step', rosterNudgeTitle: 'Your players are ready. Next step: create your schedule.',
-      rosterNudgeDesc: 'Add your first games so your players can start responding.',
+      nextStep: 'Next step', rosterNudgeTitle: 'Create your schedule.',
+      rosterNudgeDesc: 'The schedule comes first: create your games, then finish your player list.',
       rosterNudgeBtn: 'Create the schedule',
       rosterProgressOfWord: 'of', rosterProgressLabel: 'players added',
-      rosterProgressDesc: "You'll be able to create your schedule once you reach the minimum.",
+      rosterProgressDesc: "The season's minimum, subs included.",
       remindersBannerTitle: 'Automated reminders are active',
       remindersBannerDesc: 'A game is coming up and automated reminders are active for it. Adding a player now may trigger a send.',
       remindersBannerTitlePaused: 'Automated reminders are paused',
@@ -7399,13 +7404,13 @@ async function handleLeagueRosterPage(req, env, url) {
   ${rosterSetupDoneHtml}
   ${showScheduleNudge ? `<section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
     <div class="overline" style="color:var(--primary)" data-i18n="nextStep">Prochaine étape</div>
-    <h2 data-i18n="rosterNudgeTitle">Tes joueurs sont prêts. Prochaine étape : crée ton horaire.</h2>
-    <p class="nl-help" data-i18n="rosterNudgeDesc">Ajoute tes premiers matchs pour que tes joueurs puissent commencer à répondre.</p>
-    <div style="margin-top:var(--space-2)"><a class="nl-btn nl-btn--primary" href="/league/schedule" data-i18n="rosterNudgeBtn">Créer l'horaire</a></div>
+    <h2 data-i18n="rosterNudgeTitle">Crée ton horaire.</h2>
+    <p class="nl-help" data-i18n="rosterNudgeDesc">L'horaire vient en premier : crée tes matchs, puis complète ta liste de joueurs.</p>
+    <div style="margin-top:var(--space-2)"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/schedule" data-i18n="rosterNudgeBtn">Créer l'horaire</a></div>
   </section>` : ''}
   ${showRosterProgress ? `<section class="nl-card nl-card--pad-lg">
     <h2><span class="tnum">${rosterPeople}</span> <span data-i18n="rosterProgressOfWord">sur</span> <span class="tnum">${rosterMinimum}</span> <span data-i18n="rosterProgressLabel">joueurs ajoutés</span></h2>
-    <p class="nl-help" data-i18n="rosterProgressDesc">Ton horaire pourra être créé une fois le minimum atteint.</p>
+    <p class="nl-help" data-i18n="rosterProgressDesc">Minimum de la saison, remplaçants compris.</p>
   </section>` : ''}
   <div class="ro-filters">${filterPills}</div>
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);" class="ro-grid">
@@ -8118,6 +8123,18 @@ async function handleLeagueSchedulePage(req, env, url) {
   // the playoffs too, whenever the league has them configured, in the
   // same preview/confirm. No separate playoff-only action anymore.
   const showMatchupsPanel = scheduleIsFixed && scheduleTeamNames.length >= 2;
+  // What comes after the schedule, for this league's structure and state
+  // (the schedule comes first -- dashboard, Players, onboarding agree):
+  //   no games yet            -> nothing; this page's own buttons ARE the step
+  //   fixed teams, a game with no matchup -> assign matchups
+  //   no players yet          -> add players
+  // A structure with no matchups (pickup, no teams) never gets the
+  // matchups step (showMatchupsPanel is fixed-teams only).
+  const scheduleSeasonGames = needsSeason ? [] : events.filter(ev => ev.season === leagueData.current_season && ev.state !== 'cancelled' && !ev.is_playoff);
+  const scheduleNextStep = !scheduleSeasonGames.length ? null
+    : (showMatchupsPanel && scheduleSeasonGames.some(ev => !ev.home_team || !ev.away_team)) ? 'matchups'
+    : scheduleActivePlayerCount === 0 ? 'players'
+    : null;
 
   const I18N_SCHEDULE = {
     fr: {
@@ -8145,13 +8162,15 @@ async function handleLeagueSchedulePage(req, env, url) {
       stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
       needsSeasonTitle: "Lance ta saison d'abord",
       needsSeasonBody: "Il te faut une saison active avant de pouvoir créer des matchs.",
-      // C1 (empty-states polish task): same "Prochaine étape" pattern
-      // as the Players page's own rosterNudge, pointing the other
-      // direction (no players yet, so a match here is premature).
+      // The next step AFTER the schedule (scheduleNextStep): the schedule
+      // comes first, so this page never points away from its own actions
+      // while there are no games -- and its nudge is secondary.
       nextStep: 'Prochaine étape',
-      scheduleNudgeTitle: "Ajoute d'abord tes joueurs. Prochaine étape : ajoute ton alignement.",
-      scheduleNudgeDesc: 'Une fois tes joueurs ajoutés, tu pourras créer ton horaire et ils pourront commencer à répondre.',
+      scheduleNudgeTitle: 'Ajoute tes joueurs.',
+      scheduleNudgeDesc: "Tes matchs sont créés. Ajoute tes joueurs pour qu'ils puissent commencer à répondre.",
       scheduleNudgeBtn: 'Ajouter des joueurs',
+      matchupsNudgeTitle: 'Assigne les affrontements.',
+      matchupsNudgeDesc: "Choisis qui joue contre qui dans chacun de tes matchs. Tu vois l'aperçu avant de confirmer ; aucun match n'est créé.",
       goToDashboard: 'Aller au tableau de bord',
       bulkCreateBtn: 'Créer plusieurs matchs', bulkCreateTitle: 'Créer plusieurs matchs',
       bulkCreateHelp: 'Crée une série de matchs chaque semaine, même heure et même lieu.',
@@ -8233,9 +8252,11 @@ async function handleLeagueSchedulePage(req, env, url) {
       needsSeasonTitle: 'Start your season first',
       needsSeasonBody: 'You need an active season before you can create events.',
       nextStep: 'Next step',
-      scheduleNudgeTitle: 'Add your players first. Next step: add your roster.',
-      scheduleNudgeDesc: "Once your players are added, you can create your schedule and they'll be able to start responding.",
+      scheduleNudgeTitle: 'Add your players.',
+      scheduleNudgeDesc: 'Your games are created. Add your players so they can start responding.',
       scheduleNudgeBtn: 'Add players',
+      matchupsNudgeTitle: 'Assign matchups.',
+      matchupsNudgeDesc: 'Choose who plays whom in each of your games. You see a preview before confirming; no game is created.',
       goToDashboard: 'Go to dashboard',
       bulkCreateBtn: 'Create multiple events', bulkCreateTitle: 'Create multiple events',
       bulkCreateHelp: 'Create a weekly series of events, same time and venue each week.',
@@ -8381,11 +8402,16 @@ async function handleLeagueSchedulePage(req, env, url) {
   </section>
   <div class="sc-list" id="scheduleList">${rowsHtml}</div>
   ` : `
-  ${scheduleActivePlayerCount === 0 ? `<section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
+  ${scheduleNextStep === 'matchups' ? `<section class="nl-card" id="sc_next_step" data-next-step="matchups">
     <div class="overline" style="color:var(--primary)" data-i18n="nextStep">Prochaine étape</div>
-    <h2 data-i18n="scheduleNudgeTitle">Ajoute d'abord tes joueurs. Prochaine étape : ajoute ton alignement.</h2>
-    <p class="nl-help" data-i18n="scheduleNudgeDesc">Une fois tes joueurs ajoutés, tu pourras créer ton horaire et ils pourront commencer à répondre.</p>
-    <div style="margin-top:var(--space-2)"><a class="nl-btn nl-btn--primary" href="/league/roster" data-i18n="scheduleNudgeBtn">Ajouter des joueurs</a></div>
+    <h2 data-i18n="matchupsNudgeTitle">Assigne les affrontements.</h2>
+    <p class="nl-help" data-i18n="matchupsNudgeDesc">Choisis qui joue contre qui dans chacun de tes matchs. Tu vois l'aperçu avant de confirmer ; aucun match n'est créé.</p>
+    <div style="margin-top:var(--space-2)"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" onclick="toggleMatchupsPanel()" data-i18n="matchupsGenBtn">Assigner les affrontements</button></div>
+  </section>` : scheduleNextStep === 'players' ? `<section class="nl-card" id="sc_next_step" data-next-step="players">
+    <div class="overline" style="color:var(--primary)" data-i18n="nextStep">Prochaine étape</div>
+    <h2 data-i18n="scheduleNudgeTitle">Ajoute tes joueurs.</h2>
+    <p class="nl-help" data-i18n="scheduleNudgeDesc">Tes matchs sont créés. Ajoute tes joueurs pour qu'ils puissent commencer à répondre.</p>
+    <div style="margin-top:var(--space-2)"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/roster" data-i18n="scheduleNudgeBtn">Ajouter des joueurs</a></div>
   </section>` : ''}
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);">
     <div class="sc-list" id="scheduleList">${rowsHtml}</div>
@@ -8815,7 +8841,15 @@ async function submitBulkEvents() {
 // confirm (writes it) cover the regular season AND the playoffs
 // together. Never creates an event, for either half -- only ever
 // UPDATEs one already on the schedule.
-function toggleMatchupsPanel() { document.getElementById('sc_matchups_panel').classList.toggle('open'); }
+// Same treatment as the create panels (openCreatePanel): the panel sits
+// below the whole event list, so opening it without scrolling looked like
+// nothing happened. Closing stays a plain toggle.
+function toggleMatchupsPanel() {
+  var panel = document.getElementById('sc_matchups_panel');
+  if (!panel) return;
+  if (panel.classList.contains('open')) { panel.classList.remove('open'); return; }
+  openCreatePanel('sc_matchups_panel', 'mx_preview_btn');
+}
 function showMatchupsErr(msg) {
   var el = document.getElementById('matchupsGenErr'); el.textContent = msg; el.style.display = 'block';
 }
@@ -8976,7 +9010,13 @@ async function confirmMatchups() {
 }
 function toggleDuplicateRow(eventId) {
   var row = document.getElementById('dup_' + eventId);
-  if (row) row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+  if (row.style.display === 'flex') {
+    row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    var dateEl = document.getElementById('dup_date_' + eventId);
+    if (dateEl) dateEl.focus({ preventScroll: true });
+  }
 }
 async function confirmDuplicate(eventId) {
   var dateEl = document.getElementById('dup_date_' + eventId);
