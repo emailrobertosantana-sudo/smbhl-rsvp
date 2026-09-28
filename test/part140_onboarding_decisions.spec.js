@@ -25,7 +25,7 @@ describe('1. The step counter waits for the structure', () => {
     const step1 = await page(null, '/signup?step=1');
     expect(step1).toContain('data-i18n="step1">Étape 1<');
     expect(step1).not.toContain('role="progressbar"');
-    for (const [structure, total, extra] of [['fixed', 8, { teamNames: ['A', 'B'] }], ['weekly_draw', 6, { teamNames: ['A', 'B'] }], ['headcount', 5, {}]]) {
+    for (const [structure, total, extra] of [['fixed', 8, { teamNames: ['A', 'B'] }], ['weekly_draw', 5, { teamNames: ['A', 'B'] }], ['headcount', 5, {}]]) {
       const s = await signup(`p140.count.${structure}@example.com`);
       expect(await page(s, '/signup?step=2')).not.toContain('role="progressbar"');
       await post(s, '/leagues/create', { name: `P140 ${structure}`, teamStructure: structure, ...extra });
@@ -93,5 +93,33 @@ describe('3. Skip advances, and what was skipped stays on the checklist', () => 
     expect(await page(s, '/league/roster')).not.toContain('id="setup_done_card"');
     await post(s, '/league/onboarding/step', { step: 'stats', action: 'done' });
     expect(await page(s, '/dashboard')).toContain('id="setup_done_card"');
+  });
+});
+
+describe('4. Pickup leagues are not asked to name teams', () => {
+  it('a pickup league keeping "Équipe 1/2" reaches the completion card', async () => {
+    const s = await signup('p140.pickup@example.com');
+    await post(s, '/leagues/create', { name: 'P140 Pickup', teamStructure: 'weekly_draw', teamNames: ['Équipe 1', 'Équipe 2'] });
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    expect(await page(s, '/onboarding/season?step=2')).not.toContain('id="ob_teams"');
+    await post(s, '/league/settings/structure', { min_players: 1, max_players: 20 });
+    await post(s, '/league/events', { date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' });
+    await post(s, '/league/contacts', { name: 'Lea Player', role: 'roster' });
+    const html = await page(s, '/dashboard');
+    expect(html).not.toContain('data-i18n="nsNameTeams"');
+    expect(html).toContain('id="setup_done_card"');
+  });
+});
+
+describe('5. "Nommer les équipes" waits for a season', () => {
+  it('no team-naming item before a season; a fixed league gets it as a next step once one exists', async () => {
+    const s = await signup('p140.noseason@example.com');
+    await post(s, '/leagues/create', { name: 'P140 No Season', teamNames: ['Équipe 1', 'Équipe 2'] });
+    let html = await page(s, '/dashboard');
+    expect(html).toContain('data-i18n="checklistTitle"');
+    expect(html).not.toContain('data-i18n="ckTeams"');
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    html = await page(s, '/dashboard');
+    expect(html).toContain('data-i18n="nsNameTeams"');
   });
 });

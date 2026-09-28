@@ -154,24 +154,22 @@ describe('B1: one continuous "STEP n OF m" count, signup through onboarding', ()
     expect(obStats).toContain('data-i18n="finish"');
   });
 
-  it('weekly_draw structure: signup skips step 3 entirely, so onboarding starts numbering at 3; real total is 6', async () => {
+  // Onboarding item 4: no team-names step for pickup -- total 5.
+  it('weekly_draw structure: signup skips step 3, no team-names step; onboarding numbers 3,4,5; real total is 5', async () => {
     const { cookie, csrfToken } = await signup('flow.weekly@example.com', '203.0.210.004');
     await createLeague(cookie, csrfToken, { name: 'Flow Weekly League', teamStructure: 'weekly_draw', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'Flow Weekly Season' });
 
     const obRoster = await getOnboarding(cookie, 1);
-    expect(stepAttrs(obRoster)).toEqual({ now: '3', max: '6' });
-    expect(obRoster).toMatch(/Étape 3 sur 6/);
+    expect(stepAttrs(obRoster)).toEqual({ now: '3', max: '5' });
+    expect(obRoster).toMatch(/Étape 3 sur 5/);
 
-    const obTeams = await getOnboarding(cookie, 2);
-    expect(stepAttrs(obTeams)).toEqual({ now: '4', max: '6' });
-    expect(obTeams).toContain('id="ob_teams"');
+    const obReminders = await getOnboarding(cookie, 2);
+    expect(stepAttrs(obReminders)).toEqual({ now: '4', max: '5' });
+    expect(obReminders).not.toContain('id="ob_teams"');
 
-    const obReminders = await getOnboarding(cookie, 3);
-    expect(stepAttrs(obReminders)).toEqual({ now: '5', max: '6' });
-
-    const obStats = await getOnboarding(cookie, 4);
-    expect(stepAttrs(obStats)).toEqual({ now: '6', max: '6' });
+    const obStats = await getOnboarding(cookie, 3);
+    expect(stepAttrs(obStats)).toEqual({ now: '5', max: '5' });
     expect(obStats).toContain('data-i18n="finish"');
   });
 

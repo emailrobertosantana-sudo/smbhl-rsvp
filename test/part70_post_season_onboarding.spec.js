@@ -159,15 +159,16 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(step5).not.toContain('data-i18n="next"');
   });
 
-  it('weekly_draw structure: team-names step shows the real "Équipe 1"/"Équipe 2" defaults, editable', async () => {
+  // Onboarding item 4: pickup teams are drawn fresh each game -- no
+  // team-names step (names stay editable in Settings).
+  it('weekly_draw structure: no team-names step -- roster, reminders, stats', async () => {
     const { cookie, csrfToken } = await signup('ob.weekly@example.com', '203.0.185.004');
     await createLeague(cookie, csrfToken, { name: 'Onboarding Weekly League', teamStructure: 'weekly_draw', teamNames: ['Équipe 1', 'Équipe 2'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const step2 = await getOnboarding(cookie, 2);
-    expect(step2).toContain('value="Équipe 1"');
-    expect(step2).toContain('value="Équipe 2"');
-    expect(step2).toContain('data-i18n="teamsSubWeekly"');
+    expect(step2).not.toContain('id="ob_teams"');
+    expect(step2).toContain('id="ob_reminder_72h"');
   });
 
   // A3 bug fix (onboarding polish task): the roster step's helper text
@@ -358,7 +359,7 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
 
   it('the dashboard\'s "next steps" checklist appears when things are still unset, and disappears once addressed', async () => {
     const { cookie, csrfToken } = await signup('ob.nextsteps@example.com', '203.0.185.011');
-    await createLeague(cookie, csrfToken, { name: 'Next Steps League', teamStructure: 'weekly_draw', teamNames: ['Équipe 1', 'Équipe 2'] });
+    await createLeague(cookie, csrfToken, { name: 'Next Steps League', teamNames: ['Équipe 1', 'Équipe 2'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const before = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();

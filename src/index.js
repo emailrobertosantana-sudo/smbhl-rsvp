@@ -1698,7 +1698,7 @@ async function leagueSetupComplete(env, leagueRow) {
   const players = await env.DB.prepare('SELECT COUNT(*) AS c FROM contacts WHERE league_id = ? AND is_active = 1').bind(leagueRow.id).first();
   let teamNames = [];
   try { teamNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
-  const defaultNames = (leagueRow.team_structure || 'fixed') !== 'headcount' && teamNames.length > 0 && teamNames.every(t => /^(Équipe|Team) \d+$/.test(t));
+  const defaultNames = (leagueRow.team_structure || 'fixed') === 'fixed' && teamNames.length > 0 && teamNames.every(t => /^(Équipe|Team) \d+$/.test(t));
   return !!anyEvent && Number(players && players.c) > 0 && !defaultNames && leagueRow.min_players != null && leagueRow.max_players != null;
 }
 const setupCardDismissKey = leagueId => `setup_card_dismissed:${leagueId}`;
@@ -2054,7 +2054,9 @@ async function handleDashboardPage(req, env, url) {
   // post-season "next steps" card, which already had this exact
   // check -- one source of truth now instead of two.
   const defaultTeamNamePattern = /^(Équipe|Team) \d+$/;
-  const stillDefaultTeamNames = !dashIsHeadcount && teamNames.length > 0 && teamNames.every(t => defaultTeamNamePattern.test(t));
+  // Onboarding item 4: fixed teams only. Pickup teams are drawn fresh each
+  // game -- "Équipe 1/2" is fine there (still editable in Settings).
+  const stillDefaultTeamNames = dashTeamStructure === 'fixed' && teamNames.length > 0 && teamNames.every(t => defaultTeamNamePattern.test(t));
   // Live-testing task, Part 5: same hasRosterLimits gate the settings
   // page uses -- see that page's own comment for why min_players/
   // max_players (never null once genuinely set) is the reliable signal,
@@ -2241,7 +2243,12 @@ async function handleDashboardPage(req, env, url) {
                original comment below) -- it's a different question
                (player count, not team names) that genuinely is decided
                up front. -->
-          <div class="dash-ck${(dashIsHeadcount ? dashHasRosterLimits : !stillDefaultTeamNames) ? ' done' : ''}"><span class="b ${(dashIsHeadcount ? dashHasRosterLimits : !stillDefaultTeamNames) ? 'y">' + DASH_ICON_CHECK : 'n">'}</span><span data-i18n="${dashIsHeadcount ? 'ckPlayerCount' : 'ckTeams'}">${dashIsHeadcount ? 'Choisir le nombre de joueurs' : 'Nommer les équipes'}</span></div>
+          <!-- Onboarding item 5: no "Nommer les équipes" / "Choisir le nombre
+               de joueurs" row here any more. Both are set during onboarding,
+               which comes after the season exists, so before a season the
+               row could never be ticked. Once there is a season they appear
+               among the next steps ("Nommer tes équipes", "Définir
+               l'effectif") until done. -->
           <!-- Live-testing bug fix (Bug 5): season, not players, is the
                real blocking prerequisite (Bug 4 -- POST /league/events
                fails without one) for the next real step (creating
@@ -2534,7 +2541,7 @@ if (document.getElementById('hardDeleteStatus')) {
 // just confirmed.
 function onboardingStepsFor(teamStructure) {
   if (teamStructure === 'headcount') return ['roster', 'reminders', 'stats'];
-  if (teamStructure === 'weekly_draw') return ['roster', 'teams', 'reminders', 'stats'];
+  if (teamStructure === 'weekly_draw') return ['roster', 'reminders', 'stats']; // item 4: no team-names step for pickup
   return ['roster', 'teams', 'playoffs', 'reminders', 'stats'];
 }
 
@@ -2549,7 +2556,7 @@ function onboardingStepsFor(teamStructure) {
 // chosen on step 2:
 //   fixed:       signup 1,2,3 + onboarding roster,teams,playoffs,reminders,stats = 8
 //   headcount:   signup 1,2   + onboarding roster,reminders,stats                = 5
-//   weekly_draw: signup 1,2   + onboarding roster,teams,reminders,stats          = 6
+//   weekly_draw: signup 1,2   + onboarding roster,reminders,stats                = 5
 // Steps 1/2 render before a structure is chosen -- they show no total
 // at all ("Étape 1" / "Step 1"; a guess of 8 was wrong for 2 of 3
 // structures). The real total appears once the structure is known:
@@ -2558,11 +2565,11 @@ function onboardingStepsFor(teamStructure) {
 // 'teams' and 'reminders') -- fixed's total goes from 7 to 8;
 // headcount/weekly_draw are completely untouched (neither structure
 // ever sees a playoffs step, so neither total number changes).
-const FLOW_TOTAL_STEPS = { fixed: 8, headcount: 5, weekly_draw: 6 };
+const FLOW_TOTAL_STEPS = { fixed: 8, headcount: 5, weekly_draw: 5 };
 const FLOW_STEP_NUMBER = {
   fixed: { signup3: 3, roster: 4, teams: 5, playoffs: 6, reminders: 7, stats: 8 },
   headcount: { roster: 3, reminders: 4, stats: 5 },
-  weekly_draw: { roster: 3, teams: 4, reminders: 5, stats: 6 }
+  weekly_draw: { roster: 3, reminders: 4, stats: 5 }
 };
 function flowStepLabel(lang, current, total) {
   return lang === 'en' ? `Step ${current} of ${total}` : `Étape ${current} sur ${total}`;
