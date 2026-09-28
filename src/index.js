@@ -1616,6 +1616,98 @@ async function submitReset() {
 // inertly inside the JS dict. Same lesson as the public page's earlier
 // bug this session already found and fixed (an unrelated string
 // leaking into every response broke an existing test).
+// Item 1: the "setup complete" card. Setup ends with the Players step, and
+// the page used to say nothing once it was done. Shown once the setup
+// checklist -- the dashboard's "Prochaines étapes": a schedule, players,
+// real team names (not for a no-teams league), a roster size -- has nothing
+// left, until the admin hides it; on the dashboard and the Players page.
+const SETUP_CARD_I18N = {
+  fr: {
+    setupDoneTitle: 'Bravo, ta ligue est prête!',
+    setupDoneText: 'Tout est en place. Et maintenant :',
+    setupDonePublic: 'Voir ta page publique', setupDonePublicOff: 'Activer ta page publique',
+    setupDoneConfigure: 'La configurer (thème, mot de l’organisateur)',
+    setupDoneNextGame: 'Gérer ton prochain match', setupDoneSchedule: 'Voir ton horaire',
+    setupDoneComms: 'Voir tes courriels (Comms)',
+    setupDoneRemindersOff: "Les rappels automatiques sont désactivés : ta ligue n'enverra aucun courriel à tes joueurs.",
+    setupDoneRemindersBtn: 'Choisir les rappels',
+    setupDoneDismiss: 'Masquer'
+  },
+  en: {
+    setupDoneTitle: 'Congratulations, your league is ready!',
+    setupDoneText: 'Everything is in place. What next:',
+    setupDonePublic: 'See your public page', setupDonePublicOff: 'Turn on your public page',
+    setupDoneConfigure: "Configure it (theme, organizer's note)",
+    setupDoneNextGame: 'Manage your next game', setupDoneSchedule: 'See your schedule',
+    setupDoneComms: 'See your emails (Comms)',
+    setupDoneRemindersOff: "Automatic reminders are off: your league won't email your players.",
+    setupDoneRemindersBtn: 'Choose reminders',
+    setupDoneDismiss: 'Hide'
+  }
+};
+// The same four steps as the dashboard's next-steps checklist.
+async function leagueSetupComplete(env, leagueRow) {
+  const leagueData = await getLeagueDataJson(env, leagueRow.id);
+  const season = leagueData.current_season;
+  if (!season) return false;
+  const anyEvent = await env.DB.prepare(`SELECT id FROM events WHERE league_id = ? AND season = ? AND state != 'cancelled' LIMIT 1`).bind(leagueRow.id, season).first();
+  const players = await env.DB.prepare('SELECT COUNT(*) AS c FROM contacts WHERE league_id = ? AND is_active = 1').bind(leagueRow.id).first();
+  let teamNames = [];
+  try { teamNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
+  const defaultNames = (leagueRow.team_structure || 'fixed') !== 'headcount' && teamNames.length > 0 && teamNames.every(t => /^(Équipe|Team) \d+$/.test(t));
+  return !!anyEvent && Number(players && players.c) > 0 && !defaultNames && leagueRow.min_players != null && leagueRow.max_players != null;
+}
+const setupCardDismissKey = leagueId => `setup_card_dismissed:${leagueId}`;
+async function setupCompleteCardHtml(env, url, leagueRow) {
+  const dismissed = await env.DB.prepare('SELECT 1 FROM settings WHERE key = ?').bind(setupCardDismissKey(leagueRow.id)).first();
+  if (dismissed) return '';
+  const fr = SETUP_CARD_I18N.fr;
+  const slug = await getOrCreateLeagueSlug(env, leagueRow);
+  const publicUrl = slug ? `${url.origin}/${slug}` : `${url.origin}/league/public?league=${encodeURIComponent(leagueRow.id)}`;
+  const today = new Date().toISOString().slice(0, 10);
+  const next = await env.DB.prepare(`SELECT id FROM events WHERE league_id = ? AND state != 'cancelled' AND date >= ? ORDER BY date ASC LIMIT 1`).bind(leagueRow.id, today).first();
+  const remindersOn = !!(leagueRow.reminder_72h_enabled || leagueRow.reminder_24h_enabled || leagueRow.reminder_12h_enabled);
+  const link = (href, key, extra = '') => `<a class="nl-btn nl-btn--secondary nl-btn--sm" href="${esc(href)}"${extra} data-i18n="${key}">${esc(fr[key])}</a>`;
+  return `<section class="nl-card nl-card--pad-lg" id="setup_done_card" style="border-color:var(--primary)">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+      <h2 data-i18n="setupDoneTitle">${esc(fr.setupDoneTitle)}</h2>
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setupDoneDismiss" onclick="dismissSetupCard(this)">${esc(fr.setupDoneDismiss)}</button>
+    </div>
+    <p class="nl-help" data-i18n="setupDoneText">${esc(fr.setupDoneText)}</p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:var(--space-2)">
+      ${leagueRow.public_page_enabled ? link(publicUrl, 'setupDonePublic', ' target="_blank" rel="noopener"') : link('/league/settings#section-identity', 'setupDonePublicOff')}
+      ${link('/league/settings#section-identity', 'setupDoneConfigure')}
+      ${next ? link(`/league/events/detail?e=${encodeURIComponent(next.id)}`, 'setupDoneNextGame') : link('/league/schedule', 'setupDoneSchedule')}
+      ${link('/league/comms', 'setupDoneComms')}
+    </div>
+    ${remindersOn ? '' : `<div class="sc-reminder-warn" style="margin-top:var(--space-3);display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+      <p class="nl-help" style="margin:0" data-i18n="setupDoneRemindersOff">${esc(fr.setupDoneRemindersOff)}</p>
+      <a class="nl-btn nl-btn--primary nl-btn--sm" href="/league/comms" data-i18n="setupDoneRemindersBtn">${esc(fr.setupDoneRemindersBtn)}</a>
+    </div>`}
+    <script>
+    function dismissSetupCard(btn) {
+      btn.disabled = true;
+      fetch('/league/setup-card/dismiss', { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()) })
+        .then(function (r) { if (r.ok) { var c = document.getElementById('setup_done_card'); if (c) c.remove(); } else { btn.disabled = false; } })
+        .catch(function () { btn.disabled = false; });
+    }
+    </script>
+  </section>`;
+}
+async function handleSetupCardDismiss(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(setupCardDismissKey(leagueId), new Date().toISOString()).run();
+  return Response.json({ ok: true });
+}
+
 function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
   const fr = { logout: 'Se déconnecter', navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres' };
   const en = { logout: 'Log out', navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings' };
@@ -1932,6 +2024,8 @@ async function handleDashboardPage(req, env, url) {
 
   const dashState = leagueRow && leagueRow.deactivated_at ? 'deactivated' : leagueRow ? 'active' : 'none';
   const I18N_DASH = buildDashI18n({ state: dashState, needsSeason: !currentSeason, unverified: !verified, leagueName: leagueRow ? leagueRow.name : '' });
+  Object.assign(I18N_DASH.fr, SETUP_CARD_I18N.fr);
+  Object.assign(I18N_DASH.en, SETUP_CARD_I18N.en);
 
   let bodyHtml;
 
@@ -2147,6 +2241,7 @@ async function handleDashboardPage(req, env, url) {
       stillDefaultTeamNames ? { key: 'nsNameTeams', href: '/onboarding/season?step=2', fr: 'Nommer tes équipes' } : null,
       !dashHasRosterLimits ? { key: 'nsRosterLimits', href: '/onboarding/season?step=1', fr: "Définir l'effectif" } : null
     ].filter(Boolean) : [];
+    const setupDoneHtml = !nextStepsItems.length && !needsSeason ? await setupCompleteCardHtml(env, url, leagueRow) : '';
     const nextStepsHtml = nextStepsItems.length ? `
     <section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
       <div class="h3" data-i18n="nextStepsTitle">Prochaines étapes</div>
@@ -2184,6 +2279,7 @@ async function handleDashboardPage(req, env, url) {
     <div style="margin-top:10px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="resendBtn" data-i18n="resendBtn" onclick="resendVerification()">Renvoyer le courriel</button></div>
   </section>` : ''}
   ${startGridHtml}
+  ${setupDoneHtml}
   ${weekStatusHtml}
   ${nextStepsHtml}
   <div class="dash-tiles">
@@ -6804,7 +6900,7 @@ async function handleLeagueRosterPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
-  const leagueRow = await env.DB.prepare('SELECT name, team_colors, team_names, team_structure, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, min_players FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
 
   const allContacts = (await env.DB.prepare(
     'SELECT player_id, name, email, phone, role, preferred_team, is_goalie, is_backup_goalie, is_active FROM contacts WHERE league_id = ? ORDER BY name'
@@ -6852,6 +6948,9 @@ async function handleLeagueRosterPage(req, env, url) {
   }
   const rosterMeetsMinimum = rosterMinimum != null ? contacts.length >= rosterMinimum : contacts.length > 0;
   const showScheduleNudge = rosterMeetsMinimum && eventCount === 0;
+  // Item 1: Players is the last setup step -- once it completes the setup,
+  // this page (manual add and import alike, both reload here) says so.
+  const rosterSetupDoneHtml = (await leagueSetupComplete(env, leagueRow)) ? await setupCompleteCardHtml(env, url, leagueRow) : '';
   const showRosterProgress = !rosterMeetsMinimum && rosterMinimum != null && eventCount === 0;
 
   // F2 (players/reminders polish task): F1 defaults reminders off, but
@@ -7184,6 +7283,7 @@ async function handleLeagueRosterPage(req, env, url) {
       <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="ro_reminders_pause_btn" onclick="toggleReminderPause(this)" data-i18n="${reminderWindowEvent.auto_reminders_enabled ? 'pauseRemindersBtn' : 'resumeRemindersBtn'}">${reminderWindowEvent.auto_reminders_enabled ? 'Suspendre les rappels pour ce match' : 'Reprendre les rappels pour ce match'}</button>
     </div>
   </section>` : ''}
+  ${rosterSetupDoneHtml}
   ${showScheduleNudge ? `<section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
     <div class="overline" style="color:var(--primary)" data-i18n="nextStep">Prochaine étape</div>
     <h2 data-i18n="rosterNudgeTitle">Tes joueurs sont prêts. Prochaine étape : crée ton horaire.</h2>
@@ -7298,6 +7398,8 @@ async function handleLeagueRosterPage(req, env, url) {
 </main>
 ${tabbar}`;
 
+  Object.assign(I18N_ROSTER.fr, SETUP_CARD_I18N.fr);
+  Object.assign(I18N_ROSTER.en, SETUP_CARD_I18N.en);
   const script = `
 ${nlAuthScript(I18N_ROSTER)}
 // Live-testing task, Part 2 (bug fix): the goalie axis used to hide
@@ -27350,6 +27452,9 @@ async function handleFetch(req, env, ctx) {
       // Email preview: what an email would look like now, sending nothing.
       if (url.pathname === '/league/comms/preview' && req.method === 'POST')
         return await handleLeagueCommsPreview(req, env, url);
+      // Item 1: hide the "setup complete" card.
+      if (url.pathname === '/league/setup-card/dismiss' && req.method === 'POST')
+        return await handleSetupCardDismiss(req, env, url);
 
       // Live-testing task (batch 2), Part 12: hard delete (privacy/Law
       // 25). Status is read-only (for the settings page's own gate UI --
