@@ -9303,6 +9303,28 @@ ${tabbar}`;
     ${leagueRemindersArmed ? '' : `<p class="nl-help" data-i18n="remindersNoneArmedHelp" style="margin-top:4px;">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).remindersNoneArmedHelp)}</p>`}
     <p id="evRemindersMsg" class="nl-help" style="display:none;margin-top:4px;"></p>
   </div>
+  <div class="ev-teams">${ev.is_playoff && ev.state === 'cancelled'
+    ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
+      <h2 data-i18n="playoffSeriesDecidedTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffSeriesDecidedTitle)}</h2>
+      ${playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600"') : ''}
+      <p class="nl-help" data-i18n="playoffSeriesDecidedDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffSeriesDecidedDesc)}</p>
+    </section>`
+    : ev.is_playoff && !(ev.home_team && ev.away_team)
+    ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
+      <h2 data-i18n="playoffAwaitingSeedingTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingTitle)}</h2>
+      ${playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600"') : ''}
+      <p class="nl-help" data-i18n="playoffAwaitingSeedingDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingDesc)}</p>
+    </section>`
+    : fixedMatchupUnknown
+    ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
+      <h2 data-i18n="noMatchupSetTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetTitle)}</h2>
+      <p class="nl-help" data-i18n="noMatchupSetDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetDesc)}</p>
+    </section>`
+    : (ev.is_playoff && playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600;grid-column:1/-1"') : '') + (poolCardHtml || teamCards.join(''))}</div>
+  ${unassignedHtml}
+  <!-- Item 5: before the game an admin works the RSVP list (players, then
+       who is confirmed but not yet on a team); the result and player stats
+       are for after it, so they come last. -->
   ${scoreSides ? `<section class="nl-card nl-card--pad-lg" id="score_section">
     <div class="h3" data-i18n="scoreTitle">Résultat</div>
     <div id="scoreErr" class="nl-error" style="display:none"></div>
@@ -9362,25 +9384,6 @@ ${tabbar}`;
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="playerStatsSaveBtn" onclick="submitPlayerStats()">Enregistrer les statistiques</button></div>
     `}
   </section>` : ''}
-  <div class="ev-teams">${ev.is_playoff && ev.state === 'cancelled'
-    ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
-      <h2 data-i18n="playoffSeriesDecidedTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffSeriesDecidedTitle)}</h2>
-      ${playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600"') : ''}
-      <p class="nl-help" data-i18n="playoffSeriesDecidedDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffSeriesDecidedDesc)}</p>
-    </section>`
-    : ev.is_playoff && !(ev.home_team && ev.away_team)
-    ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
-      <h2 data-i18n="playoffAwaitingSeedingTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingTitle)}</h2>
-      ${playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600"') : ''}
-      <p class="nl-help" data-i18n="playoffAwaitingSeedingDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playoffAwaitingSeedingDesc)}</p>
-    </section>`
-    : fixedMatchupUnknown
-    ? `<section class="nl-card nl-card--pad-lg" style="grid-column:1/-1">
-      <h2 data-i18n="noMatchupSetTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetTitle)}</h2>
-      <p class="nl-help" data-i18n="noMatchupSetDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetDesc)}</p>
-    </section>`
-    : (ev.is_playoff && playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600;grid-column:1/-1"') : '') + (poolCardHtml || teamCards.join(''))}</div>
-  ${unassignedHtml}
 </main>
 ${tabbar}`;
 
