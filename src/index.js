@@ -17694,7 +17694,8 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
   // league event; see the task report.)
   const windowStart = new Date(Date.now() - IMMEDIATE_INVITE_DEDUP_WINDOW_MIN * 60000).toISOString();
   const recentRows = (await env.DB.prepare(
-    `SELECT payload FROM outbox WHERE event_id = ? AND kind = 'sub_call' AND created_at >= ?`
+    // A cancelled invite was never delivered: it does not count as recent.
+    `SELECT payload FROM outbox WHERE event_id = ? AND kind = 'sub_call' AND created_at >= ? AND cancelled = 0`
   ).bind(ev.id, windowStart).all()).results || [];
   const recent = recentRows.some(r => {
     try { return JSON.parse(r.payload || '{}').need === need; } catch (_) { return false; }
