@@ -1301,6 +1301,58 @@ export async function handleLeagueEventUpdateReminders(req, env) {
  * Editable date support is a separate, later task -- see this route's
  * own frontend (handleLeagueEventDetailPage) for the read-only date note.
  */
+// A matchup from a request body: both blank clears it, one alone is
+// refused, and both must be real, different teams of the season.
+function resolveMatchupInput(cfg, body) {
+  const newHome = String(body.home_team || '').trim();
+  const newAway = String(body.away_team || '').trim();
+  if (!newHome && !newAway) return { homeTeam: null, awayTeam: null };
+  if (!newHome || !newAway) return { error: { ok: false, error: 'Both home_team and away_team are required to set a matchup.', errorKey: 'MATCHUP_TEAMS_REQUIRED' } };
+  if (newHome === newAway) return { error: { ok: false, error: 'home_team and away_team must be different.', errorKey: 'MATCHUP_TEAMS_SAME' } };
+  const validTeams = getTeamNames(cfg);
+  if (!validTeams.includes(newHome) || !validTeams.includes(newAway)) {
+    return { error: { ok: false, error: 'home_team and away_team must be real teams in this season.', errorKey: 'MATCHUP_TEAM_UNKNOWN' } };
+  }
+  return { homeTeam: newHome, awayTeam: newAway };
+}
+
+/* ---------- POST /league/events/matchup ----------
+ * One game's matchup, changed in place from the Schedule list -- without
+ * regenerating (which rewrites every matchup) and without touching the
+ * game's time or venue (/league/events/update writes those too). Fixed
+ * teams, regular-season games only: playoff games are seeded from results.
+ */
+export async function handleLeagueEventMatchupUpdate(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const url = new URL(req.url);
+  const body = await req.json().catch(() => ({}));
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    return Response.json({ ok: false, error: 'This route cannot update events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
+  }
+  const eventId = String(body.event_id || '').trim();
+  const existing = eventId ? await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first() : null;
+  if (!existing) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  const cfg = await getLeagueSeasonConfig(env, leagueId, existing.season);
+  if ((cfg.teamStructure || 'fixed') !== 'fixed') {
+    return Response.json({ ok: false, error: 'This is only offered for fixed-teams leagues.', errorKey: 'FIXTURE_REQUIRES_FIXED_TEAMS' }, { status: 409 });
+  }
+  if (existing.is_playoff) {
+    return Response.json({ ok: false, error: 'Playoff matchups are set automatically from results.', errorKey: 'MATCHUP_PLAYOFF_AUTOMATIC' }, { status: 409 });
+  }
+  const m = resolveMatchupInput(cfg, body);
+  if (m.error) return Response.json(m.error, { status: 400 });
+  await env.DB.prepare('UPDATE events SET home_team = ?, away_team = ? WHERE id = ? AND league_id = ?').bind(m.homeTeam, m.awayTeam, eventId, leagueId).run();
+  return Response.json({ ok: true, event: { id: eventId, home_team: m.homeTeam, away_team: m.awayTeam } });
+}
+
 export async function handleLeagueEventUpdate(req, env) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
@@ -1380,21 +1432,9 @@ export async function handleLeagueEventUpdate(req, env) {
   const cfgForStructure = await getLeagueSeasonConfig(env, leagueId, existing.season);
   const isFixedEvent = (cfgForStructure.teamStructure || 'fixed') === 'fixed';
   if (isFixedEvent && (body.home_team !== undefined || body.away_team !== undefined)) {
-    const newHome = String(body.home_team || '').trim();
-    const newAway = String(body.away_team || '').trim();
-    if (!newHome && !newAway) {
-      homeTeam = null; awayTeam = null;
-    } else if (!newHome || !newAway) {
-      return Response.json({ ok: false, error: 'Both home_team and away_team are required to set a matchup.', errorKey: 'MATCHUP_TEAMS_REQUIRED' }, { status: 400 });
-    } else if (newHome === newAway) {
-      return Response.json({ ok: false, error: 'home_team and away_team must be different.', errorKey: 'MATCHUP_TEAMS_SAME' }, { status: 400 });
-    } else {
-      const validTeams = getTeamNames(cfgForStructure);
-      if (!validTeams.includes(newHome) || !validTeams.includes(newAway)) {
-        return Response.json({ ok: false, error: 'home_team and away_team must be real teams in this season.', errorKey: 'MATCHUP_TEAM_UNKNOWN' }, { status: 400 });
-      }
-      homeTeam = newHome; awayTeam = newAway;
-    }
+    const m = resolveMatchupInput(cfgForStructure, body);
+    if (m.error) return Response.json(m.error, { status: 400 });
+    homeTeam = m.homeTeam; awayTeam = m.awayTeam;
   }
 
   await env.DB.prepare(
@@ -2233,6 +2273,321 @@ export function buildMatchupAssignmentPlan(events, teams, mode) {
   return { plan, byeNotes };
 }
 
+/* ---------- night-aware matchups (league product only) ----------
+ * buildMatchupAssignmentPlan (above) walks the events one by one through
+ * the round-robin cycle, blind to nights: with 3 teams and two games a
+ * night, whichever team the cycle happened to put in both of a night's
+ * games played twice, and nothing said so (Oct 7: White-Red then
+ * Red-Blue). The regular season is now planned NIGHT BY NIGHT
+ * (planNightAwareMatchups), with the slot structure deciding which case
+ * applies (classifyNight):
+ *   avoidable         nobody needs two games in a night -> nobody gets two
+ *   partly_avoidable  someone must play more than the others that night ->
+ *                     who it is rotates evenly over the season
+ *   unavoidable       every team plays the same k >= 2 times every night
+ *                     (SMBHL's shape: 4 slots, 2 concurrent pairs, 4
+ *                     teams) -> nothing to balance, nothing to warn
+ * A team with two games in a night gets them back to back (consecutive
+ * time slots), never two games at the same time.
+ *
+ * Lives here, in the league product's layer. generateRoundRobinRounds
+ * (season_config.js, shared with SMBHL's season hub) is NOT changed: it is
+ * only read, as the tie-break order between equally-played pairs, so a
+ * league still gets the classic round-robin order where nothing else
+ * decides. SMBHL never calls anything below.
+ */
+const pairKey = (a, b) => (a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`);
+
+// Events grouped into nights (same date), each night's slots in time
+// order; slots at the same start time are concurrent (one time group).
+export function groupNights(events) {
+  const byDate = new Map();
+  for (const ev of events) {
+    const d = ev.date || '';
+    if (!byDate.has(d)) byDate.set(d, []);
+    byDate.get(d).push(ev);
+  }
+  return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, evs]) => {
+    const sorted = [...evs].sort((x, y) => (x.start_time || '99:99').localeCompare(y.start_time || '99:99') || String(x.id).localeCompare(String(y.id)));
+    const timeOf = e => e.start_time || `none:${e.id}`;
+    const times = [...new Set(sorted.map(timeOf))];
+    return { date, events: sorted, groupOf: sorted.map(e => times.indexOf(timeOf(e))) };
+  });
+}
+
+// Which case a night is, from its slot count and the team count alone.
+export function classifyNight(slots, teamCount) {
+  const appearances = 2 * slots;
+  const base = Math.floor(appearances / teamCount);
+  const extra = appearances % teamCount;
+  if (base >= 2 && extra === 0) return { kind: 'unavoidable', base, extra };
+  if (base === 0 || (base === 1 && extra === 0)) return { kind: 'avoidable', base, extra };
+  return { kind: 'partly_avoidable', base, extra };
+}
+
+// `count` games whose team appearances match `need` exactly, preferring
+// the least-played pairs (then the round-robin's own order). A pair twice
+// in one night only if nothing else fits.
+function chooseNightEdges(teams, need, count, pairs, cycleIndex, allowRepeat = false) {
+  const n = { ...need };
+  const used = new Map();
+  const out = [];
+  let budget = 20000;
+  const cost = k => (pairs.get(k) || 0) + (used.get(k) || 0) * 100;
+  const rec = () => {
+    if (out.length === count) return teams.every(t => n[t] === 0);
+    if (--budget < 0) return false;
+    const a = teams.filter(t => n[t] > 0).sort((x, y) => n[y] - n[x] || teams.indexOf(x) - teams.indexOf(y))[0];
+    if (!a) return false;
+    const partners = teams.filter(b => b !== a && n[b] > 0 && (allowRepeat || !used.get(pairKey(a, b))))
+      .sort((x, y) => cost(pairKey(a, x)) - cost(pairKey(a, y)) || (cycleIndex.get(pairKey(a, x)) ?? 0) - (cycleIndex.get(pairKey(a, y)) ?? 0));
+    for (const b of partners) {
+      const k = pairKey(a, b);
+      n[a]--; n[b]--; used.set(k, (used.get(k) || 0) + 1); out.push([a, b]);
+      if (rec()) return true;
+      out.pop(); used.set(k, used.get(k) - 1); n[a]++; n[b]++;
+    }
+    return false;
+  };
+  if (rec()) return out;
+  return allowRepeat ? null : chooseNightEdges(teams, need, count, pairs, cycleIndex, true);
+}
+
+const lexLess = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; };
+
+// The k-team subsets of `teams`, in order, at most `limit` of them.
+function teamCombinations(teams, k, limit) {
+  const out = [];
+  const rec = (start, acc) => {
+    if (out.length >= limit) return;
+    if (acc.length === k) { out.push(acc.slice()); return; }
+    for (let i = start; i < teams.length; i++) { acc.push(teams[i]); rec(i + 1, acc); acc.pop(); }
+  };
+  rec(0, []);
+  return out;
+}
+
+// Puts a night's games into its slots: no team in two games at the same
+// time, and a team's games back to back (no empty time slot between them).
+function scoreNightOrder(slotTeams, groupOf) {
+  const byTeam = new Map();
+  slotTeams.forEach((pair, i) => { if (!pair) return; for (const t of pair) { if (!byTeam.has(t)) byTeam.set(t, []); byTeam.get(t).push(groupOf[i]); } });
+  let clash = 0, gap = 0;
+  for (const gs of byTeam.values()) {
+    const distinct = new Set(gs);
+    clash += gs.length - distinct.size;
+    gap += (Math.max(...gs) - Math.min(...gs) + 1) - distinct.size;
+  }
+  return clash * 1000 + gap * 10;
+}
+function orderNightEdges(night, fixedIdx, freeIdx, edges) {
+  const base = night.events.map((ev, i) => (fixedIdx.includes(i) ? [ev.home_team, ev.away_team] : null));
+  const place = perm => { const s = base.slice(); perm.forEach((e, j) => { s[freeIdx[j]] = e; }); return s; };
+  if (edges.length > 7) return place(edges);
+  let best = null, bestScore = Infinity;
+  const permute = (arr, k) => {
+    if (k === arr.length) {
+      const s = place(arr); const sc = scoreNightOrder(s, night.groupOf);
+      if (sc < bestScore) { bestScore = sc; best = s; }
+      return;
+    }
+    for (let i = k; i < arr.length && bestScore > 0; i++) {
+      [arr[k], arr[i]] = [arr[i], arr[k]]; permute(arr, k + 1); [arr[k], arr[i]] = [arr[i], arr[k]];
+    }
+  };
+  permute(edges.slice(), 0);
+  return best || place(edges);
+}
+
+// The regular season's plan, one entry per event (same shape as
+// buildMatchupAssignmentPlan's): chronological `events`, the league's
+// teams, and 'fill_blanks' (an assigned game is kept, and counts toward
+// the balance) or 'regenerate'.
+export function planNightAwareMatchups(events, teams, mode) {
+  const cycle = generateRoundRobinRounds(teams);
+  const cycleIndex = new Map(), cycleHome = new Map();
+  cycle.flat().forEach((p, i) => { const k = pairKey(p.home, p.away); if (!cycleIndex.has(k)) { cycleIndex.set(k, i); cycleHome.set(k, p.home); } });
+  const T = teams.length;
+  const games = Object.fromEntries(teams.map(t => [t, 0]));
+  const homes = Object.fromEntries(teams.map(t => [t, 0]));
+  const extraNights = Object.fromEntries(teams.map(t => [t, 0]));
+  const pairs = new Map();
+  const assigned = new Map(); // eventId -> [home, away]
+  for (const night of groupNights(events)) {
+    const cls = classifyNight(night.events.length, T);
+    const fixedIdx = [], freeIdx = [];
+    night.events.forEach((ev, i) => {
+      const keep = mode !== 'regenerate' && ev.home_team && ev.away_team && teams.includes(ev.home_team) && teams.includes(ev.away_team);
+      (keep ? fixedIdx : freeIdx).push(i);
+    });
+    const fixedApp = Object.fromEntries(teams.map(t => [t, 0]));
+    for (const i of fixedIdx) { fixedApp[night.events[i].home_team]++; fixedApp[night.events[i].away_team]++; }
+    // Who takes the extra game(s) tonight, chosen together with the pairs:
+    // every way of handing them out is tried, and the fairest wins --
+    // on a light night (not everyone plays) the teams with the fewest games
+    // so far; when someone must play more, the teams that have had to the
+    // fewest times -- then the least-played pairs.
+    const want = 2 * freeIdx.length;
+    const needFor = extraSet => {
+      const need = Object.fromEntries(teams.map(t => [t, Math.max(0, cls.base + (extraSet.has(t) ? 1 : 0) - fixedApp[t])]));
+      let total = teams.reduce((a, t) => a + need[t], 0);
+      while (total > want) { const t = teams.filter(x => need[x] > 0).sort((a, b) => games[b] - games[a] || extraNights[b] - extraNights[a])[0]; need[t]--; total--; }
+      while (total < want) { const t = [...teams].sort((a, b) => (need[a] + fixedApp[a]) - (need[b] + fixedApp[b]) || games[a] - games[b])[0]; need[t]++; total++; }
+      return need;
+    };
+    let edges = null, bestKey = null;
+    if (freeIdx.length) {
+      for (const combo of teamCombinations(teams, cls.extra, 300)) {
+        const extraSet = new Set(combo);
+        const e = chooseNightEdges(teams, needFor(extraSet), freeIdx.length, pairs, cycleIndex);
+        if (!e) continue;
+        const pairSum = e.reduce((a, [x, y]) => a + (pairs.get(pairKey(x, y)) || 0), 0);
+        const gameSum = combo.reduce((a, t) => a + games[t], 0);
+        const turnSum = combo.reduce((a, t) => a + extraNights[t], 0);
+        const key = cls.base === 0 ? [gameSum, pairSum, turnSum] : [turnSum, pairSum, gameSum];
+        if (!bestKey || lexLess(key, bestKey)) { bestKey = key; edges = e; }
+      }
+    } else edges = [];
+    if (!edges) {
+      // Cannot meet the quotas exactly (only when kept games force it):
+      // least-played pairs, in order.
+      edges = [...cycleIndex.keys()].sort((a, b) => (pairs.get(a) || 0) - (pairs.get(b) || 0) || cycleIndex.get(a) - cycleIndex.get(b))
+        .slice(0, freeIdx.length).map(k => k.split('\u0000'));
+      while (edges.length < freeIdx.length) edges.push(edges[edges.length % Math.max(1, edges.length)] || [teams[0], teams[1]]);
+    }
+    const slots = orderNightEdges(night, fixedIdx, freeIdx, edges);
+    const tonight = Object.fromEntries(teams.map(t => [t, 0]));
+    slots.forEach((pair, i) => {
+      const ev = night.events[i];
+      let home, away;
+      if (fixedIdx.includes(i)) { [home, away] = pair; }
+      else {
+        const [a, b] = pair; const k = pairKey(a, b);
+        if (homes[a] !== homes[b]) [home, away] = homes[a] < homes[b] ? [a, b] : [b, a];
+        else { const h = cycleHome.get(k) || a; const flip = (pairs.get(k) || 0) % 2 === 1; home = flip ? (h === a ? b : a) : h; away = home === a ? b : a; }
+      }
+      assigned.set(ev.id, [home, away]);
+      games[home]++; games[away]++; homes[home]++; tonight[home]++; tonight[away]++;
+      const k = pairKey(home, away); pairs.set(k, (pairs.get(k) || 0) + 1);
+    });
+    if (cls.base >= 1 && cls.extra > 0) for (const t of teams) if (tonight[t] > cls.base) extraNights[t]++;
+  }
+  // Rounds, for the preview's headings and the bye notes: consecutive
+  // games in which no team repeats, at most floor(T/2) of them.
+  const perRound = Math.max(1, Math.floor(T / 2));
+  const plan = [];
+  const byeNotes = [];
+  let round = 1, inRound = new Set(), count = 0;
+  const closeRound = () => {
+    if (T % 2 === 1 && count === perRound) {
+      const sitting = teams.filter(t => !inRound.has(t));
+      if (sitting.length === 1) byeNotes.push({ round, team: sitting[0] });
+    }
+  };
+  for (const ev of events) {
+    const [home, away] = assigned.get(ev.id);
+    if (inRound.has(home) || inRound.has(away) || count >= perRound) { closeRound(); round++; inRound = new Set(); count = 0; }
+    inRound.add(home); inRound.add(away); count++;
+    const alreadyAssigned = !!(ev.home_team && ev.away_team);
+    plan.push({ eventId: ev.id, date: ev.date, round, home, away, alreadyAssigned, willWrite: mode === 'regenerate' || !alreadyAssigned });
+  }
+  closeRound();
+  return { plan, byeNotes };
+}
+
+// What a schedule gives each team, and which case its nights are: for the
+// preview (from the plan) and the Schedule page (from what is stored,
+// including matchups edited by hand). `games`: [{ date, start_time, id,
+// home_team, away_team }] of the regular season; slots without a matchup
+// count toward a night's size but give nobody a game.
+export function computeMatchupDistribution(games, teams) {
+  const T = teams.length;
+  const teamRows = Object.fromEntries(teams.map(t => [t, { team: t, games: 0, doubleNights: 0 }]));
+  const counts = { avoidable: 0, partly_avoidable: 0, unavoidable: 0 };
+  const slotSizes = new Set();
+  const warnings = [];
+  let unavoidableK = null;
+  for (const night of groupNights(games)) {
+    const cls = classifyNight(night.events.length, T);
+    counts[cls.kind]++;
+    slotSizes.add(night.events.length);
+    if (cls.kind === 'unavoidable') unavoidableK = cls.base;
+    const groupsByTeam = new Map();
+    night.events.forEach((ev, i) => {
+      if (!ev.home_team || !ev.away_team) return;
+      for (const t of [ev.home_team, ev.away_team]) {
+        if (!teamRows[t]) continue;
+        teamRows[t].games++;
+        if (!groupsByTeam.has(t)) groupsByTeam.set(t, []);
+        groupsByTeam.get(t).push(night.groupOf[i]);
+      }
+    });
+    for (const [t, gs] of groupsByTeam) {
+      if (gs.length < 2) continue;
+      teamRows[t].doubleNights++;
+      const distinct = new Set(gs);
+      if (distinct.size < gs.length) warnings.push({ kind: 'clash', team: t, date: night.date });
+      else if (Math.max(...gs) - Math.min(...gs) + 1 > distinct.size) warnings.push({ kind: 'gap', team: t, date: night.date });
+      if (cls.kind === 'avoidable') warnings.push({ kind: 'unneeded', team: t, date: night.date });
+    }
+  }
+  const kinds = Object.keys(counts).filter(k => counts[k] > 0);
+  const nights = counts.avoidable + counts.partly_avoidable + counts.unavoidable;
+  const uniform = slotSizes.size === 1;
+  const kase = !nights ? null : kinds.length === 1 && uniform ? kinds[0] : 'mixed';
+  return {
+    case: kase, nights: counts, teamCount: T,
+    slotsPerNight: uniform && nights ? [...slotSizes][0] : null,
+    gamesPerTeamPerNight: kase === 'unavoidable' ? unavoidableK : null,
+    teams: teams.map(t => teamRows[t]),
+    warnings
+  };
+}
+
+// The distribution in words, both languages -- the one copy of these
+// sentences, used by the preview (client) and the Schedule page (server).
+// Warnings are grouped per team and kind, with the nights they happen.
+export function describeMatchupDistribution(dist) {
+  if (!dist || !dist.case) return null;
+  const s = dist.slotsPerNight, t = dist.teamCount, n = dist.nights;
+  let summary;
+  if (dist.case === 'avoidable') {
+    const clean = !dist.warnings.some(w => w.kind === 'unneeded');
+    summary = {
+      fr: "Personne n'a besoin de jouer deux fois le même soir." + (clean ? ' Personne ne le fait.' : ''),
+      en: 'Nobody needs to play twice in a night.' + (clean ? ' Nobody does.' : '')
+    };
+  } else if (dist.case === 'partly_avoidable') {
+    summary = {
+      fr: `Avec ${s} matchs par soir et ${t} équipes, certaines équipes doivent jouer plus que les autres chaque soir : c'est réparti également sur la saison.`,
+      en: `With ${s} games a night and ${t} teams, some teams must play more than the others every night: this is shared evenly over the season.`
+    };
+  } else if (dist.case === 'unavoidable') {
+    summary = {
+      fr: `Avec ${s} matchs par soir et ${t} équipes, chaque équipe joue ${dist.gamesPerTeamPerNight} fois chaque soir : rien à équilibrer.`,
+      en: `With ${s} games a night and ${t} teams, every team plays ${dist.gamesPerTeamPerNight} times every night: nothing to balance.`
+    };
+  } else {
+    summary = {
+      fr: `Les soirs n'ont pas tous la même structure : ${n.avoidable} soir(s) où personne n'a besoin de jouer deux fois, ${n.partly_avoidable} où il faut répartir des matchs en plus, ${n.unavoidable} où chaque équipe joue plusieurs fois.`,
+      en: `Not every night has the same structure: ${n.avoidable} night(s) where nobody needs to play twice, ${n.partly_avoidable} where extra games must be shared out, ${n.unavoidable} where every team plays more than once.`
+    };
+  }
+  const grouped = new Map();
+  for (const w of dist.warnings) {
+    const k = `${w.kind}\u0000${w.team}`;
+    if (!grouped.has(k)) grouped.set(k, { kind: w.kind, team: w.team, dates: [] });
+    grouped.get(k).dates.push(w.date);
+  }
+  const when = dates => dates.slice(0, 4).join(', ') + (dates.length > 4 ? ` (+${dates.length - 4})` : '');
+  const warnings = [...grouped.values()].map(w => w.kind === 'clash'
+    ? { fr: `${w.team} a deux matchs à la même heure : ${when(w.dates)}.`, en: `${w.team} has two games at the same time: ${when(w.dates)}.` }
+    : w.kind === 'gap'
+      ? { fr: `${w.team} attend entre ses matchs : ${when(w.dates)}.`, en: `${w.team} has a wait between its games: ${when(w.dates)}.` }
+      : { fr: `${w.team} joue deux fois alors que ce n'est pas nécessaire : ${when(w.dates)}.`, en: `${w.team} plays twice though nobody needs to: ${when(w.dates)}.` });
+  return { summary, warnings };
+}
+
 async function handleSeasonAssignmentRequest(req, env, { write }) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
@@ -2262,11 +2617,11 @@ async function handleSeasonAssignmentRequest(req, env, { write }) {
   }
   const planResult = buildSeasonAssignmentPlan(events, teams, playoffConfig, mode);
   if (planResult.error) return Response.json(planResult.error, { status: 409 });
-  const { regularPlan, playoffPlan, byeNotes, byeSeeds, arithmetic } = planResult.value;
+  const { regularPlan, playoffPlan, byeNotes, byeSeeds, arithmetic, distribution } = planResult.value;
   const alreadyAssignedCount = regularPlan.filter(p => p.alreadyAssigned).length + playoffPlan.filter(p => p.alreadyAssigned).length;
 
   if (!write) {
-    return Response.json({ ok: true, league_id: leagueId, mode, teams, regularPlan, playoffPlan, byeNotes, byeSeeds, arithmetic, alreadyAssignedCount, eventCount: events.length });
+    return Response.json({ ok: true, league_id: leagueId, mode, teams, regularPlan, playoffPlan, byeNotes, byeSeeds, arithmetic, distribution, alreadyAssignedCount, eventCount: events.length });
   }
 
   // Two-step confirm gate for the destructive path -- same posture as
@@ -2306,7 +2661,7 @@ async function handleSeasonAssignmentRequest(req, env, { write }) {
   return Response.json({
     ok: true, league_id: leagueId, mode, updatedCount,
     skippedCount: regularPlan.length + playoffPlan.length - updatedCount,
-    byeNotes, byeSeeds, arithmetic
+    byeNotes, byeSeeds, arithmetic, distribution
   });
 }
 
@@ -2712,8 +3067,14 @@ export function buildSeasonAssignmentPlan(events, teams, playoffConfig, mode) {
   const regularEvents = events.slice(0, regularSlots);
   const playoffEvents = events.slice(regularSlots);
 
-  const { plan: regularPlanRaw, byeNotes } = buildMatchupAssignmentPlan(regularEvents, teams, mode);
+  // Night by night (planNightAwareMatchups): the slot structure decides
+  // whether anyone plays twice in a night, and who.
+  const { plan: regularPlanRaw, byeNotes } = planNightAwareMatchups(regularEvents, teams, mode);
   const regularPlan = regularPlanRaw.map(p => ({ ...p, kind: 'regular' }));
+  const byId = new Map(regularEvents.map(ev => [ev.id, ev]));
+  const distribution = computeMatchupDistribution(
+    regularPlan.map(p => ({ ...byId.get(p.eventId), home_team: p.home, away_team: p.away })), teams);
+  distribution.text = describeMatchupDistribution(distribution);
 
   let playoffGroups = [];
   let byeSeeds = [];
@@ -2742,7 +3103,7 @@ export function buildSeasonAssignmentPlan(events, teams, playoffConfig, mode) {
 
   return {
     value: {
-      regularPlan, playoffPlan, byeNotes, byeSeeds,
+      regularPlan, playoffPlan, byeNotes, byeSeeds, distribution,
       arithmetic: {
         totalSlots, playoffSlots, regularSlots, gamesPerCycle,
         regularSeasonFullRounds, regularSeasonPartialRoundGames

@@ -11,7 +11,7 @@ import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, e
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -8182,6 +8182,11 @@ async function handleLeagueSchedulePage(req, env, url) {
   // A structure with no matchups (pickup, no teams) never gets the
   // matchups step (showMatchupsPanel is fixed-teams only).
   const scheduleSeasonGames = needsSeason ? [] : events.filter(ev => ev.season === leagueData.current_season && ev.state !== 'cancelled' && !ev.is_playoff);
+  // How the matchups on the calendar fall per team -- after generating,
+  // and after any single matchup edited by hand (fixed teams only).
+  const scheduleDistribution = showMatchupsPanel && scheduleSeasonGames.some(ev => ev.home_team && ev.away_team)
+    ? computeMatchupDistribution(scheduleSeasonGames, scheduleTeamNames) : null;
+  const scheduleDistributionText = scheduleDistribution ? describeMatchupDistribution(scheduleDistribution) : null;
   const scheduleNextStep = !scheduleSeasonGames.length ? null
     : (showMatchupsPanel && scheduleSeasonGames.some(ev => !ev.home_team || !ev.away_team)) ? 'matchups'
     : scheduleActivePlayerCount === 0 ? 'players'
@@ -8222,6 +8227,10 @@ async function handleLeagueSchedulePage(req, env, url) {
       scheduleNudgeBtn: 'Ajouter des joueurs',
       matchupsNudgeTitle: 'Assigne les affrontements.',
       matchupsNudgeDesc: "Choisis qui joue contre qui dans chacun de tes matchs. Tu vois l'aperçu avant de confirmer ; aucun match n'est créé.",
+      // How the generated matchups fall per team (computeMatchupDistribution),
+      // and a single matchup changed in place.
+      distTitle: 'Répartition des matchs', distColTeam: 'Équipe', distColGames: 'Matchs', distColDoubles: 'Soirs à deux matchs ou plus',
+      editMatchupBtn: "Modifier l'affrontement", setMatchupBtn: "Choisir l'affrontement", matchupSaveBtn: 'Enregistrer',
       goToDashboard: 'Aller au tableau de bord',
       bulkCreateBtn: 'Créer plusieurs matchs', bulkCreateTitle: 'Créer plusieurs matchs',
       bulkCreateHelp: 'Crée une série de matchs chaque semaine, même heure et même lieu.',
@@ -8310,6 +8319,8 @@ async function handleLeagueSchedulePage(req, env, url) {
       scheduleNudgeBtn: 'Add players',
       matchupsNudgeTitle: 'Assign matchups.',
       matchupsNudgeDesc: 'Choose who plays whom in each of your games. You see a preview before confirming; no game is created.',
+      distTitle: 'Game distribution', distColTeam: 'Team', distColGames: 'Games', distColDoubles: 'Nights with two or more games',
+      editMatchupBtn: 'Edit matchup', setMatchupBtn: 'Set matchup', matchupSaveBtn: 'Save',
       goToDashboard: 'Go to dashboard',
       bulkCreateBtn: 'Create multiple events', bulkCreateTitle: 'Create multiple events',
       bulkCreateHelp: 'Create a weekly series of events, same time and venue each week.',
@@ -8362,6 +8373,14 @@ async function handleLeagueSchedulePage(req, env, url) {
       </a>
       <div class="sc-dup-wrap">
         ${resolveEventMapLink(ev, venueMapLinks) ? `<a class="nl-help" href="${esc(resolveEventMapLink(ev, venueMapLinks))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}
+        ${!needsSeason && showMatchupsPanel && !ev.is_playoff ? `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="${ev.home_team && ev.away_team ? 'editMatchupBtn' : 'setMatchupBtn'}" onclick="toggleMatchupEdit('${esc(ev.id)}')">${ev.home_team && ev.away_team ? "Modifier l'affrontement" : "Choisir l'affrontement"}</button>
+        <div class="sc-dup-inline sc-mx-edit" id="mx_edit_${esc(ev.id)}" style="display:none;">
+          <select class="nl-select" id="mx_home_${esc(ev.id)}" data-i18n-aria="matchupTeam1" aria-label="Équipe 1">${scheduleTeamNames.map(t => `<option value="${esc(t)}"${ev.home_team === t ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>
+          <span data-i18n="matchupVsWord">contre</span>
+          <select class="nl-select" id="mx_away_${esc(ev.id)}" data-i18n-aria="matchupTeam2" aria-label="Équipe 2">${scheduleTeamNames.map((t, i) => `<option value="${esc(t)}"${(ev.away_team ? ev.away_team === t : i === 1) ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>
+          <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" onclick="saveMatchup('${esc(ev.id)}')" data-i18n="matchupSaveBtn">Enregistrer</button>
+          <p class="nl-error" id="mx_err_${esc(ev.id)}" style="display:none;margin:0;"></p>
+        </div>` : ''}
         ${needsSeason ? '' : `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="duplicateBtn" onclick="toggleDuplicateRow('${esc(ev.id)}')">Dupliquer</button>
         <div class="sc-dup-inline" id="dup_${esc(ev.id)}" style="display:none;">
           <input type="date" class="nl-input" id="dup_date_${esc(ev.id)}">
@@ -8434,6 +8453,12 @@ async function handleLeagueSchedulePage(req, env, url) {
   .nl a.sc-game { flex: 1 1 auto; padding: var(--space-3) var(--space-4); text-decoration: none; color: inherit; }
   .sc-dup-wrap { padding: var(--space-3) var(--space-4) var(--space-3) 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .sc-dup-inline { display: flex; gap: 8px; align-items: center; }
+  .sc-mx-edit { flex-wrap: wrap; }
+  .sc-mx-edit .nl-select { width: auto; min-width: 7em; }
+  .sc-dist-table { overflow-x: auto; margin-top: var(--space-3); }
+  .sc-dist-table table { border-collapse: collapse; min-width: 320px; }
+  .sc-dist-table th, .sc-dist-table td { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .sc-dist-warn { margin: 8px 0 0; padding-left: 20px; color: var(--danger, #b3122e); font-size: 14px; }
   .sc-bulk-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); display: none; flex-direction: column; gap: var(--space-4); width: 100%; max-width: 640px; margin: 0 auto; }
   .sc-bulk-panel.open { display: flex; }
   .sc-bulk-panel h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
@@ -8465,6 +8490,15 @@ async function handleLeagueSchedulePage(req, env, url) {
     <h2 data-i18n="scheduleNudgeTitle">Ajoute tes joueurs.</h2>
     <p class="nl-help" data-i18n="scheduleNudgeDesc">Tes matchs sont créés. Ajoute tes joueurs pour qu'ils puissent commencer à répondre.</p>
     <div style="margin-top:var(--space-2)"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/roster" data-i18n="scheduleNudgeBtn">Ajouter des joueurs</a></div>
+  </section>` : ''}
+  ${scheduleDistributionText ? `<section class="nl-card" id="sc_distribution">
+    <h2 class="h3" data-i18n="distTitle">Répartition des matchs</h2>
+    <p class="nl-help" data-case="${esc(scheduleDistribution.case)}" data-date-fr="${esc(scheduleDistributionText.summary.fr)}" data-date-en="${esc(scheduleDistributionText.summary.en)}">${esc(scheduleDistributionText.summary.fr)}</p>
+    ${scheduleDistributionText.warnings.length ? `<ul class="sc-dist-warn">${scheduleDistributionText.warnings.map(w => `<li data-date-fr="${esc(w.fr)}" data-date-en="${esc(w.en)}">${esc(w.fr)}</li>`).join('')}</ul>` : ''}
+    <div class="sc-dist-table"><table>
+      <thead><tr><th data-i18n="distColTeam">Équipe</th><th data-i18n="distColGames">Matchs</th><th data-i18n="distColDoubles">Soirs à deux matchs ou plus</th></tr></thead>
+      <tbody>${scheduleDistribution.teams.map(r => `<tr data-dist-team="${esc(r.team)}"><td>${esc(r.team)}</td><td class="tnum">${r.games}</td><td class="tnum">${r.doubleNights}</td></tr>`).join('')}</tbody>
+    </table></div>
   </section>` : ''}
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);">
     <div class="sc-list" id="scheduleList">${rowsHtml}</div>
@@ -8974,6 +9008,38 @@ function renderMatchupsPreview(container, data, dict) {
     container.appendChild(roundsEl);
   }
 
+  // How the generated matchups fall per team (the same words as the
+  // Schedule page's card, from the server: describeMatchupDistribution).
+  var dist = data.distribution;
+  if (dist && dist.text) {
+    var lang = window.__currentLang === 'en' ? 'en' : 'fr';
+    var distHead = document.createElement('div');
+    distHead.className = 'h3'; distHead.style.fontSize = '15px'; distHead.style.marginTop = '8px';
+    distHead.textContent = dict.distTitle || 'Game distribution';
+    container.appendChild(distHead);
+    var distSum = document.createElement('p');
+    distSum.className = 'nl-help'; distSum.id = 'mx_dist_summary';
+    distSum.textContent = dist.text.summary[lang];
+    container.appendChild(distSum);
+    dist.text.warnings.forEach(function(w) {
+      var wEl = document.createElement('p');
+      wEl.className = 'nl-help'; wEl.style.color = 'var(--danger, #b3122e)';
+      wEl.textContent = w[lang];
+      container.appendChild(wEl);
+    });
+    var tbl = document.createElement('table');
+    tbl.id = 'mx_dist_table'; tbl.style.marginTop = '4px'; tbl.style.fontSize = '14px';
+    var hr = document.createElement('tr');
+    [dict.distColTeam || 'Team', dict.distColGames || 'Games', dict.distColDoubles || 'Nights with two or more games'].forEach(function(h) { var th = document.createElement('th'); th.textContent = h; th.style.textAlign = 'left'; th.style.paddingRight = '12px'; hr.appendChild(th); });
+    tbl.appendChild(hr);
+    dist.teams.forEach(function(r) {
+      var tr = document.createElement('tr');
+      [r.team, String(r.games), String(r.doubleNights)].forEach(function(v) { var td = document.createElement('td'); td.textContent = v; td.style.paddingRight = '12px'; tr.appendChild(td); });
+      tbl.appendChild(tr);
+    });
+    container.appendChild(tbl);
+  }
+
   var byeByRound = {};
   (data.byeNotes || []).forEach(function(b) { byeByRound[b.round] = b.team; });
   var seenRounds = {};
@@ -9070,6 +9136,30 @@ async function confirmMatchups() {
     window.location.reload();
   } catch (e) {
     showMatchupsErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
+  }
+}
+// One game's matchup, changed in place (POST /league/events/matchup) --
+// no regenerating, time and venue untouched.
+function toggleMatchupEdit(eventId) {
+  var row = document.getElementById('mx_edit_' + eventId);
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+  if (row.style.display === 'flex') { var first = document.getElementById('mx_home_' + eventId); if (first) first.focus(); }
+}
+async function saveMatchup(eventId) {
+  var err = document.getElementById('mx_err_' + eventId);
+  err.style.display = 'none';
+  try {
+    var res = await fetch('/league/events/matchup', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: eventId, home_team: document.getElementById('mx_home_' + eventId).value, away_team: document.getElementById('mx_away_' + eventId).value })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; return; }
+    window.location.reload();
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block';
   }
 }
 function toggleDuplicateRow(eventId) {
@@ -27748,6 +27838,8 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueEventUpdateReminders(req, env);
       if (url.pathname === '/league/events/update' && req.method === 'POST')
         return await handleLeagueEventUpdate(req, env);
+      if (url.pathname === '/league/events/matchup' && req.method === 'POST')
+        return await handleLeagueEventMatchupUpdate(req, env);
       // Events polish task (C1): delete (genuinely removes the event --
       // mistakes/holidays) and cancel (keeps it on the record, marked
       // cancelled and visible -- a real game that isn't happening).

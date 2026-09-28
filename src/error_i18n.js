@@ -104,6 +104,11 @@ export const ERROR_I18N = {
   EVENT_NOT_FOUND: { fr: 'Match introuvable.', en: 'Event not found.' },
   GAME_NOT_STARTED: { fr: "Ce match n'a pas encore commencé. Le résultat et les statistiques s'entrent une fois le match commencé.", en: "This game hasn't started yet. The result and stats can be entered once it has." },
   EVENT_LOCKED: { fr: "Ce match n'accepte plus de changements.", en: 'This event is locked.' },
+  // The Schedule list's in-place matchup editor (/league/events/matchup).
+  MATCHUP_TEAMS_REQUIRED: { fr: 'Choisis les deux équipes.', en: 'Choose both teams.' },
+  MATCHUP_TEAMS_SAME: { fr: 'Choisis deux équipes différentes.', en: 'Choose two different teams.' },
+  MATCHUP_TEAM_UNKNOWN: { fr: "Cette équipe n'est pas dans la saison.", en: 'That team is not in this season.' },
+  MATCHUP_PLAYOFF_AUTOMATIC: { fr: 'Les affrontements des séries sont placés automatiquement selon les résultats.', en: 'Playoff matchups are set automatically from results.' },
   PLAYER_NOT_FOUND: { fr: 'Joueur introuvable.', en: 'Player not found.' },
   PLAYER_ID_REQUIRED: { fr: "L'identifiant du joueur est requis.", en: 'player_id is required.' },
   IS_ACTIVE_REQUIRED: { fr: 'is_active doit être vrai ou faux.', en: 'is_active must be true or false.' },

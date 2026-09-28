@@ -265,6 +265,21 @@ describe('Schedule', () => {
     await close();
   }, 120000);
 
+  // Item 3a (follow-up): one game's matchup, changed from its row.
+  it('Edit matchup changes that one game from the Schedule row, nothing else', async () => {
+    const ev = await h.db.prepare("SELECT id FROM events WHERE league_id = ? AND date = '2099-01-05'").bind(league.league.id).first();
+    const { page, errors, close } = await open('/league/schedule');
+    await page.click(`[onclick="toggleMatchupEdit('${ev.id}')"]`);
+    expect(await page.isVisible(`[id="mx_edit_${ev.id}"]`)).toBe(true);
+    await page.selectOption(`[id="mx_home_${ev.id}"]`, 'Bears');
+    await page.selectOption(`[id="mx_away_${ev.id}"]`, 'Otters');
+    await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click(`[id="mx_edit_${ev.id}"] [data-i18n="matchupSaveBtn"]`)]);
+    const row = await h.db.prepare('SELECT home_team, away_team, start_time FROM events WHERE id = ?').bind(ev.id).first();
+    expect(row).toEqual({ home_team: 'Bears', away_team: 'Otters', start_time: '20:30' });
+    expect(errors).toEqual([]);
+    await close();
+  }, 120000);
+
   it('Assign matchups opens its panel IN VIEW, even below a long list', async () => {
     for (let i = 0; i < 16; i++) {
       const d = new Date(Date.UTC(2099, 1, 1 + i * 7)).toISOString().slice(0, 10);
