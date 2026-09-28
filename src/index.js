@@ -10403,7 +10403,7 @@ function body(kind, { ev, name, team, link, payload, leagueCfg = null }) {
   // ("2026-09-28"), which dayNames' own regex can't match at all --
   // it silently fell through to a generic "that day"/"ce jour-là"
   // placeholder instead of any real date, in every email this shared
-  // body() builds (sub-call invites, "assigned"/"released"/"notice"
+  // body() builds (sub-call invites, "released"/"notice"
   // confirmations, shortage alerts...). Detecting the ISO shape
   // directly (not leagueCfg, which getLeagueConfig always returns as a
   // real object for both SMBHL and league events -- not a reliable
@@ -10428,7 +10428,7 @@ function body(kind, { ev, name, team, link, payload, leagueCfg = null }) {
   // genuinely reachable by league-product code among this switch's
   // cases (audited every enqueue() call site in the codebase: every
   // other kind here -- chase/gameday/friday_board/gameday_morning/
-  // notice/assigned/released/team_short/created/summary/
+  // notice/released/team_short/created/summary/
   // season_recap[_prompt] -- is enqueued only from SMBHL's own cron
   // (runSchedule) or SMBHL-only routes (teamPost, rsvpGet/rsvpPost,
   // /admin/season-recap/send), so they're intentionally left
@@ -10524,6 +10524,20 @@ NO  (Out): ${payload.no}${sign}`;
         `;
       }
 
+      // A sub's jersey line, unless the matchups already carry it.
+      let shirtText = '';
+      let shirtHtml = '';
+      if (payload && payload.isSub && team && !/Chandail|Équipement de gardien/.test(matchInfo)) {
+        const shirtFr = payload.isGoalie
+          ? "Pas besoin de chandail d'équipe. Si tu n'as pas d'équipement, la ligue en prête."
+          : `Apporte un chandail ${SHIRT_FR[team] || team.toLowerCase()}.`;
+        const shirtEn = payload.isGoalie
+          ? 'No team shirt needed. If you do not have gear, the league lends it.'
+          : `Bring a ${team.toLowerCase()} shirt.`;
+        shirtText = `\n👕 ${shirtFr}\n👕 ${shirtEn}\n`;
+        shirtHtml = `<div style="font-size:14px; margin:0 0 16px; color:#0f172a;">👕 <b>${esc(shirtFr)}</b><br><span style="color:#475569; font-size:13px;">${esc(shirtEn)}</span></div>`;
+      }
+
       let subFeeText = '';
       let subFeeHtml = '';
       if (payload && payload.subFee && payload.subFee.total > 0) {
@@ -10550,7 +10564,7 @@ NO  (Out): ${payload.no}${sign}`;
 
 Rappel : tu es confirmé(e) avec ${frTeam} pour demain, ${w.fr} !
 Reminder: you are confirmed with ${enTeam} for tomorrow, ${w.en}!
-${subFeeText}${matchInfo ? matchInfo + (matchInfoEn !== matchInfo ? matchInfoEn : '') + '\n' : ''}${msgsText}
+${shirtText}${subFeeText}${matchInfo ? matchInfo + (matchInfoEn !== matchInfo ? matchInfoEn : '') + '\n' : ''}${msgsText}
 📋 Voir l'alignement de l'équipe : ${teamUrl}
 📋 View team lineup: ${teamUrl}
 ${webUrl ? `Fiche d'équipe : ${webUrl}\nTeam page: ${webUrl}\n` : ''}
@@ -10562,7 +10576,7 @@ Je ne peux pas jouer / I can't play : ${noUrl}${sign}`;
         `<p style="font-size:16px; margin:0 0 4px; font-weight:700;">Salut <b>${esc(name)}</b> / Hi <b>${esc(name)}</b>,</p>
         <p style="font-size:16px; margin:0 0 3px; font-weight:600; color:#0f172a;">Rappel : tu es confirmé(e) avec <b>${esc(frTeam)}</b> pour demain, <b>${esc(w.fr)}</b> !</p>
         <p style="font-size:14px; margin:0 0 16px; color:#475569;">Reminder: you are confirmed with <b>${esc(enTeam)}</b> for tomorrow, <b>${esc(w.en)}</b>!</p>
-        ${subFeeHtml}
+        ${shirtHtml}${subFeeHtml}
         ${matchInfo ? `<div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:10px 14px; margin:0 0 16px; font-size:14px; white-space:pre-line;">${esc(matchInfo.trim())}${matchInfoEn !== matchInfo ? `<div style="color:#64748b; margin-top:8px;">${esc(matchInfoEn.trim())}</div>` : ''}</div>` : ''}
         ${msgsHtml}
         <div style="margin:0 0 14px;">
@@ -10728,51 +10742,6 @@ Not right? Change it: ${link}${sign}`;
           Not right? Change it:<br>
           ${emailBtn(link, '✏️ Change my status', '#17457f', '#ffffff')}
         </p>`
-      );
-
-      return { subject: subj, text, html };
-    }
-
-    case 'assigned': {
-      const goalie = (payload && (payload.need === 'goalie' || payload.is_goalie));
-      const subj = goalie
-        ? `Dans les buts pour ${tFR(team)} / In net for ${team}`
-        : `Tu joues avec ${tFR(team)} / You are with ${team}`;
-      const text = goalie ?
-`Salut ${name},
-
-Tu gardes les buts pour ${tFR(team)} ${w.fr}.
-Pas besoin de chandail d'équipe. Si tu n'as pas d'équipement, la ligue en prête.
-
-—
-
-You are in net for ${team} ${w.en}.
-No team shirt needed. If you do not have gear, the league lends it.${sign}` :
-`Salut ${name},
-
-Tu joues avec l'équipe ${tFR(team)} ${w.fr}.
-Apporte un chandail ${SHIRT_FR[team] || team.toLowerCase()}.
-
-—
-
-You are playing for ${team} ${w.en}.
-Bring a ${team.toLowerCase()} shirt.${sign}`;
-
-      const html = wrapEmail(
-        subj,
-        goalie ?
-        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
-        <p style="font-size:15px; margin:0 0 12px;">Tu gardes les buts pour <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>.</p>
-        <p style="font-size:14px; color:#64748b; margin:0 0 16px;">Pas besoin de chandail d'équipe. Si tu n'as pas d'équipement, la ligue en prête.</p>
-        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 12px; color:#334155;">You are in net for <b>${esc(team)}</b> <b>${esc(w.en)}</b>.</p>
-        <p style="font-size:14px; color:#64748b; margin:0;">No team shirt needed. If you do not have gear, the league lends it.</p>` :
-        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
-        <p style="font-size:15px; margin:0 0 12px;">Tu joues avec l'équipe <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>.</p>
-        <p style="font-size:14px; color:#64748b; margin:0 0 16px;">Apporte un chandail <b>${esc(SHIRT_FR[team] || team.toLowerCase())}</b>.</p>
-        <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 12px; color:#334155;">You are playing for <b>${esc(team)}</b> <b>${esc(w.en)}</b>.</p>
-        <p style="font-size:14px; color:#64748b; margin:0;">Bring a <b>${esc(team.toLowerCase())}</b> shirt.</p>`
       );
 
       return { subject: subj, text, html };
@@ -11231,6 +11200,11 @@ async function prepareOutboxMessage(env, m, rctx, opts = {}) {
       const phone = (pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '');
 
       if (m.kind === 'gameday') {
+        // A sub may never have played for this team: the jersey colour (or,
+        // in net, that no shirt is needed) -- what the retired "assigned"
+        // email used to say.
+        payload.isSub = isSub;
+        payload.isGoalie = !!(c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
         if (isSub) {
           const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
           const perGame = isGoalie ? Number(pricing?.price_sub_goalie || 0) : Number(pricing?.price_sub_player ?? 5);
@@ -24543,12 +24517,6 @@ async function emailsPage(env = null, isAuthed = false) {
         audience: "Substituts actifs de la réserve selon le poste requis",
         desc: "Offre de remplacement envoyée à un substitut de la liste de réserve pour combler un poste vacant."
       },
-      'assigned': {
-        label: "✅ Assignation confirmée",
-        badgeClass: "badge-pool",
-        audience: "Substitut ayant confirmé sa place",
-        desc: "Confirmation officielle envoyée au joueur avec l'équipe assignée et la couleur de chandail."
-      },
       'notice': {
         label: "🔄 Changement de présence",
         badgeClass: "badge-notice",
@@ -24664,12 +24632,6 @@ async function emailsPage(env = null, isAuthed = false) {
         badgeClass: "badge-pool",
         audience: "Active reserve subs by requested position",
         desc: "Replacement invitation dispatched to reserve pool substitute to fill a vacancy."
-      },
-      'assigned': {
-        label: "✅ Assignment Confirmed",
-        badgeClass: "badge-pool",
-        audience: "Substitute who confirmed attendance",
-        desc: "Official confirmation sent to substitute with assigned team and jersey color."
       },
       'notice': {
         label: "🔄 Attendance Changed",
