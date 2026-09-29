@@ -398,7 +398,9 @@ describe('Item 1: event page layout order', () => {
     expect(playersCardIdx).toBeLessThan(unassignedIdx);
   });
 
-  it('within the Players card: heading/badge, then the player list with IN/OUT, then counts/meter, then invite buttons', async () => {
+  // Revised 2026-09-29: the counts and progress bar come BEFORE the list
+  // ("I read nine names before finding out whether I have enough people").
+  it('within the Players card: heading/badge, then counts and meter, then the player list with IN/OUT, then invite buttons', async () => {
     const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('item1.layout.inner@example.com', '203.0.150.003', 'Item1 Layout Inner League', ['A', 'B']);
     // Tight roster requirement so an invite button genuinely renders.
     await publishSeason(cookie, csrfToken, { season_name: 'Layout Inner Season', skaters_per_team: 3, min_skaters: 1, goalies_per_team: 0 });
@@ -412,14 +414,34 @@ describe('Item 1: event page layout order', () => {
     const headingIdx = cardHtml.indexOf('class="ev-th"');
     const listIdx = cardHtml.indexOf(`setPlayerStatus('${player.player_id}'`);
     const numsIdx = cardHtml.indexOf('class="ev-nums"');
+    const meterIdx = cardHtml.indexOf('class="nl-meter"');
     const inviteIdx = cardHtml.indexOf('data-i18n="inviteSkater"');
     expect(headingIdx).toBeGreaterThan(-1);
     expect(listIdx).toBeGreaterThan(-1);
     expect(numsIdx).toBeGreaterThan(-1);
+    expect(meterIdx).toBeGreaterThan(-1);
     expect(inviteIdx).toBeGreaterThan(-1);
-    expect(headingIdx).toBeLessThan(listIdx);
-    expect(listIdx).toBeLessThan(numsIdx);
-    expect(numsIdx).toBeLessThan(inviteIdx);
+    expect(headingIdx).toBeLessThan(numsIdx);
+    expect(numsIdx).toBeLessThan(meterIdx);
+    expect(meterIdx).toBeLessThan(listIdx);
+    expect(listIdx).toBeLessThan(inviteIdx);
+  });
+
+  it('the pickup pool card (before the draw) has the same order: counts and meter above the list', async () => {
+    const { cookie, csrfToken } = await signupAndCreateWeeklyDrawLeague('item4.pool.order@example.com', '203.0.150.013', 'Item4 Pool Order League');
+    await publishSeason(cookie, csrfToken, { season_name: 'Pool Order Season' });
+    const player = await addContact(cookie, csrfToken, { name: 'Pool Order Player', email: 'poolorder@example.com' });
+    const eventId = await createEvent(cookie, csrfToken, '2099-09-05');
+    const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
+    const cardStart = html.indexOf('id="ev_pool_list"') > -1 ? html.lastIndexOf('<section', html.indexOf('id="ev_pool_list"')) : -1;
+    expect(cardStart).toBeGreaterThan(-1);
+    const cardHtml = html.slice(cardStart, html.indexOf('</section>', cardStart));
+    const numsIdx = cardHtml.indexOf('class="ev-nums"');
+    const meterIdx = cardHtml.indexOf('class="nl-meter"');
+    const listIdx = cardHtml.indexOf(`setPlayerStatus('${player.player_id}'`);
+    expect(numsIdx).toBeGreaterThan(-1);
+    expect(numsIdx).toBeLessThan(meterIdx);
+    expect(meterIdx).toBeLessThan(listIdx);
   });
 
   it('"Confirmed, not yet assigned" is entirely absent when no player has confirmed yet for this event', async () => {

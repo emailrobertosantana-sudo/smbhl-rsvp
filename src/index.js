@@ -9808,6 +9808,9 @@ ${tabbar}`;
         </div>`).join('')
       : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
 
+    // The card reads top-down: heading and badge, then the counts and
+    // progress bar (enough people or not, before any name), then the
+    // player list, then the invite buttons.
     // The badge measures against the season's MINIMUM (teamState's own
     // short): "Manque N" is how many are missing to reach it; once it is
     // reached, "Minimum atteint" while spots remain, "Complet" only at the
@@ -9824,7 +9827,6 @@ ${tabbar}`;
           ? `<span class="nl-badge nl-badge--in" data-short="0">${BADGE_ICON_CHECK}<span data-i18n="minReached">Minimum atteint</span></span>`
           : `<span class="nl-badge nl-badge--in" data-short="0">${BADGE_ICON_CHECK}<span data-i18n="complete">Complet</span></span>`}
       </div>
-      <div class="ev-ppl">${rosterListHtml}</div>
       <div class="ev-nums">
         <div><span class="stat tnum">${confirmed}</span><span data-i18n="confirmed">confirmés</span></div>
         <div><span class="stat tnum" data-open-spots>${spotsLeft}</span><span data-i18n="openSpots">places libres</span></div>
@@ -9832,6 +9834,7 @@ ${tabbar}`;
         ${isHeadcount && (cfg.goaliesPerTeam || 0) > 0 ? `<div><span class="stat tnum">${st.goalies}/${cfg.goaliesPerTeam}</span><span data-i18n="poolGoalies">gardiens confirmés</span></div>` : ''}
       </div>
       <div class="nl-meter">${Array.from({ length: meterSpots }, (_, s) => `<i class="${s < confirmed ? 'in' : 'open'}"></i>`).join('')}</div>
+      <div class="ev-ppl">${rosterListHtml}</div>
       ${inviteButtons.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${inviteButtons.join('')}</div>` : ''}
       <p class="inviteMsg nl-help" style="display:none;"></p>
     </section>`);
@@ -9884,8 +9887,8 @@ ${tabbar}`;
         </div>`).join('')
       : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
 
-    // Same badge as the team cards above: "Manque N" to the minimum,
-    // "places libres" to the maximum.
+    // Same order and badge as the team cards above: counts and bar
+    // first, "Manque N" to the minimum, "places libres" to the maximum.
     const poolMissing = pool.openGoalies + pool.openSkaters;
     const poolSpotsLeft = Math.max(0, pool.meterTarget - poolCounts.in);
     poolCardHtml = `
@@ -9898,13 +9901,13 @@ ${tabbar}`;
           ? `<span class="nl-badge nl-badge--in" data-short="0">${BADGE_ICON_CHECK}<span data-i18n="minReached">Minimum atteint</span></span>`
           : `<span class="nl-badge nl-badge--in" data-short="0">${BADGE_ICON_CHECK}<span data-i18n="complete">Complet</span></span>`}
       </div>
-      <div class="ev-ppl" id="ev_pool_list">${poolPlayerListHtml}</div>
       <div class="ev-nums">
         <div><span class="stat tnum">${poolCounts.in}</span><span data-i18n="confirmed">confirmés</span></div>
         <div><span class="stat tnum" data-open-spots>${poolSpotsLeft}</span><span data-i18n="openSpots">places libres</span></div>
         <div><span class="stat tnum">${poolCounts.pending}</span><span data-i18n="noReply">sans réponse</span></div>
       </div>
       <div class="nl-meter">${Array.from({ length: poolMeterSpots }, (_, s) => `<i class="${s < poolCounts.in ? 'in' : 'open'}"></i>`).join('')}</div>
+      <div class="ev-ppl" id="ev_pool_list">${poolPlayerListHtml}</div>
       ${poolInviteButtons.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${poolInviteButtons.join('')}</div>` : ''}
       <p class="inviteMsg nl-help" style="display:none;"></p>
     </section>`;
