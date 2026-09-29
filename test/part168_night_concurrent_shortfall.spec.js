@@ -1,6 +1,6 @@
 // D1 (nights): a no-teams night with two games at the same time. A player
-// who hasn't answered yet can play only one of them, and a yes fills the
-// first to its maximum, then the next -- so the shortfall check counts
+// who hasn't answered yet can play only one of them, and a yes goes to the
+// game with the fewest (balanced, part170) -- so the shortfall check counts
 // them that way too, instead of counting every waiting player as available
 // for both games (which hid the second game's shortage).
 import { env } from 'cloudflare:test';

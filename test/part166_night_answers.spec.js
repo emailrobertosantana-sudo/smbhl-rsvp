@@ -2,8 +2,8 @@
 // night. One answer per player per night, written to each game it covers;
 // on their own page a player can drop one game of the night, and that
 // can't put them in two games at once. Games at the same time split the
-// group -- the first filled to its maximum, then the next; games that
-// follow each other take everyone. The 12h email's "can't make it" drops
+// group evenly (revised: balanced, not filled in order -- part170); games
+// that follow each other take everyone. The 12h email's "can't make it" drops
 // the whole night.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -41,21 +41,21 @@ const inIds = async ev => (await rows("SELECT player_id FROM rsvp WHERE event_id
 const dictOf = html => JSON.parse(html.match(/var RV_I18N = (\{[\s\S]*?\});\n/)[1]);
 
 describe('No teams: games at the same time split the group, the next game takes everyone', () => {
-  it('two games at 10:30 (max 2 each) fill in order; the 11:30 game takes all five; no one is in both 10:30 games', async () => {
-    const { game, player } = await league('p166pool', { teamStructure: 'headcount', minPlayers: 1, maxPlayers: 2, minGoalies: 0 });
+  it('two games at 10:30 (max 3 each) take turns; the 11:30 game takes all five; no one is in both 10:30 games', async () => {
+    const { game, player } = await league('p166pool', { teamStructure: 'headcount', minPlayers: 1, maxPlayers: 3, minGoalies: 0 });
     const A = await game('10:30', '11:30'), B = await game('10:30', '11:30'), C = await game('11:30', '12:30');
     const ps = [];
     for (let i = 1; i <= 5; i++) ps.push(await player(`Pool Player${i}`));
     for (const p of ps) expect((await answer(p, A, 'in')).status).toBe(200);
     const id = i => ps[i].player_id;
-    expect(await inIds(A)).toEqual([id(0), id(1), id(4)].sort()); // 1 and 2 fill A; 5 finds both full and goes to the emptier (a tie: the first)
-    expect(await inIds(B)).toEqual([id(2), id(3)].sort());
+    expect(await inIds(A)).toEqual([id(0), id(2), id(4)].sort()); // a tie goes to the first game
+    expect(await inIds(B)).toEqual([id(1), id(3)].sort());
     expect(await inIds(C)).toEqual(ps.map(p => p.player_id).sort());
     for (const p of ps) expect([await statusOf(A, p), await statusOf(B, p)].sort()).toEqual(['elsewhere', 'in']);
     // Answering again changes nothing.
-    await answer(ps[2], C, 'in');
-    expect(await statusOf(B, ps[2])).toBe('in');
-    expect(await statusOf(A, ps[2])).toBe('elsewhere');
+    await answer(ps[1], C, 'in');
+    expect(await statusOf(B, ps[1])).toBe('in');
+    expect(await statusOf(A, ps[1])).toBe('elsewhere');
   });
 
   it('one answer, from any game\'s link, is the night\'s: "can\'t make it" is written to every game', async () => {
@@ -142,8 +142,8 @@ describe('The player\'s own page: the night, and one game dropped', () => {
     expect([await statusOf(A, p), await statusOf(B, p)]).toEqual(['in', 'elsewhere']);
     let html = await page(p, A);
     expect(html).toContain('data-game-state="other"');
-    expect(dictOf(html).en.nightNoteConcurrent).toBe('Some games are at the same time: we fill the first one, then the next.');
-    expect(dictOf(html).fr.nightNoteConcurrent).toBe('Des matchs se jouent en même temps : on remplit le premier, puis le suivant.');
+    expect(dictOf(html).en.nightNoteConcurrent).toBe('Some games are at the same time: we spread players evenly across them.');
+    expect(dictOf(html).fr.nightNoteConcurrent).toBe('Des matchs se jouent en même temps : on répartit les joueurs également entre eux.');
     expect(dictOf(html).fr.nightNotePool).toBe('Ta réponse vaut pour la soirée : tu es disponible, et on te place dans les matchs où il y a de la place.');
     expect(dictOf(html).en.nightNotePool).toBe("Your answer is for the night: you're available, and we place you in the games that have room.");
     const r = await gameAnswer(p, A, B, 'in');

@@ -9586,7 +9586,7 @@ ${tabbar}`;
       confirmed: 'confirmés', openSpots: 'places libres', noReply: 'sans réponse',
       inviteGoalie: 'Inviter un gardien', inviteSkater: 'Inviter des joueurs',
       noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.',
-      statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu', statusElsewhere: "Joue l'autre match",
+      statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu', statusElsewhere: "Joue l'autre match", statusWaitlist: "Liste d'attente",
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Envoyer un rappel maintenant',
       remindersEnabledLabel: 'Rappels automatiques pour ce match',
@@ -9667,7 +9667,7 @@ ${tabbar}`;
       confirmed: 'confirmed', openSpots: 'open spots', noReply: 'no reply',
       inviteGoalie: 'Invite a goalie', inviteSkater: 'Invite players',
       noPlayersOnTeam: 'No players assigned to this team.',
-      statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply', statusElsewhere: 'In the other game',
+      statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply', statusElsewhere: 'In the other game', statusWaitlist: 'Waitlist',
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Send a reminder now',
       remindersEnabledLabel: 'Automated reminders for this game',
@@ -9715,8 +9715,13 @@ ${tabbar}`;
     out: `<span class="nl-badge nl-badge--out">${BADGE_ICON_MINUS}<span data-i18n="statusOut">Absent</span></span>`,
     pending: `<span class="nl-badge nl-badge--pending">${BADGE_ICON_CLOCK}<span data-i18n="statusPending">Pas répondu</span></span>`,
     // Nights (D1): placed in the other game at this time.
-    elsewhere: `<span class="nl-badge nl-badge--sub"><span data-i18n="statusElsewhere">Joue l'autre match</span></span>`
+    elsewhere: `<span class="nl-badge nl-badge--sub"><span data-i18n="statusElsewhere">Joue l'autre match</span></span>`,
+    // Every game at this time was full: waiting for a spot.
+    waitlist: `<span class="nl-badge nl-badge--pending">${BADGE_ICON_CLOCK}<span data-i18n="statusWaitlist">Liste d'attente</span></span>`
   };
+  const statusBadgeFor = p => (p.status === 'out' && p.status_by === 'night' ? STATUS_BADGE.elsewhere
+    : p.status === 'out' && p.status_by === 'waitlist' ? STATUS_BADGE.waitlist
+    : STATUS_BADGE[p.status]) || STATUS_BADGE.pending;
   // Item 1 (admin-confirm-players polish task): a real goalie gets the
   // "in"-toned G badge, a player flagged "can also play goalie" (E2,
   // players polish task) gets the same badge in the quieter "sub"
@@ -9787,7 +9792,7 @@ ${tabbar}`;
       ? rosterRows.map(p => `<div class="ev-p">
           <span>${esc(p.name)}${eventRowGoalieBadge(p)}</span>
           <div style="display:flex;align-items:center;gap:8px;">
-            ${(p.status === 'out' && p.status_by === 'night' ? STATUS_BADGE.elsewhere : STATUS_BADGE[p.status]) || STATUS_BADGE.pending}
+            ${statusBadgeFor(p)}
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
           </div>
@@ -9860,7 +9865,7 @@ ${tabbar}`;
       ? poolPlayerRows.map(p => `<div class="ev-p" data-pool-player-row="${esc(p.player_id)}">
           <span>${esc(p.name)}${eventRowGoalieBadge(p)}</span>
           <div style="display:flex;align-items:center;gap:8px;">
-            ${(p.status === 'out' && p.status_by === 'night' ? STATUS_BADGE.elsewhere : STATUS_BADGE[p.status]) || STATUS_BADGE.pending}
+            ${statusBadgeFor(p)}
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
           </div>
@@ -12518,33 +12523,39 @@ async function eventSeasonConfig(env, ev) {
 }
 
 // Nights (D1): a no-teams or pickup player who hasn't answered yet can play
-// only one of a night's games at the same time, and a yes fills the first
-// of them to its maximum, then the next. So each such game counts only its
-// share of those players: what the games before it (same time, in time
-// order) don't need to fill up. With no maximum set they are shared evenly.
-// waiting: [{ is_goalie }]; cap(isGoalie) is the game's maximum for that
-// position. Returns the waiting players this game counts.
+// only one of a night's games at the same time, and a yes goes to the one
+// with the fewest players that has room (pickNightGame: the games are kept
+// even). So each such game counts only its share of those players: they
+// are dealt out the same way, one at a time, from the games' counts now;
+// once every game is full the rest would wait, and count for none. A
+// player already in another game at that time is not waiting for this
+// one. waiting: [{ player_id, is_goalie }]; cap(isGoalie) is the game's
+// maximum for that position (0: none). Returns the waiting players this
+// game counts.
 async function concurrentWaitingShare(env, ev, waiting, cap) {
   if (!waiting.length || !ev.league_id || ev.league_id === SMBHL_LEAGUE_ID) return waiting;
   const cluster = concurrencyClusters((await nightGamesOf(env, ev)).filter(g => g.state === 'open')).find(c => c.some(g => g.id === ev.id));
   if (!cluster || cluster.length < 2) return waiting;
+  const busy = await playersInOverlappingGames(env, ev);
+  const free = waiting.filter(w => !busy.has(w.player_id));
   const idx = cluster.findIndex(g => g.id === ev.id);
   const out = [];
   for (const goalie of [true, false]) {
-    const mine = waiting.filter(w => (w.is_goalie === 1) === goalie);
+    const mine = free.filter(w => (w.is_goalie === 1) === goalie);
+    if (!mine.length) continue;
     const max = cap(goalie);
-    let keep;
-    if (!(max > 0)) {
-      keep = Math.floor(mine.length / cluster.length) + (idx < mine.length % cluster.length ? 1 : 0);
-    } else {
-      keep = mine.length;
-      for (const g of cluster.slice(0, idx)) {
-        const n = (await env.DB.prepare(
-          `SELECT COUNT(*) AS n FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
-            WHERE r.event_id = ? AND r.status = 'in' AND COALESCE(c.is_goalie, 0) = ?`
-        ).bind(g.id, goalie ? 1 : 0).first()).n;
-        keep -= Math.min(keep, Math.max(0, max - n));
+    const n = [];
+    for (const g of cluster) n.push(await countInByPosition(env, g.id, goalie));
+    let keep = 0;
+    for (let k = 0; k < mine.length; k++) {
+      let best = -1;
+      for (let i = 0; i < cluster.length; i++) {
+        if (max > 0 && n[i] >= max) continue;
+        if (best < 0 || n[i] < n[best]) best = i;
       }
+      if (best < 0) break;
+      n[best]++;
+      if (best === idx) keep++;
     }
     out.push(...mine.slice(0, keep));
   }
@@ -12562,7 +12573,7 @@ async function availableForTeam(env, ev, team, cfg, isHeadcount) {
     // (SMBHL seeds a row for every rostered player when it creates the
     // game, so its rsvp rows are already the whole picture.)
     const rows = (await env.DB.prepare(
-      `SELECT COALESCE(c.is_goalie, 0) AS is_goalie FROM contacts c
+      `SELECT c.player_id, COALESCE(c.is_goalie, 0) AS is_goalie FROM contacts c
         WHERE c.league_id = ? AND c.role = 'roster' AND COALESCE(c.is_active, 1) = 1
           ${isHeadcount ? '' : 'AND c.preferred_team = ?'}
           AND c.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)`
@@ -12715,7 +12726,7 @@ async function pickupPool(env, ev, cfg, { confirmedOnly }) {
   ).bind(ev.id).all()).results || [];
   if (!confirmedOnly) {
     const waitingAll = (await env.DB.prepare(
-      `SELECT COALESCE(c.is_goalie, 0) AS g FROM contacts c
+      `SELECT c.player_id, COALESCE(c.is_goalie, 0) AS g FROM contacts c
         WHERE c.league_id = ? AND c.role = 'roster' AND COALESCE(c.is_active, 1) = 1
           AND c.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)`
     ).bind(ev.league_id, ev.id).all()).results || [];
@@ -18870,56 +18881,75 @@ async function playerNight(env, ev, contact) {
     : gameCoversPlayer(g, cfgs.get(g.id), contact)));
   const isIn = g => rowCountsAsIn(g, rowsById.get(g.id), cfgs.get(g.id));
   const inGames = covered.filter(isIn);
-  const saidNo = covered.some(g => { const r = rowsById.get(g.id); return r && r.status === 'out' && r.status_by !== 'night'; });
+  const saidNo = covered.some(g => saidNoToGame(rowsById.get(g.id)));
+  const waiting = covered.some(g => { const r = rowsById.get(g.id); return r && r.status === 'out' && r.status_by === 'waitlist'; });
   return {
     games, covered, cfgs, rowsById, inGames, isIn,
     clusters: concurrencyClusters(covered),
-    status: inGames.length ? 'in' : saidNo ? 'out' : 'pending'
+    status: inGames.length ? 'in' : waiting ? 'waitlist' : saidNo ? 'out' : 'pending'
   };
 }
 
-// For a no-teams or pickup night with games at the same time: which of
-// them a new yes goes to. The first game (in time order) that still has
-// room for the player's position; when every one is full, the one with
-// the fewest (decision pending, see the D1 report). A game with no maximum
-// set counts as full, so such games are shared evenly.
-async function pickNightGame(env, candidates, cfgs, contact) {
-  const goalie = contact.is_goalie === 1;
-  const counts = [];
-  for (const g of candidates) {
-    const cfg = cfgs.get(g.id);
-    const structure = cfg.teamStructure || 'fixed';
-    if (structure === 'fixed') return candidates[0];
-    let cap;
-    if (structure === 'weekly_draw') { const t = pickupPoolTargets(cfg); cap = goalie ? t.maxGoalies : t.maxSkaters; }
-    else cap = goalie ? (cfg.maxGoalies != null ? cfg.maxGoalies : (cfg.goaliesPerTeam || 0)) : (cfg.skatersPerTeam || 0);
-    const n = (await env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
-        WHERE r.event_id = ? AND r.status = 'in' AND COALESCE(c.is_goalie, 0) = ?`
-    ).bind(g.id, goalie ? 1 : 0).first()).n;
-    if (cap > 0 && n < cap) return g;
-    counts.push({ g, n });
-  }
-  counts.sort((a, b) => a.n - b.n);
-  return counts[0].g;
+// A no-teams or pickup game's maximum for one position (0: none set).
+function nightGameCap(cfg, goalie) {
+  if ((cfg.teamStructure || 'fixed') === 'weekly_draw') { const t = pickupPoolTargets(cfg); return goalie ? t.maxGoalies : t.maxSkaters; }
+  return goalie ? (cfg.maxGoalies != null ? cfg.maxGoalies : (cfg.goaliesPerTeam || 0)) : (cfg.skatersPerTeam || 0);
 }
 
-// One answer for the night (D1): the player's own (statusBy 'self'), or
-// what an email link recorded. 'out' is written to each of their games
-// still taking answers. 'in' is written to each of their games they can
-// be in: one per set of games that overlap -- the one they are already in,
-// or the first with room -- and every game that follows another. The other
-// games of an overlapping set get an 'out' marked status_by = 'night'
-// ("in the other game") in a no-teams or pickup league, so the game's
-// counts don't take them as available; a fixed-teams league writes nothing
-// there (a team playing two games at once is refused by the matchup
-// routes). A fresh yes clears the player's no to single games;
-// keepGameOptOuts leaves them. Returns the games written, and for each
-// whether the player was in it before.
-async function writeLeagueNightStatus(env, leagueId, ev, contact, status, statusBy = 'self', { keepGameOptOuts = false } = {}) {
+// How many of a game's players in are goalies (goalie) or not.
+async function countInByPosition(env, gameId, goalie) {
+  return (await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND r.status = 'in' AND COALESCE(c.is_goalie, 0) = ?`
+  ).bind(gameId, goalie ? 1 : 0).first()).n;
+}
+
+// For a no-teams or pickup night with games at the same time: which of
+// them a new yes goes to. The games are kept even: the one with the fewest
+// players of the player's position, among those with room (a tie: the
+// first in time order). A game with no maximum set always has room. null
+// when every one is full -- the player waits (the night's waitlist);
+// nobody is placed past a maximum.
+async function pickNightGame(env, candidates, cfgs, contact) {
+  const goalie = contact.is_goalie === 1;
+  let best = null;
+  for (const g of candidates) {
+    const cfg = cfgs.get(g.id);
+    if ((cfg.teamStructure || 'fixed') === 'fixed') return candidates[0];
+    const cap = nightGameCap(cfg, goalie);
+    const n = await countInByPosition(env, g.id, goalie);
+    if (cap > 0 && n >= cap) continue;
+    if (!best || n < best.n) best = { g, n };
+  }
+  return best ? best.g : null;
+}
+
+// An 'out' the system wrote, not the player's no: 'night' (in the other
+// game at that time) or 'waitlist' (every game at that time was full).
+const NIGHT_MARKS = ['night', 'waitlist'];
+const saidNoToGame = r => !!(r && r.status === 'out' && !NIGHT_MARKS.includes(r.status_by));
+
+// One answer for the night (D1): the player's own (statusBy 'self'), an
+// admin's ('manager'), or what an email link recorded. 'out' is written
+// to each of their games still taking answers. 'in' is written to each of
+// their games they can be in: one per set of games that overlap -- the one
+// they are already in, else the game `prefer` names (an admin answering
+// from that game's page), else the one the balance picks (pickNightGame)
+// -- and every game that follows another. The other games of an
+// overlapping set get an 'out' marked status_by = 'night' ("in the other
+// game") in a no-teams or pickup league, so the game's counts don't take
+// them as available; a fixed-teams league writes nothing there (a team
+// playing two games at once is refused by the matchup routes). When every
+// game of a set is full the player goes on its waitlist: an 'out' marked
+// status_by = 'waitlist' on each, and the admins are told. A fresh yes
+// clears the player's no to single games; keepGameOptOuts leaves them.
+// Returns the games written, and for each whether the player was in it
+// before, and the sets the player waits for.
+async function writeLeagueNightStatus(env, leagueId, ev, contact, status, statusBy = 'self', { keepGameOptOuts = false, prefer = null } = {}) {
   const night = await playerNight(env, ev, contact);
   const open = g => !closedToAnswers(g);
   const written = [];
+  const waitlisted = [];
   if (status === 'out') {
     for (const g of night.covered) {
       if (!open(g)) continue;
@@ -18927,15 +18957,25 @@ async function writeLeagueNightStatus(env, leagueId, ev, contact, status, status
       await writeLeagueRsvpStatus(env, leagueId, g.id, contact.player_id, contact, 'out', statusBy, g.season);
       written.push({ game: g, wasIn });
     }
-    return { ok: true, written, night };
+    return { ok: true, written, waitlisted, night };
   }
-  const saidNoToGame = r => r && r.status === 'out' && r.status_by !== 'night';
   for (const cluster of night.clusters) {
     let chosen = cluster.find(night.isIn);
     if (!chosen) {
       const candidates = cluster.filter(g => open(g) && !(keepGameOptOuts && saidNoToGame(night.rowsById.get(g.id))));
       if (!candidates.length) continue;
-      chosen = candidates.length === 1 ? candidates[0] : await pickNightGame(env, candidates, night.cfgs, contact);
+      const preferred = prefer && candidates.find(g => g.id === prefer);
+      chosen = preferred || (cluster.length === 1 ? candidates[0] : await pickNightGame(env, candidates, night.cfgs, contact));
+      if (!chosen) {
+        for (const g of candidates) {
+          // Already waiting keeps their place in the queue (updated_at).
+          const r = night.rowsById.get(g.id);
+          if (r && r.status === 'out' && r.status_by === 'waitlist') continue;
+          await writeLeagueRsvpStatus(env, leagueId, g.id, contact.player_id, contact, 'out', 'waitlist', g.season);
+        }
+        waitlisted.push(candidates);
+        continue;
+      }
       const w = await writeLeagueRsvpStatus(env, leagueId, chosen.id, contact.player_id, contact, 'in', statusBy, chosen.season);
       if (!w.ok) continue;
       written.push({ game: chosen, wasIn: false });
@@ -18944,11 +18984,115 @@ async function writeLeagueNightStatus(env, leagueId, ev, contact, status, status
       if (g === chosen || !open(g)) continue;
       if ((night.cfgs.get(g.id).teamStructure || 'fixed') === 'fixed') continue;
       const r = night.rowsById.get(g.id);
-      if (r && r.status === 'out' && (r.status_by === 'night' || keepGameOptOuts)) continue;
+      if (r && r.status === 'out' && (r.status_by === 'night' || (keepGameOptOuts && saidNoToGame(r)))) continue;
       await writeLeagueRsvpStatus(env, leagueId, g.id, contact.player_id, contact, 'out', 'night', g.season);
     }
   }
-  return { ok: true, written, night };
+  for (const set of waitlisted) await alertAdminNightWaitlist(env, leagueId, set, contact);
+  return { ok: true, written, waitlisted, night };
+}
+
+// ---- the night's waitlist (D1) ----
+// Every game at that time was full, so a player's yes waits. The admins
+// are emailed once per player and set of games (the dedup key is checked
+// first: enqueue() would replace a pending row).
+async function alertAdminNightWaitlist(env, leagueId, games, contact) {
+  const first = games[0];
+  const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) return 0;
+  let mail = null;
+  let queued = 0;
+  for (const a of await leagueAdminEmails(env, leagueId)) {
+    const dedupKey = `night-waitlist:${first.id}:${contact.player_id}:${a.email}`;
+    if (await env.DB.prepare('SELECT 1 FROM outbox WHERE dedup_key = ? AND (sent_at IS NOT NULL OR cancelled = 0) LIMIT 1').bind(dedupKey).first()) continue;
+    mail = mail || renderNightWaitlistAdminAlert(env, leagueRow, first, contact);
+    await enqueuePrerenderedMail(env, { kind: 'short_alert', leagueId, eventId: first.id, dedupKey, to: a.email, mail });
+    queued++;
+  }
+  if (queued) await drain(env, MAIL_SENDS_PER_INVOCATION, first.id, leagueId);
+  return queued;
+}
+
+function renderNightWaitlistAdminAlert(env, leagueRow, ev, contact) {
+  const barColor = leagueFillColor(leagueRow.color || '#b3122e');
+  const whenFr = formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false);
+  const whenEn = formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false);
+  const link = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
+  const block = (badge, title, when, line, btn) => `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}${badge}</td></tr></table>
+    <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(title)}</h1>
+    <p style="margin:0 0 8px;font-size:16px;line-height:25px;"><b>${esc(when)}</b></p>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${esc(line)}</p>
+    ${nlEmailButton(link, btn, barColor)}`;
+  const lineFr = `Les matchs de cette heure-là sont complets. ${contact.name} a dit oui et attend une place : on lui donnera la première qui se libère. Personne n'a été placé au-delà de votre maximum.`;
+  const lineEn = `The games at that time are full. ${contact.name} said yes and is waiting for a spot: they get the first one that opens. No one was placed past your maximum.`;
+  const fr = {
+    subject: `Liste d'attente · ${whenFr}`,
+    text: `Liste d'attente · ${whenFr}. ${lineFr} ${link}`,
+    html: block("Liste d'attente", 'Matchs complets', whenFr, lineFr, 'Voir le match')
+  };
+  const en = {
+    subject: `Waitlist · ${whenEn}`,
+    text: `Waitlist · ${whenEn}. ${lineEn} ${link}`,
+    html: block('Waitlist', 'Games full', whenEn, lineEn, 'View the game')
+  };
+  const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
+  return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
+}
+
+// A spot may have opened in `game` (someone in it went out): the players
+// waiting for its set of games, first come first placed, take the spots
+// the game now has for their position. Only players waiting for THIS
+// game's set; no one already placed is ever moved. A player placed after
+// the night's details email went out (or with it turned off) is sent it
+// now, so they know they play.
+async function fillNightWaitlist(env, leagueId, game) {
+  if (!game || !game.league_id || game.league_id === SMBHL_LEAGUE_ID || closedToAnswers(game)) return 0;
+  const cfg = await getLeagueSeasonConfig(env, leagueId, game.season);
+  if ((cfg.teamStructure || 'fixed') === 'fixed') return 0;
+  const waiting = (await env.DB.prepare(
+    `SELECT c.* FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND r.status = 'out' AND r.status_by = 'waitlist'
+      ORDER BY r.updated_at, r.player_id`
+  ).bind(game.id).all()).results || [];
+  let placed = 0;
+  for (const contact of waiting) {
+    const goalie = contact.is_goalie === 1;
+    const cap = nightGameCap(cfg, goalie);
+    if (cap > 0 && await countInByPosition(env, game.id, goalie) >= cap) continue;
+    const w = await writeLeagueRsvpStatus(env, leagueId, game.id, contact.player_id, contact, 'in', 'self', game.season);
+    if (!w.ok) continue;
+    const cluster = concurrencyClusters(await nightGamesOf(env, game)).find(c => c.some(g => g.id === game.id)) || [game];
+    for (const g of cluster) {
+      if (g.id === game.id || closedToAnswers(g)) continue;
+      await env.DB.prepare(
+        `UPDATE rsvp SET status_by = 'night', updated_at = ? WHERE event_id = ? AND player_id = ? AND status = 'out' AND status_by = 'waitlist'`
+      ).bind(new Date().toISOString(), g.id, contact.player_id).run();
+    }
+    placed++;
+    await tellPlacedFromWaitlist(env, leagueId, game, contact);
+  }
+  return placed;
+}
+
+async function tellPlacedFromWaitlist(env, leagueId, game, contact) {
+  const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow || !contact.email || contact.opted_out) return;
+  const nightGames = await nightGamesOf(env, game);
+  const detailsSent = await env.DB.prepare(
+    `SELECT 1 FROM league_reminder_log WHERE kind = 'logistics_12h' AND event_id IN (${nightGames.map(() => '?').join(',')}) LIMIT 1`
+  ).bind(...nightGames.map(g => g.id)).first();
+  if (!detailsSent && leagueRow.reminder_12h_enabled && game.auto_reminders_enabled) return; // the details email will tell them
+  const night = await playerNight(env, game, contact);
+  const mine = night.inGames.length ? night.inGames : [game];
+  const row = await env.DB.prepare('SELECT team FROM rsvp WHERE event_id = ? AND player_id = ?').bind(game.id, contact.player_id).first();
+  const mail = await renderLeagueReminderForContact(env, leagueRow, mine[0], contact, 'logistics_12h', row && row.team, mine.length > 1 ? mine : null);
+  const cfg = await getLeagueSeasonConfig(env, leagueId, game.season);
+  await enqueuePrerenderedMail(env, {
+    kind: 'logistics_12h', leagueId, eventId: game.id, playerId: contact.player_id, team: (row && row.team) || null,
+    dedupKey: `waitlist-placed:${game.id}:${contact.player_id}`, to: contact.email, mail, identity: cfg.league
+  });
+  await drain(env, MAIL_SENDS_PER_INVOCATION, game.id, leagueId);
 }
 
 // Cheap self-contained lookup so writeLeagueRsvpStatus (and anything
@@ -20046,10 +20190,13 @@ async function leagueRsvpGet(req, env, url) {
       ...(multi ? {
         nightNoteTeams: 'Ta réponse vaut pour la soirée : pour chaque match de ton équipe.',
         nightNotePool: 'Ta réponse vaut pour la soirée : tu es disponible, et on te place dans les matchs où il y a de la place.',
-        nightNoteConcurrent: 'Des matchs se jouent en même temps : on remplit le premier, puis le suivant.',
+        nightNoteConcurrent: 'Des matchs se jouent en même temps : on répartit les joueurs également entre eux.',
         nightNoteFollow: 'Les matchs qui se suivent, tu les joues tous.',
         nightDoneInBody: `On se voit ${dayLabel || 'ce jour-là'}. Tes matchs :`,
-        gameIn: 'Tu joues', gameOut: 'Tu ne joues pas ce match', gameOther: "Tu joues l'autre match à cette heure-là",
+        gameIn: 'Tu joues', gameOut: 'Tu ne joues pas ce match', gameOther: "Tu joues l'autre match à cette heure-là", gameWaitlist: "Complet : tu es sur la liste d'attente",
+        nightWaitTitle: "Tu es sur la liste d'attente.",
+        nightWaitBody: "Les matchs de cette heure-là sont complets. Dès qu'une place se libère, elle est à toi et on t'envoie un courriel.",
+        errFull: 'Ce match est complet.',
         gamePending: 'Pas encore de réponse', gameClosed: "Ce match n'accepte plus de réponses.",
         gameBtnOut: 'Je ne peux pas pour ce match', gameBtnIn: 'Finalement, je joue ce match',
         confirmAnswerOutNight: 'Tu vas répondre : je ne peux pas, pour toute la soirée.'
@@ -20080,10 +20227,13 @@ async function leagueRsvpGet(req, env, url) {
       ...(multi ? {
         nightNoteTeams: "Your answer is for the night: each of your team's games.",
         nightNotePool: "Your answer is for the night: you're available, and we place you in the games that have room.",
-        nightNoteConcurrent: 'Some games are at the same time: we fill the first one, then the next.',
+        nightNoteConcurrent: 'Some games are at the same time: we spread players evenly across them.',
         nightNoteFollow: 'Games that follow each other, you play them all.',
         nightDoneInBody: `See you ${dayLabel || 'then'}. Your games:`,
-        gameIn: "You're playing", gameOut: "You're not playing this game", gameOther: "You're in the other game at that time",
+        gameIn: "You're playing", gameOut: "You're not playing this game", gameOther: "You're in the other game at that time", gameWaitlist: "Full: you're on the waitlist",
+        nightWaitTitle: "You're on the waitlist.",
+        nightWaitBody: "The games at that time are full. As soon as a spot opens, it's yours and we'll email you.",
+        errFull: 'This game is full.',
         gamePending: 'No answer yet', gameClosed: 'This game is no longer taking answers.',
         gameBtnOut: "I can't make this game", gameBtnIn: 'I can make this game after all',
         confirmAnswerOutNight: "You're about to answer: can't make it, for the whole night."
@@ -20118,15 +20268,16 @@ async function leagueRsvpGet(req, env, url) {
     const cluster = night.clusters.find(c => c.includes(g)) || [g];
     if (cluster.some(o => o !== g && night.isIn(o))) return 'other';
     const r = night.rowsById.get(g.id);
+    if (r && r.status === 'out' && r.status_by === 'waitlist') return 'waitlist';
     return r && r.status === 'out' ? 'out' : 'pending';
   };
-  const gameStateKey = { in: 'gameIn', out: 'gameOut', other: 'gameOther', pending: 'gamePending' };
+  const gameStateKey = { in: 'gameIn', out: 'gameOut', other: 'gameOther', pending: 'gamePending', waitlist: 'gameWaitlist' };
   const nightGamesHtml = multi ? `<ul class="rv-games rv-games--answer" id="rv_games">${night.covered.map(g => {
     const st = gameState(g);
     const closed = closedToAnswers(g);
     const btn = closed ? `<p class="nl-help" data-i18n="gameClosed">${esc(t.gameClosed)}</p>`
       : st === 'in' ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-game="${esc(g.id)}" data-gv="out" data-i18n="gameBtnOut">${esc(t.gameBtnOut)}</button>`
-      : st === 'other' ? ''
+      : st === 'other' || st === 'waitlist' ? ''
       : `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-game="${esc(g.id)}" data-gv="in" data-i18n="gameBtnIn">${esc(t.gameBtnIn)}</button>`;
     return `<li data-game-state="${st}"><div>${gameLineHtml(g)}</div><div class="rv-game-state"><b data-i18n="${gameStateKey[st]}">${esc(t[gameStateKey[st]])}</b></div>${btn}</li>`;
   }).join('')}</ul><p id="rv_game_msg" class="nl-help"></p>` : '';
@@ -20150,10 +20301,11 @@ async function leagueRsvpGet(req, env, url) {
   const answeredHtml = (!confirmFor && status !== 'pending') ? `
     <section class="rv-done rv-done--${status === 'in' ? 'ok' : 'no'}" role="status">
       <div class="rv-mark">${status === 'in' ? '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 10.5l4 4 8-9"/></svg>' : '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 10h10"/></svg>'}</div>
-      <h2 data-i18n="${status === 'in' ? 'doneInTitle' : 'doneOutTitle'}">${esc(status === 'in' ? t.doneInTitle : t.doneOutTitle)}</h2>
-      <p data-i18n="${status === 'in' ? (multi ? 'nightDoneInBody' : 'doneInBody') : 'doneOutBody'}">${esc(status === 'in' ? (multi ? t.nightDoneInBody : t.doneInBody) : t.doneOutBody)}</p>
+      ${status === 'waitlist' ? `<h2 data-i18n="nightWaitTitle">${esc(t.nightWaitTitle)}</h2>
+      <p data-i18n="nightWaitBody">${esc(t.nightWaitBody)}</p>` : `<h2 data-i18n="${status === 'in' ? 'doneInTitle' : 'doneOutTitle'}">${esc(status === 'in' ? t.doneInTitle : t.doneOutTitle)}</h2>
+      <p data-i18n="${status === 'in' ? (multi ? 'nightDoneInBody' : 'doneInBody') : 'doneOutBody'}">${esc(status === 'in' ? (multi ? t.nightDoneInBody : t.doneInBody) : t.doneOutBody)}</p>`}
     </section>
-    ${status === 'in' ? (multi ? nightGamesHtml : teamMeterHtml) : ''}
+    ${status === 'in' || status === 'waitlist' ? (multi ? nightGamesHtml : teamMeterHtml) : ''}
     ${!locked ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="change" onclick="showAnswerForm()">${esc(t.change)}</button>` : ''}
   ` : '';
 
@@ -20273,7 +20425,7 @@ function showAnswerForm() {
 // via errorKey, same pattern as every other page's
 // window.__errorText() -- this page just can't use that shared helper
 // (see nlAuthScript's own comment for why its script is separate).
-var RV_ERR_KEY_MAP = { RSVP_BAD_STATUS: 'errBadStatus', RSVP_BAD_TOKEN: 'errBadToken', RSVP_LOCKED: 'errLocked', RSVP_OVERLAPPING_GAME: 'errOverlap' };
+var RV_ERR_KEY_MAP = { RSVP_BAD_STATUS: 'errBadStatus', RSVP_BAD_TOKEN: 'errBadToken', RSVP_LOCKED: 'errLocked', RSVP_OVERLAPPING_GAME: 'errOverlap'${multi ? ", RSVP_GAME_FULL: 'errFull'" : ''} };
 ${multi ? `document.querySelectorAll('.rv-games .nl-btn[data-gv]').forEach(function(b) {
   b.addEventListener('click', async function() {
     var msg = document.getElementById('rv_game_msg');
@@ -20377,7 +20529,11 @@ async function leagueRsvpConfirmPost(req, env, url) {
     const isLateReversalOptOut = status === 'out' && before.status === 'in' && form.get('src') === 'logistics12h';
     const night = await writeLeagueNightStatus(env, leagueId, ev, contact, status, 'self');
     const shortages = [];
-    if (status === 'out') for (const w of night.written) shortages.push(await maybeInviteSubsForShortage(env, leagueId, w.game, contact));
+    if (status === 'out') for (const w of night.written) {
+      // A spot the player leaves goes to the night's waitlist first.
+      if (w.wasIn) await fillNightWaitlist(env, leagueId, w.game);
+      shortages.push(await maybeInviteSubsForShortage(env, leagueId, w.game, contact));
+    }
     if (isLateReversalOptOut) {
       // The alert names the team the player was on for the (first) game
       // they were in (a pickup's drawn team, a sub's placed team -- not
@@ -20415,7 +20571,10 @@ async function leagueRsvpPost(req, env, url) {
 
   // Nights (D1): one answer for the player's night.
   const night = await writeLeagueNightStatus(env, leagueId, ev, contact, status, 'self');
-  if (status === 'out') for (const w of night.written) await maybeInviteSubsForShortage(env, leagueId, w.game, contact);
+  if (status === 'out') for (const w of night.written) {
+    if (w.wasIn) await fillNightWaitlist(env, leagueId, w.game);
+    await maybeInviteSubsForShortage(env, leagueId, w.game, contact);
+  }
   return Response.json({ ok: true, league_id: leagueId, status });
 }
 
@@ -20445,9 +20604,18 @@ async function leagueRsvpGamePost(req, env, url) {
   if (closedToAnswers(game)) {
     return Response.json({ ok: false, error: 'This event is no longer accepting responses.', errorKey: 'RSVP_LOCKED' }, { status: 409 });
   }
+  // Nobody is placed past a maximum: back into a full game is refused.
+  const gcfg = night.cfgs.get(game.id);
+  if (status === 'in' && (gcfg.teamStructure || 'fixed') !== 'fixed' && !night.isIn(game)) {
+    const cap = nightGameCap(gcfg, contact.is_goalie === 1);
+    if (cap > 0 && await countInByPosition(env, game.id, contact.is_goalie === 1) >= cap) {
+      return Response.json({ ok: false, error: 'This game is full.', errorKey: 'RSVP_GAME_FULL' }, { status: 409 });
+    }
+  }
   const written = await writeLeagueRsvpStatus(env, leagueId, game.id, playerId, contact, status, 'self', game.season);
   if (!written.ok) return Response.json({ ok: false, error: 'Already in a game at the same time.', errorKey: 'RSVP_OVERLAPPING_GAME' }, { status: 409 });
   if (status === 'out') {
+    await fillNightWaitlist(env, leagueId, game);
     await maybeInviteSubsForShortage(env, leagueId, game, contact);
   } else {
     // In this game: the others at the same time are "in the other game"
@@ -20456,7 +20624,7 @@ async function leagueRsvpGamePost(req, env, url) {
     for (const g of cluster) {
       if (g === game || closedToAnswers(g) || (night.cfgs.get(g.id).teamStructure || 'fixed') === 'fixed') continue;
       const r = night.rowsById.get(g.id);
-      if (!r || r.status !== 'out') await writeLeagueRsvpStatus(env, leagueId, g.id, playerId, contact, 'out', 'night', g.season);
+      if (!r || r.status !== 'out' || r.status_by === 'waitlist') await writeLeagueRsvpStatus(env, leagueId, g.id, playerId, contact, 'out', 'night', g.season);
     }
   }
   return Response.json({ ok: true, league_id: leagueId, game: game.id, status });
@@ -20504,7 +20672,10 @@ async function handleLeagueAdminSetRsvp(req, env, url) {
 
   const written = await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'manager', ev.season);
   if (!written.ok) return Response.json({ ok: false, error: 'This player is already in a game at the same time.', errorKey: 'PLAYER_IN_OVERLAPPING_GAME' }, { status: 409 });
-  if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
+  if (status === 'out') {
+    await fillNightWaitlist(env, leagueId, ev);
+    await maybeInviteSubsForShortage(env, leagueId, ev, contact);
+  }
 
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, status });
 }
