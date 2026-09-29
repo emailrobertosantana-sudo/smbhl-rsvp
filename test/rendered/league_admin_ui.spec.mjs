@@ -140,8 +140,9 @@ describe('Create-game reminder notice', () => {
     expect(await page.isVisible('#e_reminder_notice')).toBe(true);
     const text = await page.textContent('#e_reminder_notice_body');
     expect(text).toContain('Rappel 72 h avant — trop tard, ne sera pas envoyé');
-    expect(text).toMatch(/Rappel 24 h avant — part dans environ \d+ h/);
-    expect(text).toMatch(/Détails 12 h avant — part dans environ \d+ h/);
+    // Under 48 h the page says hours, beyond it days: which one depends on the time of day the test runs.
+    expect(text).toMatch(/Rappel 24 h avant — part dans environ (\d+ h|\d+ jours?)/);
+    expect(text).toMatch(/Détails 12 h avant — part dans environ (\d+ h|\d+ jours?)/);
     expect(text).toContain("Jusqu'à 2 joueurs avec un courriel enregistré les recevront.");
     // No start time: no reminders at all, no notice.
     await page.fill('#e_start', '');
