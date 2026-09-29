@@ -691,11 +691,13 @@ async function runOneLeague(env, leagueRow, budget, log) {
     ).bind(leagueRow.id, localDateInDays(-1), localDateInDays(Math.ceil(horizon / 24) + 1)).all()).results || [];
 
     // Nights (D1): a league's games on the same day are one night -- one
-    // set of emails, timed from its first game.
+    // set of emails, timed from its first game. Two seasons on one day are
+    // two nights.
     const nights = new Map();
     for (const ev of events) {
-      if (!nights.has(ev.date)) nights.set(ev.date, []);
-      nights.get(ev.date).push(ev);
+      const key = `${ev.date}|${ev.season || ''}`;
+      if (!nights.has(key)) nights.set(key, []);
+      nights.get(key).push(ev);
     }
     for (const nightGames of nights.values()) {
     nightGames.sort(byStart);

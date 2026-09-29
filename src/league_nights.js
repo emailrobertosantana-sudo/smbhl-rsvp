@@ -1,5 +1,6 @@
-// Nights (D1, decided 2026-09-30): a league's games on the same day form a
-// NIGHT, played by one group of players. Which of a night's games overlap
+// Nights (D1, decided 2026-09-30): a league's games on the same day, in
+// the same season, form a NIGHT, played by one group of players (two
+// seasons on one day are two nights). Which of a night's games overlap
 // decides where a player can be: games that overlap (two at 10:30) split
 // the group, games that follow each other (10:30 then 11:30) take all of
 // it. This file is the pure part -- times, overlap, clusters; the reads

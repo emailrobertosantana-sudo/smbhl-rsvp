@@ -18765,9 +18765,18 @@ async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, 
  * and the waitlist skip anyone already in an overlapping game.
  */
 
-// The night of `ev`: its league's games that day, not cancelled, in time
-// order (ev itself included). SMBHL has no nights.
+// The night of `ev`: its league's games that day in the same season, not
+// cancelled, in time order (ev itself included). Games of two seasons on
+// one day are two nights: one answer never spans seasons. SMBHL has no
+// nights.
 async function nightGamesOf(env, ev) {
+  return (await dayGamesOf(env, ev)).filter(g => g.id === ev.id || (g.season || '') === (ev.season || ''));
+}
+
+// Every one of the league's games that day, whatever the season, not
+// cancelled, in time order. No one can be in two games at once, even of
+// two seasons: the overlap guards read this, not the night.
+async function dayGamesOf(env, ev) {
   const leagueId = ev && ev.league_id;
   if (!leagueId || leagueId === SMBHL_LEAGUE_ID) return ev ? [ev] : [];
   const rows = (await env.DB.prepare(
@@ -18799,7 +18808,7 @@ function rowCountsAsIn(game, row, cfg) {
 
 // The game overlapping `ev` that the player is already in, or null.
 async function overlapConflict(env, ev, playerId) {
-  const others = overlappingGames(ev, await nightGamesOf(env, ev));
+  const others = overlappingGames(ev, await dayGamesOf(env, ev));
   if (!others.length) return null;
   const cfgOf = seasonConfigCache(env, ev.league_id);
   for (const g of others) {
@@ -18812,7 +18821,7 @@ async function overlapConflict(env, ev, playerId) {
 // Everyone already in a game that overlaps `ev`.
 async function playersInOverlappingGames(env, ev) {
   const busy = new Set();
-  const others = overlappingGames(ev, await nightGamesOf(env, ev));
+  const others = overlappingGames(ev, await dayGamesOf(env, ev));
   if (!others.length) return busy;
   const cfgOf = seasonConfigCache(env, ev.league_id);
   for (const g of others) {
