@@ -20,6 +20,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { getNonResponders, runLeagueReminders } from '../src/index.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part10-subs-excluded-secret';
 const RSVP_SECRET = 'test-part10-subs-excluded-rsvp-secret';
@@ -124,7 +125,7 @@ describe('Part 10 (live-testing task): subs never get the initial reminder, only
       const { date, time } = hoursFromNowDateTime(50);
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date, start_time: time })
+        body: JSON.stringify(withGameTimes({ date, start_time: time }))
       });
       const eventId = (await eventRes.json()).event.id;
 
@@ -170,7 +171,7 @@ describe('Part 10 (live-testing task): subs never get the initial reminder, only
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-10-11' })
+      body: JSON.stringify(withGameTimes({ date: '2099-10-11' }))
     });
     const eventId = (await eventRes.json()).event.id;
     await SELF.fetch('http://example.com/league/rsvp/admin', {

@@ -4,6 +4,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { teamState } from '../src/index.js';
 import { getLeagueSeasonConfig } from '../src/leagues.js';
+import { withGameTimes } from './support/game_times.js';
 
 let ip = 0;
 async function signup(email) {
@@ -90,7 +91,7 @@ describe('3. Skip advances, and what was skipped stays on the checklist', () => 
     await post(s, '/leagues/create', { name: 'P140 Skip Card', teamNames: ['Otters', 'Bears'] });
     await post(s, '/league/season/publish', { season_name: 'S1' });
     await post(s, '/league/settings/structure', { min_players: 1, max_players: 20 });
-    await post(s, '/league/events', { date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' });
+    await post(s, '/league/events', withGameTimes({ date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' }));
     await post(s, '/league/contacts', { name: 'Lea Player', role: 'roster', team: 'Otters' });
     await post(s, '/league/onboarding/step', { step: 'stats', action: 'skip' });
     expect(await page(s, '/dashboard')).not.toContain('id="setup_done_card"');
@@ -107,7 +108,7 @@ describe('4. Pickup leagues are not asked to name teams', () => {
     await post(s, '/league/season/publish', { season_name: 'S1' });
     expect(await page(s, '/onboarding/season?step=2')).not.toContain('id="ob_teams"');
     await post(s, '/league/settings/structure', { min_players: 1, max_players: 20 });
-    await post(s, '/league/events', { date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' });
+    await post(s, '/league/events', withGameTimes({ date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' }));
     await post(s, '/league/contacts', { name: 'Lea Player', role: 'roster' });
     const html = await page(s, '/dashboard');
     expect(html).not.toContain('data-i18n="nsNameTeams"');
@@ -187,7 +188,7 @@ describe('7 (continued). The per-event shortfall is unchanged', () => {
     const league = (await (await post(s, '/leagues/create', { name: 'P140 Shortfall', teamNames: ['Otters', 'Bears'] })).json()).league;
     await post(s, '/league/settings/structure', { min_players: 3, max_players: 10 });
     await post(s, '/league/season/publish', { season_name: 'S1' });
-    const ev = (await (await post(s, '/league/events', { date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' })).json()).event;
+    const ev = (await (await post(s, '/league/events', withGameTimes({ date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' }))).json()).event;
     const reg = (await (await post(s, '/league/contacts', { name: 'Reg One', role: 'roster', team: 'Otters' })).json()).contact;
     for (const n of ['Sub One', 'Sub Two', 'Sub Three', 'Sub Four']) await post(s, '/league/contacts', { name: n, role: 'sub_skater' });
     await post(s, '/league/rsvp/admin', { event_id: ev.id, player_id: reg.player_id, status: 'in' });

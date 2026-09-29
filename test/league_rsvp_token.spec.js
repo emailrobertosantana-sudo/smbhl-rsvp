@@ -10,6 +10,7 @@ import { env, SELF } from 'cloudflare:test';
 import { answerViaEmailLink } from './support/email_link.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-league-rsvp-token-secret';
 const RSVP_SECRET = 'test-league-rsvp-token-rsvp-secret';
@@ -90,13 +91,13 @@ describe('Part M: GET /league/rsvp and the league RSVP token', () => {
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-06', season: 'League A Season 1' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-06', season: 'League A Season 1' }))
     });
     eventA = (await eventRes.json()).event.id;
 
     const eventBRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-      body: JSON.stringify({ date: '2026-12-06', season: 'League B Season 1' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-06', season: 'League B Season 1' }))
     });
     eventB = (await eventBRes.json()).event.id;
   });

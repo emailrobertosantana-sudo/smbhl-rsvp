@@ -14,6 +14,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part1-roster-team-secret';
 const RSVP_SECRET = 'test-part1-roster-team-rsvp-secret';
@@ -134,7 +135,7 @@ describe('Part 1: roster team assignment', () => {
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-20', season: 'Part 1 E2E Season' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-20', season: 'Part 1 E2E Season' }))
     });
     const eventId = (await eventRes.json()).event.id;
 

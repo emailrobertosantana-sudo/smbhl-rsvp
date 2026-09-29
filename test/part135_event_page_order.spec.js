@@ -4,6 +4,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 let ip = 0;
 async function signup(email) {
@@ -28,7 +29,7 @@ describe('Event page order', () => {
       await post(s, '/leagues/create', { name: `P135 ${structure}`, teamStructure: structure, tracksStats: true, teamNames: ['Otters', 'Bears'] });
       await post(s, '/league/settings/identity', { tracksResults: true, tracksPlayerStats: true });
       await post(s, '/league/season/publish', { season_name: 'S1' });
-      const ev = (await post(s, '/league/events', { date: '2020-05-03', season: 'S1', venue: 'Parc', start_time: '19:00' })).event;
+      const ev = (await post(s, '/league/events', withGameTimes({ date: '2020-05-03', season: 'S1', venue: 'Parc', start_time: '19:00' }))).event;
       const c = (await post(s, '/league/contacts', { name: 'Lea Player', role: 'roster', team: structure === 'fixed' ? 'Otters' : undefined })).contact;
       await post(s, '/league/rsvp/admin', { event_id: ev.id, player_id: c.player_id, status: 'in' });
       const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(ev.id)}`, { headers: { cookie: s.cookie } })).text();

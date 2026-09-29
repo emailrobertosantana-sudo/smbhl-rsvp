@@ -5,6 +5,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part95-public-themes-secret';
 
@@ -62,7 +63,7 @@ async function updatePlayoffs(cookie, csrfToken, body) {
 async function bulkCreateEvents(cookie, csrfToken, body) {
   const res = await SELF.fetch('http://example.com/league/events/bulk', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify(body)
+    body: JSON.stringify(withGameTimes(body))
   });
   return { status: res.status, json: await res.json() };
 }
@@ -160,7 +161,7 @@ describe('Public-page themes, Part 2: Classique and Quartier', () => {
   async function createEvent(cookie, csrfToken, body) {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify(body)
+      body: JSON.stringify(withGameTimes(body))
     });
     return (await res.json()).event;
   }

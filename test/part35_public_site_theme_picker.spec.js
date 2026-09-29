@@ -18,6 +18,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part2-public-themes-secret';
 
@@ -96,7 +97,7 @@ describe('Part 2 (live-testing task): public site theme picker', () => {
     });
     await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-04-04', venue: 'Theme Test Arena' })
+      body: JSON.stringify(withGameTimes({ date: '2099-04-04', venue: 'Theme Test Arena' }))
     });
 
     const areneHtml = await (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.id)}`)).text();

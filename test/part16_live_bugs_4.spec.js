@@ -12,6 +12,7 @@ import { env, SELF } from 'cloudflare:test';
 import { getLeagueSeasonConfig } from '../src/leagues.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part16-live-bugs-4-secret';
 
@@ -49,7 +50,7 @@ async function publishSeason(cookie, csrfToken, body) {
 async function createEvent(cookie, csrfToken, date, season) {
   return (await (await SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify({ date, season })
+    body: JSON.stringify(withGameTimes({ date, season }))
   })).json()).event.id;
 }
 async function addPlayer(cookie, csrfToken, name, extra = {}) {

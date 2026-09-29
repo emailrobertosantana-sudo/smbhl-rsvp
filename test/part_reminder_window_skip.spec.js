@@ -13,6 +13,7 @@ import { runLeagueReminders } from '../src/index.js';
 import { applyReminderWindowSkipRule } from '../src/reminder_scheduling.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-reminder-skip-secret';
 const RSVP_SECRET = 'test-reminder-skip-rsvp-secret';
@@ -63,7 +64,7 @@ async function createEventHoursFromNow(cookie, csrfToken, hoursFromNow) {
   const { date, time } = easternDateTimeHoursFromNow(hoursFromNow);
   const res = await SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify({ date, start_time: time, venue: 'Test Gym' })
+    body: JSON.stringify(withGameTimes({ date, start_time: time, venue: 'Test Gym' }))
   });
   const json = await res.json();
   if (!json.ok) throw new Error(`event create failed: ${JSON.stringify(json)}`);
@@ -279,7 +280,7 @@ describe('Reminder-window-skip-on-create/reschedule bug fix', () => {
     const { date, time } = easternDateTimeHoursFromNow(5);
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date, start_time: time, venue: 'Test Gym', auto_reminders_enabled: false })
+      body: JSON.stringify(withGameTimes({ date, start_time: time, venue: 'Test Gym', auto_reminders_enabled: false }))
     });
     const eventId = (await res.json()).event.id;
 

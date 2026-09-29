@@ -16,6 +16,7 @@ import { formatEventDate } from '../src/date_format.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { dataJsonKeyFor } from '../src/league_ids.js';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part11-comprehensive-e2e-secret';
 const RSVP_SECRET = 'test-part11-comprehensive-e2e-rsvp-secret';
@@ -201,10 +202,13 @@ describe('Part 11: the entire second-league journey, end to end', () => {
 
       // ---- Step 4: create the event, far enough out to clear callSubs'
       // cutoff/rush windows.
-      const futureDate = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+      // Beyond the 8-day shortfall horizon: a game with a start time inside it
+    // is checked for shortage at creation, which would call subs before the
+    // step this test is about.
+    const futureDate = new Date(Date.now() + 10 * 24 * 3600 * 1000).toISOString().slice(0, 10);
       const eventRes = await SELF.fetch(`${BASE}/league/events`, {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: futureDate, season: 'Part 11 Season', venue: 'Aréna Notre Ligue' })
+        body: JSON.stringify(withGameTimes({ date: futureDate, season: 'Part 11 Season', venue: 'Aréna Notre Ligue' }))
       });
       expect(eventRes.status).toBe(200);
       const eventId = (await eventRes.json()).event.id;

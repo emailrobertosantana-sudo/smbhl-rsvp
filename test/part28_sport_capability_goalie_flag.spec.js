@@ -20,6 +20,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { sportHasGoalie } from '../src/season_config.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part5-sport-capability-secret';
 
@@ -158,7 +159,7 @@ describe('Part 5 (live-testing task): goalie flag driven by sport capability, av
 
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-12-06' })
+        body: JSON.stringify(withGameTimes({ date: '2099-12-06' }))
       });
       const eventId = (await eventRes.json()).event.id;
 

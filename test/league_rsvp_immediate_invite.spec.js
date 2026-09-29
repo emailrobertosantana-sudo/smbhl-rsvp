@@ -8,6 +8,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-immediate-invite-secret';
 const RSVP_SECRET = 'test-immediate-invite-rsvp-secret';
@@ -115,7 +116,7 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
     smbhlRsvpSnapshot = (await env.DB.prepare(`SELECT * FROM rsvp WHERE league_id = 'smbhl' ORDER BY event_id, player_id`).all()).results;
   });
 
-  let nextEventDayOffset = 5;
+  let nextEventDayOffset = 10; // beyond the 8-day shortfall horizon, as the games have start times
   async function setupPlayerAndEvent(cookie, leagueId, suffix, csrfToken) {
     const playerRes = await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -130,7 +131,7 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       // No explicit season -- defaults to this league's own current_season
       // (published in beforeAll for both League A and League B).
-      body: JSON.stringify({ date: futureDate })
+      body: JSON.stringify(withGameTimes({ date: futureDate }))
     });
     const eventJson = await eventRes.json();
     if (!eventJson.event) throw new Error('event creation failed: ' + JSON.stringify(eventJson));

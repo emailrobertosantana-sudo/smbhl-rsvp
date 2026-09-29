@@ -5,6 +5,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 let ip = 0;
 async function signup(email) {
@@ -27,7 +28,7 @@ describe('A venue from the setup flow is saved', () => {
     const s = await signup('p137@example.com');
     const league = (await post(s, '/leagues/create', { name: 'P137 TESERE', teamNames: ['A', 'B'] })).league;
     await post(s, '/league/season/publish', { season_name: 'S1' });
-    const bulk = await post(s, '/league/events/bulk', { startDate: '2099-01-01', occurrences: 4, season: 'S1', venue: 'Letendre', venue_address: '1000 Avenir', start_time: '19:00' });
+    const bulk = await post(s, '/league/events/bulk', withGameTimes({ startDate: '2099-01-01', occurrences: 4, season: 'S1', venue: 'Letendre', venue_address: '1000 Avenir', start_time: '19:00' }));
     expect(bulk.ok).toBe(true);
 
     const venues = (await env.DB.prepare('SELECT id, name, address FROM venues WHERE league_id = ?').bind(league.id).all()).results;
@@ -41,7 +42,7 @@ describe('A venue from the setup flow is saved', () => {
     expect(settings).toContain('1000 Avenir');
 
     // Typed again (any case) on a later game: matched, not duplicated.
-    const one = await post(s, '/league/events', { date: '2099-03-01', season: 'S1', venue: 'letendre' });
+    const one = await post(s, '/league/events', withGameTimes({ date: '2099-03-01', season: 'S1', venue: 'letendre' }));
     expect(one.event.venue_id).toBe(venues[0].id);
     expect((await env.DB.prepare('SELECT count(*) n FROM venues WHERE league_id = ?').bind(league.id).first()).n).toBe(1);
   });

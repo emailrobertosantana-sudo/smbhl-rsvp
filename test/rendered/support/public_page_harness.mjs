@@ -106,8 +106,8 @@ export async function seedPopulatedLeague(h, { email, name, teamNames, playerNam
   const goalie = (await j('/league/contacts', { name: goalieName, role: 'roster', team: teamNames[0] })).contact;
   const venue = 'Aréna Municipal de Saint-Michel';
   // One past game (with a score and stats) and one upcoming game.
-  const past = (await j('/league/events', { date: '2020-01-05', season: 'S1', venue })).event;
-  const next = (await j('/league/events', { date: '2099-01-05', season: 'S1', venue, start_time: '20:30' })).event;
+  const past = (await j('/league/events', { date: '2020-01-05', season: 'S1', venue, start_time: '19:00', end_time: '20:00' })).event;
+  const next = (await j('/league/events', { date: '2099-01-05', season: 'S1', venue, start_time: '20:30', end_time: '21:30' })).event;
   for (const ev of [past, next]) {
     await j('/league/rsvp/admin', { event_id: ev.id, player_id: player.player_id, status: 'in' });
     await j('/league/rsvp/admin', { event_id: ev.id, player_id: goalie.player_id, status: 'in' });

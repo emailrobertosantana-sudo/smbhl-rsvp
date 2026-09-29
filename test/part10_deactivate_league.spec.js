@@ -9,6 +9,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part10-deactivate-secret';
 
@@ -103,7 +104,7 @@ describe('Part 10: deactivate a league', () => {
 
     const eventsRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: a.cookie, 'content-type': 'application/json', 'x-csrf-token': a.csrfToken },
-      body: JSON.stringify({ date: '2026-12-20' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-20' }))
     });
     expect(eventsRes.status).toBe(410);
 

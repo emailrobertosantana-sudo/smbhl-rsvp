@@ -17,6 +17,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { extractInlineScripts, assertNoSyntaxError, runScript } from './support/inline_scripts.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part76-roster-role-goalie-edit-secret';
 
@@ -60,7 +61,7 @@ async function updateContact(cookie, csrfToken, body) {
 async function createEvent(cookie, csrfToken, body) {
   return SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify(body)
+    body: JSON.stringify(withGameTimes(body))
   });
 }
 

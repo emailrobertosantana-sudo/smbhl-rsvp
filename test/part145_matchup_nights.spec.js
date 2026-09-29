@@ -8,6 +8,7 @@ import { applyRealSchema } from './support/real_schema.js';
 import { classifyNight, planNightAwareMatchups, computeMatchupDistribution, groupNights } from '../src/leagues.js';
 import { generateRoundRobinRounds } from '../src/season_config.js';
 import { generateRoundRobinRounds as hubRounds } from '../src/season_hub.js';
+import { withGameTimes } from './support/game_times.js';
 
 // n weekly nights, each with the given slot times (same time = concurrent).
 function nights(n, times) {
@@ -148,8 +149,8 @@ describe('After generating: the distribution is reported, and one matchup is edi
     const s = await signup('p145.flow@example.com');
     const league = (await (await post(s, '/leagues/create', { name: 'P145 Flow', teamNames: ['Red', 'White', 'Blue'] })).json()).league;
     await post(s, '/league/season/publish', { season_name: 'S1' });
-    await post(s, '/league/events/bulk', { startDate: '2099-10-07', occurrences: 3, start_time: '22:30', end_time: '23:30', venue: 'Letendre' });
-    await post(s, '/league/events/bulk', { startDate: '2099-10-07', occurrences: 3, start_time: '23:30', end_time: '00:30', venue: 'Letendre' });
+    await post(s, '/league/events/bulk', withGameTimes({ startDate: '2099-10-07', occurrences: 3, start_time: '22:30', end_time: '23:30', venue: 'Letendre' }));
+    await post(s, '/league/events/bulk', withGameTimes({ startDate: '2099-10-07', occurrences: 3, start_time: '23:30', end_time: '00:30', venue: 'Letendre' }));
     const preview = await (await post(s, '/league/season/matchups-preview', {})).json();
     expect(preview.distribution.case).toBe('partly_avoidable');
     expect(preview.distribution.text.summary.fr).toBe("Avec 2 matchs par soir et 3 équipes, certaines équipes doivent jouer plus que les autres chaque soir : c'est réparti également sur la saison.");
@@ -187,7 +188,7 @@ describe('After generating: the distribution is reported, and one matchup is edi
     await post(s, '/leagues/create', { name: 'P145 Four', teamNames: ['Red', 'Blue', 'White', 'Black'] });
     await post(s, '/league/season/publish', { season_name: 'S1' });
     for (const [t, v] of [['20:30', 'Gym 1'], ['20:30', 'Gym 2'], ['21:30', 'Gym 1'], ['21:30', 'Gym 2']]) {
-      await post(s, '/league/events/bulk', { startDate: '2099-10-04', occurrences: 3, start_time: t, venue: v });
+      await post(s, '/league/events/bulk', withGameTimes({ startDate: '2099-10-04', occurrences: 3, start_time: t, venue: v }));
     }
     await post(s, '/league/season/matchups-confirm', {});
     const html = await page(s, '/league/schedule');

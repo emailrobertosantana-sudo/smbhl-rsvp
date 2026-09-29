@@ -15,6 +15,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-a1-layout-sweep-secret';
 
@@ -142,7 +143,7 @@ describe('A2/A3: consistent field spacing on the event edit panel and the settin
     });
     const evRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-10-10' })
+      body: JSON.stringify(withGameTimes({ date: '2099-10-10' }))
     });
     const eventId = (await evRes.json()).event.id;
     const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();

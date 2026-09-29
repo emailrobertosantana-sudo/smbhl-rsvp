@@ -156,6 +156,7 @@ describe('Create-game reminder notice', () => {
     const { page, errors, close } = await open('/league/schedule', { lang: 'fr' });
     await page.evaluate(() => toggleBulkPanel());
     await page.fill('#be_start', '19:00');
+    await page.fill('#be_end', '20:00');
     await page.fill('#be_occurrences', '4');
     await page.fill('#be_start_date', isoOf(2));
     expect(await page.isVisible('#be_reminder_notice')).toBe(true);
@@ -325,7 +326,7 @@ describe('Schedule', () => {
   it('Assign matchups opens its panel IN VIEW, even below a long list', async () => {
     for (let i = 0; i < 16; i++) {
       const d = new Date(Date.UTC(2099, 1, 1 + i * 7)).toISOString().slice(0, 10);
-      await h.api('/league/events', { ...league.session, body: { date: d, season: 'S1' } });
+      await h.api('/league/events', { ...league.session, body: { date: d, season: 'S1', start_time: '19:00', end_time: '20:00' } });
     }
     const { page, errors, close } = await open('/league/schedule');
     const panel = '#sc_matchups_panel';

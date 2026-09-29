@@ -13,6 +13,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { getLeagueDataJson, putLeagueDataJson } from '../src/leagues.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part15-season-team-edit-secret';
 
@@ -122,7 +123,7 @@ describe('Part 15 (live-testing task, batch 2): add/remove teams on a published 
     const contact = (await contactRes.json()).contact;
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2026-11-01', season: 'S1' })
+      body: JSON.stringify(withGameTimes({ date: '2026-11-01', season: 'S1' }))
     });
     const ev = (await eventRes.json()).event;
 

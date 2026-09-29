@@ -15,6 +15,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part2-branding-secret';
 
@@ -71,7 +72,7 @@ describe('Part 2: league branding on session-based pages', () => {
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2026-12-13' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-13' }))
     });
     eventId = (await eventRes.json()).event.id;
   });

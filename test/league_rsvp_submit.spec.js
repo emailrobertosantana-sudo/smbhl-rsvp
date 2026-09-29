@@ -7,6 +7,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-league-rsvp-submit-secret';
 const RSVP_SECRET = 'test-league-rsvp-submit-rsvp-secret';
@@ -92,13 +93,13 @@ describe('Part N: POST /league/rsvp', () => {
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-13', season: 'League A Season 1' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-13', season: 'League A Season 1' }))
     });
     eventA = (await eventRes.json()).event.id;
 
     const eventBRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-      body: JSON.stringify({ date: '2026-12-13', season: 'League B Season 1' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-13', season: 'League B Season 1' }))
     });
     eventB = (await eventBRes.json()).event.id;
 
@@ -170,7 +171,7 @@ describe('Part N: POST /league/rsvp', () => {
   it('a locked (non-open) event rejects submissions', async () => {
     const lockedEventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-20', season: 'League A Season 1' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-20', season: 'League A Season 1' }))
     });
     const lockedEventId = (await lockedEventRes.json()).event.id;
     await env.DB.prepare(`UPDATE events SET state = 'closed' WHERE id = ?`).bind(lockedEventId).run();

@@ -15,6 +15,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part8-csrf-secret';
 const ADMIN_KEY = 'test-part8-csrf-admin-key';
@@ -64,7 +65,7 @@ describe('Part 8: CSRF protection', () => {
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2026-12-13' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-13' }))
     });
     eventId = (await eventRes.json()).event.id;
     const contactRes = await SELF.fetch('http://example.com/league/contacts', {
@@ -102,7 +103,7 @@ describe('Part 8: CSRF protection', () => {
     })],
     ['POST /league/events', () => SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ date: '2026-12-20' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-20' }))
     })],
     ['POST /league/season/publish', () => SELF.fetch('http://example.com/league/season/publish', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' },

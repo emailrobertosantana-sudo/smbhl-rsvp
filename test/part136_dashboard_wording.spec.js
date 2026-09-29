@@ -6,6 +6,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 let ip = 0;
 async function signup(email) {
@@ -29,7 +30,7 @@ describe('Dashboard wording', () => {
     const s = await signup('p136.distant@example.com');
     await post(s, '/leagues/create', { name: 'P136 Distant', teamNames: ['A', 'B'] });
     await post(s, '/league/season/publish', { season_name: 'S1' });
-    await post(s, '/league/events', { date: '2099-01-01', season: 'S1', venue: 'Parc', start_time: '19:00' });
+    await post(s, '/league/events', withGameTimes({ date: '2099-01-01', season: 'S1', venue: 'Parc', start_time: '19:00' }));
     const html = await dashboard(s);
     expect(html).toContain('data-i18n="weekStatusTitle">Prochain match<');
     expect(html).not.toContain('Cette semaine');

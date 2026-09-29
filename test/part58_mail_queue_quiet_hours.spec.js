@@ -29,6 +29,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part16-mail-queue-secret';
 const RSVP_SECRET = 'test-part16-mail-queue-rsvp-secret';
@@ -100,10 +101,13 @@ describe('Part 16 (live-testing task, batch 2): mail-queue quiet-hours fix', () 
     const playerId = (await playerRes.json()).contact.player_id;
     await env.DB.prepare(`UPDATE contacts SET preferred_team = 'Otters' WHERE player_id = ?`).bind(playerId).run();
 
-    const futureDate = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    // Beyond the 8-day shortfall horizon: a game with a start time inside it
+    // is checked for shortage at creation, which would call subs before the
+    // step this test is about.
+    const futureDate = new Date(Date.now() + 10 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: futureDate })
+      body: JSON.stringify(withGameTimes({ date: futureDate }))
     });
     const eventId = (await eventRes.json()).event.id;
 
@@ -150,10 +154,13 @@ describe('Part 16 (live-testing task, batch 2): mail-queue quiet-hours fix', () 
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Sub Two', email: 'sub2@mailqueue.com', role: 'sub_skater' })
     });
-    const futureDate = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    // Beyond the 8-day shortfall horizon: a game with a start time inside it
+    // is checked for shortage at creation, which would call subs before the
+    // step this test is about.
+    const futureDate = new Date(Date.now() + 10 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: futureDate })
+      body: JSON.stringify(withGameTimes({ date: futureDate }))
     });
     const eventId = (await eventRes.json()).event.id;
 

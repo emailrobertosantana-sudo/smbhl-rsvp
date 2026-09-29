@@ -29,6 +29,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { extractInlineScripts, assertNoSyntaxError } from './support/inline_scripts.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part80-reusable-venues-secret';
 const RSVP_SECRET = 'test-part80-reusable-venues-rsvp-secret';
@@ -73,7 +74,7 @@ async function createVenue(cookie, csrfToken, body) {
 async function createEvent(cookie, csrfToken, body) {
   return SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify(body)
+    body: JSON.stringify(withGameTimes(body))
   });
 }
 async function addContact(cookie, csrfToken, body) {
@@ -317,7 +318,7 @@ describe('Part 9 (live-testing task, batch 6): reusable venues', () => {
 
     const bulkRes = await SELF.fetch('http://example.com/league/events/bulk', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ startDate: '2099-06-01', occurrences: 2, venue_id: v.venue.id })
+      body: JSON.stringify(withGameTimes({ startDate: '2099-06-01', occurrences: 2, venue_id: v.venue.id }))
     });
     const bulkData = await bulkRes.json();
     expect(bulkData.createdCount).toBe(2);

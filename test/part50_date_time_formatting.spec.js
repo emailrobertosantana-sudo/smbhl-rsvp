@@ -24,6 +24,7 @@ import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateT
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { extractInlineScripts } from './support/inline_scripts.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part6-batch2-date-time-format-secret';
 const RSVP_SECRET = 'test-part6-batch2-date-time-format-rsvp-secret';
@@ -114,7 +115,7 @@ describe('Part 6 (live-testing task, batch 2): date/time formatting', () => {
       });
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2026-09-27', start_time: '10:30', venue: 'Test Arena' })
+        body: JSON.stringify(withGameTimes({ date: '2026-09-27', start_time: '10:30', venue: 'Test Arena' }))
       });
       const event = (await eventRes.json()).event;
       return { cookie, csrfToken, league, event };

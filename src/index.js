@@ -8178,6 +8178,17 @@ async function handleLeagueSchedulePage(req, env, url) {
     'SELECT id, season, week, date, venue, venue_id, venue_map_link, state, start_time, end_time, home_team, away_team, is_playoff, playoff_meta FROM events WHERE league_id = ? AND date < ? ORDER BY date DESC, week DESC'
   ).bind(leagueId, scheduleToday).all()).results || [];
   const events = [...upcomingEvents, ...pastEvents];
+  // Nights (D1, 2026-09-30): every game now needs a start and an end time,
+  // which say which games overlap. Games created before that may have
+  // neither; nothing is guessed for them -- the admin is asked to add the
+  // end time, and until then two such games count as overlapping only when
+  // they start at the same time.
+  const needsEndTime = ev => ev.state === 'open' && !ev.end_time;
+  const noEndCount = upcomingEvents.filter(needsEndTime).length;
+  const noEndText = {
+    fr: `${noEndCount} match${noEndCount > 1 ? 's' : ''} à venir ${noEndCount > 1 ? "n'ont" : "n'a"} pas d'heure de fin. Ajoute-la sur la page du match : elle sert à savoir quels matchs se chevauchent. D'ici là, deux matchs ne comptent comme simultanés que s'ils commencent à la même heure.`,
+    en: `${noEndCount} upcoming game${noEndCount > 1 ? 's have' : ' has'} no end time. Add it on the game's page: it's how we tell which games overlap. Until then, two games only count as at the same time when they start at the same time.`
+  };
   // C4 bug fix (schedule/events polish task): most leagues play at the
   // same time every week -- prefilling the create form's start time
   // with whatever was most recently used means the field is usually
@@ -8289,7 +8300,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     fr: {
       navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter',
       title: 'Horaire', createEvent: 'Créer un match',
-      date: 'Date', startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
+      date: 'Date', startOpt: 'Heure de début', endOpt: 'Heure de fin',
       venueOpt: 'Lieu (optionnel)', createBtn: 'Créer le match', cancel: 'Annuler',
       venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun — texte libre ci-dessous',
       // Events polish task (C3): a free-text venue no longer has NO
@@ -8309,6 +8320,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       remBulkSuppressOne: 'Ne pas envoyer de rappels automatiques pour ce match seulement (les autres gardent les leurs)',
       noEvents: "Aucun match pour l'instant.",
       stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
+       noEndTag: 'Heure de fin à ajouter', noEndNoticeTitle: "Des matchs n'ont pas d'heure de fin",
       needsSeasonTitle: "Lance ta saison d'abord",
       needsSeasonBody: "Il te faut une saison active avant de pouvoir créer des matchs.",
       // The next step AFTER the schedule (scheduleNextStep): the schedule
@@ -8389,7 +8401,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
       title: 'Schedule', createEvent: 'Create an event',
-      date: 'Date', startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
+      date: 'Date', startOpt: 'Start time', endOpt: 'End time',
       venueOpt: 'Venue (optional)', createBtn: 'Create the event', cancel: 'Cancel',
       venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None — free text below',
       lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
@@ -8405,6 +8417,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       remBulkSuppressOne: "Don't send automatic reminders for this game only (the others keep theirs)",
       noEvents: 'No events yet.',
       stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled',
+       noEndTag: 'End time needed', noEndNoticeTitle: 'Some games have no end time',
       needsSeasonTitle: 'Start your season first',
       needsSeasonBody: 'You need an active season before you can create events.',
       nextStep: 'Next step',
@@ -8460,7 +8473,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   const rowsHtml = events.length
     ? events.map(ev => `<div class="nl-card sc-game-row">
       <a class="sc-game" href="/league/events/detail?e=${encodeURIComponent(ev.id)}">
-        <div class="sc-when">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
+        <div class="sc-when">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}${ev.date >= scheduleToday && needsEndTime(ev) ? '<span class="sc-no-end" data-i18n="noEndTag">Heure de fin à ajouter</span>' : ''}</div>
         <!-- Who plays is the row's headline; the venue sits under it, small.
              (Both used to be small grey text side by side, and the extra
              cell pushed the row's grid out of line.) -->
@@ -8520,6 +8533,7 @@ async function handleLeagueSchedulePage(req, env, url) {
      avoids the text visually overflowing into the next column instead. */
   .sc-when b { display: block; font: 700 18px/22px var(--font-display); font-stretch: 118%; white-space: nowrap; }
   .sc-when span { font-size: 13px; color: var(--ink-muted); white-space: nowrap; }
+  .sc-when .sc-no-end { display: block; color: var(--ink); font-weight: 600; }
   .sc-venue { font-size: 14px; color: var(--ink-muted); }
   .sc-main-col { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .sc-matchup { font: 700 18px/24px var(--font-display); font-stretch: 112%; color: var(--ink); overflow-wrap: anywhere; }
@@ -8603,6 +8617,10 @@ async function handleLeagueSchedulePage(req, env, url) {
       <tbody>${scheduleDistribution.teams.map(r => `<tr data-dist-team="${esc(r.team)}"><td>${esc(r.team)}</td><td class="tnum">${r.games}</td><td class="tnum">${r.doubleNights}</td></tr>`).join('')}</tbody>
     </table></div>
   </section>` : ''}
+  ${noEndCount ? `<section class="nl-card" id="sc_no_end">
+    <h2 class="h3" data-i18n="noEndNoticeTitle">Des matchs n'ont pas d'heure de fin</h2>
+    <p class="nl-help" data-date-fr="${esc(noEndText.fr)}" data-date-en="${esc(noEndText.en)}">${esc(noEndText.fr)}</p>
+  </section>` : ''}
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);">
     <div class="sc-list" id="scheduleList">${rowsHtml}</div>
     <aside class="sc-panel" id="sc_panel" data-i18n-aria="createEvent" aria-label="Créer un match">
@@ -8627,17 +8645,17 @@ async function handleLeagueSchedulePage(req, env, url) {
       </div>` : ''}
       <div class="sc-two">
         <div class="nl-field">
-          <label class="nl-label" for="e_start" data-i18n="startOpt">Heure de début (optionnel)</label>
+          <label class="nl-label" for="e_start" data-i18n="startOpt">Heure de début</label>
           <!-- D2 (forms polish task): the :00/:15/:30/:45 quick-set
                buttons that used to sit here were removed -- they
                wrapped badly and weren't useful. Prefill from the last
                used start time (below) is kept; the native time picker
                handles everything else. -->
-          <input class="nl-input" id="e_start" type="time" value="${esc(lastUsedStartTime)}">
+          <input class="nl-input" id="e_start" type="time" value="${esc(lastUsedStartTime)}" required>
         </div>
         <div class="nl-field">
-          <label class="nl-label" for="e_end" data-i18n="endOpt">Heure de fin (optionnel)</label>
-          <input class="nl-input" id="e_end" type="time">
+          <label class="nl-label" for="e_end" data-i18n="endOpt">Heure de fin</label>
+          <input class="nl-input" id="e_end" type="time" required>
         </div>
       </div>
       ${venues.length ? `<div class="nl-field">
@@ -8692,12 +8710,12 @@ async function handleLeagueSchedulePage(req, env, url) {
       </div>
       <div class="sc-two">
         <div class="nl-field">
-          <label class="nl-label" for="be_start" data-i18n="startOpt">Heure de début (optionnel)</label>
-          <input class="nl-input" id="be_start" type="time">
+          <label class="nl-label" for="be_start" data-i18n="startOpt">Heure de début</label>
+          <input class="nl-input" id="be_start" type="time" required>
         </div>
         <div class="nl-field">
-          <label class="nl-label" for="be_end" data-i18n="endOpt">Heure de fin (optionnel)</label>
-          <input class="nl-input" id="be_end" type="time">
+          <label class="nl-label" for="be_end" data-i18n="endOpt">Heure de fin</label>
+          <input class="nl-input" id="be_end" type="time" required>
         </div>
       </div>
       ${venues.length ? `<div class="nl-field">
@@ -8857,6 +8875,8 @@ async function submitEvent() {
   var homeTeam = homeTeamEl ? homeTeamEl.value : '';
   var awayTeam = awayTeamEl ? awayTeamEl.value : '';
   if (!date) { showErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
+  if (!start_time) { showErr(window.__errorText('START_TIME_REQUIRED')); return; }
+  if (!end_time) { showErr(window.__errorText('END_TIME_REQUIRED')); return; }
   // A late game crossing midnight is normal; an implausible length is
   // usually a typo -- warn (don't block).
   if (!confirmGameLength(start_time, end_time)) return;
@@ -9011,6 +9031,8 @@ async function submitBulkEvents() {
   var suppressEl = document.getElementById('be_suppress_soon');
   var suppressDates = (suppressEl && suppressEl.checked) ? bulkSoonGames().map(function(g) { return g.date; }) : [];
   if (!startDate) { showBulkErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
+  if (!start_time) { showBulkErr(window.__errorText('START_TIME_REQUIRED')); return; }
+  if (!end_time) { showBulkErr(window.__errorText('END_TIME_REQUIRED')); return; }
   // Same check as the single-event form, for every game in the series.
   if (!confirmGameLength(start_time, end_time)) return;
   var btn = document.getElementById('be_submit');
@@ -9586,7 +9608,7 @@ ${tabbar}`;
       // for why the date specifically stays out of scope.
       editBtn: 'Modifier', saveBtn: 'Enregistrer', cancelEdit: 'Annuler',
       editDateLabel: 'Date', editDateNote: "La date ne peut pas encore être modifiée.",
-      startOpt: 'Heure de début (optionnel)', endOpt: 'Heure de fin (optionnel)',
+      startOpt: 'Heure de début', endOpt: 'Heure de fin',
       venueOpt: 'Lieu (optionnel)', venueSelectOpt: 'Lieu enregistré (optionnel)', venueSelectNone: 'Aucun — texte libre ci-dessous',
       lblVenueAddress: 'Adresse (optionnel)', lblVenueMapLink: 'Lien vers une carte (optionnel)',
       editSaved: 'Modifications enregistrées.',
@@ -9659,7 +9681,7 @@ ${tabbar}`;
       assignTo: 'Assign to…', assign: 'Assign', randomDraw: 'Random draw',
       editBtn: 'Edit', saveBtn: 'Save', cancelEdit: 'Cancel',
       editDateLabel: 'Date', editDateNote: "The date can't be changed yet.",
-      startOpt: 'Start time (optional)', endOpt: 'End time (optional)',
+      startOpt: 'Start time', endOpt: 'End time',
       venueOpt: 'Venue (optional)', venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None — free text below',
       lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
       editSaved: 'Changes saved.',
@@ -9973,12 +9995,12 @@ ${tabbar}`;
     </div>
     <div class="sc-two">
       <div class="nl-field">
-        <label class="nl-label" for="ev_edit_start" data-i18n="startOpt">Heure de début (optionnel)</label>
-        <input class="nl-input" id="ev_edit_start" type="time" value="${esc(ev.start_time || '')}">
+        <label class="nl-label" for="ev_edit_start" data-i18n="startOpt">Heure de début</label>
+        <input class="nl-input" id="ev_edit_start" type="time" required value="${esc(ev.start_time || '')}">
       </div>
       <div class="nl-field">
-        <label class="nl-label" for="ev_edit_end" data-i18n="endOpt">Heure de fin (optionnel)</label>
-        <input class="nl-input" id="ev_edit_end" type="time" value="${esc(ev.end_time || '')}">
+        <label class="nl-label" for="ev_edit_end" data-i18n="endOpt">Heure de fin</label>
+        <input class="nl-input" id="ev_edit_end" type="time" required value="${esc(ev.end_time || '')}">
       </div>
     </div>
     ${venues.length ? `<div class="nl-field">

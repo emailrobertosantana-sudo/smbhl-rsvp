@@ -928,6 +928,11 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
   if (endTime && !timePattern.test(endTime)) {
     return { ok: false, error: 'end_time must be in HH:MM format.', errorKey: 'END_TIME_FORMAT' };
   }
+  // Nights: games on the same day are one night, and which of them
+  // overlap -- who can play what -- comes from their times. Both are
+  // required (the end used to be optional, the start too).
+  if (!startTime) return { ok: false, error: 'start_time is required.', errorKey: 'START_TIME_REQUIRED' };
+  if (!endTime) return { ok: false, error: 'end_time is required.', errorKey: 'END_TIME_REQUIRED' };
 
   let venue = String(body.venue || '').trim() || null;
   // Live-testing task (batch 6), Part 9: reusable venues. venue_id is
@@ -1170,6 +1175,10 @@ export async function handleLeagueEventsBulkCreate(req, env) {
     return Response.json({ ok: false, error: 'Provide an occurrence count or an end date after the start date.', errorKey: 'BULK_EVENTS_RECURRENCE_REQUIRED' }, { status: 400 });
   }
   occurrences = Math.min(Math.floor(occurrences), 52);
+  // Nights (D1): the times are required; refuse the whole series up front
+  // rather than skipping every one of its games as invalid.
+  if (!String(body.start_time || '').trim()) return Response.json({ ok: false, error: 'start_time is required.', errorKey: 'START_TIME_REQUIRED' }, { status: 400 });
+  if (!String(body.end_time || '').trim()) return Response.json({ ok: false, error: 'end_time is required.', errorKey: 'END_TIME_REQUIRED' }, { status: 400 });
 
   const leagueData = await getLeagueDataJson(env, leagueId);
   // Item 10c: the games the form named as sending reminders soon, whose
@@ -1397,6 +1406,9 @@ export async function handleLeagueEventUpdate(req, env) {
   if (endTime && !timePattern.test(endTime)) {
     return Response.json({ ok: false, error: 'end_time must be in HH:MM format.', errorKey: 'END_TIME_FORMAT' }, { status: 400 });
   }
+  // Required, as when a game is created (nights: see createLeagueEventRow).
+  if (!startTime) return Response.json({ ok: false, error: 'start_time is required.', errorKey: 'START_TIME_REQUIRED' }, { status: 400 });
+  if (!endTime) return Response.json({ ok: false, error: 'end_time is required.', errorKey: 'END_TIME_REQUIRED' }, { status: 400 });
 
   // Same venue_id resolution as createLeagueEventRow: optional, must be
   // one of THIS league's own saved venues, and its name is copied into

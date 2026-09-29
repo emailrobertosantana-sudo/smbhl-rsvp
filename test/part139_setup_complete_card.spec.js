@@ -7,6 +7,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 let ip = 0;
 async function signup(email) {
@@ -26,7 +27,7 @@ async function almostSetUp(email) {
   await post(s, '/leagues/create', { name: `League ${email}`, teamNames: ['Otters', 'Bears'] });
   await post(s, '/league/season/publish', { season_name: 'S1' });
   await post(s, '/league/settings/structure', { min_players: 1, max_players: 20 });
-  await post(s, '/league/events', { date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' });
+  await post(s, '/league/events', withGameTimes({ date: '2099-06-07', season: 'S1', venue: 'Parc', start_time: '19:00' }));
   return s;
 }
 

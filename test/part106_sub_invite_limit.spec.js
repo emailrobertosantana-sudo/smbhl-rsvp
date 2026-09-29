@@ -7,6 +7,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { runSchedule, drain } from '../src/index.js';
+import { withGameTimes } from './support/game_times.js';
 
 const ADMIN_KEY = 'test-part106-admin';
 
@@ -133,7 +134,7 @@ describe('League product: the same limit', () => {
     }
     await post('/league/contacts', { name: 'League Sub', email: 'p106.sub@example.com', role: 'sub_skater' });
     const date = new Date(Date.now() + 5 * 24 * 3600000).toISOString().slice(0, 10);
-    const eventId = (await (await post('/league/events', { date, start_time: '20:00' })).json()).event.id;
+    const eventId = (await (await post('/league/events', withGameTimes({ date, start_time: '20:00' }))).json()).event.id;
     const out = pid => withResend(() => post('/league/rsvp/admin', { event_id: eventId, player_id: pid, status: 'out' }));
 
     const first = await out(players[0]);
@@ -163,7 +164,7 @@ describe('League product: the manual third, from a league admin', () => {
     }
     const sub = (await (await post('/league/contacts', { name: `X${tag} Sub`, email: `p106.x${tag}.sub@example.com`, role: 'sub_skater' })).json()).contact;
     const date = new Date(Date.now() + 5 * 24 * 3600000).toISOString().slice(0, 10);
-    const eventId = (await (await post('/league/events', { date, start_time: '20:00' })).json()).event.id;
+    const eventId = (await (await post('/league/events', withGameTimes({ date, start_time: '20:00' }))).json()).event.id;
     return { post, sub, eventId };
   }
 

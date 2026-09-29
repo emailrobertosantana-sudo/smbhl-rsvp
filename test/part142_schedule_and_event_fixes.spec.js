@@ -5,6 +5,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { computePlayoffSlots } from '../src/leagues.js';
+import { withGameTimes } from './support/game_times.js';
 
 let ip = 0;
 async function signup(email) {
@@ -40,7 +41,7 @@ describe('2. The bye note agrees with the slot arithmetic', () => {
   });
 });
 
-const createEventAt = (s, date) => post(s, '/league/events', { date });
+const createEventAt = (s, date) => post(s, '/league/events', withGameTimes({ date }));
 const i18n = html => JSON.parse(html.match(/var __I18N = (\{[\s\S]*?\});\n/)[1]);
 
 describe('3. The Schedule page lets you do what you came for, and names the real next step', () => {
@@ -113,9 +114,9 @@ describe('4. Bulk-created games keep the time the form sent', () => {
     const s = await signup('p142.bulk.time@example.com');
     const league = (await (await post(s, '/leagues/create', { name: 'P142 Bulk Time', teamNames: ['A', 'B'] })).json()).league;
     await post(s, '/league/season/publish', { season_name: 'S1' });
-    const res = await (await post(s, '/league/events/bulk', { startDate: '2099-03-01', occurrences: 3, start_time: '10:30', end_time: '11:30', venue: 'Rink' })).json();
+    const res = await (await post(s, '/league/events/bulk', withGameTimes({ startDate: '2099-03-01', occurrences: 3, start_time: '10:30', end_time: '11:30', venue: 'Rink' }))).json();
     expect(res.createdCount).toBe(3);
-    await post(s, '/league/events/bulk', { startDate: '2099-03-01', occurrences: 1, start_time: '22:30', end_time: '23:30', venue: 'Rink' });
+    await post(s, '/league/events/bulk', withGameTimes({ startDate: '2099-03-01', occurrences: 1, start_time: '22:30', end_time: '23:30', venue: 'Rink' }));
     const rows = (await env.DB.prepare('SELECT start_time, end_time FROM events WHERE league_id = ? ORDER BY date, start_time').bind(league.id).all()).results;
     expect(rows.map(r => `${r.start_time}-${r.end_time}`)).toEqual(['10:30-11:30', '22:30-23:30', '10:30-11:30', '10:30-11:30']);
   });
@@ -127,7 +128,7 @@ describe('5. Result and player stats: only once the game has started, the form c
     await post(s, '/leagues/create', { name: `P142 ${email}`, teamNames: ['Blue', 'White'], tracksStats: true });
     await post(s, '/league/settings/identity', { tracksResults: true, tracksPlayerStats: true });
     await post(s, '/league/season/publish', { season_name: 'S1' });
-    const ev = (await (await post(s, '/league/events', { date, season: 'S1', start_time })).json()).event;
+    const ev = (await (await post(s, '/league/events', withGameTimes({ date, season: 'S1', start_time }))).json()).event;
     const html = await page(s, `/league/events/detail?e=${encodeURIComponent(ev.id)}`);
     return { s, ev, html };
   };

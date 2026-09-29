@@ -14,6 +14,7 @@ import { env, SELF } from 'cloudflare:test';
 import { getLeagueSeasonConfig } from '../src/leagues.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part1-settings-page-secret';
 
@@ -310,7 +311,7 @@ describe('Part 1 (live-testing task): consolidated settings page', () => {
       const player = (await contactRes.json()).contact;
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-05-05' })
+        body: JSON.stringify(withGameTimes({ date: '2099-05-05' }))
       });
       const eventId = (await eventRes.json()).event.id;
       await SELF.fetch('http://example.com/league/rsvp/admin', {

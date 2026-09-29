@@ -30,6 +30,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { runScript, extractInlineScripts, assertNoSyntaxError } from './support/inline_scripts.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part1-roster-broken-regression-secret';
 
@@ -111,7 +112,7 @@ describe('Part 1 (live-testing task, URGENT): roster "Ajouter" button regression
     });
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-08-15' })
+      body: JSON.stringify(withGameTimes({ date: '2099-08-15' }))
     });
     const eventId = (await eventRes.json()).event.id;
 

@@ -8,6 +8,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part4-batch4-broadcast-secret';
 
@@ -157,7 +158,7 @@ describe('Part 4 (live-testing task, batch 4): broadcast in the shared Comms mod
     const p2 = await addContact(cookie, csrfToken, { name: 'Pending Player', email: 'bcstatus.pending@example.com', role: 'roster' });
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2026-12-20' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-20' }))
     });
     const ev = (await eventRes.json()).event;
     await SELF.fetch('http://example.com/league/rsvp/admin', {

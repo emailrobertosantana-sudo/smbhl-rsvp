@@ -10,6 +10,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part3-admin-rsvp-edit-secret';
 const RSVP_SECRET = 'test-part3-admin-rsvp-edit-rsvp-secret';
@@ -83,7 +84,7 @@ describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2026-12-20', season: 'Part 3 Season' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-20', season: 'Part 3 Season' }))
     });
     eventId = (await eventRes.json()).event.id;
   });
@@ -178,7 +179,7 @@ describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
       const playerId = (await playerRes.json()).contact.player_id;
       const evRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie: c, 'content-type': 'application/json', 'x-csrf-token': t },
-        body: JSON.stringify({ date: '2099-09-09' })
+        body: JSON.stringify(withGameTimes({ date: '2099-09-09' }))
       });
       const eId = (await evRes.json()).event.id;
 

@@ -7,6 +7,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-onboarding-season-secret';
 
@@ -80,7 +81,7 @@ describe('Onboarding: dashboard "start your season" prompt', () => {
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2026-12-13', venue: 'Onboarding Rink' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-13', venue: 'Onboarding Rink' }))
     });
     expect(eventRes.status).toBe(200);
     const eventJson = await eventRes.json();

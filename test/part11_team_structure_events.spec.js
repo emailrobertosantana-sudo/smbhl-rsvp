@@ -4,6 +4,7 @@ import { env, SELF } from 'cloudflare:test';
 import { getNonResponders, getConfirmedPlayers } from '../src/index.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part11-team-structure-events-secret';
 const RSVP_SECRET = 'test-part11-team-structure-events-rsvp-secret';
@@ -49,7 +50,7 @@ async function addPlayer(cookie, csrfToken, name, extra = {}) {
 async function createEvent(cookie, csrfToken, date) {
   const res = await SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify({ date })
+    body: JSON.stringify(withGameTimes({ date }))
   });
   return (await res.json()).event.id;
 }

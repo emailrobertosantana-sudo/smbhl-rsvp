@@ -16,6 +16,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part2-role-goalie-redundancy-secret';
 
@@ -162,7 +163,7 @@ describe('Part 2 (live-testing task): role has exactly 2 options, goalie axis is
     await addPlayer(cookie, csrfToken, 'Manual Invite Goalie Sub', { role: 'sub_skater', is_goalie: true, email: 'manualinvitegoaliesub@example.com' });
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-11-11' })
+      body: JSON.stringify(withGameTimes({ date: '2099-11-11' }))
     });
     const eventId = (await eventRes.json()).event.id;
 

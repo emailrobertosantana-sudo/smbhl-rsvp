@@ -13,6 +13,7 @@ import { env, SELF } from 'cloudflare:test';
 import { answerViaEmailLink } from './support/email_link.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-ui-rsvp-polish-secret';
 const RSVP_SECRET = 'test-ui-rsvp-polish-rsvp-secret';
@@ -84,7 +85,7 @@ describe('UI task Part V: GET /league/rsvp visual polish (design system Part 4)'
     });
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2026-12-20' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-20' }))
     });
     eventId = (await eventRes.json()).event.id;
   });

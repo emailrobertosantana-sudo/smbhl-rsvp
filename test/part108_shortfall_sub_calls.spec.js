@@ -14,6 +14,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { runSchedule, runLeagueReminders } from '../src/index.js';
 import { hmac } from '../src/crypto_utils.js';
+import { withGameTimes } from './support/game_times.js';
 
 const ADMIN_KEY = 'test-part108-admin';
 const RSVP_SECRET = 'test-part108-rsvp';
@@ -167,7 +168,7 @@ describe('League product: the same shortfall trigger', () => {
   it('creating a game where a team is already short calls subs in that same request', async () => {
     const { post } = await league(1);
     const date = new Date(Date.now() + 4 * 24 * 3600000).toISOString().slice(0, 10);
-    const { result, sent } = await withResend(async () => (await post('/league/events', { date, start_time: '20:00' })).json());
+    const { result, sent } = await withResend(async () => (await post('/league/events', withGameTimes({ date, start_time: '20:00' }))).json());
     expect(result.ok).toBe(true);
     // (The admin is also told the other team is short of a goalie, with no
     // goalie sub to call -- D3.)
@@ -179,7 +180,7 @@ describe('League product: the same shortfall trigger', () => {
   it('a game beyond the 8-day horizon calls nobody yet; the cron calls subs once it comes within range', async () => {
     const { post } = await league(2);
     const date = new Date(Date.now() + 20 * 24 * 3600000).toISOString().slice(0, 10);
-    const { result, sent } = await withResend(async () => (await post('/league/events', { date, start_time: '20:00' })).json());
+    const { result, sent } = await withResend(async () => (await post('/league/events', withGameTimes({ date, start_time: '20:00' }))).json());
     expect(sent).toEqual([]);
     expect(await subCallRows(result.event.id)).toEqual([]);
     const soon = new Date(Date.now() + 5 * 24 * 3600000).toISOString().slice(0, 10);

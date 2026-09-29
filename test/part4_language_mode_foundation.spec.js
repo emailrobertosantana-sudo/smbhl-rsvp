@@ -18,6 +18,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part4-language-mode-secret';
 const RSVP_SECRET = 'test-part4-language-mode-rsvp-secret';
@@ -113,7 +114,7 @@ describe('Part 4: per-league language_mode foundation', () => {
     const playerSalt = (await env.DB.prepare('SELECT token_salt FROM contacts WHERE player_id = ?').bind(playerId).first()).token_salt;
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: a.cookie, 'content-type': 'application/json', 'x-csrf-token': a.csrfToken },
-      body: JSON.stringify({ date: '2099-07-07', season: 'Part 4 Season' })
+      body: JSON.stringify(withGameTimes({ date: '2099-07-07', season: 'Part 4 Season' }))
     });
     const eventId = (await eventRes.json()).event.id;
 

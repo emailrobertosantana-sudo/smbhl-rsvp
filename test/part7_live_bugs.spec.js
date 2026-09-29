@@ -5,6 +5,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { ERROR_I18N } from '../src/error_i18n.js';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part7-live-bugs-secret';
 const RSVP_SECRET = 'test-part7-live-bugs-rsvp-secret';
@@ -213,7 +214,7 @@ describe('Bug 6: sweep -- raw backend errors now resolve through ERROR_I18N on e
     playerSalt = (await env.DB.prepare('SELECT token_salt FROM contacts WHERE player_id = ?').bind(playerId).first()).token_salt;
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-03-03' })
+      body: JSON.stringify(withGameTimes({ date: '2099-03-03' }))
     });
     eventId = (await eventRes.json()).event.id;
   });

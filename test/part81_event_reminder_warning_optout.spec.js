@@ -18,6 +18,7 @@ import worker, { runLeagueReminders } from '../src/index.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { extractInlineScripts, assertNoSyntaxError } from './support/inline_scripts.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part81-reminder-warning-optout-secret';
 const RSVP_SECRET = 'test-part81-reminder-warning-optout-rsvp-secret';
@@ -62,7 +63,7 @@ async function addContact(cookie, csrfToken, body) {
 async function createEvent(cookie, csrfToken, body) {
   return SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify(body)
+    body: JSON.stringify(withGameTimes(body))
   });
 }
 // Reminder-window-skip-on-create bug fix task: createEvent (above) goes
@@ -308,7 +309,7 @@ describe('Part 10 (live-testing task, batch 6): event creation warns before armi
 
     const bulkRes = await SELF.fetch('http://example.com/league/events/bulk', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ startDate: '2099-08-01', occurrences: 2, auto_reminders_enabled: false })
+      body: JSON.stringify(withGameTimes({ startDate: '2099-08-01', occurrences: 2, auto_reminders_enabled: false }))
     });
     const bulkData = await bulkRes.json();
     expect(bulkData.createdCount).toBe(2);

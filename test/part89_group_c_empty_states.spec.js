@@ -16,6 +16,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part89-group-c-empty-states-secret';
 
@@ -61,7 +62,7 @@ async function addContact(cookie, csrfToken, body) {
 async function createEventAt(cookie, csrfToken, date) {
   return SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify({ date })
+    body: JSON.stringify(withGameTimes({ date }))
   });
 }
 

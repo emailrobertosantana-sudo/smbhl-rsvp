@@ -7,6 +7,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { leagueFillColor } from '../src/design_system.js';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part4-league-color-ds-secret';
 const RSVP_SECRET = 'test-part4-league-color-ds-rsvp-secret';
@@ -63,7 +64,7 @@ describe('Part 4: the league\'s own color is used, not a hardcoded one', () => {
       });
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie: league.cookie, 'content-type': 'application/json', 'x-csrf-token': league.csrfToken },
-        body: JSON.stringify({ date: '2099-09-09' })
+        body: JSON.stringify(withGameTimes({ date: '2099-09-09' }))
       });
       const eventId = (await eventRes.json()).event.id;
       const encoder = new TextEncoder();

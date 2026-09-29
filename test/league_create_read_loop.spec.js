@@ -6,6 +6,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-league-create-read-loop-secret';
 
@@ -104,7 +105,7 @@ describe('Part L: the full create -> read loop', () => {
       const createRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST',
         headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-        body: JSON.stringify({ date: '2026-11-15', season: 'League A Season 1', venue: 'Loop Rink', start_time: '19:00', end_time: '21:00' })
+        body: JSON.stringify(withGameTimes({ date: '2026-11-15', season: 'League A Season 1', venue: 'Loop Rink', start_time: '19:00', end_time: '21:00' }))
       });
       expect(createRes.status).toBe(200);
       const created = await createRes.json();
@@ -121,7 +122,7 @@ describe('Part L: the full create -> read loop', () => {
       await SELF.fetch('http://example.com/league/events', {
         method: 'POST',
         headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-        body: JSON.stringify({ date: '2026-11-22', season: 'League B Season 1', venue: 'League B Rink' })
+        body: JSON.stringify(withGameTimes({ date: '2026-11-22', season: 'League B Season 1', venue: 'League B Rink' }))
       });
 
       const aRes = await SELF.fetch('http://example.com/league/events', { headers: { cookie: cookieA } });

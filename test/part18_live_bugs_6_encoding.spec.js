@@ -32,6 +32,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part18-live-bugs-6-secret';
 
@@ -96,7 +97,7 @@ describe('Live-testing Bug 5 investigation: accented-character encoding is corre
     const realVenue = 'Aréna Municipale de Montréal';
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-11-15', venue: realVenue })
+      body: JSON.stringify(withGameTimes({ date: '2099-11-15', venue: realVenue }))
     });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -119,7 +120,7 @@ describe('Live-testing Bug 5 investigation: accented-character encoding is corre
     // JSON escape sequence é (not a pre-decoded JS character) --
     // this is what a real browser's own JSON.stringify sometimes emits
     // for non-ASCII characters, and is valid, unambiguous JSON.
-    const rawBody = '{"date":"2099-11-22","venue":"Ar\\u00e9na Escaped"}';
+    const rawBody = '{"date":"2099-11-22","start_time":"19:00","end_time":"20:00","venue":"Ar\\u00e9na Escaped"}';
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: rawBody

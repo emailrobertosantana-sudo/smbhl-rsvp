@@ -7,6 +7,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-ui-schedule-secret';
 
@@ -71,13 +72,13 @@ describe('UI task Part T: GET /league/schedule', () => {
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-06', venue: 'Schedule Page Rink' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-06', venue: 'Schedule Page Rink' }))
     });
     eventA = (await eventRes.json()).event.id;
 
     await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-      body: JSON.stringify({ date: '2026-12-07', venue: 'League B Only Rink' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-07', venue: 'League B Only Rink' }))
     });
   });
 
@@ -110,7 +111,7 @@ describe('UI task Part T: GET /league/schedule', () => {
   it('an event created via the real POST /league/events route is reflected on the next page load', async () => {
     const createRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-13', venue: 'Freshly Created Venue' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-13', venue: 'Freshly Created Venue' }))
     });
     expect(createRes.status).toBe(200);
 
@@ -122,7 +123,7 @@ describe('UI task Part T: GET /league/schedule', () => {
   it('a genuine same date+venue slot rejection from the API is a real, surfaceable error (fixed-teams scheduling task, Part 2: a bare date alone no longer collides -- see league_event_create.spec.js for the now-allowed different-venue/time case)', async () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-06', venue: 'Schedule Page Rink' }) // same date AND venue as above
+      body: JSON.stringify(withGameTimes({ date: '2026-12-06', venue: 'Schedule Page Rink' })) // same date AND venue as above
     });
     expect(res.status).toBe(409);
     const json = await res.json();
@@ -162,7 +163,7 @@ describe('UI task Part T: GET /league/schedule', () => {
     for (const body of toCreate) {
       const res = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
-        body: JSON.stringify(body)
+        body: JSON.stringify(withGameTimes(body))
       });
       expect(res.status).toBe(200);
     }
@@ -248,7 +249,7 @@ describe('UI task Part T: GET /league/schedule', () => {
       });
       await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
-        body: JSON.stringify({ date: '2099-04-10', start_time: '19:45' })
+        body: JSON.stringify(withGameTimes({ date: '2099-04-10', start_time: '19:45' }))
       });
       const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
       expect(html).toContain('id="e_start" type="time" value="19:45"');
@@ -256,7 +257,7 @@ describe('UI task Part T: GET /league/schedule', () => {
       // A LATER-dated event's own start time becomes the new prefill.
       await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie: c.cookie, 'content-type': 'application/json', 'x-csrf-token': c.csrfToken },
-        body: JSON.stringify({ date: '2099-04-17', start_time: '20:15' })
+        body: JSON.stringify(withGameTimes({ date: '2099-04-17', start_time: '20:15' }))
       });
       const html2 = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
       expect(html2).toContain('id="e_start" type="time" value="20:15"');

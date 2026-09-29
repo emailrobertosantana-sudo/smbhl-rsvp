@@ -9,6 +9,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-league-event-status-secret';
 
@@ -71,7 +72,7 @@ describe('Part O: GET /league/events/status', () => {
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-27', season: 'League A Season 1' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-27', season: 'League A Season 1' }))
     });
     eventA = (await eventRes.json()).event.id;
 
@@ -139,7 +140,7 @@ describe('Part O: GET /league/events/status', () => {
     });
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-      body: JSON.stringify({ date: '2026-12-28', season: 'League B Season 1' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-28', season: 'League B Season 1' }))
     });
     const eventBId = (await eventRes.json()).event.id;
 

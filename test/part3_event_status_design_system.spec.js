@@ -5,6 +5,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part3-event-status-ds-secret';
 
@@ -43,7 +44,7 @@ describe('Part 3: event status page (design system)', () => {
     });
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-08-08' })
+      body: JSON.stringify(withGameTimes({ date: '2099-08-08' }))
     });
     const eventId = (await eventRes.json()).event.id;
 

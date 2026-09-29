@@ -5,6 +5,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part98-events-polish-secret';
 
@@ -42,14 +43,14 @@ async function publishSeason(cookie, csrfToken, body) {
 async function createEvent(cookie, csrfToken, body) {
   const res = await SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify(body)
+    body: JSON.stringify(withGameTimes(body))
   });
   return { status: res.status, json: await res.json() };
 }
 async function bulkCreateEvents(cookie, csrfToken, body) {
   const res = await SELF.fetch('http://example.com/league/events/bulk', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify(body)
+    body: JSON.stringify(withGameTimes(body))
   });
   return { status: res.status, json: await res.json() };
 }
@@ -253,7 +254,7 @@ describe('Events polish, C3: a free-text venue can carry its own address and map
     const ev = (await createEvent(cookie, csrfToken, { date: '2099-01-05', season: 'S1', venue: 'Bare Name Rink' })).json.event;
     const res = await SELF.fetch('http://example.com/league/events/update', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ event_id: ev.id, venue: 'Bare Name Rink', venue_address: '456 Ice Ave', venue_map_link: 'https://maps.example.com/bare-name-rink' })
+      body: JSON.stringify(withGameTimes({ event_id: ev.id, venue: 'Bare Name Rink', venue_address: '456 Ice Ave', venue_map_link: 'https://maps.example.com/bare-name-rink' }))
     });
     expect(res.status).toBe(200);
     const row = await env.DB.prepare('SELECT venue_address, venue_map_link FROM events WHERE id = ?').bind(ev.id).first();

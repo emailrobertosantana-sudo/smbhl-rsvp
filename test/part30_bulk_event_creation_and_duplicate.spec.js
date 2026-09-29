@@ -8,6 +8,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part7-bulk-events-secret';
 
@@ -43,7 +44,7 @@ async function createLeagueWithSeason(cookie, csrfToken, name) {
 async function bulkCreateEvents(cookie, csrfToken, body) {
   const res = await SELF.fetch('http://example.com/league/events/bulk', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify(body)
+    body: JSON.stringify(withGameTimes(body))
   });
   return { status: res.status, json: await res.json() };
 }
@@ -94,7 +95,7 @@ describe('Part 7 (live-testing task): bulk event creation (POST /league/events/b
     await createLeagueWithSeason(cookie, csrfToken, 'Bulk Events Collision League');
     await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-10-18' })
+      body: JSON.stringify(withGameTimes({ date: '2099-10-18' }))
     });
 
     const { json } = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-10-04', occurrences: 4 });
@@ -143,7 +144,7 @@ describe('Part 7 (live-testing task): duplicate event (POST /league/events/dupli
     await createLeagueWithSeason(cookie, csrfToken, 'Duplicate Event Basic League');
     const createRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-09-07', start_time: '20:15', end_time: '21:15', venue: 'Rink Seven' })
+      body: JSON.stringify(withGameTimes({ date: '2099-09-07', start_time: '20:15', end_time: '21:15', venue: 'Rink Seven' }))
     });
     const sourceEvent = (await createRes.json()).event;
 
@@ -161,12 +162,12 @@ describe('Part 7 (live-testing task): duplicate event (POST /league/events/dupli
     await createLeagueWithSeason(cookie, csrfToken, 'Duplicate Event Collision League');
     const sourceRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-08-03', venue: 'Rink X' })
+      body: JSON.stringify(withGameTimes({ date: '2099-08-03', venue: 'Rink X' }))
     });
     const source = (await sourceRes.json()).event;
     await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-08-10', venue: 'Rink X' })
+      body: JSON.stringify(withGameTimes({ date: '2099-08-10', venue: 'Rink X' }))
     });
 
     const { status, json } = await duplicateEvent(cookie, csrfToken, { event_id: source.id, date: '2099-08-10' });
@@ -179,7 +180,7 @@ describe('Part 7 (live-testing task): duplicate event (POST /league/events/dupli
     await createLeagueWithSeason(leagueA.cookie, leagueA.csrfToken, 'Duplicate Event League A');
     const sourceRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: leagueA.cookie, 'content-type': 'application/json', 'x-csrf-token': leagueA.csrfToken },
-      body: JSON.stringify({ date: '2099-07-06' })
+      body: JSON.stringify(withGameTimes({ date: '2099-07-06' }))
     });
     const source = (await sourceRes.json()).event;
 
@@ -196,7 +197,7 @@ describe('Part 7 (live-testing task): duplicate event (POST /league/events/dupli
     await createLeagueWithSeason(cookie, csrfToken, 'Duplicate Event UI League');
     await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-06-01' })
+      body: JSON.stringify(withGameTimes({ date: '2099-06-01' }))
     });
     const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
     expect(html).toContain('id="sc_bulk_panel"');

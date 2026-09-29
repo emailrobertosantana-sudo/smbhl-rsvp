@@ -11,6 +11,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part4-public-league-secret';
 
@@ -70,7 +71,7 @@ describe('Part 4: GET /league/public (unauthenticated public page)', () => {
     });
     await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2099-01-11', venue: 'Public Page Rink', season: 'Part 4 Season A' })
+      body: JSON.stringify(withGameTimes({ date: '2099-01-11', venue: 'Public Page Rink', season: 'Part 4 Season A' }))
     });
 
     // A player with real, private contact info -- must never appear here.
@@ -85,7 +86,7 @@ describe('Part 4: GET /league/public (unauthenticated public page)', () => {
     });
     await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-      body: JSON.stringify({ date: '2099-02-22', venue: 'League B Only Rink', season: 'Part 4 Season B' })
+      body: JSON.stringify(withGameTimes({ date: '2099-02-22', venue: 'League B Only Rink', season: 'Part 4 Season B' }))
     });
   });
 

@@ -9,6 +9,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-ui-event-detail-secret';
 
@@ -73,13 +74,13 @@ describe('UI task Part U: GET /league/events/detail', () => {
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-06', venue: 'Detail Page Rink' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-06', venue: 'Detail Page Rink' }))
     });
     eventA = (await eventRes.json()).event.id;
 
     const eventBRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-      body: JSON.stringify({ date: '2026-12-07' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-07' }))
     });
     eventB = (await eventBRes.json()).event.id;
   });
@@ -173,7 +174,7 @@ describe('UI task Part U: GET /league/events/detail', () => {
     it('POST /league/events/update actually changes start/end time and free-text venue', async () => {
       const res = await SELF.fetch('http://example.com/league/events/update', {
         method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-        body: JSON.stringify({ event_id: eventA, start_time: '19:30', end_time: '21:00', venue: 'Edited Rink Name' })
+        body: JSON.stringify(withGameTimes({ event_id: eventA, start_time: '19:30', end_time: '21:00', venue: 'Edited Rink Name' }))
       });
       expect(res.status).toBe(200);
       const json = await res.json();
@@ -195,7 +196,7 @@ describe('UI task Part U: GET /league/events/detail', () => {
       const before = await env.DB.prepare('SELECT date, id FROM events WHERE id = ?').bind(eventA).first();
       const res = await SELF.fetch('http://example.com/league/events/update', {
         method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-        body: JSON.stringify({ event_id: eventA, date: '2099-01-01', start_time: '20:00' })
+        body: JSON.stringify(withGameTimes({ event_id: eventA, date: '2099-01-01', start_time: '20:00' }))
       });
       expect(res.status).toBe(200);
       const after = await env.DB.prepare('SELECT date, id FROM events WHERE id = ?').bind(eventA).first();
@@ -217,7 +218,7 @@ describe('UI task Part U: GET /league/events/detail', () => {
 
       const res = await SELF.fetch('http://example.com/league/events/update', {
         method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-        body: JSON.stringify({ event_id: eventA, venue_id: venue.id })
+        body: JSON.stringify(withGameTimes({ event_id: eventA, venue_id: venue.id }))
       });
       expect(res.status).toBe(200);
       let row = await env.DB.prepare('SELECT venue, venue_id FROM events WHERE id = ?').bind(eventA).first();
@@ -226,7 +227,7 @@ describe('UI task Part U: GET /league/events/detail', () => {
 
       const res2 = await SELF.fetch('http://example.com/league/events/update', {
         method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-        body: JSON.stringify({ event_id: eventA, venue: 'Back To Free Text' })
+        body: JSON.stringify(withGameTimes({ event_id: eventA, venue: 'Back To Free Text' }))
       });
       expect(res2.status).toBe(200);
       row = await env.DB.prepare('SELECT venue, venue_id FROM events WHERE id = ?').bind(eventA).first();
@@ -237,7 +238,7 @@ describe('UI task Part U: GET /league/events/detail', () => {
     it("League B's admin cannot edit League A's event (404)", async () => {
       const res = await SELF.fetch('http://example.com/league/events/update', {
         method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-        body: JSON.stringify({ event_id: eventA, start_time: '18:00' })
+        body: JSON.stringify(withGameTimes({ event_id: eventA, start_time: '18:00' }))
       });
       expect(res.status).toBe(404);
     });
@@ -281,7 +282,7 @@ describe('UI task Part U: GET /league/events/detail', () => {
 
       const evRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date, start_time: time, venue: 'Reminder C2 Rink' })
+        body: JSON.stringify(withGameTimes({ date, start_time: time, venue: 'Reminder C2 Rink' }))
       });
       const newEventId = (await evRes.json()).event.id;
 
@@ -300,7 +301,7 @@ describe('UI task Part U: GET /league/events/detail', () => {
       // rule at all.
       const updateRes = await SELF.fetch('http://example.com/league/events/update', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ event_id: newEventId, start_time: time })
+        body: JSON.stringify(withGameTimes({ event_id: newEventId, start_time: time }))
       });
       expect(updateRes.status).toBe(200);
 
@@ -351,7 +352,7 @@ describe('Item 1: event page layout order', () => {
   async function createEvent(cookie, csrfToken, date) {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date })
+      body: JSON.stringify(withGameTimes({ date }))
     });
     return (await res.json()).event.id;
   }

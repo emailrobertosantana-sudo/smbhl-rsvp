@@ -12,6 +12,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part14-live-bugs-2-secret';
 const RSVP_SECRET = 'test-part14-live-bugs-2-rsvp-secret';
@@ -55,7 +56,7 @@ async function addPlayer(cookie, csrfToken, name, extra = {}) {
 async function createEvent(cookie, csrfToken, date) {
   return (await (await SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify({ date })
+    body: JSON.stringify(withGameTimes({ date }))
   })).json()).event.id;
 }
 async function setStatus(cookie, csrfToken, eventId, playerId, status) {

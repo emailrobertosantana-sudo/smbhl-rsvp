@@ -26,6 +26,7 @@ import { env, SELF } from 'cloudflare:test';
 import { leagueFillColor } from '../src/design_system.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part7-batch2-league-colour-contrast-secret';
 
@@ -106,7 +107,7 @@ describe('Part 7 (live-testing task, batch 2): league colour contrast', () => {
       });
       await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-05-05', venue: 'Contrast Test Arena' })
+        body: JSON.stringify(withGameTimes({ date: '2099-05-05', venue: 'Contrast Test Arena' }))
       });
       const html = await (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.id)}`)).text();
       // Eyebrow (inline style).
@@ -133,7 +134,7 @@ describe('Part 7 (live-testing task, batch 2): league colour contrast', () => {
       });
       await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-05-06' })
+        body: JSON.stringify(withGameTimes({ date: '2099-05-06' }))
       });
       const html = await (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.id)}`)).text();
       expect(html).toContain('style="background:#16181d"');

@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { hmac } from '../src/crypto_utils.js';
 import { answerViaEmailLink } from './support/email_link.js';
+import { withGameTimes } from './support/game_times.js';
 
 const f = (u, i) => SELF.fetch(u, i);
 const SEASON = 'Fall 2099';
@@ -135,7 +136,7 @@ describe('League RSVP link (/league/rsvp ?v=in|out, and the 12h "can\'t make it"
     await post(s, '/league/season/publish', { season_name: 'S1' });
     const c = (await (await post(s, '/league/contacts', { name: 'Lea Player', role: 'roster', team: 'Red', email: 'lea.p149@example.com' })).json()).contact;
     const g = montreal(60);
-    const ev = (await (await post(s, '/league/events', { date: g.date, start_time: g.time, season: 'S1' })).json()).event;
+    const ev = (await (await post(s, '/league/events', withGameTimes({ date: g.date, start_time: g.time, season: 'S1' }))).json()).event;
     const salt = (await env.DB.prepare('SELECT token_salt FROM contacts WHERE player_id = ?').bind(c.player_id).first()).token_salt;
     const t = await hmac(env.RSVP_SECRET, `lr:${lg.id}:${ev.id}:${c.player_id}:${salt}`);
     const link = `http://example.com/league/rsvp?league=${encodeURIComponent(lg.id)}&e=${encodeURIComponent(ev.id)}&p=${encodeURIComponent(c.player_id)}&t=${t}&v=in`;

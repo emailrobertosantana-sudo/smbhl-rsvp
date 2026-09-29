@@ -7,6 +7,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-league-event-create-secret';
 const ADMIN_KEY = 'test-league-event-create-admin-key';
@@ -86,7 +87,7 @@ describe('Part K: POST /league/events', () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { 'x-admin': ADMIN_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({ date: '2026-11-01' })
+      body: JSON.stringify(withGameTimes({ date: '2026-11-01' }))
     });
     expect(res.status).toBe(401);
   });
@@ -95,7 +96,7 @@ describe('Part K: POST /league/events', () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ date: '2026-11-01' })
+      body: JSON.stringify(withGameTimes({ date: '2026-11-01' }))
     });
     expect(res.status).toBe(401);
   });
@@ -104,7 +105,7 @@ describe('Part K: POST /league/events', () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-09-20', venue: 'League A Rink', start_time: '18:00', end_time: '20:00' })
+      body: JSON.stringify(withGameTimes({ date: '2026-09-20', venue: 'League A Rink', start_time: '18:00', end_time: '20:00' }))
     });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -138,7 +139,7 @@ describe('Part K: POST /league/events', () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-09-27' })
+      body: JSON.stringify(withGameTimes({ date: '2026-09-27' }))
     });
     const json = await res.json();
     expect(json.event.week).toBe(2); // second event for League A Season 1
@@ -148,7 +149,7 @@ describe('Part K: POST /league/events', () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-      body: JSON.stringify({ date: '2026-10-04' })
+      body: JSON.stringify(withGameTimes({ date: '2026-10-04' }))
     });
     const json = await res.json();
     expect(json.event.season).toBe('League B Season 1');
@@ -158,14 +159,14 @@ describe('Part K: POST /league/events', () => {
     const res1 = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({})
+      body: JSON.stringify(withGameTimes({}))
     });
     expect(res1.status).toBe(400);
 
     const res2 = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: 'not-a-date' })
+      body: JSON.stringify(withGameTimes({ date: 'not-a-date' }))
     });
     expect(res2.status).toBe(400);
   });
@@ -174,7 +175,7 @@ describe('Part K: POST /league/events', () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-01', start_time: '6pm' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-01', start_time: '6pm' }))
     });
     expect(res.status).toBe(400);
   });
@@ -183,7 +184,7 @@ describe('Part K: POST /league/events', () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-09-20', venue: 'League A Rink', start_time: '18:00' })
+      body: JSON.stringify(withGameTimes({ date: '2026-09-20', venue: 'League A Rink', start_time: '18:00' }))
     });
     expect(res.status).toBe(409);
     const json = await res.json();
@@ -194,7 +195,7 @@ describe('Part K: POST /league/events', () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-09-20', venue: 'League A Rink 2', start_time: '18:00' })
+      body: JSON.stringify(withGameTimes({ date: '2026-09-20', venue: 'League A Rink 2', start_time: '18:00' }))
     });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -209,7 +210,7 @@ describe('Part K: POST /league/events', () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-09-20', venue: 'League A Rink', start_time: '20:00' })
+      body: JSON.stringify(withGameTimes({ date: '2026-09-20', venue: 'League A Rink', start_time: '20:00' }))
     });
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -221,7 +222,7 @@ describe('Part K: POST /league/events', () => {
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST',
       headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-      body: JSON.stringify({ date: '2026-09-20' })
+      body: JSON.stringify(withGameTimes({ date: '2026-09-20' }))
     });
     expect(res.status).toBe(200);
     const json = await res.json();

@@ -28,6 +28,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part2-lang-toggle-secret';
 const RSVP_SECRET = 'test-part2-lang-toggle-rsvp-secret';
@@ -118,7 +119,7 @@ describe('Part 2: real FR/EN toggle on every public-facing page', () => {
     const playerSalt = (await env.DB.prepare('SELECT token_salt FROM contacts WHERE player_id = ?').bind(playerId).first()).token_salt;
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-05-05', season: 'Part 2 Season' })
+      body: JSON.stringify(withGameTimes({ date: '2099-05-05', season: 'Part 2 Season' }))
     });
     const eventId = (await eventRes.json()).event.id;
 

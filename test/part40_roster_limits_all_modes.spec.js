@@ -33,6 +33,7 @@ import { getLeagueSeasonConfig } from '../src/leagues.js';
 import { teamState, expected } from '../src/index.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part5-roster-limits-secret';
 
@@ -262,7 +263,7 @@ describe('Part 5 (live-testing task): roster min/max for every team structure', 
 
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-06-06' })
+        body: JSON.stringify(withGameTimes({ date: '2099-06-06' }))
       });
       const eventId = (await eventRes.json()).event.id;
 
@@ -298,7 +299,7 @@ describe('Part 5 (live-testing task): roster min/max for every team structure', 
 
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-06-07' })
+        body: JSON.stringify(withGameTimes({ date: '2099-06-07' }))
       });
       const eventId = (await eventRes.json()).event.id;
 

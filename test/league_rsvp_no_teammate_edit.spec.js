@@ -9,6 +9,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-no-teammate-edit-secret';
 const RSVP_SECRET = 'test-no-teammate-edit-rsvp-secret';
@@ -82,7 +83,7 @@ describe('Part R: no teammate-marks-teammate capability for a second league', ()
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: '2026-12-06', season: 'League A Season 1' })
+      body: JSON.stringify(withGameTimes({ date: '2026-12-06', season: 'League A Season 1' }))
     });
     eventA = (await eventRes.json()).event.id;
   });

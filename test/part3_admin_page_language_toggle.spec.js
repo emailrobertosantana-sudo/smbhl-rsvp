@@ -11,6 +11,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part3-lang-toggle-secret';
 
@@ -108,7 +109,7 @@ describe('Part 3: real FR/EN toggle on every session-authenticated admin page', 
     expect(contactRes.status).toBe(200);
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-06-06', season: 'Part 3 Season' })
+      body: JSON.stringify(withGameTimes({ date: '2099-06-06', season: 'Part 3 Season' }))
     });
     const eventId = (await eventRes.json()).event.id;
 

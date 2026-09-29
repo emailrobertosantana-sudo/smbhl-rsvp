@@ -11,6 +11,7 @@ import { answerViaEmailLink } from './support/email_link.js';
 import worker, { runLeagueReminders, getNonResponders, getConfirmedPlayers } from '../src/index.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part8-league-reminders-secret';
 const RSVP_SECRET = 'test-part8-league-reminders-rsvp-secret';
@@ -64,7 +65,7 @@ async function createEventHoursFromNow(cookie, csrfToken, hoursFromNow) {
   const { date, time } = easternDateTimeHoursFromNow(hoursFromNow);
   const res = await SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify({ date, start_time: time, venue: 'Test Gym' })
+    body: JSON.stringify(withGameTimes({ date, start_time: time, venue: 'Test Gym' }))
   });
   const json = await res.json();
   return json.event.id;
@@ -439,7 +440,7 @@ describe('Part 2: per-league automated reminders', () => {
     const { cookie, csrfToken } = await signupAndCreateLeague('reminders.notime@example.com', '203.0.113.963', 'No Time League', ['A', 'B']);
     const res = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: '2099-01-01' })
+      body: JSON.stringify(withGameTimes({ date: '2099-01-01' }))
     });
     const eventId = (await res.json()).event.id;
     await addPlayer(cookie, csrfToken, 'No Time Player', 'A', 'notime@example.com');

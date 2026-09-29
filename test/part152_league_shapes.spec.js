@@ -20,6 +20,7 @@ import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { H, DAY, local, mail, installMailCapture, removeMailCapture, linksIn, admin, must, pass, answer, rows, one } from './support/league_season.js';
+import { withGameTimes } from './support/game_times.js';
 
 const START = Date.UTC(2026, 9, 5, 16, 0); // Mon 2026-10-05 12:00 Toronto
 
@@ -55,7 +56,7 @@ async function runSeason(fx) {
     players.push({ ...p, id: r.json.contact ? r.json.contact.player_id : null });
   }
   const first = local(T0 + 8 * DAY).date;
-  for (const t of fx.times) await must(a.post('/league/events/bulk', { startDate: first, occurrences: fx.weeks, start_time: t, venue: 'Gym', season: 'S1' }), 'events ' + t);
+  for (const t of fx.times) await must(a.post('/league/events/bulk', withGameTimes({ startDate: first, occurrences: fx.weeks, start_time: t, venue: 'Gym', season: 'S1' })), 'events ' + t);
   const setupNotes = [];
   if (fx.structure === 'fixed' && fx.matchups !== false) {
     const m = await a.post('/league/season/matchups-confirm', { mode: 'fill_blanks' });
@@ -252,7 +253,7 @@ const FIXTURES = {
       const notes = [];
       const p = await a.post('/league/season/publish', { season_name: 'S2' });
       notes.push(`publish S2 mid-season: ${p.status} ${JSON.stringify(p.json).slice(0, 200)}`);
-      const e = await a.post('/league/events/bulk', { startDate: local(START + 40 * DAY).date, occurrences: 2, start_time: '19:00', venue: 'Gym', season: 'S2' });
+      const e = await a.post('/league/events/bulk', { startDate: local(START + 40 * DAY).date, occurrences: 2, start_time: '19:00', end_time: '20:00', venue: 'Gym', season: 'S2' });
       notes.push(`S2 events: ${e.status} ${JSON.stringify(e.json && { ok: e.json.ok, n: e.json.results && e.json.results.length, st: e.json.results && e.json.results.map(x => x.status) }).slice(0, 200)}`);
       const m = await a.post('/league/season/matchups-confirm', { mode: 'fill_blanks' });
       notes.push(`S2 matchups: ${m.status} ${JSON.stringify(m.json && { ok: m.json.ok, updated: m.json.updatedCount, err: m.json.errorKey }).slice(0, 160)}`);

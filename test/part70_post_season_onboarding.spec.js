@@ -40,6 +40,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part70-post-season-onboarding-secret';
 
@@ -374,7 +375,7 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
 
     // Address all four: create the schedule, add a player, rename
     // teams, set roster limits.
-    await post(cookie, csrfToken, '/league/events', { date: '2099-01-05', season: 'S1' });
+    await post(cookie, csrfToken, '/league/events', withGameTimes({ date: '2099-01-05', season: 'S1' }));
     await post(cookie, csrfToken, '/league/contacts', { name: 'Real Player One', role: 'roster' });
     await post(cookie, csrfToken, '/league/settings/teams', { teamNames: ['Nord', 'Sud'], teamColors: ['#b3122e', '#b3122e'] });
     await post(cookie, csrfToken, '/league/settings/structure', { min_players: 8, max_players: 16 });
@@ -387,7 +388,7 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     const { cookie, csrfToken } = await signup('ob.nonextsteps@example.com', '203.0.185.012');
     await createLeague(cookie, csrfToken, { name: 'Complete League', teamNames: ['Nord', 'Sud'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    await post(cookie, csrfToken, '/league/events', { date: '2099-01-05', season: 'S1' });
+    await post(cookie, csrfToken, '/league/events', withGameTimes({ date: '2099-01-05', season: 'S1' }));
     await post(cookie, csrfToken, '/league/settings/structure', { min_players: 8, max_players: 16 });
     await post(cookie, csrfToken, '/league/contacts', { name: 'Real Player One', role: 'roster' });
 

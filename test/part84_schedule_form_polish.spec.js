@@ -21,6 +21,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { extractInlineScripts, assertNoSyntaxError } from './support/inline_scripts.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part84-schedule-form-polish-secret';
 
@@ -63,7 +64,7 @@ async function createVenue(cookie, csrfToken, body) {
 async function createEvent(cookie, csrfToken, body) {
   return SELF.fetch('http://example.com/league/events', {
     method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify(body)
+    body: JSON.stringify(withGameTimes(body))
   });
 }
 
@@ -154,7 +155,7 @@ describe('D2/D3/D4 (forms polish task): schedule create/bulk/edit forms', () => 
     // is now what the edit form's own "None -- free text" choice leaves.
     await SELF.fetch('http://example.com/league/events/update', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ event_id: ev.event.id, venue: 'Some Rink', venue_id: '' })
+      body: JSON.stringify(withGameTimes({ event_id: ev.event.id, venue: 'Some Rink', venue_id: '' }))
     });
 
     const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(ev.event.id)}`, { headers: { cookie } })).text();

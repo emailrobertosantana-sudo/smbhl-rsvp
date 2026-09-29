@@ -8,6 +8,7 @@ import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { admin, must } from './support/league_season.js';
+import { withGameTimes } from './support/game_times.js';
 
 beforeAll(async () => { env.AUTH_SECRET = 'p157'; env.RSVP_SECRET = 'p157r'; await applyRealSchema(env); });
 
@@ -41,7 +42,7 @@ describe('A single team\'s league reads right', () => {
     for (let step = 1; step <= 6; step++) onboarding.push((await a.get(`/onboarding/season?step=${step}`)).text);
     await must(a.post('/league/season/publish', { season_name: 'S1' }), 'publish');
     await must(a.post('/league/contacts', { name: 'Ann Player', email: 'ann@example.com' }), 'contact');
-    await must(a.post('/league/events', { date: '2099-05-05', season: 'S1', venue: 'Parc', start_time: '19:00' }), 'event');
+    await must(a.post('/league/events', withGameTimes({ date: '2099-05-05', season: 'S1', venue: 'Parc', start_time: '19:00' })), 'event');
     const pages = { dashboard: (await a.get('/dashboard')).text, schedule: (await a.get('/league/schedule')).text, settings: (await a.get('/league/settings')).text, public: (await a.get('/' + lg.slug)).text };
     for (const [name, html] of [...Object.entries(pages), ...onboarding.map((h, i) => [`onboarding ${i + 1}`, h])]) {
       const text = visible(html);

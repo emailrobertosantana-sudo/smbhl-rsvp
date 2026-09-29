@@ -13,6 +13,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { runSchedule, teamState, runLeagueReminders } from '../src/index.js';
 import { getSeasonConfig } from '../src/season_config.js';
+import { withGameTimes } from './support/game_times.js';
 
 async function withResend(fn) {
   const original = globalThis.fetch;
@@ -129,7 +130,7 @@ describe('Configured values win; the league product keeps its default', () => {
     }
     await post('/league/contacts', { name: `L${tag} Sub`, email: `p109.l${tag}.sub@example.com`, role: 'sub_skater' });
     const date = new Date(Date.now() + 4 * 24 * 3600000).toISOString().slice(0, 10);
-    const ev = (await (await post('/league/events', { date, start_time: '20:00' })).json()).event;
+    const ev = (await (await post('/league/events', withGameTimes({ date, start_time: '20:00' }))).json()).event;
     return { league, ev };
   }
 

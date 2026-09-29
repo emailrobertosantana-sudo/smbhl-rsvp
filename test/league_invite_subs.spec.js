@@ -11,6 +11,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { drain } from '../src';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-league-invite-subs-secret';
 const RSVP_SECRET = 'test-league-invite-subs-rsvp-secret';
@@ -76,15 +77,18 @@ describe('Part P: POST /league/events/invite-subs', () => {
     });
 
     // An event far enough out to clear callSubs' CUTOFF_HOURS gate.
-    const futureDate = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    // Beyond the 8-day shortfall horizon: a game with a start time inside it
+    // is checked for shortage at creation, which would call subs before the
+    // step this test is about.
+    const futureDate = new Date(Date.now() + 10 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     const eventARes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
-      body: JSON.stringify({ date: futureDate, season: 'League A Season 1' })
+      body: JSON.stringify(withGameTimes({ date: futureDate, season: 'League A Season 1' }))
     });
     eventA = (await eventARes.json()).event.id;
     const eventBRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie: cookieB, 'content-type': 'application/json', 'x-csrf-token': csrfTokenB },
-      body: JSON.stringify({ date: futureDate, season: 'League B Season 1' })
+      body: JSON.stringify(withGameTimes({ date: futureDate, season: 'League B Season 1' }))
     });
     eventB = (await eventBRes.json()).event.id;
 

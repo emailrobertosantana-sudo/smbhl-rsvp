@@ -33,6 +33,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { getConfirmedPlayers } from '../src/index.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part8-weekly-draw-visibility-secret';
 
@@ -87,7 +88,7 @@ describe('Part 8 (live-testing task): weekly_draw team assignment visible beyond
 
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-11-02' })
+        body: JSON.stringify(withGameTimes({ date: '2099-11-02' }))
       });
       const eventId = (await eventRes.json()).event.id;
       await SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -114,7 +115,7 @@ describe('Part 8 (live-testing task): weekly_draw team assignment visible beyond
 
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-11-03' })
+        body: JSON.stringify(withGameTimes({ date: '2099-11-03' }))
       });
       const eventId = (await eventRes.json()).event.id;
       await SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -134,7 +135,7 @@ describe('Part 8 (live-testing task): weekly_draw team assignment visible beyond
       const player = await addPlayer(cookie, csrfToken, 'Public Before Player');
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-11-09' })
+        body: JSON.stringify(withGameTimes({ date: '2099-11-09' }))
       });
       const eventId = (await eventRes.json()).event.id;
       await SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -155,7 +156,7 @@ describe('Part 8 (live-testing task): weekly_draw team assignment visible beyond
 
       const eventRes = await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-11-16' })
+        body: JSON.stringify(withGameTimes({ date: '2099-11-16' }))
       });
       const eventId = (await eventRes.json()).event.id;
       for (const p of [p1, p2]) {
@@ -182,7 +183,7 @@ describe('Part 8 (live-testing task): weekly_draw team assignment visible beyond
       const league = await createLeague(cookie, csrfToken, { name: 'Fixed Public No Draw Section League', teamNames: ['A', 'B'], tracksStats: true });
       await SELF.fetch('http://example.com/league/events', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ date: '2099-11-20' })
+        body: JSON.stringify(withGameTimes({ date: '2099-11-20' }))
       });
       const html = await (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.id)}`)).text();
       expect(html).not.toContain('data-i18n="drawnTeams"');

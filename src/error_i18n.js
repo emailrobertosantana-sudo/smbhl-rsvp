@@ -83,6 +83,10 @@ export const ERROR_I18N = {
   DATE_REQUIRED: { fr: 'La date est requise, au format AAAA-MM-JJ.', en: 'date is required, in YYYY-MM-DD format.' },
   START_TIME_FORMAT: { fr: "L'heure de début doit être au format HH:MM.", en: 'start_time must be in HH:MM format.' },
   END_TIME_FORMAT: { fr: "L'heure de fin doit être au format HH:MM.", en: 'end_time must be in HH:MM format.' },
+  // Nights (2026-09-30): which games overlap is worked out from their
+  // times, so every league game needs both.
+  START_TIME_REQUIRED: { fr: "Indique l'heure de début du match.", en: "Add the game's start time." },
+  END_TIME_REQUIRED: { fr: "Indique l'heure de fin du match : elle sert à savoir quels matchs se chevauchent.", en: "Add the game's end time: it's how we tell which games overlap." },
   SEASON_REQUIRED: { fr: "Il te faut une saison active avant de créer un match. Lance ta saison depuis le tableau de bord.", en: 'You need an active season before creating an event. Start your season from the dashboard.' },
   EVENT_DATE_EXISTS: { fr: 'Un match existe déjà à cette date dans ta ligue.', en: 'An event already exists for this date in your league.' },
   BULK_EVENTS_RECURRENCE_REQUIRED: { fr: 'Indique un nombre de matchs ou une date de fin après la date de départ.', en: 'Provide an occurrence count or an end date after the start date.' },

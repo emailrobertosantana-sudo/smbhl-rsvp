@@ -5,6 +5,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part2-batch3-comms-secret';
 const RSVP_SECRET = 'test-part2-batch3-comms-rsvp-secret';
@@ -117,10 +118,13 @@ describe('Part 2 (live-testing task, batch 3): Comms view -- email activity and 
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ name: 'Comms Sub', email: 'commssub@example.com', role: 'sub_skater' })
     });
-    const futureDate = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    // Beyond the 8-day shortfall horizon: a game with a start time inside it
+    // is checked for shortage at creation, which would call subs before the
+    // step this test is about.
+    const futureDate = new Date(Date.now() + 10 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: futureDate })
+      body: JSON.stringify(withGameTimes({ date: futureDate }))
     });
     const eventId = (await eventRes.json()).event.id;
 
@@ -156,10 +160,13 @@ describe('Part 2 (live-testing task, batch 3): Comms view -- email activity and 
     // preferred_team on file -- not set by POST /league/contacts
     // itself, matching how a real admin's roster always has one.
     await env.DB.prepare('UPDATE contacts SET preferred_team = ? WHERE player_id = ?').bind('Otters', contact.player_id).run();
-    const futureDate = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    // Beyond the 8-day shortfall horizon: a game with a start time inside it
+    // is checked for shortage at creation, which would call subs before the
+    // step this test is about.
+    const futureDate = new Date(Date.now() + 10 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ date: futureDate })
+      body: JSON.stringify(withGameTimes({ date: futureDate }))
     });
     const eventId = (await eventRes.json()).event.id;
     // No rsvp row at all yet == a real non-responder; getNonResponders
