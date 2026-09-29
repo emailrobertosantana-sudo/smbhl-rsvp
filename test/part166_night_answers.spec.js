@@ -69,6 +69,22 @@ describe('No teams: games at the same time split the group, the next game takes 
   });
 });
 
+describe('Pickup: the draw of two games at the same time', () => {
+  it('each game draws only its own players: no one gets a team in both', async () => {
+    const { a, game, player } = await league('p166draw', { teamStructure: 'weekly_draw', teamNames: ['Dark', 'Light'] });
+    const A = await game('20:30', '21:30'), B = await game('20:30', '21:30');
+    const ps = [];
+    for (let i = 1; i <= 8; i++) ps.push(await player(`Draw Player${i}`));
+    for (const p of ps) expect((await answer(p, A, 'in')).status).toBe(200);
+    await must(a.post('/league/events/random-assign', { event_id: A.id }), 'draw A');
+    await must(a.post('/league/events/random-assign', { event_id: B.id }), 'draw B');
+    const drawn = async ev => (await rows("SELECT player_id FROM rsvp WHERE event_id = ? AND status = 'in' AND team IS NOT NULL", ev.id)).map(r => r.player_id);
+    const [inA, inB] = [await drawn(A), await drawn(B)];
+    expect(inA.length + inB.length).toBe(8);
+    expect(inA.filter(x => inB.includes(x))).toEqual([]);
+  });
+});
+
 describe('Fixed teams: a yes is for the games the player\'s team plays that night', () => {
   it('Bears play 19:00 and 20:00: in both; the 20:00 game Bears aren\'t in gets nothing', async () => {
     const { game, player } = await league('p166fixed', { teamNames: ['Bears', 'Otters', 'Wolves', 'Owls'] });
