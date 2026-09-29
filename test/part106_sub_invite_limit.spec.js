@@ -177,7 +177,8 @@ describe('League product: the manual third, from a league admin', () => {
 
     const first = await withResend(async () => (await a.post('/league/subs/extra-invite', { event_id: a.eventId, player_id: a.sub.player_id })).json());
     expect(first.result).toMatchObject({ ok: true, status: 'sent' });
-    expect(first.sent.map(m => m.to[0])).toEqual([`p106.x1.sub@example.com`]);
+    // (The admin may also be told the game is short -- D3; not an invite.)
+    expect(first.sent.filter(m => !/Short of players/.test(m.subject)).map(m => m.to[0])).toEqual([`p106.x1.sub@example.com`]);
     const second = await a.post('/league/subs/extra-invite', { event_id: a.eventId, player_id: a.sub.player_id });
     expect(second.status).toBe(409);
     expect((await second.json()).code).toBe('extra_already_used');

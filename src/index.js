@@ -5031,6 +5031,7 @@ async function handleLeagueCommsPage(req, env, url) {
       // that column reuses cad72/cad24/cad12 verbatim so the two never
       // drift apart.
       cadTeamAssigned: 'Équipe assignée (tirage tardif)',
+      cadShortAlert: 'Match incomplet (admin)',
       cadAutoDraw: 'Tirage automatique des équipes',
       btnPreview: 'Aperçu', cadSubCall: 'Appel aux remplaçants', cadLateReversal: 'Alerte de désistement tardif (admin)',
       toggleAria: 'Activer ou désactiver', toggleSaved: 'Enregistré.',
@@ -5073,6 +5074,7 @@ async function handleLeagueCommsPage(req, env, url) {
       cadenceTitle: 'Active automations',
       cad72: '72h reminder (no reply)', cad24: '24h reminder (no reply)', cad12: '12h details (confirmed)',
       cadTeamAssigned: 'Team assigned (late draw)',
+      cadShortAlert: 'Short game (admin)',
       cadAutoDraw: 'Automatic team draw',
       btnPreview: 'Preview', cadSubCall: 'Sub call', cadLateReversal: 'Late dropout alert (admin)',
       toggleAria: 'Turn on or off', toggleSaved: 'Saved.',
@@ -5182,7 +5184,7 @@ const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', retrying: '#c4153a', 
 // own wording. Built from the current dict each render, not module-
 // level, so a language switch re-labels it correctly.
 function activityKindLabel(d, kind) {
-  var KIND_LABEL = { reminder_72h: d.cad72, reminder_24h: d.cad24, logistics_12h: d.cad12, team_assigned: d.cadTeamAssigned };
+  var KIND_LABEL = { reminder_72h: d.cad72, reminder_24h: d.cad24, logistics_12h: d.cad12, team_assigned: d.cadTeamAssigned, short_alert: d.cadShortAlert };
   return KIND_LABEL[kind] || kind;
 }
 function renderStats(stats) {
@@ -12520,6 +12522,98 @@ async function shortfallCallsHeld(env, ev) {
   return true;
 }
 
+// ---- a short game with no sub to call (D3) ----
+// A league game is short and no sub can be called: the league's admins
+// are emailed, ONCE per game (every shortage of that game in one email).
+// A shortage counted on everyone not out is left out while a sub call for
+// that position is still waiting for an answer (that sub may yet fill it).
+// Players are not told. Queued (retried like any league email), never
+// twice: the dedup key is checked first, since enqueue() would replace a
+// pending row.
+async function leagueHasNoSubs(env, leagueId, need, usesIndependentGoalieAxis) {
+  const cond = usesIndependentGoalieAxis
+    ? (need === 'goalie' ? "role = 'sub_skater' AND is_goalie = 1" : "role = 'sub_skater' AND is_goalie != 1")
+    : (need === 'goalie' ? "role = 'sub_goalie'" : "role = 'sub_skater'");
+  const r = await env.DB.prepare(
+    `SELECT 1 FROM contacts WHERE league_id = ? AND ${cond} AND opted_out = 0 AND dormant = 0 AND email IS NOT NULL AND COALESCE(is_active, 1) = 1 LIMIT 1`
+  ).bind(leagueId).first();
+  return !r;
+}
+
+async function alertAdminShortGame(env, ev, shortages) {
+  const leagueId = ev.league_id;
+  const open = [];
+  for (const sh of shortages) {
+    if (sh.basis === 'available') {
+      const waiting = await env.DB.prepare(
+        `SELECT 1 FROM outbox o WHERE o.event_id = ? AND o.kind = 'sub_call' AND o.cancelled = 0
+            AND json_extract(o.payload, '$.need') = ?
+            AND o.player_id NOT IN (SELECT player_id FROM availability WHERE event_id = ? AND need = ?) LIMIT 1`
+      ).bind(ev.id, sh.need, ev.id, sh.need).first();
+      if (waiting) continue;
+    }
+    open.push(sh);
+  }
+  if (!open.length) return 0;
+  const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) return 0;
+  const admins = await leagueAdminEmails(env, leagueId);
+  let mail = null;
+  let queued = 0;
+  for (const a of admins) {
+    const dedupKey = `short-game:${ev.id}:${a.email}`;
+    const done = await env.DB.prepare('SELECT 1 FROM outbox WHERE dedup_key = ? AND (sent_at IS NOT NULL OR cancelled = 0) LIMIT 1').bind(dedupKey).first();
+    if (done) continue;
+    mail = mail || renderShortGameAdminAlert(env, leagueRow, ev, open);
+    await enqueuePrerenderedMail(env, { kind: 'short_alert', leagueId, eventId: ev.id, dedupKey, to: a.email, mail });
+    queued++;
+  }
+  return queued;
+}
+
+function shortGameLine(sh, lang) {
+  const g = sh.need === 'goalie';
+  const t = sh.team ? (lang === 'fr' ? `${sh.team} : ` : `${sh.team}: `) : '';
+  if (lang === 'fr') {
+    return sh.basis === 'confirmed'
+      ? `${t}${sh.have} ${g ? 'gardien(s)' : 'joueur(s)'} confirmé(s) pour un minimum de ${sh.min}.`
+      : `${t}${sh.have} ${g ? 'gardien(s)' : 'joueur(s)'} disponible(s) (confirmés ou sans réponse) pour un minimum de ${sh.min}.`;
+  }
+  return sh.basis === 'confirmed'
+    ? `${t}${sh.have} ${g ? 'goalie(s)' : 'player(s)'} confirmed against a minimum of ${sh.min}.`
+    : `${t}${sh.have} ${g ? 'goalie(s)' : 'player(s)'} available (confirmed or not yet answered) against a minimum of ${sh.min}.`;
+}
+
+function renderShortGameAdminAlert(env, leagueRow, ev, shortages) {
+  const barColor = leagueFillColor(leagueRow.color || '#b3122e');
+  const whenFr = formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false);
+  const whenEn = formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false);
+  const link = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
+  const closeFr = "Il n'y a plus aucun remplaçant à appeler. Les joueurs n'ont pas été prévenus.";
+  const closeEn = 'There is no sub left to call. Players have not been told.';
+  const block = (badge, title, when, lines, close, btn) => `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}${badge}</td></tr></table>
+    <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(title)}</h1>
+    <p style="margin:0 0 8px;font-size:16px;line-height:25px;"><b>${esc(when)}</b></p>
+    ${lines.map(l => `<p style="margin:0 0 8px;font-size:16px;line-height:25px;">${esc(l)}</p>`).join('')}
+    <p style="margin:8px 0 24px;font-size:16px;line-height:25px;">${esc(close)}</p>
+    ${nlEmailButton(link, btn, barColor)}`;
+  const linesFr = shortages.map(sh => shortGameLine(sh, 'fr'));
+  const linesEn = shortages.map(sh => shortGameLine(sh, 'en'));
+  const fr = {
+    subject: `Il manque des joueurs · ${whenFr}`,
+    text: `Il manque des joueurs · ${whenFr}. ${linesFr.join(' ')} ${closeFr} ${link}`,
+    html: block('Match incomplet', 'Il manque des joueurs', whenFr, linesFr, closeFr, 'Voir le match')
+  };
+  const en = {
+    subject: `Short of players · ${whenEn}`,
+    text: `Short of players · ${whenEn}. ${linesEn.join(' ')} ${closeEn} ${link}`,
+    html: block('Short game', 'Short of players', whenEn, linesEn, closeEn, 'View the game')
+  };
+  const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
+  return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
+}
+
 // ---- a pickup game's pool, before its draw (D2) ----
 // Drawn = any player already has a team for this game, or the automatic
 // draw has run (league_auto_draw_log).
@@ -12589,12 +12683,25 @@ async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
     const need = pickupPoolTargets(cfg);
     let queuedPool = 0;
     const emptyPoolsPickup = new Set();
+    const pickupShort = [];
+    const lateP = hrs <= 24;
+    let confP = null;
+    const confPool = async () => (confP = confP || await pickupPool(env, ev, cfg, { confirmedOnly: true }));
     if (hasGoalies && pool.goalies < need.minGoalies) {
-      queuedPool += await callSubs(env, ev, null, 'goalie', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPoolsPickup);
+      const n = await callSubs(env, ev, null, 'goalie', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPoolsPickup);
+      queuedPool += n;
+      if (!n) pickupShort.push({ team: null, need: 'goalie', have: pool.goalies, min: need.minGoalies, basis: 'available' });
+    } else if (lateP && hasGoalies && need.minGoalies > 0 && (await confPool()).goalies < need.minGoalies && await leagueHasNoSubs(env, leagueId, 'goalie', usesIndependentGoalieAxis)) {
+      pickupShort.push({ team: null, need: 'goalie', have: confP.goalies, min: need.minGoalies, basis: 'confirmed' });
     }
     if (pool.skaters < need.minSkaters) {
-      queuedPool += await callSubs(env, ev, null, 'skater', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPoolsPickup);
+      const n = await callSubs(env, ev, null, 'skater', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPoolsPickup);
+      queuedPool += n;
+      if (!n) pickupShort.push({ team: null, need: 'skater', have: pool.skaters, min: need.minSkaters, basis: 'available' });
+    } else if (lateP && (await confPool()).skaters < need.minSkaters && await leagueHasNoSubs(env, leagueId, 'skater', usesIndependentGoalieAxis)) {
+      pickupShort.push({ team: null, need: 'skater', have: confP.skaters, min: need.minSkaters, basis: 'confirmed' });
     }
+    if (pickupShort.length) await alertAdminShortGame(env, ev, pickupShort);
     if (queuedPool && drainNow) await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id);
     return queuedPool;
   }
@@ -12603,15 +12710,37 @@ async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
   // comes back empty for one team, it is empty for the next one too
   // (nothing was queued in between), so it is not read again.
   const emptyPools = new Set();
+  // A league's shortages with no sub to call, for the admin (D3):
+  //   'available' -- short counting everyone not out (who is called for),
+  //     and no sub could be called;
+  //   'confirmed' -- inside the last 24 h (the last reminder has gone),
+  //     short counting only who said yes, in a league with no sub at all
+  //     for that position. Sub calls themselves are unchanged.
+  const shortages = [];
+  const late = isLeague && hrs <= 24;
+  const minG = cfg.goaliesPerTeam || 0;
+  const minSk = shortfallMinSkaters(cfg, leagueId);
   for (const team of teams) {
     const a = await availableForTeam(env, ev, team, cfg, isHeadcount);
-    if (hasGoalies && a.goalies < (cfg.goaliesPerTeam || 0)) {
-      queued += await callSubs(env, ev, team, 'goalie', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPools);
+    const shown = isHeadcount ? null : team;
+    let confirmed = null;
+    const conf = async () => (confirmed = confirmed || await teamState(env.DB, ev.id, team, cfg));
+    if (hasGoalies && a.goalies < minG) {
+      const n = await callSubs(env, ev, team, 'goalie', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPools);
+      queued += n;
+      if (!n && isLeague) shortages.push({ team: shown, need: 'goalie', have: a.goalies, min: minG, basis: 'available' });
+    } else if (late && hasGoalies && minG > 0 && (await conf()).goalies < minG && await leagueHasNoSubs(env, leagueId, 'goalie', usesIndependentGoalieAxis)) {
+      shortages.push({ team: shown, need: 'goalie', have: confirmed.goalies, min: minG, basis: 'confirmed' });
     }
-    if (a.skaters < shortfallMinSkaters(cfg, leagueId)) {
-      queued += await callSubs(env, ev, team, 'skater', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPools);
+    if (a.skaters < minSk) {
+      const n = await callSubs(env, ev, team, 'skater', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPools);
+      queued += n;
+      if (!n && isLeague) shortages.push({ team: shown, need: 'skater', have: a.skaters, min: minSk, basis: 'available' });
+    } else if (late && (await conf()).skaters < minSk && await leagueHasNoSubs(env, leagueId, 'skater', usesIndependentGoalieAxis)) {
+      shortages.push({ team: shown, need: 'skater', have: confirmed.skaters, min: minSk, basis: 'confirmed' });
     }
   }
+  if (isLeague && shortages.length) await alertAdminShortGame(env, ev, shortages);
   if (queued && drainNow) await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id);
   return queued;
 }

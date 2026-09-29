@@ -301,10 +301,13 @@ describe('Leagues unlike SMBHL, a whole season each', () => {
     expect(r.subCalls).toEqual([]);
     for (const g of r.games) { expect(g.kinds.remind).toBeGreaterThan(0); expect(g.kinds.details).toBe(g.ins); }
     for (const m of r.sent) expect(m.text).not.toMatch(/Tous/);
-    // DECISION PENDING: short of its 10-player minimum (8 in) with no subs,
-    // and nobody -- the admin included -- is told.
+    // D3 (decided 2026-09-29): short of its 10-player minimum with no subs,
+    // the admin is told -- once per game -- and players are not.
     expect(r.games.every(g => g.ins < 10)).toBe(true);
-    expect(r.sent.filter(m => m.to.startsWith('admin.'))).toEqual([]);
+    const shortAlerts = r.sent.filter(m => m.to.startsWith('admin.') && /Short of players/.test(m.subject));
+    expect(shortAlerts.length).toBeGreaterThan(0);
+    expect(shortAlerts.length).toBeLessThanOrEqual(r.games.length);
+    expect(r.sent.filter(m => !m.to.startsWith('admin.') && /Short of|Il manque/.test(m.subject))).toEqual([]);
   }, 900000);
 
   it('FIXED, THREE teams, two games a night (partly avoidable double games)', async () => {
@@ -350,9 +353,11 @@ describe('Leagues unlike SMBHL, a whole season each', () => {
   it('REMINDERS OFF entirely', async () => {
     const r = await runSeason(FIXTURES.remindersoff);
     common(r);
-    // DECISION PENDING: nothing at all is sent -- no reminders, no details,
-    // and no sub calls (unanswered players count as available).
-    expect(r.totalMail).toBe(0);
+    // Players get nothing -- no reminders, no details, and no sub calls
+    // (unanswered players count as available). The admin may still be told
+    // a game is short (D3: this league has no goalie, and no goalie sub).
+    expect(r.sent.filter(m => !m.to.startsWith('admin.'))).toEqual([]);
+    expect(r.sent.every(m => /Short of players/.test(m.subject))).toBe(true);
     for (const g of r.games) expect(g.ev.home_score).toBe(3);
   }, 900000);
 

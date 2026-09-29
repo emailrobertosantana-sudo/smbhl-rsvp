@@ -120,7 +120,10 @@ async function withMailMock(fn) {
   const sentMails = [];
   globalThis.fetch = async (url, opts) => {
     if (String(url).includes('api.resend.com')) {
-      sentMails.push(JSON.parse(opts.body));
+      const body = JSON.parse(opts.body);
+      // These leagues are short with no subs, so their admin also gets the
+      // short-game alert (D3, part159) -- not what these tests count.
+      if (!/Short of players/.test(body.subject)) sentMails.push(body);
       return new Response(JSON.stringify({ id: 'mock' }), { status: 200 });
     }
     return originalFetch(url, opts);

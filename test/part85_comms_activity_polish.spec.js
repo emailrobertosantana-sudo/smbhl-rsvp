@@ -120,7 +120,7 @@ describe('E1/E2/E3 (Comms polish task): Recent Activity table', () => {
     await createLeague(cookie, csrfToken, { name: 'E Labels League', teamNames: ['A', 'B'] });
     const html = await (await SELF.fetch('http://example.com/league/comms', { headers: { cookie } })).text();
     expect(html).toContain('function activityKindLabel(d, kind)');
-    expect(html).toMatch(/KIND_LABEL = \{ reminder_72h: d\.cad72, reminder_24h: d\.cad24, logistics_12h: d\.cad12, team_assigned: d\.cadTeamAssigned \}/);
+    expect(html).toMatch(/KIND_LABEL = \{ reminder_72h: d\.cad72, reminder_24h: d\.cad24, logistics_12h: d\.cad12, team_assigned: d\.cadTeamAssigned, short_alert: d\.cadShortAlert \}/);
     expect(html).toContain('activityKindLabel(d, a.kind)');
 
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);

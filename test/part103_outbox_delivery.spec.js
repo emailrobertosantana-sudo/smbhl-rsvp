@@ -405,7 +405,8 @@ describe('Part 4: the league product had the same two problems', () => {
     const passes = [];
     for (let pass = 0; pass < 4; pass++) {
       const inv = await asInvocation(() => runLeagueReminders(env));
-      passes.push({ fetches: inv.fetches, refused: inv.refused, delivered: inv.delivered.length });
+      // The league's admin is also told the game is short (D3): not a reminder.
+      passes.push({ fetches: inv.fetches, refused: inv.refused, delivered: inv.delivered.filter(t => !t.startsWith('p103.league')).length });
     }
     const rows = (await env.DB.prepare(`SELECT * FROM outbox WHERE league_id = ? AND kind = 'reminder_72h'`).bind(leagueId).all()).results;
     expect(rows.length).toBe(60);

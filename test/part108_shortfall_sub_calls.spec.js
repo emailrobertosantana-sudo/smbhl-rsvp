@@ -169,7 +169,9 @@ describe('League product: the same shortfall trigger', () => {
     const date = new Date(Date.now() + 4 * 24 * 3600000).toISOString().slice(0, 10);
     const { result, sent } = await withResend(async () => (await post('/league/events', { date, start_time: '20:00' })).json());
     expect(result.ok).toBe(true);
-    expect(sent).toEqual(['p108.l1.sub@example.com']);
+    // (The admin is also told the other team is short of a goalie, with no
+    // goalie sub to call -- D3.)
+    expect(sent.filter(t => t !== 'p108.l1@example.com')).toEqual(['p108.l1.sub@example.com']);
     const calls = await subCallRows(result.event.id);
     expect(calls.map(c => c.team)).toEqual(['Otters']);
   });
