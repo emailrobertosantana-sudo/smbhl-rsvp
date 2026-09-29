@@ -31,7 +31,11 @@ function check(name, fn) {
 // ---- Mock execSync: succeeds with a valid demo target by default ----
 const DEMO_DB_UUID = '87411a46-fc5f-414f-bd46-6ff26feb155f';
 let mode = 'ok';
+// Later tests route other wrangler calls here (the script keeps its own
+// reference to this mock from require time).
+let extraHandler = null;
 cp.execSync = (cmd, opts) => {
+  if (extraHandler) return extraHandler(cmd, opts);
   if (mode === 'bad_token') {
     const err = new Error('Authentication error [code: 10001]: Unable to authenticate request');
     throw err;
@@ -117,5 +121,61 @@ check('reassertAuthOrReport() does nothing (no exit, no report) when the token s
   }
 });
 
-console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILED'}`);
-process.exitCode = failures === 0 ? 0 : 1;
+// ---- orphan-users: the SQL, on a real SQLite database (node:sqlite) ----
+// Same shape as demo's users / league_admins / leagues (migrate-018/019).
+check('orphanUsersStatements(): lists and deletes only accounts with no league, sparing --keep', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, created_at TEXT, last_login_at TEXT);
+    CREATE TABLE leagues (id TEXT PRIMARY KEY, created_by TEXT REFERENCES users(id));
+    CREATE TABLE league_admins (user_id TEXT NOT NULL REFERENCES users(id), league_id TEXT NOT NULL, PRIMARY KEY (user_id, league_id));
+    INSERT INTO users VALUES ('u-admin', 'admin@example.com', '1', NULL), ('u-creator', 'creator@example.com', '2', NULL),
+      ('u-orphan1', 'orphan1@example.com', '3', NULL), ('u-orphan2', 'Keep.Me@example.com', '4', NULL), ('u-orphan3', 'orphan3@example.com', '5', NULL);
+    INSERT INTO leagues VALUES ('L1', 'u-creator'), ('L2', NULL);
+    INSERT INTO league_admins VALUES ('u-admin', 'L2');`);
+  const sql = cleanup.orphanUsersStatements(['keep.me@example.com']);
+  assert.deepStrictEqual(db.prepare(sql.list).all().map(r => r.id), ['u-orphan1', 'u-orphan3']);
+  assert.strictEqual(db.prepare(sql.del).run().changes, 2);
+  assert.deepStrictEqual(db.prepare('SELECT id FROM users ORDER BY id').all().map(r => r.id), ['u-admin', 'u-creator', 'u-orphan2']);
+  assert.strictEqual(db.prepare(sql.remaining).get().n, 0);
+  // Without --keep, the kept one is an orphan too.
+  assert.deepStrictEqual(db.prepare(cleanup.orphanUsersStatements([]).list).all().map(r => r.id), ['u-orphan2']);
+});
+
+// ---- orphan-users: the command's flow, execSync mocked ----
+(async () => {
+  const run = async (args, dbState) => {
+    const calls = [];
+    extraHandler = (cmd, opts) => {
+      if (cmd.includes('wrangler d1 info')) return JSON.stringify({ name: 'notreligue-demo', uuid: DEMO_DB_UUID });
+      calls.push(cmd);
+      if (/DELETE FROM users/.test(cmd)) { const n = dbState.users.length; dbState.users = []; return JSON.stringify([{ results: [], meta: { changes: n } }]); }
+      if (/SELECT COUNT\(\*\) AS n FROM users/.test(cmd)) return JSON.stringify([{ results: [{ n: dbState.users.length }] }]);
+      if (/SELECT id, email/.test(cmd)) return JSON.stringify([{ results: dbState.users }]);
+      throw new Error(`unexpected execSync call: ${cmd}`);
+    };
+    const log = console.log; console.log = () => {};
+    try { return { result: await cleanup.orphanUsers(args), calls }; }
+    finally { console.log = log; extraHandler = null; }
+  };
+  const users = () => ({ users: [{ id: 'a', email: 'a@example.com' }, { id: 'b', email: 'b@example.com' }] });
+
+  await (async () => {
+    const { result, calls } = await run({ _: ['orphan-users'] }, users());
+    check('orphan-users without --execute is a dry run: lists, deletes nothing', () => {
+      assert.deepStrictEqual(result, { listed: 2, deleted: 0 });
+      assert.ok(calls.every(c => !/DELETE/.test(c)), 'no DELETE in a dry run');
+    });
+  })();
+  await (async () => {
+    const { result, calls } = await run({ _: ['orphan-users'], execute: true }, users());
+    check('orphan-users --execute deletes them, with the no-league condition in the DELETE itself', () => {
+      assert.deepStrictEqual(result, { listed: 2, deleted: 2, left: 0 });
+      const del = calls.find(c => /DELETE FROM users/.test(c));
+      assert.ok(del && /NOT IN \(SELECT user_id FROM league_admins\)/.test(del) && /NOT IN \(SELECT created_by FROM leagues/.test(del));
+    });
+  })();
+
+  console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILED'}`);
+  process.exitCode = failures === 0 ? 0 : 1;
+})();

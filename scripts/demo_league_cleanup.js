@@ -47,6 +47,19 @@
 //   node scripts/demo_league_cleanup.js delete --ids=<id1>,<id2>
 //   node scripts/demo_league_cleanup.js delete --ids=<id1>,<id2> --execute
 //   node scripts/demo_league_cleanup.js delete --slugs=<slug1>,<slug2> --execute
+//   node scripts/demo_league_cleanup.js orphan-users [--keep=<email1>,<email2>]
+//   node scripts/demo_league_cleanup.js orphan-users [--keep=...] --execute
+//
+// orphan-users: user accounts that belong to NO league -- no
+// league_admins row and no league created by them. A league's delete
+// removes its own admins only when they have no other league
+// (performLeagueHardDelete), so accounts that signed up and never made a
+// league, or whose league was deleted while they had none of their own
+// left through another path, stay behind. Nothing else references users
+// (league_admins.user_id and leagues.created_by are the only foreign
+// keys; sessions are signed cookies checked against users.session_epoch),
+// so deleting such a row leaves nothing dangling. --keep spares the
+// listed emails. Same dry-run default and demo-only target as delete.
 //
 // Dry-run (report only, deletes nothing) is what `delete` does WITHOUT
 // --execute -- that is the default. --execute is required to actually
@@ -314,6 +327,38 @@ function printFootprint(label, footprint, LEAGUE_SCOPED_TABLES) {
   console.log(`    admin user_id(s): ${footprint.adminUserIds.length ? footprint.adminUserIds.join(', ') : '(none)'}`);
 }
 
+// Accounts with no league. The same condition is repeated inside the
+// DELETE, so an account that gains a league between the listing and the
+// delete is not touched.
+const ORPHAN_USERS_WHERE = 'id NOT IN (SELECT user_id FROM league_admins) AND id NOT IN (SELECT created_by FROM leagues WHERE created_by IS NOT NULL)';
+function orphanUsersStatements(keep) {
+  const keepClause = keep.length ? ` AND lower(email) NOT IN (${keep.map(e => escapeSqlValue(String(e).toLowerCase())).join(', ')})` : '';
+  return {
+    list: `SELECT id, email, created_at, last_login_at FROM users WHERE ${ORPHAN_USERS_WHERE}${keepClause} ORDER BY created_at;`,
+    del: `DELETE FROM users WHERE ${ORPHAN_USERS_WHERE}${keepClause};`,
+    remaining: `SELECT COUNT(*) AS n FROM users WHERE ${ORPHAN_USERS_WHERE}${keepClause};`
+  };
+}
+
+async function orphanUsers(args) {
+  const keep = typeof args.keep === 'string' ? args.keep.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const sql = orphanUsersStatements(keep);
+  const users = (runD1One(sql.list).results) || [];
+  console.log(`\n${users.length} user account(s) with no league on "${DEMO_DB_NAME}"${keep.length ? ` (keeping ${keep.join(', ')})` : ''}:\n`);
+  for (const u of users) console.log(`  ${String(u.email).padEnd(48)} created ${u.created_at || '?'}  last login ${u.last_login_at || 'never'}`);
+  if (!users.length) return { listed: 0, deleted: 0 };
+  if (!args.execute) {
+    console.log('\nDRY RUN -- nothing was deleted. Re-run with --execute to delete the account(s) listed above.\n');
+    return { listed: users.length, deleted: 0 };
+  }
+  reassertAuthOrReport([], users.map(u => ({ id: u.id, name: u.email })));
+  const result = runD1One(sql.del);
+  const deleted = (result && result.meta && result.meta.changes) || 0;
+  const left = ((runD1One(sql.remaining).results || [])[0] || {}).n || 0;
+  console.log(`\nDeleted ${deleted} user account(s). Accounts with no league left${keep.length ? ' (besides those kept)' : ''}: ${left}.\n`);
+  return { listed: users.length, deleted, left };
+}
+
 function parseArgs(argv) {
   const args = { _: [] };
   for (const raw of argv) {
@@ -372,8 +417,14 @@ async function main() {
     return;
   }
 
+  if (command === 'orphan-users') {
+    await orphanUsers(args);
+    return;
+  }
+
   if (command !== 'delete') {
     console.error('Usage:');
+    console.error('  node scripts/demo_league_cleanup.js orphan-users [--keep=<email1>,<email2>] [--execute]');
     console.error('  node scripts/demo_league_cleanup.js list');
     console.error('  node scripts/demo_league_cleanup.js delete --ids=<id1>,<id2> [--execute]');
     console.error('  node scripts/demo_league_cleanup.js delete --slugs=<slug1>,<slug2> [--execute]');
@@ -447,4 +498,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { resolveDemoTarget, assertDemoTarget, reassertAuthOrReport, fail };
+module.exports = { resolveDemoTarget, assertDemoTarget, reassertAuthOrReport, fail, orphanUsers, orphanUsersStatements };
