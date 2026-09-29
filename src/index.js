@@ -9587,6 +9587,8 @@ ${tabbar}`;
       inviteGoalie: 'Inviter un gardien', inviteSkater: 'Inviter des joueurs',
       noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.',
       statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu', statusElsewhere: "Joue l'autre match", statusWaitlist: "Liste d'attente",
+      setGameOut: 'Pas ce match',
+      nightScopeHelp: "Il y a d'autres matchs ce soir-là. IN et OUT valent pour toute la soirée du joueur, comme sa propre réponse. « Pas ce match » le retire de ce match seulement.",
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Envoyer un rappel maintenant',
       remindersEnabledLabel: 'Rappels automatiques pour ce match',
@@ -9668,6 +9670,8 @@ ${tabbar}`;
       inviteGoalie: 'Invite a goalie', inviteSkater: 'Invite players',
       noPlayersOnTeam: 'No players assigned to this team.',
       statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply', statusElsewhere: 'In the other game', statusWaitlist: 'Waitlist',
+      setGameOut: 'Not this game',
+      nightScopeHelp: "There are other games that night. IN and OUT cover the player's whole night, like their own answer. \u201cNot this game\u201d takes them out of this game only.",
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Send a reminder now',
       remindersEnabledLabel: 'Automated reminders for this game',
@@ -9719,6 +9723,11 @@ ${tabbar}`;
     // Every game at this time was full: waiting for a spot.
     waitlist: `<span class="nl-badge nl-badge--pending">${BADGE_ICON_CLOCK}<span data-i18n="statusWaitlist">Liste d'attente</span></span>`
   };
+  // Nights (D1): with other games that night, IN/OUT are for the player's
+  // night (as their own answer is); "Not this game" is this game only.
+  const multiNight = (ev.league_id && ev.league_id !== SMBHL_LEAGUE_ID) && (await nightGamesOf(env, ev)).length > 1;
+  const gameOutBtn = p => multiNight ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setGameOut" data-game-out="${esc(p.player_id)}" onclick="setPlayerStatus('${esc(p.player_id)}','out',this,'game')">Pas ce match</button>` : '';
+  const nightScopeHelpHtml = multiNight ? `<p class="nl-help" data-i18n="nightScopeHelp" style="grid-column:1/-1">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).nightScopeHelp)}</p>` : '';
   const statusBadgeFor = p => (p.status === 'out' && p.status_by === 'night' ? STATUS_BADGE.elsewhere
     : p.status === 'out' && p.status_by === 'waitlist' ? STATUS_BADGE.waitlist
     : STATUS_BADGE[p.status]) || STATUS_BADGE.pending;
@@ -9794,7 +9803,7 @@ ${tabbar}`;
           <div style="display:flex;align-items:center;gap:8px;">
             ${statusBadgeFor(p)}
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
-            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
+            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>${gameOutBtn(p)}
           </div>
         </div>`).join('')
       : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
@@ -9867,7 +9876,7 @@ ${tabbar}`;
           <div style="display:flex;align-items:center;gap:8px;">
             ${statusBadgeFor(p)}
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
-            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
+            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>${gameOutBtn(p)}
           </div>
         </div>`).join('')
       : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
@@ -10065,7 +10074,7 @@ ${tabbar}`;
       <h2 data-i18n="noMatchupSetTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetTitle)}</h2>
       <p class="nl-help" data-i18n="noMatchupSetDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetDesc)}</p>
     </section>`
-    : (ev.is_playoff && playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600;grid-column:1/-1"') : '') + (poolCardHtml || teamCards.join(''))}</div>
+    : (ev.is_playoff && playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600;grid-column:1/-1"') : '') + nightScopeHelpHtml + (poolCardHtml || teamCards.join(''))}</div>
   ${unassignedHtml}
   <!-- Item 5: before the game an admin works the RSVP list (players, then
        who is confirmed but not yet on a team); the result and player stats
@@ -10458,13 +10467,13 @@ async function inviteSubs(team, need, btn) {
   msg.style.display = 'block';
   btn.disabled = false;
 }
-async function setPlayerStatus(playerId, status, btn) {
+async function setPlayerStatus(playerId, status, btn, scope) {
   btn.disabled = true;
   try {
     var res = await fetch('/league/rsvp/admin', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, player_id: playerId, status: status })
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, player_id: playerId, status: status, scope: scope || 'night' })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {
@@ -20670,14 +20679,45 @@ async function handleLeagueAdminSetRsvp(req, env, url) {
     .bind(playerId, leagueId).first();
   if (!contact) return Response.json({ ok: false, error: 'Player not found.', errorKey: 'PLAYER_NOT_FOUND' }, { status: 404 });
 
-  const written = await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'manager', ev.season);
-  if (!written.ok) return Response.json({ ok: false, error: 'This player is already in a game at the same time.', errorKey: 'PLAYER_IN_OVERLAPPING_GAME' }, { status: 409 });
-  if (status === 'out') {
-    await fillNightWaitlist(env, leagueId, ev);
-    await maybeInviteSubsForShortage(env, leagueId, ev, contact);
+  // Nights (D1): the admin's IN or OUT is for the player's night, as the
+  // player's own answer is -- IN puts them in this game (and, for the
+  // night's other games, where the balance places them); OUT takes them
+  // out of every game that night. scope 'game' is this game only: the
+  // admin's "Not this game" (OUT only).
+  const scope = body.scope === 'game' ? 'game' : 'night';
+  if (scope === 'game' && status !== 'out') {
+    return Response.json({ ok: false, error: 'Only OUT can be set for one game.', errorKey: 'ADMIN_RSVP_FIELDS_REQUIRED' }, { status: 400 });
+  }
+  const busy = 'This player is already in a game at the same time.';
+  // A game that has started takes no answers for the night any more, but
+  // the admin can still correct it: this game only.
+  if (scope === 'game' || leagueId === SMBHL_LEAGUE_ID || closedToAnswers(ev)) {
+    const written = await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'manager', ev.season);
+    if (!written.ok) return Response.json({ ok: false, error: busy, errorKey: 'PLAYER_IN_OVERLAPPING_GAME' }, { status: 409 });
+    if (status === 'out') {
+      await fillNightWaitlist(env, leagueId, ev);
+      await maybeInviteSubsForShortage(env, leagueId, ev, contact);
+    }
+  } else {
+    // Already in another game at this time: refused, as before -- the
+    // system never moves a player between games; the admin takes them out
+    // of that one first.
+    if (status === 'in' && await overlapConflict(env, ev, playerId)) {
+      return Response.json({ ok: false, error: busy, errorKey: 'PLAYER_IN_OVERLAPPING_GAME' }, { status: 409 });
+    }
+    // A sub is placed game by game: their night is this game and the games
+    // they are already in (playerNight).
+    const night = await writeLeagueNightStatus(env, leagueId, ev, contact, status, 'manager', { prefer: ev.id });
+    if (status === 'in' && !night.written.some(w => w.game.id === ev.id) && !night.night.isIn(ev)) {
+      return Response.json({ ok: false, error: busy, errorKey: 'PLAYER_IN_OVERLAPPING_GAME' }, { status: 409 });
+    }
+    if (status === 'out') for (const w of night.written) {
+      if (w.wasIn) await fillNightWaitlist(env, leagueId, w.game);
+      await maybeInviteSubsForShortage(env, leagueId, w.game, contact);
+    }
   }
 
-  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, status });
+  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, status, scope });
 }
 
 /* ---------- league-scoped shortage status (Part O) ----------
