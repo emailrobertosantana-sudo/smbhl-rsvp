@@ -306,7 +306,10 @@ describe('Item 1 (players/admin-confirm polish task): weekly_draw pre-draw pool 
 
     const backupRowStart = html.indexOf(`data-pool-player-row="${backup.player_id}"`);
     const backupRowEnd = html.indexOf('</div>', html.indexOf('</div>', backupRowStart) + 6);
-    expect(html.slice(backupRowStart, backupRowEnd)).toContain('data-i18n="goalieBadge"');
+    // Revised 2026-09-29: "can also play goalie" no longer reads "G" like a
+    // goalie -- its badge says "G au besoin" / "G if needed".
+    expect(html.slice(backupRowStart, backupRowEnd)).toContain('data-i18n="canAlsoGoalieBadge"');
+    expect(html.slice(backupRowStart, backupRowEnd)).not.toContain('data-i18n="goalieBadge"');
   });
 
   it('the fixed/headcount/post-draw per-team list also shows the goalie badge now (same distinguishability, consistent list)', async () => {

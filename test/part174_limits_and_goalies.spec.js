@@ -99,3 +99,18 @@ describe('A shortage is measured against the season minimum, on every surface', 
     expect(html).toContain('Minimum reached');
   });
 });
+
+describe('The G badge: a goalie, or someone who can also play goalie', () => {
+  it('Liam (goalie) reads "G" and is the one goalie counted; Mason (can also play goalie) reads "G au besoin" / "G if needed"', async () => {
+    const { a, ev, cs } = await tester1('p174badge');
+    const html = (await a.get(`/league/events/detail?e=${encodeURIComponent(ev.id)}`)).text;
+    const row = pid => { const i = html.indexOf(`setPlayerStatus('${pid}','in'`); return html.slice(html.lastIndexOf('<div class="ev-p"', i), i); };
+    expect(row(cs.Liam.player_id)).toContain('data-goalie="1"');
+    expect(row(cs.Liam.player_id)).toContain('>G</span>');
+    expect(row(cs.Mason.player_id)).toContain('data-goalie="backup"');
+    expect(row(cs.Mason.player_id)).toContain('G au besoin');
+    expect(row(cs.Mason.player_id)).not.toContain('>G</span>');
+    expect(html).toContain("'G if needed'".replace(/'/g, '"'));
+    expect(html).toContain('<span class="stat tnum">1/1</span>'); // one goalie confirmed, one needed
+  });
+});

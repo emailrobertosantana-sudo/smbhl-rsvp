@@ -9620,7 +9620,7 @@ ${tabbar}`;
       // as the Players page (I18N_ROSTER), reused here rather than
       // shared across dicts since each page's dict is already
       // self-contained by this codebase's own convention.
-      goalieBadge: 'G', goalieTitle: 'Gardien', canAlsoGoalieTitle: 'Peut aussi jouer gardien',
+      goalieBadge: 'G', goalieTitle: 'Gardien', canAlsoGoalieTitle: 'Peut aussi jouer gardien', canAlsoGoalieBadge: 'G au besoin',
       // Part 1 (fixed-teams matchup bug fix task): shown instead of
       // every team's card for a >2-team fixed league until Part 2's
       // matchup data exists (or is set) for this specific event.
@@ -9690,7 +9690,7 @@ ${tabbar}`;
       venueOpt: 'Venue (optional)', venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None — free text below',
       lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
       editSaved: 'Changes saved.',
-      goalieBadge: 'G', goalieTitle: 'Goalie', canAlsoGoalieTitle: 'Can also play goalie',
+      goalieBadge: 'G', goalieTitle: 'Goalie', canAlsoGoalieTitle: 'Can also play goalie', canAlsoGoalieBadge: 'G if needed',
       noMatchupSetTitle: 'No matchup set',
       noMatchupSetDesc: "This league has more than two teams — who's playing needs to be known before rosters can be shown.",
       playoffAwaitingSeedingTitle: 'Playoff game — awaiting results',
@@ -9731,15 +9731,17 @@ ${tabbar}`;
   const statusBadgeFor = p => (p.status === 'out' && p.status_by === 'night' ? STATUS_BADGE.elsewhere
     : p.status === 'out' && p.status_by === 'waitlist' ? STATUS_BADGE.waitlist
     : STATUS_BADGE[p.status]) || STATUS_BADGE.pending;
-  // Item 1 (admin-confirm-players polish task): a real goalie gets the
-  // "in"-toned G badge, a player flagged "can also play goalie" (E2,
-  // players polish task) gets the same badge in the quieter "sub"
-  // tone -- same distinction, same data-i18n keys the Players page
-  // already established, just a compact inline badge here instead of
-  // a full label button (this row has no room for one).
+  // "G" is the league's goalie (contacts.is_goalie) -- counted in
+  // "gardiens confirmés". A player who can also play goalie
+  // (is_backup_goalie) is not a goalie: they count as a player, and as
+  // the goalie only when no goalie is in (teamState). Both used to read
+  // "G", told apart by tone and a French-only tooltip, so a game looked
+  // like it had two goalies; theirs now says so -- "G au besoin" / "G if
+  // needed" -- and both tooltips follow the language toggle.
   function eventRowGoalieBadge(c) {
-    if (c.is_goalie) return ` <span class="nl-badge nl-badge--in" style="padding:1px 6px;font-size:11px;" data-i18n="goalieBadge" title="${esc(I18N_DETAIL.fr.goalieTitle)}">G</span>`;
-    if (c.is_backup_goalie) return ` <span class="nl-badge nl-badge--sub" style="padding:1px 6px;font-size:11px;" data-i18n="goalieBadge" title="${esc(I18N_DETAIL.fr.canAlsoGoalieTitle)}">G</span>`;
+    const d = I18N_DETAIL[lang] || I18N_DETAIL.fr;
+    if (c.is_goalie) return ` <span class="nl-badge nl-badge--in" style="padding:1px 6px;font-size:11px;" data-i18n="goalieBadge" data-i18n-title="goalieTitle" data-goalie="1" title="${esc(d.goalieTitle)}">G</span>`;
+    if (c.is_backup_goalie) return ` <span class="nl-badge nl-badge--sub" style="padding:1px 6px;font-size:11px;" data-i18n="canAlsoGoalieBadge" data-i18n-title="canAlsoGoalieTitle" data-goalie="backup" title="${esc(d.canAlsoGoalieTitle)}">${esc(d.canAlsoGoalieBadge)}</span>`;
     return '';
   }
 
