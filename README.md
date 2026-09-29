@@ -178,6 +178,8 @@ Set independently per environment via `npx wrangler secret put <NAME>` (producti
 
 Both production and the demo environment have their own copies of every secret above (confirmed via `wrangler secret list --env demo`); they are never shared or inherited from production.
 
+**`ADMIN_NAME` is a plain variable, not a secret** (`src/admin_greeting.js`): the name admin-only emails greet ("Bonjour Roberto," / "Hi Roberto,"); unset, they say "Bonjour," / "Hi,". It is not sensitive, so it goes in `wrangler.jsonc` `vars` — versioned, and kept by every deploy — in **both** the top-level `vars` and `env.demo.vars` (an environment's `vars` replace the top-level ones, they don't merge). A variable set only in the dashboard is removed by the next `wrangler deploy`, and a secret of the same name would clash with the var.
+
 ---
 
 ## 7. Season Configuration Engine (`src/season_config.js`)
