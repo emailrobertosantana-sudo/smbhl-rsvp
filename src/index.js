@@ -19055,12 +19055,23 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
 
 const LEAGUE_REMINDER_ICON_ALERT = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:4px;"><path d="M10 3l8 14H2z"/><path d="M10 8v4M10 14.5v.5"/></svg>';
 
-function leagueReminderDict(lang, { firstName, dayLabel, ev, team }) {
+// "19:00 et 20:00" / "19:00 and 20:00"; three or more with commas.
+function listJoin(items, lang) {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} ${lang === 'fr' ? 'et' : 'and'} ${items[items.length - 1]}`;
+}
+
+// games: the player's games that night (D1), when there is more than one
+// -- the "when" line then gives each start time.
+function leagueReminderDict(lang, { firstName, dayLabel, ev, team, games = null }) {
   // Live-testing task (batch 2), Part 6: was raw ISO ("2026-11-21")
   // directly interpolated -- an email is a single-language, one-shot
   // artifact (no live toggle possible), so it just formats straight in
   // this dict's own `lang`, no data-date-fr/en attribute pair needed.
-  const when = `${formatEventDate(ev.date, lang, 'short')}${ev.start_time ? ' · ' + formatEventTime(ev.start_time, lang) : ''}${ev.venue ? ' · ' + ev.venue : ''}`;
+  const venues = games && games.length > 1 ? [...new Set(games.map(g => g.venue).filter(Boolean))] : null;
+  const when = games && games.length > 1
+    ? `${formatEventDate(ev.date, lang, 'short')} · ${listJoin(games.filter(g => g.start_time).map(g => formatEventTime(g.start_time, lang)), lang)}${venues.length ? ' · ' + venues.join(' / ') : ''}`
+    : `${formatEventDate(ev.date, lang, 'short')}${ev.start_time ? ' · ' + formatEventTime(ev.start_time, lang) : ''}${ev.venue ? ' · ' + ev.venue : ''}`;
   return lang === 'fr' ? {
     r72Subject: `${firstName}, as-tu décidé pour ${dayLabel || 'ton prochain match'}?`,
     r72Headline: 'As-tu décidé?',
@@ -19105,13 +19116,13 @@ function leagueReminderDict(lang, { firstName, dayLabel, ev, team }) {
 // dayLabel: { fr, en } (each language its own), or one string for both.
 const dayLabelFor = (dayLabel, lang) => (dayLabel && typeof dayLabel === 'object') ? dayLabel[lang] : dayLabel;
 
-function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, dayLabel, ev, inLink, outLink, forcedLang }) {
+function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, dayLabel, ev, inLink, outLink, forcedLang, games = null }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
   const subjKey = kind === 'reminder_72h' ? 'r72Subject' : 'r24Subject';
   const headKey = kind === 'reminder_72h' ? 'r72Headline' : 'r24Headline';
   const bodyKey = kind === 'reminder_72h' ? 'r72Body' : 'r24Body';
   const toContent = l => {
-    const d = leagueReminderDict(l, { firstName, dayLabel: dayLabelFor(dayLabel, l), ev });
+    const d = leagueReminderDict(l, { firstName, dayLabel: dayLabelFor(dayLabel, l), ev, games });
     return {
       subject: d[subjKey],
       text: `${d[headKey]}\n${d[bodyKey]}\n${d.btnIn}: ${inLink}\n${d.btnOut}: ${outLink}`,
@@ -19140,10 +19151,10 @@ function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, d
 // 30-emails.md: one button per email).
 // Live-testing task (batch 3), Part 1: reconciled onto the same shared
 // assembler as renderLeagueReminderEmail above -- see its own comment.
-function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang }) {
+function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang, games = null }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
   const toContent = l => {
-    const d = leagueReminderDict(l, { firstName, dayLabel: dayLabelFor(dayLabel, l), ev, team });
+    const d = leagueReminderDict(l, { firstName, dayLabel: dayLabelFor(dayLabel, l), ev, team, games });
     return {
       subject: d.logisticsSubject,
       text: `${d.logisticsHeadline}\n${d.logisticsBody}\n${d.optOut}: ${optOutLink}`,
@@ -19529,22 +19540,55 @@ async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId =
 // reminder_72h / reminder_24h ask; logistics_12h and team_assigned (the
 // same "you're confirmed" email once the team is known) inform. The
 // senders queue it; the Comms preview shows it.
-async function renderLeagueReminderForContact(env, leagueRow, ev, contact, kind, team = null) {
+// games: the player's games that night when more than one (D1); ev is the
+// first of them, the one the links are signed for.
+async function renderLeagueReminderForContact(env, leagueRow, ev, contact, kind, team = null, games = null) {
   const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
   const dayLabel = { fr: reminderDayLabel(ev.date, 'fr'), en: reminderDayLabel(ev.date, 'en') };
   const firstName = (contact.name || '').split(' ')[0] || contact.name;
   const { inLink, outLink, optOutLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
   return (kind === 'reminder_72h' || kind === 'reminder_24h')
-    ? renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang })
+    ? renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang, games })
     // A no-teams league's single pool (HEADCOUNT_TEAM_NAME, 'Tous') is internal:
     // the details email said 'Équipe Tous / Team Tous'.
-    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: team === HEADCOUNT_TEAM_NAME ? null : team, optOutLink, forcedLang });
+    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: team === HEADCOUNT_TEAM_NAME ? null : team, optOutLink, forcedLang, games });
 }
 
-async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false, drainNow = false, budget = null, quietHours = false } = {}) {
-  const recipients = kind === 'logistics_12h'
-    ? await getConfirmedPlayers(env, leagueRow.id, ev.id)
-    : await getNonResponders(env, leagueRow.id, ev.id, ev.season);
+// night: the night's games when there is more than one (D1), ev first:
+// one email per player for the night -- asking those who haven't answered
+// for any of their games, or giving the confirmed their games -- logged
+// for each game.
+// A night's recipients (D1), each once, with their games that night (in
+// time order): for the asks, players who haven't answered for any of the
+// night's games; for the details, the players confirmed for any of them.
+async function nightReminderRecipients(env, leagueId, games, kind) {
+  const byPlayer = new Map();
+  for (const g of games) {
+    const list = kind === 'logistics_12h'
+      ? await getConfirmedPlayers(env, leagueId, g.id)
+      : await getNonResponders(env, leagueId, g.id, g.season);
+    for (const c of list) {
+      if (!byPlayer.has(c.player_id)) byPlayer.set(c.player_id, { ...c, games: [] });
+      byPlayer.get(c.player_id).games.push(g);
+    }
+  }
+  let out = [...byPlayer.values()];
+  if (kind !== 'logistics_12h' && out.length) {
+    const answered = new Set(((await env.DB.prepare(
+      `SELECT DISTINCT player_id FROM rsvp WHERE status IN ('in', 'out') AND event_id IN (${games.map(() => '?').join(',')})`
+    ).bind(...games.map(g => g.id)).all()).results || []).map(r => r.player_id));
+    out = out.filter(c => !answered.has(c.player_id));
+  }
+  return out;
+}
+
+async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false, drainNow = false, budget = null, quietHours = false, night = null } = {}) {
+  const games = night && night.length > 1 ? night : [ev];
+  const recipients = games.length > 1
+    ? await nightReminderRecipients(env, leagueRow.id, games, kind)
+    : kind === 'logistics_12h'
+      ? await getConfirmedPlayers(env, leagueRow.id, ev.id)
+      : await getNonResponders(env, leagueRow.id, ev.id, ev.season);
 
   // Outbox QA batch: each recipient's email is QUEUED (outbox,
   // pre-rendered), not sent inline. Inline sending had two faults, the
@@ -19564,7 +19608,8 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
   let failedToQueue = 0;
   for (const contact of recipients) {
     try {
-      const mail = await renderLeagueReminderForContact(env, leagueRow, ev, contact, kind, contact.rsvp_team);
+      const mine = contact.games || [ev];
+      const mail = await renderLeagueReminderForContact(env, leagueRow, mine[0], contact, kind, contact.rsvp_team, mine.length > 1 ? mine : null);
       await enqueuePrerenderedMail(env, {
         kind, leagueId: leagueRow.id, eventId: ev.id, playerId: contact.player_id, team: contact.rsvp_team || null,
         dedupKey: `${writeLog ? 'lrem' : 'lrem-manual'}:${ev.id}:${kind}:${contact.player_id}`,
@@ -19582,10 +19627,12 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
     }
   }
   if (writeLog) {
-    await env.DB.prepare(
-      `INSERT INTO league_reminder_log (event_id, kind, league_id, sent_at, recipient_count) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(event_id, kind) DO NOTHING`
-    ).bind(ev.id, kind, leagueRow.id, new Date().toISOString(), queued).run();
+    for (const g of games) {
+      await env.DB.prepare(
+        `INSERT INTO league_reminder_log (event_id, kind, league_id, sent_at, recipient_count) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(event_id, kind) DO NOTHING`
+      ).bind(g.id, kind, leagueRow.id, new Date().toISOString(), queued).run();
+    }
   }
   if (drainNow) {
     const d = await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id, leagueRow.id, budget);
@@ -19624,7 +19671,9 @@ async function handleLeagueSendReminderNow(req, env, url) {
 
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
-  const { sent, eligible, failed } = await sendLeagueReminderKind(env, leagueRow, cfg, ev, 'reminder_72h', { writeLog: false, drainNow: true });
+  // Nights (D1): for the whole night the game is in.
+  const night = (await nightGamesOf(env, ev)).filter(g => g.state === 'open');
+  const { sent, eligible, failed } = await sendLeagueReminderKind(env, leagueRow, cfg, night[0] || ev, 'reminder_72h', { writeLog: false, drainNow: true, night: night.length > 1 ? night : null });
   // Bug 2 fix (live-testing): eligible/failed let the client tell
   // "genuinely nothing to send" (eligible === 0) apart from "there were
   // real recipients but every send failed" (eligible > 0, sent === 0)

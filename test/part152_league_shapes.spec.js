@@ -180,6 +180,10 @@ async function runSeason(fx) {
   const perNight = {};
   for (const m of sent) { const l = linksIn(m, '/league/rsvp')[0]; if (!l) continue; const ev = events.find(e => e.id === new URL(l).searchParams.get('e')); if (!ev) continue; const k = m.to + '|' + ev.date; perNight[k] = (perNight[k] || 0) + 1; }
   const nightMax = Math.max(0, ...Object.values(perNight));
+  // D1: one set of emails per night -- no player gets the same email twice for one night.
+  const perNightKind = {};
+  for (const m of sent) { const l = linksIn(m, '/league/rsvp')[0]; if (!l) continue; const ev = events.find(e => e.id === new URL(l).searchParams.get('e')); if (!ev) continue; const k = `${m.to}|${ev.date}|${m.subject}`; perNightKind[k] = (perNightKind[k] || 0) + 1; }
+  const nightDup = Object.entries(perNightKind).filter(([, n]) => n > 1).map(([k, n]) => `${k} x${n}`);
   const subCalls = await rows(`SELECT event_id, player_id, team, sent_at IS NOT NULL AS sent, cancelled FROM outbox WHERE league_id = ? AND kind = 'sub_call' ORDER BY id`, leagueId);
   const pages = [];
   const slugRow = await one('SELECT slug FROM leagues WHERE id = ?', leagueId);
@@ -204,7 +208,7 @@ async function runSeason(fx) {
     const lead = (pub.text.match(/<section id="(?:leaders|players|stats)"[\s\S]*?<\/section>/) || [''])[0];
     standings += ' || ' + lead.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
   }
-  return { games, sent, cancelled, samples, standings, violations, nightMax, leagueId, players: players.filter(p => p.createError).map(p => `${p.name}: ${p.createError}`), setupNotes, perEvent, unlinked: Object.entries(unlinkedCounts).map(([s, n]) => `${n}x ${s}`), subCalls: subCalls.map(s => `${s.event_id.slice(-10)} ${s.player_id.slice(-5)} ${s.team} sent=${s.sent} c=${s.cancelled}`), problems, pages, totalMail: sent.length };
+  return { games, sent, cancelled, samples, standings, violations, nightMax, nightDup, leagueId, players: players.filter(p => p.createError).map(p => `${p.name}: ${p.createError}`), setupNotes, perEvent, unlinked: Object.entries(unlinkedCounts).map(([s, n]) => `${n}x ${s}`), subCalls: subCalls.map(s => `${s.event_id.slice(-10)} ${s.player_id.slice(-5)} ${s.team} sent=${s.sent} c=${s.cancelled}`), problems, pages, totalMail: sent.length };
 }
 
 function roster(prefix, n, { teams = null, goalies = 0, subs = 0, role = 'roster' } = {}) {
@@ -267,6 +271,7 @@ function common(r) {
   expect(r.players, 'contacts created').toEqual([]);
   expect(r.problems, 'pass errors, failed answers, failed scores').toEqual([]);
   expect(r.violations).toEqual([]);
+  expect(r.nightDup, 'one set of emails per night (D1)').toEqual([]);
   for (const p of r.pages) expect(p, 'page renders').toMatch(/ 200$/);
 }
 const sumKind = (r, k) => r.games.reduce((a, g) => a + (g.kinds[k] || 0), 0);
@@ -278,11 +283,17 @@ describe('Leagues unlike SMBHL, a whole season each', () => {
     for (const g of r.games) {
       expect([g.ev.home_team, g.ev.away_team]).toEqual(['Dark', 'Light']); // the auto-draw ran
       expect(g.ev.home_score).toBe(3);
-      expect(g.kinds.remind).toBeGreaterThan(0);
     }
-    // DECISION PENDING: two games a night are two events -- two RSVPs and
-    // two sets of mail per player per night (4 emails), subjects alike.
-    expect(r.nightMax).toBe(4);
+    // D1 (decided 2026-09-30): the two games are one night -- one answer
+    // and one set of emails, linked to the night's first game (it used to
+    // be two of each, 4 emails a night). At most the 72h and 24h asks and
+    // the 12h details; never the same one twice.
+    for (const g of r.games) {
+      if (g.ev.start_time === '20:30') expect(g.kinds.remind).toBeGreaterThan(0);
+      else expect(g.kinds.remind || 0).toBe(0);
+    }
+    expect(r.nightDup).toEqual([]);
+    expect(r.nightMax).toBeLessThanOrEqual(3);
     // D2 (decided 2026-09-29): before its draw, a short pickup pool calls
     // subs (half the regulars are out); those who say yes join the pool
     // and the draw gives them a team, like everyone else.

@@ -24,6 +24,7 @@
 // Wave-staggered sub calls, the responsiveness order and dormancy were
 // already ONE implementation shared by both products before this move
 // (callSubs / drain in index.js), and stay there.
+import { byStart } from './league_nights.js';
 import { eventStart, localParts, SMBHL_LEAGUE_ID } from './league_ids.js';
 import { getSeasonConfigForEvent, getTeamNames } from './season_config.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation } from './mail_queue.js';
@@ -578,7 +579,11 @@ export async function applyReminderWindowSkipRule(env, leagueId, ev) {
 // advancedSettings: the league's cadence settings when it is on the
 // advanced model (its hours-before and hour of day decide when each step is
 // due, and its mail is held for its quiet hours); null for the simple model.
-export async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil, advancedSettings = null) {
+// night: the night's games (D1) when there is more than one -- ev is the
+// first. One wave for the night: already sent if any of its games has it,
+// and logged for each of them (sendLeagueReminderKind).
+export async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil, advancedSettings = null, night = null) {
+  const games = night && night.length > 1 ? night : [ev];
   const { sendLeagueReminderKind } = reminderHost();
   const kindToColumn = { reminder_72h: 'reminder_72h_enabled', reminder_24h: 'reminder_24h_enabled', logistics_12h: 'reminder_12h_enabled' };
   const results = {};
@@ -589,14 +594,16 @@ export async function sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil
       : !(hoursUntil > REMINDER_WINDOW_THRESHOLD_HOURS[kind]);
     if (!due) { results[kind] = 0; continue; }
     if (!leagueRow[kindToColumn[kind]]) { results[kind] = 0; continue; }
-    const already = await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(ev.id, kind).first();
+    const already = games.length === 1
+      ? await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(ev.id, kind).first()
+      : await env.DB.prepare(`SELECT 1 FROM league_reminder_log WHERE kind = ? AND event_id IN (${games.map(() => '?').join(',')})`).bind(kind, ...games.map(g => g.id)).first();
     if (already) { results[kind] = 0; continue; }
     // The automated cron wave only ever logs a summary count -- no
     // admin is watching a live message for it, so only .sent (not the
     // eligible/failed breakdown Bug 2 added for the manual trigger) is
     // needed here; this keeps runLeagueReminders' own summing logic
     // unchanged.
-    results[kind] = (await sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog: true, quietHours: !!advancedSettings })).queued;
+    results[kind] = (await sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog: true, quietHours: !!advancedSettings, night: games.length > 1 ? games : null })).queued;
   }
   return results;
 }
@@ -683,7 +690,16 @@ async function runOneLeague(env, leagueRow, budget, log) {
          AND date >= ? AND date <= ?`
     ).bind(leagueRow.id, localDateInDays(-1), localDateInDays(Math.ceil(horizon / 24) + 1)).all()).results || [];
 
+    // Nights (D1): a league's games on the same day are one night -- one
+    // set of emails, timed from its first game.
+    const nights = new Map();
     for (const ev of events) {
+      if (!nights.has(ev.date)) nights.set(ev.date, []);
+      nights.get(ev.date).push(ev);
+    }
+    for (const nightGames of nights.values()) {
+    nightGames.sort(byStart);
+    for (const ev of nightGames) {
       const start = eventStart(ev);
       if (!start) continue;
       const hoursUntil = (start.getTime() - Date.now()) / 3600000;
@@ -696,9 +712,11 @@ async function runOneLeague(env, leagueRow, budget, log) {
       // already current), and each must use its OWN season's config,
       // not whichever season happens to be current right now.
       const cfg = await getLeagueSeasonConfig(env, leagueRow.id, ev.season);
-      const results = await sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil, advancedSettings);
-      const total = results.reminder_72h + results.reminder_24h + results.logistics_12h;
-      if (total > 0) log.push(`${leagueRow.id}:${ev.id} 72h=${results.reminder_72h} 24h=${results.reminder_24h} logistics=${results.logistics_12h}`);
+      if (ev === nightGames[0]) {
+        const results = await sendLeagueReminderWave(env, leagueRow, cfg, ev, hoursUntil, advancedSettings, nightGames);
+        const total = results.reminder_72h + results.reminder_24h + results.logistics_12h;
+        if (total > 0) log.push(`${leagueRow.id}:${ev.id} 72h=${results.reminder_72h} 24h=${results.reminder_24h} logistics=${results.logistics_12h}`);
+      }
 
       // Live-testing task, Part 9: scheduled auto-draw, extending this
       // SAME cron rather than building a second trigger -- per the
@@ -725,6 +743,7 @@ async function runOneLeague(env, leagueRow, budget, log) {
           }
         }
       }
+    }
     }
 
     // Sub-call rework, Part 3: every pass, a team that can no longer
