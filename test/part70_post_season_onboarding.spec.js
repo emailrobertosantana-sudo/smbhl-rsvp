@@ -200,7 +200,7 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     await publishSeason(cookieHc, csrfHc, { season_name: 'S1' });
     const hcStep1 = await getOnboarding(cookieHc, 1);
     expect(hcStep1).toContain('data-i18n="rosterSubHeadcount"');
-    expect(hcStep1).toContain("Tous les joueurs confirmés comptent dans ce total — cette ligue n'a pas d'équipes.");
+    expect(hcStep1).toContain('Tous les joueurs confirmés comptent dans ce total.'); // D5: true for a single team too
     // Never claims a team draw for headcount, which has no teams at all
     // (the embedded __I18N dict always carries every key regardless of
     // which is shown -- what matters is which one the visible element

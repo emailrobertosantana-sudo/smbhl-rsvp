@@ -90,7 +90,8 @@ describe('Live-testing Part 3: team-structure copy is clearer and friendlier', (
     });
     const html = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie } })).text();
     expect(html).toContain('La même équipe toute la saison, comme une ligue régulière.');
-    expect(html).toContain('Juste la liste des présents. Vous formez les équipes sur place.');
+    // D5 (2026-09-29): Settings' no-teams option names both of its uses.
+    expect(html).toContain('Pas de répartition en équipes : une seule liste de joueurs, avec présences et remplaçants.');
     expect(html).toContain('tirage automatique ou choisies par toi.');
   });
 });
