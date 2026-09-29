@@ -19193,20 +19193,27 @@ function renderThinGameAdminAlert(env, leagueRow, ev, thin) {
   return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
 }
 
-// ---- a changed matchup (D1) ----
-// A fixed-teams player answers for the NIGHT; which game their team plays
-// is the league's schedule, not their choice. So when a matchup changes,
-// the answers of each team now in a game move with it, and the players
-// whose games that night changed time or place are told -- only those who
-// had already been told about the night (an ask or details email went out
-// to them), and not those who said no. The email waits a few minutes
-// (MATCHUP_CHANGE_TELL_DELAY_MIN) and one per player per night replaces
-// the last, so moving a team in two steps (out of one game, into another)
-// sends one email with the night as it ends up.
+// ---- a changed matchup or time (D1) ----
+// A player answers for the NIGHT; which game their team plays, and when,
+// is the league's schedule, not their choice. So when a game's matchup,
+// time or place changes:
+//  - fixed teams: the answers of each team now in a game move with it
+//    (carryTeamNight);
+//  - no teams / pickup: each player's yes for the night is written again,
+//    so games that stopped (or started) overlapping place them as their
+//    own yes would (carryPoolNight);
+// and the players whose games that night changed time or place are told
+// -- only those who had already been told about the night (an ask or
+// details email went out to them), and not those who said no. A fixed
+// team left with no game that night is told there is no game, as for a
+// cancellation. The email waits a few minutes (MATCHUP_CHANGE_TELL_DELAY_MIN)
+// and one per player per night replaces the last, so a change made in two
+// steps (a team out of one game, into another; 7pm to 8pm to 9pm) sends
+// one email with the night as it ends up.
 const MATCHUP_CHANGE_TELL_DELAY_MIN = 10;
 
-// The league's open games before a matchup route runs; null for SMBHL or
-// no league.
+// The league's open games before a schedule route runs; null for SMBHL
+// or no league.
 async function leagueMatchupSnapshot(req, env, url) {
   try {
     const leagueId = await resolveSessionLeagueId(req, env, url);
@@ -19219,30 +19226,40 @@ async function leagueMatchupSnapshot(req, env, url) {
   }
 }
 
+// A game's time and place, as a player would read it.
+const gameWhere = g => `${g.start_time}-${g.end_time}@${g.venue_id || g.venue || ''}`;
+
 async function afterLeagueMatchupChange(env, snap, res) {
   if (!snap || !res || res.status !== 200) return res;
   try {
     const before = new Map(snap.games.map(g => [g.id, g]));
     const after = (await env.DB.prepare(`SELECT * FROM events WHERE league_id = ? AND state = 'open'`).bind(snap.leagueId).all()).results || [];
     const teamsOf = g => [g.home_team, g.away_team].filter(Boolean);
-    // Per night (date + season): the teams whose games changed.
+    // Per night (date + season): the teams whose games changed, and the
+    // games whose time or place changed.
     const nights = new Map();
     for (const g of after) {
       const b = before.get(g.id);
       if (!b) continue;
       const was = teamsOf(b), now = teamsOf(g);
       const changed = [...now.filter(t => !was.includes(t)), ...was.filter(t => !now.includes(t))];
-      if (!changed.length) continue;
+      const moved = gameWhere(b) !== gameWhere(g);
+      if (moved) changed.push(...was, ...now);
+      if (!changed.length && !moved) continue;
       const key = `${g.date}|${g.season || ''}`;
-      if (!nights.has(key)) nights.set(key, { game: g, teams: new Set() });
+      if (!nights.has(key)) nights.set(key, { game: g, teams: new Set(), moved: new Set() });
       for (const t of changed) nights.get(key).teams.add(t);
+      if (moved) nights.get(key).moved.add(g.id);
     }
-    for (const { game, teams } of nights.values()) {
+    for (const { game, teams, moved } of nights.values()) {
       const cfg = await getLeagueSeasonConfig(env, snap.leagueId, game.season);
-      if ((cfg.teamStructure || 'fixed') !== 'fixed') continue;
       const nightNow = await nightGamesOf(env, game);
       const nightBefore = snap.games.filter(g => g.date === game.date && (g.season || '') === (game.season || ''));
-      for (const team of teams) await carryTeamNight(env, snap.leagueId, team, nightBefore, nightNow);
+      if ((cfg.teamStructure || 'fixed') === 'fixed') {
+        for (const team of teams) await carryTeamNight(env, snap.leagueId, team, nightBefore, nightNow);
+      } else if (moved.size) {
+        await carryPoolNight(env, snap.leagueId, nightBefore, nightNow, moved);
+      }
     }
   } catch (e) {
     console.error(`[matchup] carrying answers failed: ${e.message}`);
@@ -19250,15 +19267,43 @@ async function afterLeagueMatchupChange(env, snap, res) {
   return res;
 }
 
-// One team whose games that night changed: each of its players' answer
-// for the night is written to each game the team now plays, and the
-// players are told when their games' times or places changed.
+const nightMovedKey = (leagueId, game, playerId) => `night-moved:${leagueId}:${game.date}:${game.season || ''}:${playerId}`;
+
+// Queues (or, when not to be told, cancels) one player's email about
+// their night: only if an ask or details email for it had already been
+// sent to them.
+async function tellNightChange(env, leagueId, contact, ids, dedupKey, render) {
+  if (!contact.email || contact.opted_out) { await cancelPending(env, dedupKey); return false; }
+  const told = await env.DB.prepare(
+    `SELECT 1 FROM outbox WHERE player_id = ? AND sent_at IS NOT NULL
+        AND kind IN ('reminder_72h', 'reminder_24h', 'logistics_12h', 'team_assigned')
+        AND event_id IN (${ids.map(() => '?').join(',')}) LIMIT 1`
+  ).bind(contact.player_id, ...ids).first();
+  if (!told) { await cancelPending(env, dedupKey); return false; }
+  const { mail, game, team = null } = await render();
+  const cfg = await getLeagueSeasonConfig(env, leagueId, game.season);
+  await enqueuePrerenderedMail(env, {
+    kind: 'night_moved', leagueId, eventId: game.id, playerId: contact.player_id, team,
+    dedupKey, to: contact.email, mail, identity: cfg.league, delayMin: MATCHUP_CHANGE_TELL_DELAY_MIN
+  });
+  return true;
+}
+
+// One fixed team whose games that night changed (matchup, time or place):
+// each of its players' answer for the night is written to each game the
+// team now plays, and the players are told when their games' times or
+// places changed -- or, when the team no longer plays that night, that
+// there is no game.
 async function carryTeamNight(env, leagueId, team, nightBefore, nightNow) {
   const plays = (games, t) => games.filter(g => g.home_team === t || g.away_team === t);
   const gamesNow = plays(nightNow, team);
-  const where = games => games.map(g => `${g.start_time}-${g.end_time}@${g.venue_id || g.venue || ''}`).sort().join(',');
-  const moved = where(plays(nightBefore, team)) !== where(gamesNow);
+  const gamesBefore = plays(nightBefore, team);
+  const where = games => games.map(gameWhere).sort().join(',');
+  const moved = where(gamesBefore) !== where(gamesNow);
   const ids = [...new Set([...nightBefore, ...nightNow].map(g => g.id))];
+  const anyGame = nightNow[0] || nightBefore[0];
+  if (!anyGame) return;
+  const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
   const players = (await env.DB.prepare(
     `SELECT * FROM contacts WHERE league_id = ? AND preferred_team = ? AND role = 'roster' AND COALESCE(is_active, 1) = 1`
   ).bind(leagueId, team).all()).results || [];
@@ -19276,27 +19321,64 @@ async function carryTeamNight(env, leagueId, team, nightBefore, nightNow) {
         await writeLeagueRsvpStatus(env, leagueId, g.id, c.player_id, c, source.status, source.status_by || 'self', g.season);
       }
     }
-    const dedupKey = `night-moved:${leagueId}:${nightNow[0] ? nightNow[0].date : ''}:${c.player_id}`;
-    if (!moved || !gamesNow.length || (source && source.status === 'out') || !c.email || c.opted_out) {
+    const dedupKey = nightMovedKey(leagueId, anyGame, c.player_id);
+    if (!moved || (source && source.status === 'out') || (!gamesNow.length && !gamesBefore.length)) {
       await cancelPending(env, dedupKey);
       continue;
     }
-    const told = await env.DB.prepare(
-      `SELECT 1 FROM outbox WHERE player_id = ? AND sent_at IS NOT NULL
-          AND kind IN ('reminder_72h', 'reminder_24h', 'logistics_12h', 'team_assigned')
-          AND event_id IN (${ids.map(() => '?').join(',')}) LIMIT 1`
-    ).bind(c.player_id, ...ids).first();
-    if (!told) { await cancelPending(env, dedupKey); continue; }
-    const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
-    const cfg = await getLeagueSeasonConfig(env, leagueId, gamesNow[0].season);
-    const mail = await renderNightMovedForContact(env, leagueRow, gamesNow, c, team, source ? 'in' : 'pending');
-    await enqueuePrerenderedMail(env, {
-      kind: 'night_moved', leagueId, eventId: gamesNow[0].id, playerId: c.player_id, team,
-      dedupKey, to: c.email, mail, identity: cfg.league, delayMin: MATCHUP_CHANGE_TELL_DELAY_MIN
-    });
+    await tellNightChange(env, leagueId, c, ids, dedupKey, async () => gamesNow.length
+      ? { mail: await renderNightMovedForContact(env, leagueRow, gamesNow, c, team, source ? 'in' : 'pending'), game: gamesNow[0], team }
+      : { mail: await renderNightMovedForContact(env, leagueRow, gamesBefore, c, team, 'none'), game: gamesBefore[0], team });
   }
 }
 
+// A no-teams or pickup night where a game's time or place changed: each
+// player's yes for the night is written again (games that stopped
+// overlapping take them in both, as a fresh yes would; their "not this
+// game" answers are kept), then the players are told: those in a game
+// whose time or place changed, and those who haven't answered (their
+// night changed). Not those who said no, nor those waiting for a spot.
+async function carryPoolNight(env, leagueId, nightBefore, nightNow, movedIds) {
+  const ids = [...new Set([...nightBefore, ...nightNow].map(g => g.id))];
+  const anyGame = nightNow[0] || nightBefore[0];
+  if (!anyGame || !nightNow.length) return;
+  const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
+  const beforeById = new Map(nightBefore.map(g => [g.id, g]));
+  const players = (await env.DB.prepare(
+    `SELECT DISTINCT c.* FROM contacts c
+      WHERE c.league_id = ? AND COALESCE(c.is_active, 1) = 1
+        AND (c.role = 'roster' OR c.player_id IN (SELECT player_id FROM rsvp WHERE status = 'in' AND event_id IN (${ids.map(() => '?').join(',')})))`
+  ).bind(leagueId, ...ids).all()).results || [];
+  for (const c of players) {
+    const rowsOf = async () => (await env.DB.prepare(
+      `SELECT * FROM rsvp WHERE player_id = ? AND event_id IN (${ids.map(() => '?').join(',')})`
+    ).bind(c.player_id, ...ids).all()).results || [];
+    let rows = await rowsOf();
+    const yes = rows.find(r => r.status === 'in' && !NIGHT_MARKS.includes(r.status_by));
+    if (yes && c.role === 'roster') {
+      await writeLeagueNightStatus(env, leagueId, nightNow[0], c, 'in', yes.status_by || 'self', { keepGameOptOuts: true });
+      rows = await rowsOf();
+    }
+    const inIds = new Set(rows.filter(r => r.status === 'in').map(r => r.event_id));
+    const answered = rows.some(r => ['in', 'out'].includes(r.status) && !NIGHT_MARKS.includes(r.status_by));
+    const saidNo = !inIds.size && rows.some(r => r.status === 'out' && !NIGHT_MARKS.includes(r.status_by));
+    const dedupKey = nightMovedKey(leagueId, anyGame, c.player_id);
+    const mine = nightNow.filter(g => inIds.has(g.id));
+    const mineMoved = mine.some(g => movedIds.has(g.id) && (!beforeById.get(g.id) || gameWhere(beforeById.get(g.id)) !== gameWhere(g)));
+    if (saidNo || (inIds.size && !mineMoved) || (!inIds.size && answered) || (!inIds.size && c.role !== 'roster')) {
+      await cancelPending(env, dedupKey);
+      continue;
+    }
+    const games = inIds.size ? mine : nightNow;
+    await tellNightChange(env, leagueId, c, ids, dedupKey, async () => ({
+      mail: await renderNightMovedForContact(env, leagueRow, games, c, null, inIds.size ? 'in' : 'pending'), game: games[0]
+    }));
+  }
+}
+
+// answer: 'in' (their answer carries over), 'pending' (still to answer),
+// or 'none' (their team no longer plays that night: games are the ones it
+// played). team: null for a no-teams or pickup night.
 async function renderNightMovedForContact(env, leagueRow, games, contact, team, answer) {
   const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
   const ev = games[0];
@@ -19308,29 +19390,42 @@ async function renderNightMovedForContact(env, leagueRow, games, contact, team, 
     const dayLabel = reminderDayLabel(ev.date, lang);
     const venues = [...new Set(games.map(g => g.venue).filter(Boolean))];
     const when = `${formatEventDate(ev.date, lang, 'short')} · ${listJoin(games.map(g => formatEventTime(g.start_time, lang)), lang)}${venues.length ? ' · ' + venues.join(' / ') : ''}`;
-    const d = lang === 'fr' ? {
+    const plural = games.length > 1;
+    const d = answer === 'none' ? (lang === 'fr' ? {
+      subject: `${firstName}, pas de match pour ${team} ${dayLabel || 'ce jour-là'}`,
+      headline: 'Pas de match pour ton équipe',
+      body: `${team} ne joue plus ${formatEventDate(ev.date, lang, 'short')}. Pas besoin de te présenter.`,
+      answer: '',
+      poweredBy: 'Propulsé par Notre Ligue'
+    } : {
+      subject: `${firstName}, no game for ${team} ${dayLabel || 'that day'}`,
+      headline: 'No game for your team',
+      body: `${team} is no longer playing on ${formatEventDate(ev.date, lang, 'short')}. No need to come.`,
+      answer: '',
+      poweredBy: 'Powered by Notre Ligue'
+    }) : lang === 'fr' ? {
       subject: `${firstName}, nouvel horaire pour ${dayLabel || 'ton match'}`,
       headline: 'Ton horaire a changé',
-      body: `${team} joue maintenant : ${when}.`,
+      body: team ? `${team} joue maintenant : ${when}.` : `${plural ? 'Tes matchs sont' : 'Ton match est'} maintenant : ${when}.`,
       answer: answer === 'in' ? 'Ta réponse suit : tu joues toujours. Rien à faire.' : 'On attend encore ta réponse.',
       btn: answer === 'in' ? 'Voir ma soirée' : 'Répondre',
       poweredBy: 'Propulsé par Notre Ligue'
     } : {
       subject: `${firstName}, new schedule for ${dayLabel || 'your game'}`,
       headline: 'Your schedule changed',
-      body: `${team} now plays: ${when}.`,
+      body: team ? `${team} now plays: ${when}.` : `${plural ? 'Your games are' : 'Your game is'} now: ${when}.`,
       answer: answer === 'in' ? "Your answer carries over: you're still playing. Nothing to do." : 'We still need your answer.',
       btn: answer === 'in' ? 'See my night' : 'Answer',
       poweredBy: 'Powered by Notre Ligue'
     };
     return {
       subject: d.subject,
-      text: `${d.headline}\n${d.body}\n${d.answer}\n${d.btn}: ${pageLink}`,
+      text: [d.headline, d.body, d.answer, d.btn ? `${d.btn}: ${pageLink}` : ''].filter(Boolean).join('\n'),
       html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.headline}</h1>
-    <p style="margin:0 0 12px;font-size:16px;line-height:25px;">${esc(d.body)}</p>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${d.answer}</p>
-    ${nlEmailButton(pageLink, d.btn, barColor)}`,
+    <p style="margin:0 0 ${d.answer ? 12 : 24}px;font-size:16px;line-height:25px;">${esc(d.body)}</p>
+    ${d.answer ? `<p style="margin:0 0 24px;font-size:16px;line-height:25px;">${d.answer}</p>` : ''}
+    ${d.btn ? nlEmailButton(pageLink, d.btn, barColor) : ''}`,
       poweredBy: d.poweredBy
     };
   };
