@@ -11056,7 +11056,10 @@ function renderInviteEmail({
   return { subject: subj, text, html };
 }
 
-function body(kind, { ev, name, team, link, payload, leagueCfg = null }) {
+// teamless: a league with no teams (the no-teams structure: "Just my team"
+// or "Drop-in, no fixed teams") -- nothing in the email may talk about
+// being placed on a team.
+function body(kind, { ev, name, team, link, payload, leagueCfg = null, teamless = false }) {
   const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
   const siteUrl = league.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl;
   const siteHost = String(siteUrl).replace(/^https?:\/\//, '').replace(/\/$/, '');
@@ -11480,10 +11483,11 @@ We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}
 
       const subjFr = `${who.fr} cherche ${g ? 'un gardien' : 'un joueur'}${again}`;
       const subjEn = `${who.en} needs ${g ? 'a goalie' : 'a skater'}${payload.reminder ? ' (reminder)' : ''}`;
-      const teamNoteFr = generic
+      // A league with no teams has no team to decide: no team sentence at all.
+      const teamNoteFr = generic && !teamless
         ? "L'équipe n'est pas encore décidée : si tu es disponible, on te place dans une équipe, et tu reçois ton équipe finale avant le match."
         : '';
-      const teamNoteEn = generic
+      const teamNoteEn = generic && !teamless
         ? "The team isn't decided yet: if you're available, we place you on a team, and you get your final team before the game."
         : '';
       const waitFr = generic ? "Si toutes les places sont prises, tu restes sur la liste d'attente." : "Si la place est déjà prise, tu restes sur la liste d'attente pour les autres équipes.";
@@ -12060,7 +12064,7 @@ async function prepareOutboxMessage(env, m, rctx, opts = {}) {
     const d = drop('too close to game time'); if (d) return d;
   }
   // A sub call's team is exactly what was decided above (null = generic).
-  const msg = body(m.kind, { ev, name, team: m.kind === 'sub_call' ? playerTeam : (playerTeam || m.team), link, payload, leagueCfg });
+  const msg = body(m.kind, { ev, name, team: m.kind === 'sub_call' ? playerTeam : (playerTeam || m.team), link, payload, leagueCfg, teamless: !!(seasonCfg && seasonCfg.teamStructure === 'headcount') });
   if (!msg) throw new Error('unknown kind ' + m.kind);
   return { action: 'send', to, msg, leagueCfg, ev, notes };
 }
