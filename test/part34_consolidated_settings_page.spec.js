@@ -190,21 +190,22 @@ describe('Part 1 (live-testing task): consolidated settings page', () => {
       expect((await res.json()).errorKey).toBe('NO_TEAMS_TO_EDIT');
     });
 
-    it("renaming a team does NOT retroactively change an already-published season's own team list", async () => {
+    // D7 (decided 2026-09-29): a rename moves the team -- the CURRENT
+    // season follows it (its players and games do too, part161); a closed
+    // season keeps the names it had.
+    it("renaming a team renames it in the current season, not in a closed one", async () => {
       const { cookie, csrfToken } = await signup('settings.teams.retro@example.com', '203.0.133.010');
       const league = await createLeague(cookie, csrfToken, { name: 'Teams Retro League', teamNames: ['Falcons', 'Otters'], tracksStats: true });
       await publishSeason(cookie, csrfToken, { season_name: 'Retro Season' });
-
-      const cfgBefore = await getLeagueSeasonConfig(env, league.id, 'Retro Season');
-      expect(cfgBefore.teams.map(t => t.name)).toEqual(['Falcons', 'Otters']);
+      await publishSeason(cookie, csrfToken, { season_name: 'Current Season' });
 
       await SELF.fetch('http://example.com/league/settings/teams', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
         body: JSON.stringify({ teamNames: ['Hawks', 'Wolves'] })
       });
 
-      const cfgAfter = await getLeagueSeasonConfig(env, league.id, 'Retro Season');
-      expect(cfgAfter.teams.map(t => t.name)).toEqual(['Falcons', 'Otters']);
+      expect((await getLeagueSeasonConfig(env, league.id, 'Current Season')).teams.map(t => t.name)).toEqual(['Hawks', 'Wolves']);
+      expect((await getLeagueSeasonConfig(env, league.id, 'Retro Season')).teams.map(t => t.name)).toEqual(['Falcons', 'Otters']);
     });
 
     it('the roster page renders the new custom team colour after a save', async () => {

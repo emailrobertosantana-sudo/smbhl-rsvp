@@ -5556,7 +5556,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       venueNamePh: 'Ex. Aréna Notre-Dame', venueAddressPh: '123 rue Principale, Ville', venueMapLinkPh: 'https://maps.google.com/...',
       addVenue: 'Ajouter le lieu', removeVenue: 'Retirer', noVenuesYet: "Aucun lieu enregistré pour l'instant.",
       viewOnMap: 'Voir sur la carte',
-      teamsTitle: 'Équipes par défaut', teamsDesc: "Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue — republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).",
+      teamsTitle: 'Équipes par défaut', teamsDesc: "Renomme tes équipes et choisis leur couleur. Une équipe renommée l'est tout de suite partout : ses joueurs, ses matchs et la saison en cours suivent. Pour ajouter ou retirer une équipe dans la saison en cours, va à « Équipes de cette saison ».",
       teamsHeadcountNote: "Pas d'équipes à nommer dans cette ligue.",
       addTeam: 'Ajouter une équipe', removeTeam: 'Retirer', lblTeamName: 'Nom', lblTeamColor: 'Couleur',
       seasonTeamsTitle: 'Équipes de cette saison',
@@ -5706,7 +5706,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       venueNamePh: 'E.g. Notre-Dame Arena', venueAddressPh: '123 Main St, City', venueMapLinkPh: 'https://maps.google.com/...',
       addVenue: 'Add venue', removeVenue: 'Remove', noVenuesYet: 'No venues saved yet.',
       viewOnMap: 'View on map',
-      teamsTitle: 'Default teams', teamsDesc: "Rename your teams and pick their colour. A change here updates the league's default team list — republish the current season for it to show up everywhere (players, games, public page).",
+      teamsTitle: 'Default teams', teamsDesc: "Rename your teams and pick their colour. A renamed team is renamed everywhere right away: its players, its games and the current season follow. To add or remove a team in the current season, go to “This season's teams”.",
       teamsHeadcountNote: 'No teams to name in this league.',
       addTeam: 'Add a team', removeTeam: 'Remove', lblTeamName: 'Name', lblTeamColor: 'Colour',
       seasonTeamsTitle: "This season's teams",
@@ -5958,7 +5958,7 @@ async function handleLeagueSettingsPage(req, env, url) {
   ${!isHeadcount ? `
   <section class="nl-card nl-card--pad-lg" id="section-teams">
     <div class="h3" data-i18n="teamsTitle">Équipes par défaut</div>
-    <p class="nl-help" data-i18n="teamsDesc">Renomme tes équipes et choisis leur couleur. Un changement ici met à jour l'équipe par défaut de la ligue — republie la saison actuelle pour que ça apparaisse partout (joueurs, matchs, page publique).</p>
+    <p class="nl-help" data-i18n="teamsDesc">Renomme tes équipes et choisis leur couleur. Une équipe renommée l'est tout de suite partout : ses joueurs, ses matchs et la saison en cours suivent. Pour ajouter ou retirer une équipe dans la saison en cours, va à « Équipes de cette saison ».</p>
     <div id="teamsErr" class="nl-error" style="display:none"></div>
     <div id="teamsOk" class="nl-ok" style="display:none"></div>
     <div id="se_teams_list" style="margin-top:12px">${teamRowsHtml}</div>

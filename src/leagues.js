@@ -4054,7 +4054,7 @@ export async function handleLeagueUpdateTeams(req, env, url) {
     return Response.json({ ok: false, error: 'This route cannot update SMBHL.', errorKey: 'ROUTE_BLOCKED_SETTINGS' }, { status: 403 });
   }
 
-  const leagueRow = await env.DB.prepare('SELECT team_structure FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueRow = await env.DB.prepare('SELECT team_structure, team_names FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow || leagueRow.team_structure === 'headcount') {
     return Response.json({ ok: false, error: 'This league has no team names to edit.', errorKey: 'NO_TEAMS_TO_EDIT' }, { status: 400 });
   }
@@ -4079,7 +4079,67 @@ export async function handleLeagueUpdateTeams(req, env, url) {
   await env.DB.prepare('UPDATE leagues SET team_names = ?, team_colors = ? WHERE id = ?')
     .bind(JSON.stringify(teamNames), teamColors ? JSON.stringify(teamColors) : null, leagueId).run();
 
-  return Response.json({ ok: true, teamNames, teamColors });
+  // D7: a team renamed here takes its players, games and current season
+  // with it (before, only the default list changed and six players stayed
+  // behind on the old name).
+  let oldNames = [];
+  try { oldNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
+  const renames = teamRenames(oldNames, teamNames);
+  const moved = renames.length ? await renameLeagueTeams(env, leagueId, renames) : null;
+
+  return Response.json({ ok: true, teamNames, teamColors, renamed: renames, moved });
+}
+
+// A rename is a name that changed at the same place in the list, to a
+// name the league did not have: ['Red','Blue'] -> ['Red','Navy'] renames
+// Blue to Navy. A reorder (both names already there), or a team added or
+// removed at the end, is not a rename.
+export function teamRenames(oldNames, newNames) {
+  const out = [];
+  for (let i = 0; i < Math.min(oldNames.length, newNames.length); i++) {
+    const from = oldNames[i], to = newNames[i];
+    if (from && to && from !== to && !newNames.includes(from) && !oldNames.includes(to)) out.push({ from, to });
+  }
+  return out;
+}
+
+// Everything that holds a team by name, for this league: its players
+// (contacts.preferred_team); every game of the current season and every
+// game still open -- matchup (home/away, which results are keyed on),
+// answers (rsvp.team), per-player stats, team messages -- and unsent mail;
+// and the current season in data.json (its team list and standings).
+// Closed seasons keep the name they had: that is their history.
+export async function renameLeagueTeams(env, leagueId, renames) {
+  const data = await getLeagueDataJson(env, leagueId);
+  const current = data && data.current_season;
+  const games = `SELECT id FROM events WHERE league_id = ? AND (season = ? OR state = 'open')`;
+  const counts = {};
+  for (const { from, to } of renames) {
+    const run = async (label, sql, ...binds) => {
+      const r = await env.DB.prepare(sql).bind(...binds).run();
+      counts[label] = (counts[label] || 0) + ((r.meta && r.meta.changes) || 0);
+    };
+    await run('players', 'UPDATE contacts SET preferred_team = ? WHERE league_id = ? AND preferred_team = ?', to, leagueId, from);
+    await run('home', `UPDATE events SET home_team = ? WHERE home_team = ? AND id IN (${games})`, to, from, leagueId, current);
+    await run('away', `UPDATE events SET away_team = ? WHERE away_team = ? AND id IN (${games})`, to, from, leagueId, current);
+    await run('answers', `UPDATE rsvp SET team = ? WHERE team = ? AND event_id IN (${games})`, to, from, leagueId, current);
+    await run('stats', `UPDATE player_game_stats SET team = ? WHERE team = ? AND event_id IN (${games})`, to, from, leagueId, current);
+    await run('messages', `UPDATE team_messages SET team = ? WHERE team = ? AND event_id IN (${games})`, to, from, leagueId, current);
+    await run('mail', 'UPDATE outbox SET team = ? WHERE league_id = ? AND team = ? AND sent_at IS NULL AND cancelled = 0', to, leagueId, from);
+  }
+  // The current season's own team list and standings.
+  const seasons = data && Array.isArray(data.seasons) ? data.seasons : [];
+  const season = seasons.find(x => x && x.name === current);
+  if (season) {
+    const renamed = n => { const r = renames.find(x => x.from === n); return r ? r.to : n; };
+    if (season.config && Array.isArray(season.config.teams)) {
+      season.config.teams = season.config.teams.map(t => (typeof t === 'string' ? renamed(t) : (t && t.name ? { ...t, name: renamed(t.name) } : t)));
+    }
+    if (Array.isArray(season.standings)) season.standings = season.standings.map(r => (r && r.team ? { ...r, team: renamed(r.team) } : r));
+    await putLeagueDataJson(env, leagueId, data);
+    counts.season = 1;
+  }
+  return counts;
 }
 
 /* ---------- add/remove teams on a PUBLISHED season (Part 15, live-
