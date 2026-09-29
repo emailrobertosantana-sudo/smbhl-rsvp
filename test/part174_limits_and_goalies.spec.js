@@ -68,3 +68,34 @@ describe('A goalie maximum under the minimum', () => {
     expect([st.goalies, st.skaters, st.short]).toEqual([1, 7, false]);
   });
 });
+
+describe('A shortage is measured against the season minimum, on every surface', () => {
+  const page = async (a, ev) => (await a.get(`/league/events/detail?e=${encodeURIComponent(ev.id)}`)).text;
+
+  it('8 in (a goalie among them) against a minimum of 7 and a goalie: not short anywhere', async () => {
+    const { a, ev } = await tester1('p174surfaces');
+    const html = await page(a, ev);
+    expect(html).toContain('data-short="0"');
+    expect(html).toContain('data-i18n="minReached"'); // spots remain to the maximum of 12
+    expect(html).not.toContain('nl-card--short ev-team');
+    expect(html).toMatch(/data-open-spots>5</); // 12 skaters + 1 goalie - 8
+    expect(html).toContain('<span class="stat tnum">1/1</span>'); // goalies confirmed
+    const status = await a.get(`/league/events/status?e=${encodeURIComponent(ev.id)}`);
+    expect(status.json.teams[0].short).toBe(false);
+    // The automatic sub call reads the same numbers: a goalie sub is not
+    // called for a game that has its goalie.
+    await env.DB.prepare('UPDATE events SET date = ? WHERE id = ?').bind(local(Date.now() + 3 * DAY).date, ev.id).run();
+    await must(a.post('/league/contacts', { name: 'Lucas Vance', email: 'lucas.p174@example.com', role: 'sub_skater', is_goalie: true }), 'goalie sub');
+    expect(await rows("SELECT 1 FROM outbox WHERE event_id = ? AND kind = 'sub_call'", ev.id)).toEqual([]);
+  });
+
+  it('6 in: "Manque" counts what is missing to the minimum, not to the maximum', async () => {
+    const { a, ev, cs } = await tester1('p174short');
+    for (const n of ['Mia', 'Olivia']) await must(a.post('/league/rsvp/admin', { event_id: ev.id, player_id: cs[n].player_id, status: 'out' }), n);
+    const html = await page(a, ev);
+    expect(html).toContain('data-short="2"'); // 5 skaters + the goalie: 2 short of 7 skaters
+    expect(html).toMatch(/data-open-spots>7</); // 12 - 5
+    expect(html).toContain('Minimum atteint');
+    expect(html).toContain('Minimum reached');
+  });
+});
