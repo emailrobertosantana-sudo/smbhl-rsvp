@@ -1,3 +1,4 @@
+import { adminName, adminHello } from './admin_greeting.js';
 import PostalMime from 'postal-mime';
 import { checkAdminAuth, adminPageHeaders, generateReviewToken } from './admin_auth.js';
 import { computeWeeklyRecap } from './highlights.js';
@@ -2805,7 +2806,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
     const notifyLeagueCfg = getLeagueConfig(cfg);
 
     const subject = `[${notifyLeagueCfg.name}] ${hasWarnings ? '⚠️ Validation requise' : '✅ Prêt à publier'} : Feuilles Semaine ${week} (${receivedTeams.length}/${teamNames.length} reçues)`;
-    const text = `Bonjour Roberto,\n\n` +
+    const text = `${adminHello(env, 'fr')}\n\n` +
       `${imageAttachments.length} nouvelle(s) feuille(s) de match ont été reçues pour la semaine ${week}.\n` +
       `État : ${receivedTeams.length}/${teamNames.length} feuilles reçues (${receivedTeams.join(', ') || 'aucune'}).${missingTeams.length > 0 ? ` (Manque : ${missingTeams.join(', ')})` : ''}\n\n` +
       `${hasWarnings ? '⚠️ Des écarts de pointage ou des feuilles manquantes nécessitent votre validation.' : `✅ Toutes les statistiques et les ${teamNames.length} feuilles concordent parfaitement!`}\n\n` +
@@ -2833,7 +2834,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
     </tr>
     <tr>
       <td style="padding:22px 20px;">
-        <p style="font-size:16px; margin:0 0 14px;">Bonjour <b>Roberto</b>,</p>
+        <p style="font-size:16px; margin:0 0 14px;">Bonjour${adminName(env) ? ` <b>${escHtml(adminName(env))}</b>` : ''},</p>
         <p style="font-size:15px; margin:0 0 14px;">
           <b>${escH(imageAttachments.length)}</b> nouvelle(s) feuille(s) de match ont été reçues pour la <b>semaine ${escH(week)}</b>.
         </p>
@@ -3336,7 +3337,7 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
     console.error('Error saving weekly recap:', recapErr);
   }
 
-  // 3. Automated Email Backup to Roberto with data.json attached
+  // 3. Automated Email Backup to the admin with data.json attached
   // Its real outcome goes back to the admin (see the response below):
   // publishing succeeded either way, but the page must not imply the
   // backup email went out when it was deferred or failed.
@@ -3363,7 +3364,7 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
         </div>`;
       }).join('');
 
-      const text = `Bonjour Roberto,\n\n` +
+      const text = `${adminHello(env, 'fr')}\n\n` +
         `Les résultats de la semaine ${weekNum} ont été confirmés et publiés avec succès sur ${siteHost}!\n\n` +
         `Matchs enregistrés :\n${gameLines}\n\n` +
         `Une copie de sauvegarde de sécurité a été archivée dans le Cloud (clé: ${backupKey}).\n` +
@@ -3406,7 +3407,7 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
     </tr>
     <tr>
       <td style="padding:22px 20px;">
-        <p style="font-size:16px; margin:0 0 12px;">Bonjour <b>Roberto</b>,</p>
+        <p style="font-size:16px; margin:0 0 12px;">Bonjour${adminName(env) ? ` <b>${escHtml(adminName(env))}</b>` : ''},</p>
         <p style="font-size:15px; margin:0 0 16px;">
           Les résultats de la <b>semaine ${weekNum}</b> ont été publiés avec succès sur <a href="${league.siteUrl}" style="color:#2563eb; text-decoration:none; font-weight:600;">${siteHost}</a>!
         </p>

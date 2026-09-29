@@ -1,3 +1,4 @@
+import { adminName, adminHello } from './admin_greeting.js';
 import { withPassCache } from './pass_cache.js';
 import PostalMime from 'postal-mime';
 import { hmac, same } from './crypto_utils.js';
@@ -11635,7 +11636,7 @@ ${payload.teamLink}${sign}`;
       const recapUrl = `${base}/admin/season-recap?s=${encodeURIComponent(season)}`;
       const subj = `[${league.name}] Préparation du bilan de fin de saison (${season}) / Season Recap Ready`;
       const text =
-`Bonjour Roberto,
+`${name ? `Bonjour ${name},` : 'Bonjour,'}
 
 Les séries éliminatoires de la saison ${season} sont terminées !
 
@@ -11653,7 +11654,7 @@ ${league.name} Automation`;
 
       const html = wrapEmail(
         subj,
-        `<p style="font-size:16px; margin:0 0 14px;">Bonjour <b>Roberto</b>,</p>
+        `<p style="font-size:16px; margin:0 0 14px;">Bonjour${name ? ` <b>${esc(name)}</b>` : ''},</p>
         <p style="font-size:15px; margin:0 0 14px;">
           Les séries éliminatoires de la saison <b>${esc(season)}</b> sont terminées !
         </p>
@@ -11887,7 +11888,7 @@ async function prepareOutboxMessage(env, m, rctx, opts = {}) {
   // through to the player lookup and failed as "contact gone".
   if (m.kind === 'summary' || m.kind === 'season_recap_prompt' || !m.player_id) {
     to = (payload && payload.to) || (env.ADMIN_EMAIL || ADMIN_EMAIL);
-    name = 'Roberto';
+    name = adminName(env); // was hard-coded 'Roberto' (src/admin_greeting.js)
     payload.base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
   } else {
     const c = await getContact(env.DB, m.player_id);
@@ -17885,7 +17886,7 @@ Tableau général / Master board :
 ${boardUrl}
 
 —
-Hi Roberto,
+${adminHello(env, 'en')}
 
 Goalie ${goalieName} was marked OUT for ${teamEN}${prevNoteEN}.
 
@@ -22606,7 +22607,7 @@ async function handlePollSend(req, env) {
     const adminEmail = env.ADMIN_EMAIL || ADMIN_EMAIL;
     const testPlayer = await env.DB.prepare("SELECT * FROM contacts WHERE email IS NOT NULL AND opted_out = 0 ORDER BY player_id ASC LIMIT 1").first() || {
       player_id: 'TEST_ADMIN',
-      name: 'Roberto Santana',
+      name: adminName(env) || 'Admin',
       token_salt: 'test_salt'
     };
     const tok = await hmac(env.RSVP_SECRET, pollMsg(poll.id, testPlayer.player_id, testPlayer.token_salt));
