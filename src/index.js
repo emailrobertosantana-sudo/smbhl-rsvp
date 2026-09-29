@@ -18987,7 +18987,9 @@ async function writeLeagueNightStatus(env, leagueId, ev, contact, status, status
       const candidates = cluster.filter(g => open(g) && !(keepGameOptOuts && saidNoToGame(night.rowsById.get(g.id))));
       if (!candidates.length) continue;
       const preferred = prefer && candidates.find(g => g.id === prefer);
-      chosen = preferred || (cluster.length === 1 ? candidates[0] : await pickNightGame(env, candidates, night.cfgs, contact));
+      // Any full game, alone at its time or not: nobody is placed past a
+      // maximum (pickNightGame returns null -- the waitlist).
+      chosen = preferred || await pickNightGame(env, candidates, night.cfgs, contact);
       if (!chosen) {
         for (const g of candidates) {
           // Already waiting keeps their place in the queue (updated_at).
@@ -19027,7 +19029,7 @@ async function alertAdminNightWaitlist(env, leagueId, games, contact) {
   for (const a of await leagueAdminEmails(env, leagueId)) {
     const dedupKey = `night-waitlist:${first.id}:${contact.player_id}:${a.email}`;
     if (await env.DB.prepare('SELECT 1 FROM outbox WHERE dedup_key = ? AND (sent_at IS NOT NULL OR cancelled = 0) LIMIT 1').bind(dedupKey).first()) continue;
-    mail = mail || renderNightWaitlistAdminAlert(env, leagueRow, first, contact);
+    mail = mail || renderNightWaitlistAdminAlert(env, leagueRow, first, contact, games.length === 1);
     await enqueuePrerenderedMail(env, { kind: 'short_alert', leagueId, eventId: first.id, dedupKey, to: a.email, mail });
     queued++;
   }
@@ -19035,7 +19037,7 @@ async function alertAdminNightWaitlist(env, leagueId, games, contact) {
   return queued;
 }
 
-function renderNightWaitlistAdminAlert(env, leagueRow, ev, contact) {
+function renderNightWaitlistAdminAlert(env, leagueRow, ev, contact, alone = false) {
   const barColor = leagueFillColor(leagueRow.color || '#b3122e');
   const whenFr = formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false);
   const whenEn = formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false);
@@ -19046,17 +19048,17 @@ function renderNightWaitlistAdminAlert(env, leagueRow, ev, contact) {
     <p style="margin:0 0 8px;font-size:16px;line-height:25px;"><b>${esc(when)}</b></p>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${esc(line)}</p>
     ${nlEmailButton(link, btn, barColor)}`;
-  const lineFr = `Les matchs de cette heure-là sont complets. ${contact.name} a dit oui et attend une place : on lui donnera la première qui se libère. Personne n'a été placé au-delà de votre maximum.`;
-  const lineEn = `The games at that time are full. ${contact.name} said yes and is waiting for a spot: they get the first one that opens. No one was placed past your maximum.`;
+  const lineFr = `${alone ? 'Le match est complet' : 'Les matchs de cette heure-là sont complets'}. ${contact.name} a dit oui et attend une place : on lui donnera la première qui se libère. Personne n'a été placé au-delà de votre maximum.`;
+  const lineEn = `${alone ? 'The game is full' : 'The games at that time are full'}. ${contact.name} said yes and is waiting for a spot: they get the first one that opens. No one was placed past your maximum.`;
   const fr = {
     subject: `Liste d'attente · ${whenFr}`,
     text: `Liste d'attente · ${whenFr}. ${lineFr} ${link}`,
-    html: block("Liste d'attente", 'Matchs complets', whenFr, lineFr, 'Voir le match')
+    html: block("Liste d'attente", alone ? 'Match complet' : 'Matchs complets', whenFr, lineFr, 'Voir le match')
   };
   const en = {
     subject: `Waitlist · ${whenEn}`,
     text: `Waitlist · ${whenEn}. ${lineEn} ${link}`,
-    html: block('Waitlist', 'Games full', whenEn, lineEn, 'View the game')
+    html: block('Waitlist', alone ? 'Game full' : 'Games full', whenEn, lineEn, 'View the game')
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
   return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
@@ -20380,6 +20382,9 @@ async function leagueRsvpGet(req, env, url) {
   const night = await playerNight(env, ev, contact);
   const multi = night.covered.length > 1;
   if (multi) status = night.status;
+  // A one-game night can have a waitlist too (the game is full).
+  const waitlistedAlone = !multi && night.status === 'waitlist';
+  if (waitlistedAlone) status = 'waitlist';
 
   // An email's link (?v=in|out, and the 12h email's ?v=out&src=logistics12h)
   // records nothing when opened -- link scanners open every URL -- it shows
@@ -20454,6 +20459,10 @@ async function leagueRsvpGet(req, env, url) {
       errOverlap: 'Tu es déjà inscrit à un match qui se joue en même temps.',
       errNetwork: 'Erreur réseau. Réessaie.',
       ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {}),
+      ...(waitlistedAlone ? {
+        nightWaitTitle: "Tu es sur la liste d'attente.",
+        nightWaitBody: "Le match est complet. Dès qu'une place se libère, elle est à toi et on t'envoie un courriel."
+      } : {}),
       ...(multi ? {
         nightNoteTeams: 'Ta réponse vaut pour la soirée : pour chaque match de ton équipe.',
         nightNotePool: 'Ta réponse vaut pour la soirée : tu es disponible, et on te place dans les matchs où il y a de la place.',
@@ -20491,6 +20500,10 @@ async function leagueRsvpGet(req, env, url) {
       errOverlap: "You're already in a game at the same time.",
       errNetwork: 'Network error. Please try again.',
       ...(venueMapLink ? { viewOnMap: 'View on map' } : {}),
+      ...(waitlistedAlone ? {
+        nightWaitTitle: "You're on the waitlist.",
+        nightWaitBody: "The game is full. As soon as a spot opens, it's yours and we'll email you."
+      } : {}),
       ...(multi ? {
         nightNoteTeams: "Your answer is for the night: each of your team's games.",
         nightNotePool: "Your answer is for the night: you're available, and we place you in the games that have room.",

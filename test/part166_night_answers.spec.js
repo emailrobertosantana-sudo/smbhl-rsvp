@@ -41,8 +41,8 @@ const inIds = async ev => (await rows("SELECT player_id FROM rsvp WHERE event_id
 const dictOf = html => JSON.parse(html.match(/var RV_I18N = (\{[\s\S]*?\});\n/)[1]);
 
 describe('No teams: games at the same time split the group, the next game takes everyone', () => {
-  it('two games at 10:30 (max 3 each) take turns; the 11:30 game takes all five; no one is in both 10:30 games', async () => {
-    const { game, player } = await league('p166pool', { teamStructure: 'headcount', minPlayers: 1, maxPlayers: 3, minGoalies: 0 });
+  it('two games at 10:30 (max 5 each) take turns; the 11:30 game takes all five; no one is in both 10:30 games', async () => {
+    const { game, player } = await league('p166pool', { teamStructure: 'headcount', minPlayers: 1, maxPlayers: 5, minGoalies: 0 });
     const A = await game('10:30', '11:30'), B = await game('10:30', '11:30'), C = await game('11:30', '12:30');
     const ps = [];
     for (let i = 1; i <= 5; i++) ps.push(await player(`Pool Player${i}`));

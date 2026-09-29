@@ -40,8 +40,8 @@ const inIds = async ev => (await rows("SELECT player_id FROM rsvp WHERE event_id
 const dictOf = html => JSON.parse(html.match(/var RV_I18N = (\{[\s\S]*?\});\n/)[1]);
 
 describe('Games at the same time are balanced', () => {
-  it('two 10:30 games (max 3 each): yeses alternate, the 11:30 game takes everyone', async () => {
-    const { game, player } = await league('p170even', { teamStructure: 'headcount', minPlayers: 1, maxPlayers: 3, minGoalies: 0 });
+  it('two 10:30 games (max 5 each): yeses alternate, the 11:30 game takes everyone', async () => {
+    const { game, player } = await league('p170even', { teamStructure: 'headcount', minPlayers: 1, maxPlayers: 5, minGoalies: 0 });
     const A = await game('10:30', '11:30'), B = await game('10:30', '11:30'), C = await game('11:30', '12:30');
     const ps = [];
     for (let i = 1; i <= 5; i++) ps.push(await player(`Even Player${i}`));
@@ -79,7 +79,7 @@ describe('Games at the same time are balanced', () => {
 describe('Every game at that time full: the waitlist', () => {
   it('the extra yes waits instead of going past a maximum, the admin is told once, and gets the first spot that opens', async () => {
     const { a, game, player } = await league('p170wait', { teamStructure: 'headcount', minPlayers: 1, maxPlayers: 2, minGoalies: 0 });
-    const A = await game('10:30', '11:30'), B = await game('10:30', '11:30'), C = await game('11:30', '12:30');
+    const A = await game('10:30', '11:30'), B = await game('10:30', '11:30');
     const ps = [];
     for (let i = 1; i <= 4; i++) ps.push(await player(`Full Player${i}`));
     for (const p of ps) await answer(p, A, 'in');
@@ -88,7 +88,7 @@ describe('Every game at that time full: the waitlist', () => {
     expect((await answer(w, A, 'in')).status).toBe(200);
     expect((await inIds(A)).length).toBe(2);
     expect((await inIds(B)).length).toBe(2);
-    expect([await statusOf(A, w), await statusOf(B, w), await statusOf(C, w)]).toEqual(['waitlist', 'waitlist', 'in']);
+    expect([await statusOf(A, w), await statusOf(B, w)]).toEqual(['waitlist', 'waitlist']);
     const alerts = mail.sent.slice(before).filter(m => /Waitlist|Liste d'attente/.test(m.subject));
     expect(alerts.length).toBe(1);
     expect(alerts[0].to).toBe('admin.p170wait@example.com');
@@ -159,5 +159,48 @@ describe("The shortfall check counts the players who haven't answered the same w
     const calls = async ev => (await rows("SELECT player_id FROM outbox WHERE event_id = ? AND kind = 'sub_call'", ev.id)).length;
     expect(await calls(A)).toBe(0);
     expect(await calls(B)).toBe(0); // filled in order, B would count 1 of the 2 and call a sub
+  });
+});
+
+// Decided 2026-09-29: ANY full game, alone at its time or not.
+describe('A full one-game night: the waitlist too', () => {
+  it('the fourth yes (max 3) waits, the admin is told, the page says so, and the first spot that opens is theirs', async () => {
+    const { a, game, player } = await league('p170alone', { teamStructure: 'headcount', minPlayers: 1, maxPlayers: 3, minGoalies: 0 }, '2099-06-13');
+    const A = await game('19:00', '20:00');
+    const ps = [];
+    for (let i = 1; i <= 3; i++) ps.push(await player(`Alone Player${i}`));
+    for (const p of ps) await answer(p, A, 'in');
+    const before = mail.sent.length;
+    const w = await player('Walt Alone');
+    expect((await answer(w, A, 'in')).status).toBe(200);
+    expect((await inIds(A)).length).toBe(3);
+    expect(await statusOf(A, w)).toBe('waitlist');
+    const alerts = mail.sent.slice(before).filter(m => /Waitlist|Liste d'attente/.test(m.subject));
+    expect(alerts.length).toBe(1);
+    expect(alerts[0].text).toContain('The game is full. Walt Alone said yes');
+    expect(alerts[0].text).toContain('Le match est complet. Walt Alone a dit oui');
+    const html = await page(w, A);
+    expect(html).toContain('data-i18n="nightWaitTitle"');
+    const d = dictOf(html);
+    expect([d.fr.nightWaitTitle, d.en.nightWaitTitle]).toEqual(["Tu es sur la liste d'attente.", "You're on the waitlist."]);
+    expect(d.fr.nightWaitBody).toBe("Le match est complet. Dès qu'une place se libère, elle est à toi et on t'envoie un courriel.");
+    expect(d.en.nightWaitBody).toBe("The game is full. As soon as a spot opens, it's yours and we'll email you.");
+    expect(html).not.toContain('rv-games'); // still a one-game page
+    // A player who is in sees the page as always: no waitlist keys.
+    expect(dictOf(await page(ps[0], A)).fr.nightWaitTitle).toBeUndefined();
+    // A spot opens.
+    await answer(ps[0], A, 'out');
+    expect(await statusOf(A, w)).toBe('in');
+    expect((await inIds(A)).length).toBe(3);
+  });
+
+  it('the admin can still place someone past the maximum on purpose', async () => {
+    const { a, game, player } = await league('p170adminpast', { teamStructure: 'headcount', minPlayers: 1, maxPlayers: 2, minGoalies: 0 }, '2099-06-14');
+    const A = await game('19:00', '20:00');
+    const ps = [];
+    for (let i = 1; i <= 3; i++) ps.push(await player(`Past Player${i}`));
+    for (const p of ps.slice(0, 2)) await answer(p, A, 'in');
+    await must(a.post('/league/rsvp/admin', { event_id: A.id, player_id: ps[2].player_id, status: 'in' }), 'admin in');
+    expect((await inIds(A)).length).toBe(3);
   });
 });
