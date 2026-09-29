@@ -5032,6 +5032,7 @@ async function handleLeagueCommsPage(req, env, url) {
       // drift apart.
       cadTeamAssigned: 'Équipe assignée (tirage tardif)',
       cadShortAlert: 'Match incomplet (admin)',
+      cadGameCancelled: 'Match annulé',
       cadAutoDraw: 'Tirage automatique des équipes',
       btnPreview: 'Aperçu', cadSubCall: 'Appel aux remplaçants', cadLateReversal: 'Alerte de désistement tardif (admin)',
       toggleAria: 'Activer ou désactiver', toggleSaved: 'Enregistré.',
@@ -5075,6 +5076,7 @@ async function handleLeagueCommsPage(req, env, url) {
       cad72: '72h reminder (no reply)', cad24: '24h reminder (no reply)', cad12: '12h details (confirmed)',
       cadTeamAssigned: 'Team assigned (late draw)',
       cadShortAlert: 'Short game (admin)',
+      cadGameCancelled: 'Game cancelled',
       cadAutoDraw: 'Automatic team draw',
       btnPreview: 'Preview', cadSubCall: 'Sub call', cadLateReversal: 'Late dropout alert (admin)',
       toggleAria: 'Turn on or off', toggleSaved: 'Saved.',
@@ -5184,7 +5186,7 @@ const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', retrying: '#c4153a', 
 // own wording. Built from the current dict each render, not module-
 // level, so a language switch re-labels it correctly.
 function activityKindLabel(d, kind) {
-  var KIND_LABEL = { reminder_72h: d.cad72, reminder_24h: d.cad24, logistics_12h: d.cad12, team_assigned: d.cadTeamAssigned, short_alert: d.cadShortAlert };
+  var KIND_LABEL = { reminder_72h: d.cad72, reminder_24h: d.cad24, logistics_12h: d.cad12, team_assigned: d.cadTeamAssigned, short_alert: d.cadShortAlert, game_cancelled: d.cadGameCancelled };
   return KIND_LABEL[kind] || kind;
 }
 function renderStats(stats) {
@@ -8328,6 +8330,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       lblEndDate: 'ou date de fin (optionnel)', bulkCreateSubmit: 'Créer la série',
       duplicateBtn: 'Dupliquer', duplicateConfirmBtn: 'Confirmer',
       cancelEventBtn: 'Annuler le match', deleteEventBtn: 'Supprimer',
+      cancelEventConfirm: "Annuler ce match? Les joueurs qui ont dit qu'ils seraient là et ceux qui n'ont pas répondu recevront un courriel.",
       deleteConfirmPlain: 'Supprimer ce match?', deleteConfirmBtn: 'Supprimer définitivement',
       bulkCreateResultSummary: '{created} match(s) créé(s), {skipped} ignoré(s) (déjà existant).',
       // D3 (forms polish task): a 10h00 start / 00h30 end used to be
@@ -8418,6 +8421,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       lblEndDate: 'or end date (optional)', bulkCreateSubmit: 'Create the series',
       duplicateBtn: 'Duplicate', duplicateConfirmBtn: 'Confirm',
       cancelEventBtn: 'Cancel game', deleteEventBtn: 'Delete',
+      cancelEventConfirm: "Cancel this game? Players who said they're in, and those who haven't answered, will get an email.",
       deleteConfirmPlain: 'Delete this game?', deleteConfirmBtn: 'Delete permanently',
       bulkCreateResultSummary: '{created} event(s) created, {skipped} skipped (already existed).',
       longGameWarning: 'This game would last {d} ({start} to {end}). Continue anyway?',
@@ -9288,6 +9292,8 @@ async function confirmDuplicate(eventId) {
   }
 }
 async function cancelEvent(eventId, btn) {
+  // Cancelling emails the players (D4): said so before it happens.
+  if (!window.confirm(window.__pageDict().cancelEventConfirm)) return;
   if (btn) btn.disabled = true;
   try {
     var res = await fetch('/league/events/cancel', {
@@ -18976,6 +18982,73 @@ function renderLateReversalForLeague(env, leagueRow, ev, contact, opts = {}) {
     subsInvited: opts.subsInvited !== undefined ? !!opts.subsInvited : true
   });
 }
+// ---- a cancelled game (D4) ----
+// Players who said IN and players who have not answered are emailed that
+// the game is cancelled (those who said out already know) -- the same two
+// audiences the league's own emails use (getConfirmedPlayers: in, for the
+// game's teams; getNonResponders: rostered players of the game's teams who
+// have not answered). Called after the cancel, which has already dropped
+// the game's other unsent mail. Sent now: no quiet-hours hold.
+async function afterLeagueGameCancelled(env, res) {
+  if (!res || res.status !== 200) return res;
+  let body = null;
+  try { body = await res.clone().json(); } catch (_) {}
+  const eventId = body && body.ok && body.event && body.event.id;
+  if (!eventId) return res;
+  try { await notifyLeagueGameCancelled(env, eventId); }
+  catch (e) { console.error(`[cancel] telling players failed for ${eventId}: ${e.message}`); }
+  return res;
+}
+
+async function notifyLeagueGameCancelled(env, eventId) {
+  const ev = await getEvent(env.DB, eventId);
+  if (!ev || ev.state !== 'cancelled' || !ev.league_id || ev.league_id === SMBHL_LEAGUE_ID) return 0;
+  const leagueRow = await env.DB.prepare('SELECT id, name, color, language_mode FROM leagues WHERE id = ?').bind(ev.league_id).first();
+  if (!leagueRow) return 0;
+  const people = new Map();
+  for (const c of await getConfirmedPlayers(env, ev.league_id, ev.id)) people.set(c.player_id, c);
+  for (const c of await getNonResponders(env, ev.league_id, ev.id, ev.season)) people.set(c.player_id, c);
+  const cfg = await getLeagueSeasonConfig(env, ev.league_id, ev.season);
+  let queued = 0;
+  for (const c of people.values()) {
+    // Once per player, even if the game is cancelled again.
+    const dedupKey = `cancelled:${ev.id}:${c.player_id}`;
+    if (await env.DB.prepare('SELECT 1 FROM outbox WHERE dedup_key = ? AND (sent_at IS NOT NULL OR cancelled = 0) LIMIT 1').bind(dedupKey).first()) continue;
+    const mail = renderLeagueGameCancelledEmail(leagueRow, ev, c);
+    await enqueuePrerenderedMail(env, { kind: 'game_cancelled', leagueId: ev.league_id, eventId: ev.id, playerId: c.player_id, dedupKey, to: c.email, mail, identity: cfg.league });
+    queued++;
+  }
+  if (queued) await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id, ev.league_id);
+  return queued;
+}
+
+function renderLeagueGameCancelledEmail(leagueRow, ev, contact) {
+  const barColor = leagueFillColor(leagueRow.color || '#b3122e');
+  const firstName = (contact.name || '').split(' ')[0] || contact.name || '';
+  const whenFr = formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false);
+  const whenEn = formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false);
+  const venue = ev.venue ? String(ev.venue) : '';
+  const lineFr = `Le match du ${whenFr}${venue ? ` au ${venue}` : ''} est annulé. Pas besoin de te présenter.`;
+  const lineEn = `The game on ${whenEn}${venue ? ` at ${venue}` : ''} is cancelled. No need to come.`;
+  const block = (badge, hello, title, line) => `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${badge}</td></tr></table>
+    <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(title)}</h1>
+    <p style="margin:0 0 8px;font-size:16px;line-height:25px;">${esc(hello)}</p>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${esc(line)}</p>`;
+  const fr = {
+    subject: `Match annulé · ${whenFr}`,
+    text: `Bonjour ${firstName}, ${lineFr}`,
+    html: block('Annulé', `Bonjour ${firstName},`, 'Match annulé', lineFr)
+  };
+  const en = {
+    subject: `Game cancelled · ${whenEn}`,
+    text: `Hi ${firstName}, ${lineEn}`,
+    html: block('Cancelled', `Hi ${firstName},`, 'Game cancelled', lineEn)
+  };
+  const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
+  return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
+}
+
 async function leagueAdminEmails(env, leagueId) {
   return (await env.DB.prepare(
     `SELECT u.email FROM league_admins la JOIN users u ON u.id = la.user_id WHERE la.league_id = ?`
@@ -28452,7 +28525,7 @@ async function handleFetch(req, env, ctx) {
       // mistakes/holidays) and cancel (keeps it on the record, marked
       // cancelled and visible -- a real game that isn't happening).
       if (url.pathname === '/league/events/cancel' && req.method === 'POST')
-        return await handleLeagueEventCancel(req, env);
+        return await afterLeagueGameCancelled(env, await handleLeagueEventCancel(req, env));
       if (url.pathname === '/league/events/delete' && req.method === 'POST')
         return await handleLeagueEventDelete(req, env);
       if (url.pathname === '/league/season/publish' && req.method === 'POST')

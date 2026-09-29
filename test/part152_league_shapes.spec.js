@@ -76,7 +76,7 @@ async function runSeason(fx) {
       if (ev && startMs(ev) - fx.cancel.hoursBefore * H <= t) {
         const pending = (await one('SELECT count(*) n FROM outbox WHERE event_id = ? AND sent_at IS NULL AND cancelled = 0', ev.id)).n;
         const r = await a.post('/league/events/cancel', { event_id: ev.id });
-        cancelled.set(ev.id, t);
+        cancelled.set(ev.id, Date.now()); // the clock at the cancel (this hour's pass has not set it yet)
         events = await rows(`SELECT * FROM events WHERE league_id = ? ORDER BY date, start_time`, leagueId);
         setupNotes.push(`cancelled ${ev.date} ${ev.start_time} ${fx.cancel.hoursBefore}h before: ${r.status}, ${pending} unsent at the time, response ${JSON.stringify(r.json).slice(0, 120)}`);
       }
@@ -167,7 +167,7 @@ async function runSeason(fx) {
   for (const [evId, at] of cancelled) {
     const after = sent.filter(m => m.at > at && [...linksIn(m, '/league/rsvp'), ...linksIn(m, '/avail')].some(l => new URL(l).searchParams.get('e') === evId));
     if (after.length) violations.push(`${after.length} email(s) about the cancelled game sent after it was cancelled: ${[...new Set(after.map(m => m.subject))].join(' ; ').slice(0, 200)}`);
-    const told = sent.filter(m => m.at > at && /annul|cancel/i.test(m.subject));
+    const told = sent.filter(m => m.at >= at && /annul|cancel/i.test(m.subject));
     setupNotes.push(`after cancelling: ${told.length} email(s) telling anyone it is cancelled`);
   }
   const unlinked = sent.filter(m => ![...linksIn(m, '/league/rsvp'), ...linksIn(m, '/avail')].length).map(m => `${kindOf(m)}: ${m.subject}`);
@@ -319,12 +319,12 @@ describe('Leagues unlike SMBHL, a whole season each', () => {
     // Subs only ever for, and on, Green (the short team) in Green's games.
     for (const g of r.games) for (const s of g.subs) expect([g.ev.home_team, g.ev.away_team]).toContain(s.team);
     expect(r.subCalls.length).toBeGreaterThan(0);
-    // The cancelled game: nothing about it after the cancel; DECISION
-    // PENDING: nobody is told it is cancelled.
+    // The cancelled game: nothing about it after the cancel but the
+    // cancellation itself (D4), to those in or not answered (exact audience: part160).
     const [cancelledId] = [...r.cancelled.keys()];
     const cancelledGame = r.games.find(g => g.ev.id === cancelledId);
     expect(cancelledGame.ev.state).toBe('cancelled');
-    expect(r.setupNotes).toContain('after cancelling: 0 email(s) telling anyone it is cancelled');
+    expect(r.setupNotes.find(n => n.startsWith('after cancelling:'))).toMatch(/^after cancelling: [1-9]\d* email\(s\) telling anyone it is cancelled$/);
     // Standings and leaders from the results and stats entered.
     expect(r.standings).toMatch(/Classement/);
     for (const t of ['Red', 'Blue', 'Green']) expect(r.standings).toContain(t);
