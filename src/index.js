@@ -12520,6 +12520,45 @@ async function shortfallCallsHeld(env, ev) {
   return true;
 }
 
+// ---- a pickup game's pool, before its draw (D2) ----
+// Drawn = any player already has a team for this game, or the automatic
+// draw has run (league_auto_draw_log).
+async function pickupDrawn(env, ev) {
+  const t = await env.DB.prepare('SELECT 1 FROM rsvp WHERE event_id = ? AND team IS NOT NULL LIMIT 1').bind(ev.id).first();
+  if (t) return true;
+  return !!(await env.DB.prepare('SELECT 1 FROM league_auto_draw_log WHERE event_id = ?').bind(ev.id).first());
+}
+// The season stores a pickup league's numbers per team (the admin's pool
+// total divided by its teams, minimums rounded up -- handleLeagueSeasonPublish);
+// times the teams, they are the pool again.
+function pickupPoolTargets(cfg) {
+  const n = Math.max(1, getTeamNames(cfg).length);
+  return {
+    minSkaters: (cfg.minSkaters || 0) * n, maxSkaters: (cfg.skatersPerTeam || 0) * n,
+    minGoalies: (cfg.goaliesPerTeam || 0) * n, maxGoalies: (cfg.maxGoalies != null ? cfg.maxGoalies : (cfg.goaliesPerTeam || 0)) * n
+  };
+}
+// Who is in the pool: everyone not out (confirmedOnly: only those in), plus
+// -- not confirmedOnly -- the league's active rostered players who have not
+// answered yet (they count as available, as for every league game).
+async function pickupPool(env, ev, cfg, { confirmedOnly }) {
+  const rows = (await env.DB.prepare(
+    `SELECT COALESCE(c.is_goalie, 0) AS g FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND ${confirmedOnly ? "r.status = 'in'" : "r.status != 'out'"}`
+  ).bind(ev.id).all()).results || [];
+  if (!confirmedOnly) {
+    const waiting = (await env.DB.prepare(
+      `SELECT COALESCE(c.is_goalie, 0) AS g FROM contacts c
+        WHERE c.league_id = ? AND c.role = 'roster' AND COALESCE(c.is_active, 1) = 1
+          AND c.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)`
+    ).bind(ev.league_id, ev.id).all()).results || [];
+    rows.push(...waiting);
+  }
+  const t = pickupPoolTargets(cfg);
+  const goalies = Math.min(rows.filter(r => r.g === 1).length, t.maxGoalies);
+  return { goalies, skaters: rows.length - goalies };
+}
+
 async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
   if (!ev || ev.state !== 'open') return 0;
   const hrs = hoursOut(ev);
@@ -12528,7 +12567,6 @@ async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
   const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
   const cfg = await eventSeasonConfig(env, ev);
   const structure = cfg.teamStructure || 'fixed';
-  if (structure === 'weekly_draw') return 0; // teams are drawn per game: no team to be short until the draw
   const isHeadcount = structure === 'headcount';
   const teams = isHeadcount ? [HEADCOUNT_TEAM_NAME] : gameTeamNames(ev, cfg);
   const isLeague = leagueId !== SMBHL_LEAGUE_ID;
@@ -12540,6 +12578,26 @@ async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
   const advancedLeague = isLeague && await usesAdvancedReminders(env, leagueId);
   const skipQuiet = isLeague && !advancedLeague;
   const quietLeagueId = advancedLeague ? leagueId : null;
+  // A pickup game (weekly draw) has no teams until its draw, so none can
+  // be short: before the draw the whole pool is checked against the
+  // league's minimum player count, and a sub who accepts joins the pool
+  // for the draw (acceptAvailability). After the draw, as before: no
+  // automatic calls.
+  if (structure === 'weekly_draw') {
+    if (await pickupDrawn(env, ev)) return 0;
+    const pool = await pickupPool(env, ev, cfg, { confirmedOnly: false });
+    const need = pickupPoolTargets(cfg);
+    let queuedPool = 0;
+    const emptyPoolsPickup = new Set();
+    if (hasGoalies && pool.goalies < need.minGoalies) {
+      queuedPool += await callSubs(env, ev, null, 'goalie', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPoolsPickup);
+    }
+    if (pool.skaters < need.minSkaters) {
+      queuedPool += await callSubs(env, ev, null, 'skater', 0, leagueId, usesIndependentGoalieAxis, skipQuiet, isLeague, quietLeagueId, emptyPoolsPickup);
+    }
+    if (queuedPool && drainNow) await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id);
+    return queuedPool;
+  }
   let queued = 0;
   // The sub pool depends on the game and the need, not the team: once it
   // comes back empty for one team, it is empty for the next one too
@@ -12771,9 +12829,16 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
 
 async function stopWaves(env, eventId, need, cfg) {
   const ev = cfg ? await getEvent(env.DB, eventId) : null;
-  const teamsToCheck = cfg ? (ev ? gameTeamNames(ev, cfg) : getTeamNames(cfg)) : TEAMS;
-  for (const team of teamsToCheck) {
-    if (await openSpots(env.DB, eventId, team, need, cfg) > 0) return;
+  if (cfg && ev && (cfg.teamStructure || 'fixed') === 'weekly_draw' && !(await pickupDrawn(env, ev))) {
+    // A pickup pool before its draw: full when its maximum is confirmed.
+    const t = pickupPoolTargets(cfg);
+    const inPool = await pickupPool(env, ev, cfg, { confirmedOnly: true });
+    if ((need === 'goalie' ? inPool.goalies : inPool.skaters) < (need === 'goalie' ? t.maxGoalies : t.maxSkaters)) return;
+  } else {
+    const teamsToCheck = cfg ? (ev ? gameTeamNames(ev, cfg) : getTeamNames(cfg)) : TEAMS;
+    for (const team of teamsToCheck) {
+      if (await openSpots(env.DB, eventId, team, need, cfg) > 0) return;
+    }
   }
   // A prefix range, not LIKE: D1 refuses a LIKE pattern over 50 bytes, and
   // a league's event id alone is longer than that -- so for league games
@@ -12852,6 +12917,22 @@ export async function acceptAvailability(env, ev, playerId, need) {
   // SMBHL's data.json for every game, so a league's sub was placed on
   // SMBHL's teams (Red/Blue/White/Black) with SMBHL's roster sizes.
   const cfg = await eventSeasonConfig(env, ev);
+  // A pickup game before its draw: the sub joins the pool, with no team,
+  // and the draw places them with everyone else (it only assigns players
+  // who have no team yet) -- if the pool still has room for their position.
+  if ((cfg.teamStructure || 'fixed') === 'weekly_draw' && !(await pickupDrawn(env, ev))) {
+    const t = pickupPoolTargets(cfg);
+    const inPool = await pickupPool(env, ev, cfg, { confirmedOnly: true });
+    const have = need === 'goalie' ? inPool.goalies : inPool.skaters;
+    const room = need === 'goalie' ? t.maxGoalies : t.maxSkaters;
+    if (have >= room) return { placed: null };
+    await env.DB.prepare(
+      `INSERT INTO rsvp (event_id,player_id,team,status,role,status_by,updated_at,league_id)
+       VALUES (?,?,NULL,'in','sub','self',?,?)`
+    ).bind(ev.id, playerId, now, leagueId).run();
+    if (have + 1 >= room) await stopWaves(env, ev.id, need, cfg);
+    return { placed: null, pool: true };
+  }
   // Only a team that is playing this game can take the sub.
   const cfgTeams = gameTeamNames(ev, cfg);
 
@@ -14082,6 +14163,13 @@ async function availRoute(req, env, url) {
 
   const r = await acceptAvailability(env, ev, playerId, need);
   const logoTooltip = await getStandingsTooltip(env);
+  if (r.pool) {
+    // A pickup game before its draw: in, team to come.
+    return page('Confirmé', `<h1>Tu es inscrit pour ce match
+      <span class="en">You're in for this game</span></h1>
+      <p class="when">${esc(w.fr)}</p>
+      <div class="card"><p>Les équipes sont tirées avant le match : on t'envoie ton équipe avant le match.<span class="en">Teams are drawn before the game: we'll send you your team before the game.</span></p></div>`, logoTooltip);
+  }
   if (r.placed) {
     const shirt = need === 'goalie'
       ? { fr: 'Pas besoin de chandail d\u2019équipe.', en: 'No team shirt needed.' }

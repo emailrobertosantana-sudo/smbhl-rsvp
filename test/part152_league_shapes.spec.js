@@ -173,7 +173,8 @@ async function runSeason(fx) {
   const unlinked = sent.filter(m => ![...linksIn(m, '/league/rsvp'), ...linksIn(m, '/avail')].length).map(m => `${kindOf(m)}: ${m.subject}`);
   const unlinkedCounts = {}; for (const u of unlinked) unlinkedCounts[u] = (unlinkedCounts[u] || 0) + 1;
   for (const sc of await rows(`SELECT o.team, e.home_team, e.away_team, e.date, e.start_time FROM outbox o JOIN events e ON e.id = o.event_id WHERE o.league_id = ? AND o.kind = 'sub_call'`, leagueId)) {
-    if (sc.home_team && sc.away_team && ![sc.home_team, sc.away_team].includes(sc.team)) violations.push(`${sc.date} ${sc.start_time}: sub call for ${sc.team}, game is ${sc.home_team}v${sc.away_team}`);
+    // A call naming no team (a pickup pool before its draw) is for the game, not a team.
+    if (sc.team !== null && sc.home_team && sc.away_team && ![sc.home_team, sc.away_team].includes(sc.team)) violations.push(`${sc.date} ${sc.start_time}: sub call for ${sc.team}, game is ${sc.home_team}v${sc.away_team}`);
   }
   const perNight = {};
   for (const m of sent) { const l = linksIn(m, '/league/rsvp')[0]; if (!l) continue; const ev = events.find(e => e.id === new URL(l).searchParams.get('e')); if (!ev) continue; const k = m.to + '|' + ev.date; perNight[k] = (perNight[k] || 0) + 1; }
@@ -281,9 +282,12 @@ describe('Leagues unlike SMBHL, a whole season each', () => {
     // DECISION PENDING: two games a night are two events -- two RSVPs and
     // two sets of mail per player per night (4 emails), subjects alike.
     expect(r.nightMax).toBe(4);
-    // DECISION PENDING: a pickup league never calls subs (no team is short
-    // before the draw, and the check does not run after it).
-    expect(r.subCalls).toEqual([]);
+    // D2 (decided 2026-09-29): before its draw, a short pickup pool calls
+    // subs (half the regulars are out); those who say yes join the pool
+    // and the draw gives them a team, like everyone else.
+    expect(r.subCalls.length).toBeGreaterThan(0);
+    for (const g of r.games) for (const s of g.subs) expect(['Dark', 'Light']).toContain(s.team);
+    expect(r.games.some(g => g.subs.some(s => s.status === 'in'))).toBe(true);
     // The late-reversal alert names the drawn team and claims no sub call.
     const alerts = r.sent.filter(m => /dropped out/.test(m.subject));
     expect(alerts.length).toBeGreaterThan(0);
