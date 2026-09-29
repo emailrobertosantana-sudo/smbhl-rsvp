@@ -93,7 +93,7 @@ async function runSeason(fx) {
         const out = linksIn(m, '/league/rsvp').find(l => new URL(l).searchParams.get('v') === 'out');
         const evId = out && new URL(out).searchParams.get('e');
         if (out && !lateDone.has(evId)) {
-          lateDone.add(evId); lateOuts.add(evId + '|' + who.email);
+          lateDone.add(evId); lateOuts.add(evId.slice(-10) + '|' + who.email); // by night (D1): the 12h "can't make it" drops every game of that day
           const adminBefore = mail.sent.filter(x => x.to === `admin.${fx.tag}@example.com`).length;
           const callsBefore = (await one("SELECT count(*) n FROM outbox WHERE event_id = ? AND kind = 'sub_call'", evId)).n;
           const r = await answer(out);
@@ -154,7 +154,7 @@ async function runSeason(fx) {
     for (const m of mine) {
       const who = byEmail.get(m.to); const kind = kindOf(m);
       if (fx.structure === 'fixed' && playing && (kind === 'remind' || kind === 'details') && who && who.role !== 'sub_skater' && !playing.includes(who.team)) violations.push(`${ev.date} ${ev.start_time}: ${kind} to ${who.name} (team ${who.team}) for ${playing.join('v')}`);
-      if (kind === 'details' && !confirmed.has(m.to) && !lateOuts.has(ev.id + '|' + m.to)) violations.push(`${ev.date} ${ev.start_time}: details to ${m.to} who is not confirmed`);
+      if (kind === 'details' && !confirmed.has(m.to) && !lateOuts.has(ev.date + '|' + m.to)) violations.push(`${ev.date} ${ev.start_time}: details to ${m.to} who is not confirmed`);
     }
     const leagueTeams = fx.structure === 'headcount' ? null : (fx.teams || []);
     for (const r of subs) {

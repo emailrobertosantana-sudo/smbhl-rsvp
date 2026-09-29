@@ -9586,7 +9586,7 @@ ${tabbar}`;
       confirmed: 'confirmés', openSpots: 'places libres', noReply: 'sans réponse',
       inviteGoalie: 'Inviter un gardien', inviteSkater: 'Inviter des joueurs',
       noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.',
-      statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu',
+      statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu', statusElsewhere: "Joue l'autre match",
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Envoyer un rappel maintenant',
       remindersEnabledLabel: 'Rappels automatiques pour ce match',
@@ -9667,7 +9667,7 @@ ${tabbar}`;
       confirmed: 'confirmed', openSpots: 'open spots', noReply: 'no reply',
       inviteGoalie: 'Invite a goalie', inviteSkater: 'Invite players',
       noPlayersOnTeam: 'No players assigned to this team.',
-      statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply',
+      statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply', statusElsewhere: 'In the other game',
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Send a reminder now',
       remindersEnabledLabel: 'Automated reminders for this game',
@@ -9713,7 +9713,9 @@ ${tabbar}`;
   const STATUS_BADGE = {
     in: `<span class="nl-badge nl-badge--in">${BADGE_ICON_CHECK}<span data-i18n="statusIn">Je joue</span></span>`,
     out: `<span class="nl-badge nl-badge--out">${BADGE_ICON_MINUS}<span data-i18n="statusOut">Absent</span></span>`,
-    pending: `<span class="nl-badge nl-badge--pending">${BADGE_ICON_CLOCK}<span data-i18n="statusPending">Pas répondu</span></span>`
+    pending: `<span class="nl-badge nl-badge--pending">${BADGE_ICON_CLOCK}<span data-i18n="statusPending">Pas répondu</span></span>`,
+    // Nights (D1): placed in the other game at this time.
+    elsewhere: `<span class="nl-badge nl-badge--sub"><span data-i18n="statusElsewhere">Joue l'autre match</span></span>`
   };
   // Item 1 (admin-confirm-players polish task): a real goalie gets the
   // "in"-toned G badge, a player flagged "can also play goalie" (E2,
@@ -9754,7 +9756,7 @@ ${tabbar}`;
     // here must come from THIS event's own rsvp row, not the contact.
     const rosterRows = isHeadcount
       ? (await env.DB.prepare(
-          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status
+          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status, r.status_by AS status_by
              FROM contacts c
              LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
             WHERE c.league_id = ? AND c.role = 'roster' AND c.is_active = 1
@@ -9762,14 +9764,14 @@ ${tabbar}`;
         ).bind(ev.id, leagueId).all()).results || []
       : isWeeklyDraw
       ? (await env.DB.prepare(
-          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, r.status AS status
+          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, r.status AS status, r.status_by AS status_by
              FROM contacts c
              JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
             WHERE c.league_id = ? AND r.team = ? AND c.is_active = 1
             ORDER BY c.name`
         ).bind(ev.id, leagueId, team).all()).results || []
       : (await env.DB.prepare(
-          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status
+          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status, r.status_by AS status_by
              FROM contacts c
              LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
             WHERE c.league_id = ? AND c.preferred_team = ? AND c.is_active = 1
@@ -9785,7 +9787,7 @@ ${tabbar}`;
       ? rosterRows.map(p => `<div class="ev-p">
           <span>${esc(p.name)}${eventRowGoalieBadge(p)}</span>
           <div style="display:flex;align-items:center;gap:8px;">
-            ${STATUS_BADGE[p.status] || STATUS_BADGE.pending}
+            ${(p.status === 'out' && p.status_by === 'night' ? STATUS_BADGE.elsewhere : STATUS_BADGE[p.status]) || STATUS_BADGE.pending}
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
           </div>
@@ -9839,7 +9841,7 @@ ${tabbar}`;
     // setPlayerStatus-wired list those other cases already have can
     // render here too -- one pool, not per-team lists, per the task.
     const poolPlayerRows = (await env.DB.prepare(
-      `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status
+      `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status, r.status_by AS status_by
          FROM contacts c
          LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
         WHERE c.league_id = ? AND c.role = 'roster' AND c.is_active = 1
@@ -9858,7 +9860,7 @@ ${tabbar}`;
       ? poolPlayerRows.map(p => `<div class="ev-p" data-pool-player-row="${esc(p.player_id)}">
           <span>${esc(p.name)}${eventRowGoalieBadge(p)}</span>
           <div style="display:flex;align-items:center;gap:8px;">
-            ${STATUS_BADGE[p.status] || STATUS_BADGE.pending}
+            ${(p.status === 'out' && p.status_by === 'night' ? STATUS_BADGE.elsewhere : STATUS_BADGE[p.status]) || STATUS_BADGE.pending}
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>
           </div>
@@ -18783,6 +18785,123 @@ async function playersInOverlappingGames(env, ev) {
   return busy;
 }
 
+// Whether a game of the night is one of this player's games. Fixed teams:
+// the games their team plays (a game whose matchup isn't set yet counts;
+// a player with no team, such as a sub, is placed like a no-teams player).
+// No-teams and pickup: every game of the night -- a yes means available
+// tonight, placed where there is room.
+function gameCoversPlayer(game, cfg, contact) {
+  if ((cfg.teamStructure || 'fixed') !== 'fixed') return true;
+  const team = contact && contact.preferred_team;
+  if (!team) return true;
+  return gameTeamNames(game, cfg).includes(team);
+}
+
+// A player's night: the night's games, the ones that are theirs (always
+// including the game their link is for; for a sub, only the games they were
+// placed in), their rows, the overlap clusters
+// of their games, and their answer for the night -- 'in' when they are in
+// any of their games, 'out' when they said no (to the night or to a game)
+// and are in none, otherwise 'pending'.
+async function playerNight(env, ev, contact) {
+  const games = await nightGamesOf(env, ev);
+  const cfgOf = seasonConfigCache(env, ev.league_id);
+  const cfgs = new Map();
+  for (const g of games) cfgs.set(g.id, await cfgOf(g.season));
+  const rowsById = new Map();
+  const found = (await env.DB.prepare(
+    `SELECT * FROM rsvp WHERE player_id = ? AND event_id IN (${games.map(() => '?').join(',')})`
+  ).bind(contact.player_id, ...games.map(g => g.id)).all()).results || [];
+  for (const r of found) rowsById.set(r.event_id, r);
+  // A sub is placed game by game (sub calls): their night is the games
+  // they are in, not every game of the day.
+  const isSub = contact.role !== 'roster';
+  const covered = games.filter(g => g.id === ev.id || (isSub
+    ? (rowsById.get(g.id) || {}).status === 'in'
+    : gameCoversPlayer(g, cfgs.get(g.id), contact)));
+  const isIn = g => rowCountsAsIn(g, rowsById.get(g.id), cfgs.get(g.id));
+  const inGames = covered.filter(isIn);
+  const saidNo = covered.some(g => { const r = rowsById.get(g.id); return r && r.status === 'out' && r.status_by !== 'night'; });
+  return {
+    games, covered, cfgs, rowsById, inGames, isIn,
+    clusters: concurrencyClusters(covered),
+    status: inGames.length ? 'in' : saidNo ? 'out' : 'pending'
+  };
+}
+
+// For a no-teams or pickup night with games at the same time: which of
+// them a new yes goes to. The first game (in time order) that still has
+// room for the player's position; when every one is full, the one with
+// the fewest (decision pending, see the D1 report). A game with no maximum
+// set counts as full, so such games are shared evenly.
+async function pickNightGame(env, candidates, cfgs, contact) {
+  const goalie = contact.is_goalie === 1;
+  const counts = [];
+  for (const g of candidates) {
+    const cfg = cfgs.get(g.id);
+    const structure = cfg.teamStructure || 'fixed';
+    if (structure === 'fixed') return candidates[0];
+    let cap;
+    if (structure === 'weekly_draw') { const t = pickupPoolTargets(cfg); cap = goalie ? t.maxGoalies : t.maxSkaters; }
+    else cap = goalie ? (cfg.maxGoalies != null ? cfg.maxGoalies : (cfg.goaliesPerTeam || 0)) : (cfg.skatersPerTeam || 0);
+    const n = (await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
+        WHERE r.event_id = ? AND r.status = 'in' AND COALESCE(c.is_goalie, 0) = ?`
+    ).bind(g.id, goalie ? 1 : 0).first()).n;
+    if (cap > 0 && n < cap) return g;
+    counts.push({ g, n });
+  }
+  counts.sort((a, b) => a.n - b.n);
+  return counts[0].g;
+}
+
+// One answer for the night (D1): the player's own (statusBy 'self'), or
+// what an email link recorded. 'out' is written to each of their games
+// still taking answers. 'in' is written to each of their games they can
+// be in: one per set of games that overlap -- the one they are already in,
+// or the first with room -- and every game that follows another. The other
+// games of an overlapping set get an 'out' marked status_by = 'night'
+// ("in the other game") in a no-teams or pickup league, so the game's
+// counts don't take them as available; a fixed-teams league writes nothing
+// there (a team playing two games at once is refused by the matchup
+// routes). A fresh yes clears the player's no to single games;
+// keepGameOptOuts leaves them. Returns the games written, and for each
+// whether the player was in it before.
+async function writeLeagueNightStatus(env, leagueId, ev, contact, status, statusBy = 'self', { keepGameOptOuts = false } = {}) {
+  const night = await playerNight(env, ev, contact);
+  const open = g => !closedToAnswers(g);
+  const written = [];
+  if (status === 'out') {
+    for (const g of night.covered) {
+      if (!open(g)) continue;
+      const wasIn = night.isIn(g);
+      await writeLeagueRsvpStatus(env, leagueId, g.id, contact.player_id, contact, 'out', statusBy, g.season);
+      written.push({ game: g, wasIn });
+    }
+    return { ok: true, written, night };
+  }
+  const saidNoToGame = r => r && r.status === 'out' && r.status_by !== 'night';
+  for (const cluster of night.clusters) {
+    let chosen = cluster.find(night.isIn);
+    if (!chosen) {
+      const candidates = cluster.filter(g => open(g) && !(keepGameOptOuts && saidNoToGame(night.rowsById.get(g.id))));
+      if (!candidates.length) continue;
+      chosen = candidates.length === 1 ? candidates[0] : await pickNightGame(env, candidates, night.cfgs, contact);
+      const w = await writeLeagueRsvpStatus(env, leagueId, chosen.id, contact.player_id, contact, 'in', statusBy, chosen.season);
+      if (!w.ok) continue;
+      written.push({ game: chosen, wasIn: false });
+    }
+    for (const g of cluster) {
+      if (g === chosen || !open(g)) continue;
+      if ((night.cfgs.get(g.id).teamStructure || 'fixed') === 'fixed') continue;
+      const r = night.rowsById.get(g.id);
+      if (r && r.status === 'out' && (r.status_by === 'night' || keepGameOptOuts)) continue;
+      await writeLeagueRsvpStatus(env, leagueId, g.id, contact.player_id, contact, 'out', 'night', g.season);
+    }
+  }
+  return { ok: true, written, night };
+}
+
 // Cheap self-contained lookup so writeLeagueRsvpStatus (and anything
 // else that just needs the mode, not a full season config) doesn't
 // have to resolve a whole getLeagueSeasonConfig() in the common case.
@@ -19747,6 +19866,11 @@ async function leagueRsvpGet(req, env, url) {
   let row = await env.DB.prepare('SELECT * FROM rsvp WHERE event_id = ? AND player_id = ?')
     .bind(eventId, playerId).first();
   let status = row ? row.status : 'pending';
+  // Nights (D1): the answer is for the night. A player with more than one
+  // game that day sees them all, answers once, and can drop one game.
+  const night = await playerNight(env, ev, contact);
+  const multi = night.covered.length > 1;
+  if (multi) status = night.status;
 
   // An email's link (?v=in|out, and the 12h email's ?v=out&src=logistics12h)
   // records nothing when opened -- link scanners open every URL -- it shows
@@ -19820,7 +19944,18 @@ async function leagueRsvpGet(req, env, url) {
       errLocked: "Cet événement n'accepte plus de réponses.",
       errOverlap: 'Tu es déjà inscrit à un match qui se joue en même temps.',
       errNetwork: 'Erreur réseau. Réessaie.',
-      ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
+      ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {}),
+      ...(multi ? {
+        nightNoteTeams: 'Ta réponse vaut pour la soirée : pour chaque match de ton équipe.',
+        nightNotePool: 'Ta réponse vaut pour la soirée : tu es disponible, et on te place dans les matchs où il y a de la place.',
+        nightNoteConcurrent: 'Des matchs se jouent en même temps : on remplit le premier, puis le suivant.',
+        nightNoteFollow: 'Les matchs qui se suivent, tu les joues tous.',
+        nightDoneInBody: `On se voit ${dayLabel || 'ce jour-là'}. Tes matchs :`,
+        gameIn: 'Tu joues', gameOut: 'Tu ne joues pas ce match', gameOther: "Tu joues l'autre match à cette heure-là",
+        gamePending: 'Pas encore de réponse', gameClosed: "Ce match n'accepte plus de réponses.",
+        gameBtnOut: 'Je ne peux pas pour ce match', gameBtnIn: 'Finalement, je joue ce match',
+        confirmAnswerOutNight: 'Tu vas répondre : je ne peux pas, pour toute la soirée.'
+      } : {})
     } : {
       question: `${firstName}, are you playing${dayLabel ? ' ' + dayLabel.toLowerCase() : ''}?`,
       btnIn: "I'm in", btnOut: "Can't make it",
@@ -19843,7 +19978,18 @@ async function leagueRsvpGet(req, env, url) {
       errLocked: 'This event is no longer accepting responses.',
       errOverlap: "You're already in a game at the same time.",
       errNetwork: 'Network error. Please try again.',
-      ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
+      ...(venueMapLink ? { viewOnMap: 'View on map' } : {}),
+      ...(multi ? {
+        nightNoteTeams: "Your answer is for the night: each of your team's games.",
+        nightNotePool: "Your answer is for the night: you're available, and we place you in the games that have room.",
+        nightNoteConcurrent: 'Some games are at the same time: we fill the first one, then the next.',
+        nightNoteFollow: 'Games that follow each other, you play them all.',
+        nightDoneInBody: `See you ${dayLabel || 'then'}. Your games:`,
+        gameIn: "You're playing", gameOut: "You're not playing this game", gameOther: "You're in the other game at that time",
+        gamePending: 'No answer yet', gameClosed: 'This game is no longer taking answers.',
+        gameBtnOut: "I can't make this game", gameBtnIn: 'I can make this game after all',
+        confirmAnswerOutNight: "You're about to answer: can't make it, for the whole night."
+      } : {})
     };
   }
   const RSVP_I18N = { fr: buildDict('fr'), en: buildDict('en') };
@@ -19856,14 +20002,45 @@ async function leagueRsvpGet(req, env, url) {
     <div class="rv-where">${ev.venue ? esc(ev.venue) : ''}${ev.start_time && ev.end_time ? ` · ${timeSpanHtml('span', ev.start_time)} – ${timeSpanHtml('span', ev.end_time)}` : ''}${venueMapLink ? ` · <a href="${esc(venueMapLink)}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
   </div>`;
 
+  // Nights (D1): with more than one game, the meta lists them, with what
+  // a yes means for this league.
+  const cfgOfGame = g => night.cfgs.get(g.id) || cfg;
+  const gameLineHtml = g => `${timeSpanHtml('span', g.start_time)}${g.end_time ? ` – ${timeSpanHtml('span', g.end_time)}` : ''}${g.venue ? ` · ${esc(g.venue)}` : ''}${(cfgOfGame(g).teamStructure || 'fixed') === 'fixed' && g.home_team && g.away_team ? ` · ${esc(g.home_team)} – ${esc(g.away_team)}` : ''}`;
+  const byTeams = teamStructure === 'fixed' && !!contact.preferred_team;
+  const nightNotes = multi ? [byTeams ? 'nightNoteTeams' : 'nightNotePool',
+    ...(!byTeams && night.clusters.some(c => c.length > 1) ? ['nightNoteConcurrent'] : []),
+    ...(night.clusters.length > 1 ? ['nightNoteFollow'] : [])] : [];
+  const nightMetaHtml = multi ? `<div class="rv-meta">
+    ${team && byTeams ? `<div><b>${esc(team)}</b></div>` : ''}
+    <ul class="rv-games">${night.covered.map(g => `<li>${gameLineHtml(g)}</li>`).join('')}</ul>
+    ${nightNotes.map(k => `<p class="nl-help" data-i18n="${k}">${esc(t[k])}</p>`).join('')}
+  </div>` : '';
+  const gameState = g => {
+    if (night.isIn(g)) return 'in';
+    const cluster = night.clusters.find(c => c.includes(g)) || [g];
+    if (cluster.some(o => o !== g && night.isIn(o))) return 'other';
+    const r = night.rowsById.get(g.id);
+    return r && r.status === 'out' ? 'out' : 'pending';
+  };
+  const gameStateKey = { in: 'gameIn', out: 'gameOut', other: 'gameOther', pending: 'gamePending' };
+  const nightGamesHtml = multi ? `<ul class="rv-games rv-games--answer" id="rv_games">${night.covered.map(g => {
+    const st = gameState(g);
+    const closed = closedToAnswers(g);
+    const btn = closed ? `<p class="nl-help" data-i18n="gameClosed">${esc(t.gameClosed)}</p>`
+      : st === 'in' ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-game="${esc(g.id)}" data-gv="out" data-i18n="gameBtnOut">${esc(t.gameBtnOut)}</button>`
+      : st === 'other' ? ''
+      : `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-game="${esc(g.id)}" data-gv="in" data-i18n="gameBtnIn">${esc(t.gameBtnIn)}</button>`;
+    return `<li data-game-state="${st}"><div>${gameLineHtml(g)}</div><div class="rv-game-state"><b data-i18n="${gameStateKey[st]}">${esc(t[gameStateKey[st]])}</b></div>${btn}</li>`;
+  }).join('')}</ul><p id="rv_game_msg" class="nl-help"></p>` : '';
+
   const confirmQs = `league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}`;
   const confirmHtml = confirmFor ? `
     <section class="rv-confirm" id="rv_confirm" role="alert">
       <div class="overline">${overline}</div>
       <h1 class="rv-q" data-i18n="confirmTitle">${esc(t.confirmTitle)}</h1>
       <p class="rv-warn" data-i18n="confirmNotYet">${esc(t.confirmNotYet)}</p>
-      ${metaHtml}
-      <p data-i18n="${confirmFor === 'in' ? 'confirmAnswerIn' : 'confirmAnswerOut'}">${esc(confirmFor === 'in' ? t.confirmAnswerIn : t.confirmAnswerOut)}</p>
+      ${multi ? nightMetaHtml : metaHtml}
+      <p data-i18n="${confirmFor === 'in' ? 'confirmAnswerIn' : multi ? 'confirmAnswerOutNight' : 'confirmAnswerOut'}">${esc(confirmFor === 'in' ? t.confirmAnswerIn : multi ? t.confirmAnswerOutNight : t.confirmAnswerOut)}</p>
       <form method="post" action="/league/rsvp/confirm?${confirmQs}">
         <input type="hidden" name="status" value="${confirmFor}">
         ${url.searchParams.get('src') === 'logistics12h' ? '<input type="hidden" name="src" value="logistics12h">' : ''}
@@ -19876,9 +20053,9 @@ async function leagueRsvpGet(req, env, url) {
     <section class="rv-done rv-done--${status === 'in' ? 'ok' : 'no'}" role="status">
       <div class="rv-mark">${status === 'in' ? '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 10.5l4 4 8-9"/></svg>' : '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 10h10"/></svg>'}</div>
       <h2 data-i18n="${status === 'in' ? 'doneInTitle' : 'doneOutTitle'}">${esc(status === 'in' ? t.doneInTitle : t.doneOutTitle)}</h2>
-      <p data-i18n="${status === 'in' ? 'doneInBody' : 'doneOutBody'}">${esc(status === 'in' ? t.doneInBody : t.doneOutBody)}</p>
+      <p data-i18n="${status === 'in' ? (multi ? 'nightDoneInBody' : 'doneInBody') : 'doneOutBody'}">${esc(status === 'in' ? (multi ? t.nightDoneInBody : t.doneInBody) : t.doneOutBody)}</p>
     </section>
-    ${status === 'in' ? teamMeterHtml : ''}
+    ${status === 'in' ? (multi ? nightGamesHtml : teamMeterHtml) : ''}
     ${!locked ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="change" onclick="showAnswerForm()">${esc(t.change)}</button>` : ''}
   ` : '';
 
@@ -19886,14 +20063,14 @@ async function leagueRsvpGet(req, env, url) {
     <div id="rv_form" style="${status !== 'pending' ? 'display:none' : ''}">
       <div class="overline">${overline}</div>
       <h1 class="rv-q" data-i18n="question">${esc(t.question)}</h1>
-      ${metaHtml}
+      ${multi ? nightMetaHtml : metaHtml}
       ${locked ? `<p class="nl-help" data-i18n="lockedMsg">${esc(t.lockedMsg)}</p>` : `
       <div class="rv-answers">
         <button type="button" class="nl-btn nl-btn--league nl-btn--lg nl-btn--block" data-v="in"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 10.5l4 4 8-9"/></svg><span data-i18n="btnIn">${esc(t.btnIn)}</span></button>
         <button type="button" class="nl-btn nl-btn--secondary nl-btn--lg nl-btn--block" data-v="out"><span data-i18n="btnOut">${esc(t.btnOut)}</span></button>
       </div>
       <p id="rv_msg" class="nl-help"></p>
-      ${teamMeterHtml}`}
+      ${multi ? '' : teamMeterHtml}`}
     </div>
   ` : '';
 
@@ -19905,7 +20082,9 @@ async function leagueRsvpGet(req, env, url) {
   .rv-where { font-size: 16px; line-height: 24px; color: var(--ink-muted); }
   .rv-answers { display: flex; flex-direction: column; gap: var(--space-3); }
   .rv-team { display: flex; flex-direction: column; gap: 10px; }
-  .rv-team-top { display: flex; justify-content: space-between; align-items: baseline; }
+${multi ? `  .rv-games { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); font-size: 16px; line-height: 24px; }
+  .rv-games--answer li { display: flex; flex-direction: column; gap: 6px; padding: var(--space-3) 0; border-top: 1px solid var(--line); }
+` : ''}  .rv-team-top { display: flex; justify-content: space-between; align-items: baseline; }
   .rv-done { border-radius: var(--radius-lg); padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
   /* The email-link confirmation: an unfinished step, never a success. */
   .rv-confirm { border: 2px solid var(--warning, #b45309); border-radius: var(--radius-lg); padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
@@ -19997,7 +20176,33 @@ function showAnswerForm() {
 // window.__errorText() -- this page just can't use that shared helper
 // (see nlAuthScript's own comment for why its script is separate).
 var RV_ERR_KEY_MAP = { RSVP_BAD_STATUS: 'errBadStatus', RSVP_BAD_TOKEN: 'errBadToken', RSVP_LOCKED: 'errLocked', RSVP_OVERLAPPING_GAME: 'errOverlap' };
-document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(b) {
+${multi ? `document.querySelectorAll('.rv-games .nl-btn[data-gv]').forEach(function(b) {
+  b.addEventListener('click', async function() {
+    var msg = document.getElementById('rv_game_msg');
+    document.querySelectorAll('.rv-games .nl-btn[data-gv]').forEach(function(x) { x.disabled = true; });
+    try {
+      var res = await fetch('/league/rsvp/game' + location.search, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ game: b.dataset.game, status: b.dataset.gv })
+      });
+      var data = await res.json().catch(function() { return {}; });
+      if (!res.ok || !data.ok) {
+        var dict = RV_I18N[window.__currentLang] || RV_I18N.fr;
+        var key = RV_ERR_KEY_MAP[data.errorKey];
+        if (msg) msg.textContent = key ? dict[key] : dict.errBadStatus;
+        document.querySelectorAll('.rv-games .nl-btn[data-gv]').forEach(function(x) { x.disabled = false; });
+        return;
+      }
+      location.replace(location.pathname + location.search.replace(/([?&])(v|src)=[^&]*/g, '$1').replace(/[?&]+$/, ''));
+    } catch (e) {
+      var dict2 = RV_I18N[window.__currentLang] || RV_I18N.fr;
+      if (msg) msg.textContent = dict2.errNetwork;
+      document.querySelectorAll('.rv-games .nl-btn[data-gv]').forEach(function(x) { x.disabled = false; });
+    }
+  });
+});
+` : ''}document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(b) {
   b.addEventListener('click', async function() {
     var v = b.dataset.v;
     document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(x) { x.disabled = true; });
@@ -20066,22 +20271,25 @@ async function leagueRsvpConfirmPost(req, env, url) {
   const status = form && String(form.get('status') || '');
   if (!['in', 'out'].includes(status)) return leagueRsvpNotice('Réponse invalide.', 'Invalid answer.');
   if (!closedToAnswers(ev)) {
-    const row = await env.DB.prepare('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
+    // Nights (D1): the answer is for the player's whole night -- the 12h
+    // email's "can't make it" drops every game of theirs that day.
+    const before = await playerNight(env, ev, contact);
     // The 12h email's "can't make it" from a confirmed player: the late-
-    // reversal alert to the admins, as before.
-    const isLateReversalOptOut = status === 'out' && row && row.status === 'in' && form.get('src') === 'logistics12h';
-    const written = await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'self', ev.season);
-    if (!written.ok) return leagueRsvpNotice('Tu es déjà inscrit à un match qui se joue en même temps.', "You're already in a game at the same time.");
-    const shortage =status === 'out' ? await maybeInviteSubsForShortage(env, leagueId, ev, contact) : null;
+    // reversal alert to the admins, as before -- one for the night.
+    const isLateReversalOptOut = status === 'out' && before.status === 'in' && form.get('src') === 'logistics12h';
+    const night = await writeLeagueNightStatus(env, leagueId, ev, contact, status, 'self');
+    const shortages = [];
+    if (status === 'out') for (const w of night.written) shortages.push(await maybeInviteSubsForShortage(env, leagueId, w.game, contact));
     if (isLateReversalOptOut) {
-      // The alert names the team the player was on for THIS game (a
-      // pickup's drawn team, a sub's placed team -- not their roster
-      // team, which a pickup player or a sub does not have) and says subs
-      // were invited only when they were.
-      const placed = await env.DB.prepare('SELECT team FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
+      // The alert names the team the player was on for the (first) game
+      // they were in (a pickup's drawn team, a sub's placed team -- not
+      // their roster team, which a pickup player or a sub does not have)
+      // and says subs were invited only when they were.
+      const first = before.inGames[0];
+      const placed = await env.DB.prepare('SELECT team FROM rsvp WHERE event_id = ? AND player_id = ?').bind(first.id, playerId).first();
       const team = placed && placed.team && placed.team !== HEADCOUNT_TEAM_NAME ? placed.team : '';
-      const subsInvited = !!(shortage && (shortage.invited > 0 || shortage.reason === 'recently-invited'));
-      await sendLateReversalAdminAlert(env, leagueId, ev, contact, { team, subsInvited });
+      const subsInvited = shortages.some(x => x && (x.invited > 0 || x.reason === 'recently-invited'));
+      await sendLateReversalAdminAlert(env, leagueId, first, contact, { team, subsInvited });
     }
   }
   const back = `/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}`;
@@ -20107,10 +20315,53 @@ async function leagueRsvpPost(req, env, url) {
     return Response.json({ ok: false, error: 'This event is no longer accepting responses.', errorKey: 'RSVP_LOCKED' }, { status: 409 });
   }
 
-  const written = await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'self', ev.season);
-  if (!written.ok) return Response.json({ ok: false, error: 'Already in a game at the same time.', errorKey: 'RSVP_OVERLAPPING_GAME' }, { status: 409 });
-  if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
+  // Nights (D1): one answer for the player's night.
+  const night = await writeLeagueNightStatus(env, leagueId, ev, contact, status, 'self');
+  if (status === 'out') for (const w of night.written) await maybeInviteSubsForShortage(env, leagueId, w.game, contact);
   return Response.json({ ok: true, league_id: leagueId, status });
+}
+
+// POST /league/rsvp/game (JSON { game, status }): the player's answer for
+// ONE game of their night, from their own page (D1) -- "I can't make this
+// game", or back in. The link's token is for any game of that night; the
+// game must be one of the player's games that night. Back in is refused
+// when it would put them in two games at once.
+async function leagueRsvpGamePost(req, env, url) {
+  const leagueId = url.searchParams.get('league');
+  const eventId = url.searchParams.get('e');
+  const playerId = url.searchParams.get('p');
+  const token = url.searchParams.get('t');
+  const body = await req.json().catch(() => ({}));
+  const status = body.status;
+  if (!['in', 'out'].includes(status)) {
+    return Response.json({ ok: false, error: 'Invalid status.', errorKey: 'RSVP_BAD_STATUS' }, { status: 400 });
+  }
+  const result = await verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token);
+  if (!result.ok) {
+    return Response.json({ ok: false, error: 'Invalid or expired link.', errorKey: 'RSVP_BAD_TOKEN' }, { status: 403 });
+  }
+  const { contact, ev } = result;
+  const night = await playerNight(env, ev, contact);
+  const game = night.covered.find(g => g.id === String(body.game || ''));
+  if (!game) return Response.json({ ok: false, error: 'Not one of your games that night.', errorKey: 'RSVP_BAD_STATUS' }, { status: 404 });
+  if (closedToAnswers(game)) {
+    return Response.json({ ok: false, error: 'This event is no longer accepting responses.', errorKey: 'RSVP_LOCKED' }, { status: 409 });
+  }
+  const written = await writeLeagueRsvpStatus(env, leagueId, game.id, playerId, contact, status, 'self', game.season);
+  if (!written.ok) return Response.json({ ok: false, error: 'Already in a game at the same time.', errorKey: 'RSVP_OVERLAPPING_GAME' }, { status: 409 });
+  if (status === 'out') {
+    await maybeInviteSubsForShortage(env, leagueId, game, contact);
+  } else {
+    // In this game: the others at the same time are "in the other game"
+    // (no-teams and pickup), as the night's own answer writes them.
+    const cluster = night.clusters.find(c => c.includes(game)) || [game];
+    for (const g of cluster) {
+      if (g === game || closedToAnswers(g) || (night.cfgs.get(g.id).teamStructure || 'fixed') === 'fixed') continue;
+      const r = night.rowsById.get(g.id);
+      if (!r || r.status !== 'out') await writeLeagueRsvpStatus(env, leagueId, g.id, playerId, contact, 'out', 'night', g.season);
+    }
+  }
+  return Response.json({ ok: true, league_id: leagueId, game: game.id, status });
 }
 
 /* ---------- admin-set RSVP status (Part R) ----------
@@ -28442,6 +28693,8 @@ async function handleFetch(req, env, ctx) {
         return await leagueRsvpPost(req, env, url);
       if (url.pathname === '/league/rsvp/confirm' && req.method === 'POST')
         return await leagueRsvpConfirmPost(req, env, url);
+      if (url.pathname === '/league/rsvp/game' && req.method === 'POST')
+        return await leagueRsvpGamePost(req, env, url);
       // Part 4: public, read-only league page. No session/ADMIN_KEY at
       // all -- deliberately as unauthenticated as /league/rsvp above.
       if (url.pathname === '/league/public' && (req.method === 'GET' || req.method === 'HEAD'))
