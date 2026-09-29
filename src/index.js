@@ -12521,7 +12521,8 @@ async function sendExtraSubInvite(env, ev, playerId) {
   // the team with open spots for their position, else the first team.
   let team = lastInvite ? lastInvite.team : null;
   if (!team) {
-    const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+    // The event's own league's config (a league game read SMBHL's).
+    const cfg = await eventSeasonConfig(env, ev);
     const teams = gameTeamNames(ev, cfg);
     for (const t of teams) if (await openSpots(env.DB, ev.id, t, need, cfg) > 0) { team = t; break; }
     team = team || teams[0] || null;
@@ -12745,8 +12746,11 @@ export async function acceptAvailability(env, ev, playerId, need) {
   const c = await getContact(env.DB, playerId);
   const pref = c && c.preferred_team;
 
-  // Resolve config for this event's season to get the right team list and thresholds
-  const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
+  // Resolve config for this event's season to get the right team list and
+  // thresholds -- the event's OWN league's (eventSeasonConfig). This read
+  // SMBHL's data.json for every game, so a league's sub was placed on
+  // SMBHL's teams (Red/Blue/White/Black) with SMBHL's roster sizes.
+  const cfg = await eventSeasonConfig(env, ev);
   // Only a team that is playing this game can take the sub.
   const cfgTeams = gameTeamNames(ev, cfg);
 
@@ -18603,26 +18607,30 @@ function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLab
 // (which resolves the actual day label via reminderDayLabel) pass a
 // pre-formatted label per language, since that formatting itself needs
 // to know which language(s) to build.
-function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, team, dayLabelFr, dayLabelEn, ev, dashboardLink, languageMode = 'both' }) {
+// team: the team the player was on FOR THIS GAME ('' when there is none:
+// a pickup game before its draw, a no-teams league). subsInvited: whether
+// subs were actually invited -- the alert used to say they were every time,
+// even in a league with no subs or a team that was not short.
+function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, team, dayLabelFr, dayLabelEn, ev, dashboardLink, languageMode = 'both', subsInvited = true }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
   const dFr = dayLabelFr || formatEventDate(ev.date, 'fr', 'short');
   const dEn = dayLabelEn || formatEventDate(ev.date, 'en', 'short');
   const fr = {
-    subject: `${team}: ${playerName} vient de se désister · 12 h avant le match`,
-    text: `${playerName} (${team}) vient de se désister 12 heures avant le match (${dFr}). L'invitation aux remplaçants a été lancée automatiquement. ${dashboardLink}`,
+    subject: `${team ? `${team}: ` : ''}${playerName} vient de se désister · 12 h avant le match`,
+    text: `${playerName}${team ? ` (${team})` : ''} vient de se désister 12 heures avant le match (${dFr}).${subsInvited ? " L'invitation aux remplaçants a été lancée automatiquement." : ''} ${dashboardLink}`,
     html: `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Désistement tardif</td></tr></table>
     <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(playerName)} ne joue plus</h1>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> était confirmé${'·'}e pour <b>${esc(team)}</b> et vient de changer sa réponse à 12 heures du match (${esc(dFr)}). On a lancé l'invitation aux remplaçants automatiquement.</p>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> était confirmé${'·'}e${team ? ` pour <b>${esc(team)}</b>` : ''} et vient de changer sa réponse à 12 heures du match (${esc(dFr)}).${subsInvited ? " On a lancé l'invitation aux remplaçants automatiquement." : ''}</p>
     ${nlEmailButton(dashboardLink, 'Voir le match', barColor)}`
   };
   const en = {
-    subject: `${team}: ${playerName} just dropped out, 12h before the game`,
-    text: `${playerName} (${team}) just dropped out 12h before the game (${dEn}). Subs invited automatically. ${dashboardLink}`,
+    subject: `${team ? `${team}: ` : ''}${playerName} just dropped out, 12h before the game`,
+    text: `${playerName}${team ? ` (${team})` : ''} just dropped out 12h before the game (${dEn}).${subsInvited ? ' Subs invited automatically.' : ''} ${dashboardLink}`,
     html: `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Late reversal</td></tr></table>
     <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(playerName)} is no longer playing</h1>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> was confirmed for <b>${esc(team)}</b> and just changed their answer 12 hours before the game (${esc(dEn)}). Subs have already been invited automatically.</p>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> was confirmed${team ? ` for <b>${esc(team)}</b>` : ''} and just changed their answer 12 hours before the game (${esc(dEn)}).${subsInvited ? ' Subs have already been invited automatically.' : ''}</p>
     ${nlEmailButton(dashboardLink, 'View the game', barColor)}`
   };
   const assembled = assembleBilingualEmail(languageMode, { fr, en });
@@ -18637,14 +18645,17 @@ function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, tea
 // this too.
 // The late-reversal alert for one player and event, rendered and not sent
 // (the Comms preview shows it), and who it goes to.
-function renderLateReversalForLeague(env, leagueRow, ev, contact) {
+// opts.team / opts.subsInvited: see renderLateReversalAdminAlert (the
+// Comms preview passes neither: the roster team, subs invited).
+function renderLateReversalForLeague(env, leagueRow, ev, contact, opts = {}) {
   const languageMode = leagueRow.language_mode || 'both';
   const dayLabelFr = reminderDayLabel(ev.date, 'fr');
   const dayLabelEn = reminderDayLabel(ev.date, 'en');
   const dashboardLink = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
   return renderLateReversalAdminAlert({
     leagueName: leagueRow.name, leagueColor: leagueRow.color,
-    playerName: contact.name, team: contact.preferred_team || '', dayLabelFr, dayLabelEn, ev, dashboardLink, languageMode
+    playerName: contact.name, team: opts.team !== undefined ? (opts.team || '') : (contact.preferred_team || ''), dayLabelFr, dayLabelEn, ev, dashboardLink, languageMode,
+    subsInvited: opts.subsInvited !== undefined ? !!opts.subsInvited : true
   });
 }
 async function leagueAdminEmails(env, leagueId) {
@@ -18653,13 +18664,13 @@ async function leagueAdminEmails(env, leagueId) {
   ).bind(leagueId).all()).results || [];
 }
 
-async function sendLateReversalAdminAlert(env, leagueId, ev, contact) {
+async function sendLateReversalAdminAlert(env, leagueId, ev, contact, opts = {}) {
   const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow) return;
   const admins = await leagueAdminEmails(env, leagueId);
   if (!admins.length) return;
 
-  const mail = renderLateReversalForLeague(env, leagueRow, ev, contact);
+  const mail = renderLateReversalForLeague(env, leagueRow, ev, contact, opts);
   for (const admin of admins) {
     try {
       await sendMail(env, admin.email, mail.subject, mail.text, mail.html);
@@ -18888,7 +18899,9 @@ async function renderLeagueReminderForContact(env, leagueRow, ev, contact, kind,
   const { inLink, outLink, optOutLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
   return (kind === 'reminder_72h' || kind === 'reminder_24h')
     ? renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang })
-    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team, optOutLink, forcedLang });
+    // A no-teams league's single pool (HEADCOUNT_TEAM_NAME, 'Tous') is internal:
+    // the details email said 'Équipe Tous / Team Tous'.
+    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: team === HEADCOUNT_TEAM_NAME ? null : team, optOutLink, forcedLang });
 }
 
 async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog = false, drainNow = false, budget = null, quietHours = false } = {}) {
@@ -19538,8 +19551,17 @@ async function leagueRsvpConfirmPost(req, env, url) {
     // reversal alert to the admins, as before.
     const isLateReversalOptOut = status === 'out' && row && row.status === 'in' && form.get('src') === 'logistics12h';
     await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'self', ev.season);
-    if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
-    if (isLateReversalOptOut) await sendLateReversalAdminAlert(env, leagueId, ev, contact);
+    const shortage = status === 'out' ? await maybeInviteSubsForShortage(env, leagueId, ev, contact) : null;
+    if (isLateReversalOptOut) {
+      // The alert names the team the player was on for THIS game (a
+      // pickup's drawn team, a sub's placed team -- not their roster
+      // team, which a pickup player or a sub does not have) and says subs
+      // were invited only when they were.
+      const placed = await env.DB.prepare('SELECT team FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
+      const team = placed && placed.team && placed.team !== HEADCOUNT_TEAM_NAME ? placed.team : '';
+      const subsInvited = !!(shortage && (shortage.invited > 0 || shortage.reason === 'recently-invited'));
+      await sendLateReversalAdminAlert(env, leagueId, ev, contact, { team, subsInvited });
+    }
   }
   const back = `/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}`;
   return new Response(null, { status: 303, headers: { location: back, 'cache-control': 'no-store' } });

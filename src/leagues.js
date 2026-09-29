@@ -1511,7 +1511,19 @@ export async function handleLeagueEventCancel(req, env) {
     return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
   }
   await env.DB.prepare("UPDATE events SET state = 'cancelled' WHERE id = ? AND league_id = ?").bind(eventId, leagueId).run();
-  return Response.json({ ok: true, event: { id: eventId, state: 'cancelled' } });
+  // Its mail not yet sent goes with it (as SMBHL's cancel does): league
+  // reminders are pre-rendered and sent as stored, and a sub call does not
+  // look at the game's state, so a reminder waiting out quiet hours or a
+  // later sub-call wave went out for a game that was no longer happening.
+  const dropped = await cancelUnsentEventMail(env, eventId);
+  return Response.json({ ok: true, event: { id: eventId, state: 'cancelled' }, cancelled_outbox: dropped });
+}
+
+async function cancelUnsentEventMail(env, eventId) {
+  const r = await env.DB.prepare(
+    "UPDATE outbox SET cancelled = 1, error = COALESCE(error, 'event cancelled') WHERE event_id = ? AND sent_at IS NULL AND cancelled = 0"
+  ).bind(eventId).run();
+  return (r.meta && r.meta.changes) || 0;
 }
 
 // Events polish task (C1): DELETE -- for mistakes and holidays, the
@@ -5075,6 +5087,7 @@ export async function resolvePlayoffSeeding(env, leagueId, season) {
     for (const ev of evs) {
       if (!ev.result_entered_at && ev.state !== 'cancelled') {
         await env.DB.prepare("UPDATE events SET state = 'cancelled' WHERE id = ?").bind(ev.id).run();
+        await cancelUnsentEventMail(env, ev.id);
       }
     }
 
