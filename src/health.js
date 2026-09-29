@@ -81,11 +81,19 @@ async function putJson(db, key, value) {
 
 // Written at the start and the end of every pass. A pass that starts and
 // never finishes (a crash, a timeout) leaves finished_at behind started_at.
-export async function recordHeartbeat(env, phase, { ok = true, error = null } = {}, now = new Date()) {
+// schemaBehind: the pass was skipped because the database is missing
+// something this deployment expects (schema_guard.js checkSchemaForPass)
+// -- a short list of what; since: when that was first seen (kept while
+// it stays behind). Cleared by the next pass that runs.
+export async function recordHeartbeat(env, phase, { ok = true, error = null, schemaBehind = null } = {}, now = new Date()) {
   const key = `health:cron:${productOf(env)}`;
   const hb = (await getJson(env.DB, key)) || {};
   if (phase === 'start') hb.started_at = nowIso(now);
-  else { hb.finished_at = nowIso(now); hb.ok = ok; hb.error = error ? String(error).slice(0, 300) : null; if (ok) hb.last_ok_at = nowIso(now); }
+  else {
+    hb.finished_at = nowIso(now); hb.ok = ok; hb.error = error ? String(error).slice(0, 300) : null;
+    if (ok) hb.last_ok_at = nowIso(now);
+    hb.schema_behind = schemaBehind ? { missing: String(schemaBehind).slice(0, 300), since: (hb.schema_behind && hb.schema_behind.since) || nowIso(now) } : null;
+  }
   await putJson(env.DB, key, hb);
   return hb;
 }
@@ -106,7 +114,8 @@ export async function cronStatus(env, now = new Date()) {
     // Never run at all is not "stale" (a fresh deployment); a run that
     // stopped is.
     stale: ageMin != null && ageMin > CRON_STALE_MINUTES[product],
-    last_error: hb.ok === false ? hb.error : null
+    last_error: hb.ok === false ? hb.error : null,
+    schema_behind: hb.schema_behind || null
   };
 }
 

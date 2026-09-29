@@ -40,10 +40,10 @@ Last updated: 22 September 2026
 
 **`DEMO_ENV=true` behavior** (`src/index.js`, top-level `fetch` handler): every response gets an `X-Robots-Tag: noindex, nofollow` header, and `GET /robots.txt` returns `Disallow: /`. This keeps the demo site out of search engines. This is currently the *only* thing gated on `DEMO_ENV` — branding, sender email, and default fallback URLs are not (see **Section 9**).
 
-**Deploying**:
+**Deploying** (each runs the read-only schema check first and stops if the database is behind; see **Section 10**):
 ```powershell
-npx wrangler deploy              # production (smbhl-rsvp)
-npx wrangler deploy --env demo   # demo (notreligue-rsvp) — never omit --env demo here
+npm run deploy:production   # production (smbhl-rsvp)
+npm run deploy:demo         # demo (notreligue-rsvp)
 ```
 
 Secrets are set per environment and do not carry over automatically:
@@ -291,29 +291,24 @@ Values still hardcoded to SMBHL specifics rather than driven by season config or
    ```powershell
    npm test -- --run
    ```
-3. **Schema check** — *optional, but do it*:
+3. **Deploy** — the schema check runs first and the deploy stops if the database is behind:
    ```powershell
-   npm run schema:check:demo         # before deploying to demo
-   npm run schema:check:production   # before deploying to production
+   npm run deploy:production   # production — smbhl-rsvp / rsvp.smbhl.com
+   npm run deploy:demo         # demo — notreligue-rsvp / rsvp.notreligue.ca
    ```
-   Read-only. Tells you exactly which migrations are pending, before you deploy anything. This is a script — it only helps if you remember to run it. The **runtime guard** below is the part that can't be skipped.
-4. **Deploy:**
-   ```powershell
-   npx wrangler deploy --env=""     # production — smbhl-rsvp / rsvp.smbhl.com
-   npx wrangler deploy --env demo   # demo — notreligue-rsvp / rsvp.notreligue.ca
-   ```
+   These run `npm run schema:check:<env>` (read-only, names the pending migrations) and then `npx wrangler deploy --env=""` / `--env demo`. A bare `npx wrangler deploy` skips the check — the **runtime guard** below still stops requests and cron passes, but only after the deploy.
    Use `--env=""` for production, not a bare `npx wrangler deploy`. Both resolve to the same thing (wrangler.jsonc's top-level config), but multiple environments are defined in this project, so a bare deploy triggers wrangler's own warning that no target was specified and just so happens to fall back to production — correct, but ambiguous: it reads as a missed `--env demo`, not a deliberate choice. `--env=""` says "production, on purpose" and skips the warning.
-5. **Verify:** load the deployed site. If it 503s with `Schema drift detected`, see below — don't just retry the deploy, it won't help.
+4. **Verify:** load the deployed site. If it 503s with `Schema drift detected`, see below — don't just retry the deploy, it won't help.
 
 ### The schema-drift guard
 
-Every real request now passes through `src/schema_guard.js` before any routing. On the first request per isolate, it checks (via `PRAGMA table_info`, read-only) that the database this deployment is actually bound to has every table/column the code expects, cached for that isolate's lifetime. If something's missing, **every request 503s** with the exact gap named, e.g.:
+Every real request now passes through `src/schema_guard.js` before any routing, and so does **every cron pass**. It checks (via `PRAGMA table_info`, read-only) that the database this deployment is actually bound to has every table/column the code expects. A clean result is kept for the isolate's lifetime, and for cron passes also per deployed version (settings key `schema:ok:<version id>`), so only the first pass after a deploy pays for the check. If something's missing, **every request 503s** with the exact gap named (except `/health/status`, which answers with reason `schema_behind` and the missing columns), and **every cron pass is skipped** — nothing sent — with the heartbeat recording it (`health:cron:*` → `schema_behind`), the external heartbeat ping reporting a failure, and the alert webhook told once. If the check itself can't run, both fail open. E.g.:
 
 ```
 table "outbox" has no column named "league_id"
 ```
 
-**To fix:** apply the named migration(s) — `npx wrangler d1 execute <db-name> --remote --file=./migrate-NNN.sql` (never `--file=./test/support/base_schema_v1.sql`, see below) — then the guard clears itself on the very next request. No redeploy needed.
+**To fix:** apply the named migration(s) — `npx wrangler d1 execute <db-name> --remote --file=./migrate-NNN.sql` (never `--file=./test/support/base_schema_v1.sql`, see below) — then the guard clears itself on the very next request and cron pass. No redeploy needed.
 
 **After adding a new `migrate-NNN.sql` file:**
 ```powershell

@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "deploy": "wrangler deploy",
+    "deploy": "npm run deploy:production",
+    "deploy:production": "npm run schema:check:production && wrangler deploy --env=\"\"",
+    "deploy:demo": "npm run schema:check:demo && wrangler deploy --env demo",
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",

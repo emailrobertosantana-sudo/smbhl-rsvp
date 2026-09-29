@@ -12,10 +12,11 @@
 // migration chain has ever added. On the first request handled by a
 // given isolate, this queries env.DB directly via PRAGMA table_info --
 // the database's own live, authoritative schema, not a trust-based
-// "we believe we already ran this" log -- and compares. The result is
-// memoized for the rest of that isolate's lifetime (a schema cannot
-// change without a new deploy, so a genuine determination made once
-// stays valid).
+// "we believe we already ran this" log -- and compares. A clean result
+// is memoized for the rest of that isolate's lifetime (the deployed code
+// can't change under it); a result that finds the database behind is
+// not, so the migration being applied clears it on the next request.
+// Scheduled passes run the same check first (checkSchemaForPass).
 //
 // FALSE-POSITIVE SAFETY (this guard must never become its own outage):
 //   - It only asserts column/table EXISTENCE. No migration in this
@@ -66,11 +67,62 @@ export async function checkSchemaOnce(env) {
   if (cachedResult) return cachedResult;
   try {
     const result = await runCheck(env);
-    cachedResult = result; // only cache a real, completed determination
+    // Only a clean result is kept: a database found behind is checked
+    // again on the next request, so applying the migration clears the 503
+    // without a redeploy (an isolate that had kept "behind" stayed down
+    // until it was recycled). The site is down meanwhile anyway, so the
+    // repeated PRAGMAs cost nothing that matters.
+    if (result.ok) cachedResult = result;
     return result;
   } catch (err) {
     return { ok: true, checkFailed: true, error: String((err && err.message) || err) };
   }
+}
+
+// Before a scheduled pass (runCronPass). Requests were guarded; the cron
+// was not, so code deployed ahead of its migrations could send an email
+// and then fail to record it -- and send it again next pass. Same check,
+// with three differences:
+//   - a clean result is remembered per DEPLOYED VERSION
+//     (env.CF_VERSION_METADATA.id, wrangler.jsonc version_metadata) in
+//     the settings table (a migrate-002 table, there in any database this
+//     code can meet), so each fresh isolate's pass reads one row instead
+//     of a PRAGMA per table: only the first pass after a deploy pays;
+//   - a database found behind is never remembered -- each pass checks
+//     again, so applying the migration (no redeploy) lets the next pass
+//     run;
+//   - as for requests, a check that cannot run fails open: the pass runs.
+// Returns { ok, missing?, checkFailed?, error?, source: 'isolate' |
+// 'version' | 'checked' }.
+export const SCHEMA_OK_PREFIX = 'schema:ok:';
+export async function checkSchemaForPass(env) {
+  if (cachedResult && cachedResult.ok) return { ok: true, source: 'isolate' };
+  const version = (env.CF_VERSION_METADATA && env.CF_VERSION_METADATA.id) || null;
+  const key = version ? `${SCHEMA_OK_PREFIX}${version}` : null;
+  if (key) {
+    try {
+      if (await env.DB.prepare('SELECT 1 FROM settings WHERE key = ?').bind(key).first()) {
+        cachedResult = { ok: true };
+        return { ok: true, source: 'version' };
+      }
+    } catch (_) { /* fall through to the real check */ }
+  }
+  let result;
+  try {
+    result = await runCheck(env);
+  } catch (err) {
+    return { ok: true, checkFailed: true, error: String((err && err.message) || err), source: 'checked' };
+  }
+  if (result.ok) {
+    cachedResult = result;
+    if (key) {
+      try {
+        await env.DB.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING')
+          .bind(key, new Date().toISOString()).run();
+      } catch (_) { /* remembering is an optimisation only */ }
+    }
+  }
+  return { ...result, source: 'checked' };
 }
 
 // One specific, human-readable line per missing thing -- "fail loudly

@@ -29,6 +29,10 @@
       "id": "e5af34ebf39b4c5d8851d7b071368a0e"
     }
   ],
+  // The deployed version's id (env.CF_VERSION_METADATA.id): the cron's
+  // schema guard remembers a clean check per version (src/schema_guard.js
+  // checkSchemaForPass). A binding, so env.demo repeats it.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "env": {
     "demo": {
       "name": "notreligue-rsvp",
@@ -65,6 +69,7 @@
           "id": "28a2834f15814fcb84bb98f62f4919f1"
         }
       ],
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
       // A genuinely separate cron trigger from SMBHL's own
       // (top-level triggers.crons, "*/5 * * * *") -- this env block's
       // own triggers REPLACE the top-level ones for this named

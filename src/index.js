@@ -69,7 +69,7 @@ import {
   gamesPerNight,
   SMBHL_SHORTFALL_MIN_SKATERS
 } from './season_config.js';
-import { checkSchemaOnce, formatSchemaDriftMessage } from './schema_guard.js';
+import { checkSchemaOnce, checkSchemaForPass, formatSchemaDriftMessage } from './schema_guard.js';
 import { gamesOverlap, overlappingGames, concurrencyClusters, byStart, gameInterval } from './league_nights.js';
 
 /* SMBHL attendance
@@ -29228,6 +29228,19 @@ async function runCronPass(env) {
   const failures = [];
   let passOk = true, passError = null;
   try { await recordHeartbeat(env, 'start'); } catch (e) { console.error(`[health] heartbeat start: ${e.message}`); }
+  // Schema guard before the pass (src/schema_guard.js checkSchemaForPass):
+  // a database behind this deployment skips the whole pass -- no mail sent
+  // that the database can't record -- and says so in the heartbeat
+  // (/health/status), the external heartbeat ping and the alert webhook.
+  // A check that can't run fails open (the pass runs).
+  let schema;
+  try { schema = await checkSchemaForPass(env); }
+  catch (e) { schema = { ok: true, checkFailed: true, error: e.message }; }
+  if (schema.checkFailed) console.error(`[schema-guard] check before the cron pass could not run; running the pass anyway: ${schema.error}`);
+  if (!schema.ok) {
+    await skipPassForSchema(env, schema.missing);
+    return;
+  }
   try {
     const { product, log, failures: f } = await runReminderPass(env);
     failures.push(...(f || []));
@@ -29251,6 +29264,25 @@ async function runCronPass(env) {
   await pingHeartbeatUrl(env, passOk);
 }
 
+// The pass is skipped: the heartbeat records it (ok false, the error,
+// schema_behind), the external ping reports a failure, and the alert
+// webhook is told once -- when it is first seen, not every pass. No email:
+// the outbox is one of the tables that may be behind.
+async function skipPassForSchema(env, missing) {
+  const message = formatSchemaDriftMessage(missing);
+  const short = missing.map(m => (m.column ? `${m.table}.${m.column}` : m.table)).join(', ');
+  console.error(`[schema-guard] cron pass skipped: ${message}`);
+  let hb = null;
+  try {
+    hb = await recordHeartbeat(env, 'end', { ok: false, error: `Schema behind the deployed code: ${short}`, schemaBehind: short });
+  } catch (e) { console.error(`[health] heartbeat end: ${e.message}`); }
+  await pingHeartbeatUrl(env, false);
+  if (!hb || !hb.schema_behind || hb.schema_behind.since === hb.finished_at) {
+    await postWebhook(env, 'Cron pass skipped: database schema behind / Passage du cron sauté : base de données en retard',
+      `Missing / Manquant : ${short}. Apply the pending migration(s); the next pass will run. / Appliquer les migrations en attente ; le prochain passage se fera.`);
+  }
+}
+
 // GET /health/status: for an external uptime monitor (and a person). 200 when the
 // cron is running and every open problem has reached the operator; 503
 // otherwise -- so a monitor polling it alerts even when this Worker's own
@@ -29263,7 +29295,11 @@ async function handleHealth(req, env) {
   const open = rows.map(r => { try { return JSON.parse(r.value); } catch (_) { return null; } }).filter(a => a && !a.resolved_at);
   const untold = open.filter(a => !a.ops_notified_at && now.getTime() - Date.parse(a.first_seen) > 30 * 60000);
   const capReached = open.some(a => a.key.startsWith('mail_cap:'));
+  // The request guard lets this route through (it names what is behind
+  // here, as JSON, rather than the plain-text 503 every other route gets).
+  const schemaNow = env.DB ? await checkSchemaOnce(env) : { ok: true };
   const reasons = [
+    (cron.schema_behind || !schemaNow.ok) && 'schema_behind',
     cron.stale && 'cron_stale',
     cron.last_error && 'cron_last_pass_failed',
     untold.length && 'alerts_not_delivered',
@@ -29271,7 +29307,8 @@ async function handleHealth(req, env) {
   ].filter(Boolean);
   const body = {
     ok: reasons.length === 0, product: cron.product, reasons,
-    cron: { last_ok_at: cron.last_ok_at, age_minutes: cron.age_minutes, stale: cron.stale },
+    cron: { last_ok_at: cron.last_ok_at, age_minutes: cron.age_minutes, stale: cron.stale, ...(cron.schema_behind ? { schema_behind: cron.schema_behind } : {}) },
+    ...(!schemaNow.ok ? { schema_missing: schemaNow.missing.map(m => (m.column ? `${m.table}.${m.column}` : m.table)) } : {}),
     open_alerts: open.length
   };
   if (env.ADMIN_KEY && req.headers.get('x-admin') === env.ADMIN_KEY) {
@@ -29317,7 +29354,9 @@ async function handleFetch(req, env, ctx) {
       // nothing to remember to run separately. Fails loudly with the
       // exact missing table/column rather than letting broken code run
       // silently against a database it doesn't match.
-      if (env.DB) {
+      // /health/status is let through: it reports the drift itself (as JSON,
+      // with reason 'schema_behind'), so a monitor sees why.
+      if (env.DB && url.pathname !== '/health/status') {
         const schemaCheck = await checkSchemaOnce(env);
         if (!schemaCheck.ok) {
           const message = formatSchemaDriftMessage(schemaCheck.missing);
