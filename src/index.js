@@ -12517,6 +12517,40 @@ async function eventSeasonConfig(env, ev) {
     : getLeagueSeasonConfig(env, leagueId, ev.season);
 }
 
+// Nights (D1): a no-teams or pickup player who hasn't answered yet can play
+// only one of a night's games at the same time, and a yes fills the first
+// of them to its maximum, then the next. So each such game counts only its
+// share of those players: what the games before it (same time, in time
+// order) don't need to fill up. With no maximum set they are shared evenly.
+// waiting: [{ is_goalie }]; cap(isGoalie) is the game's maximum for that
+// position. Returns the waiting players this game counts.
+async function concurrentWaitingShare(env, ev, waiting, cap) {
+  if (!waiting.length || !ev.league_id || ev.league_id === SMBHL_LEAGUE_ID) return waiting;
+  const cluster = concurrencyClusters((await nightGamesOf(env, ev)).filter(g => g.state === 'open')).find(c => c.some(g => g.id === ev.id));
+  if (!cluster || cluster.length < 2) return waiting;
+  const idx = cluster.findIndex(g => g.id === ev.id);
+  const out = [];
+  for (const goalie of [true, false]) {
+    const mine = waiting.filter(w => (w.is_goalie === 1) === goalie);
+    const max = cap(goalie);
+    let keep;
+    if (!(max > 0)) {
+      keep = Math.floor(mine.length / cluster.length) + (idx < mine.length % cluster.length ? 1 : 0);
+    } else {
+      keep = mine.length;
+      for (const g of cluster.slice(0, idx)) {
+        const n = (await env.DB.prepare(
+          `SELECT COUNT(*) AS n FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
+            WHERE r.event_id = ? AND r.status = 'in' AND COALESCE(c.is_goalie, 0) = ?`
+        ).bind(g.id, goalie ? 1 : 0).first()).n;
+        keep -= Math.min(keep, Math.max(0, max - n));
+      }
+    }
+    out.push(...mine.slice(0, keep));
+  }
+  return out;
+}
+
 // { goalies, skaters } still available to a team for this event.
 async function availableForTeam(env, ev, team, cfg, isHeadcount) {
   const e = await expected(env.DB, ev.id, team, cfg);
@@ -12533,7 +12567,10 @@ async function availableForTeam(env, ev, team, cfg, isHeadcount) {
           ${isHeadcount ? '' : 'AND c.preferred_team = ?'}
           AND c.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)`
     ).bind(...(isHeadcount ? [leagueId, ev.id] : [leagueId, team, ev.id])).all()).results || [];
-    for (const r of rows) { if (r.is_goalie === 1 && goalies < (cfg.maxGoalies || 1)) goalies++; else skaters++; }
+    const counted = isHeadcount
+      ? await concurrentWaitingShare(env, ev, rows, g => (g ? (cfg.maxGoalies != null ? cfg.maxGoalies : (cfg.goaliesPerTeam || 0)) : (cfg.skatersPerTeam || 0)))
+      : rows;
+    for (const r of counted) { if (r.is_goalie === 1 && goalies < (cfg.maxGoalies || 1)) goalies++; else skaters++; }
   }
   return { goalies, skaters };
 }
@@ -12677,11 +12714,14 @@ async function pickupPool(env, ev, cfg, { confirmedOnly }) {
       WHERE r.event_id = ? AND ${confirmedOnly ? "r.status = 'in'" : "r.status != 'out'"}`
   ).bind(ev.id).all()).results || [];
   if (!confirmedOnly) {
-    const waiting = (await env.DB.prepare(
+    const waitingAll = (await env.DB.prepare(
       `SELECT COALESCE(c.is_goalie, 0) AS g FROM contacts c
         WHERE c.league_id = ? AND c.role = 'roster' AND COALESCE(c.is_active, 1) = 1
           AND c.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)`
     ).bind(ev.league_id, ev.id).all()).results || [];
+    // Nights (D1): shared with the games at the same time.
+    const t0 = pickupPoolTargets(cfg);
+    const waiting = (await concurrentWaitingShare(env, ev, waitingAll.map(w => ({ ...w, is_goalie: w.g })), g => (g ? t0.maxGoalies : t0.maxSkaters)));
     rows.push(...waiting);
   }
   const t = pickupPoolTargets(cfg);
