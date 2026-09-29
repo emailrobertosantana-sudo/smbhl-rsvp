@@ -46,7 +46,11 @@
         "LEAGUE_PRODUCT": "true",
         // Same meaning as the top-level MAIL_DAILY_CAP (this env block's
         // vars replace, not merge with, the top-level ones).
-        "MAIL_DAILY_CAP": "10"
+        "MAIL_DAILY_CAP": "10",
+        // Demo shares production's Resend account: a HARD cap on every
+        // kind of email (MAIL_DAILY_CAP only holds back sub calls). See
+        // src/mail_queue.js hardDailyCapFromEnv.
+        "MAIL_HARD_DAILY_CAP": "10"
       },
       "d1_databases": [
         {

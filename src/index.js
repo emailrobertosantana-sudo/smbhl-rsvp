@@ -11,7 +11,7 @@ import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateT
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart, eventHasStarted } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
-import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation, claimOutboxRow, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
+import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation, claimOutboxRow, hardDailyCapFromEnv, hardCapError, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
 import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
@@ -10653,6 +10653,10 @@ function extractEmailAddress(fromValue) {
 // drain's own sends -- the drain defers its rows itself.
 async function sendMail(env, to, subject, text, html = null, attachments = null, leagueCfg = null, opts = {}) {
   try {
+    // A hard daily cap (demo): every kind counts; reached, the email waits
+    // for tomorrow like a Resend quota refusal (src/mail_queue.js).
+    const hard = hardDailyCapFromEnv(env);
+    if (hard && env.DB && (await readDailyCount(env.DB)).sent >= hard) throw hardCapError(hard);
     await sendMailViaResend(env, to, subject, text, html, attachments, leagueCfg);
   } catch (e) {
     if (!opts.fromQueue && env.DB && isResendQuotaError(e)) {
@@ -29226,6 +29230,8 @@ async function handleFetch(req, env, ctx) {
 
 export {
   body,
+  // The hard daily cap (part163) on a direct send.
+  sendMail,
   formatFixtureText,
   formatMsgTime,
   renderCancellationEmail,

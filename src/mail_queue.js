@@ -203,6 +203,21 @@ export function dailyCapFromEnv(env) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
 }
 
+// HARD daily cap (MAIL_HARD_DAILY_CAP): every kind of email counts, and once
+// the day's count reaches it nothing more is sent that UTC day -- mail waits
+// for the next one, exactly as when Resend refuses for its own quota. For a
+// deployment that shares a Resend account it must not spend: demo shares
+// production's 90 a day, and MAIL_DAILY_CAP only holds back sub calls (demo
+// sent 11 and 13 on Sept 27-28 against its 10). Not set on production.
+export function hardDailyCapFromEnv(env) {
+  const n = Number(env && env.MAIL_HARD_DAILY_CAP);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+export function hardCapError(cap) {
+  // Worded so isResendQuotaError() treats it as Resend's own quota refusal.
+  return new Error(`resend 429: daily quota reached -- this deployment's hard daily cap (${cap}, MAIL_HARD_DAILY_CAP)`);
+}
+
 export function utcDay(now = new Date()) {
   return now.toISOString().slice(0, 10);
 }
