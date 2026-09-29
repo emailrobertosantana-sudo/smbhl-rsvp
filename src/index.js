@@ -12400,7 +12400,9 @@ async function weeklyDrawPoolStatus(env, ev, cfg, confirmedTotal) {
     `SELECT COUNT(*) AS c FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
       WHERE r.event_id = ? AND r.status = 'in' AND c.is_goalie = 1`
   ).bind(ev.id).first();
-  const maxGoaliesPerTeam = cfg.maxGoalies || cfg.goaliesPerTeam || 0;
+  // The season's resolved maximum (never below its minimum,
+  // normalizeSeasonConfig), as teamState reads it.
+  const maxGoaliesPerTeam = cfg.maxGoalies != null ? cfg.maxGoalies : (cfg.goaliesPerTeam || 0);
   const confirmedGoalies = Math.min(Number(goalieRow && goalieRow.c) || 0, maxGoaliesPerTeam * teamNames.length);
   const confirmedSkaters = confirmedTotal - confirmedGoalies;
   const neededSkaters = (cfg.minSkaters || 0) * teamNames.length;

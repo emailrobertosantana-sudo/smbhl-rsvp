@@ -1991,7 +1991,14 @@ export async function handleLeagueSeasonPublish(req, env) {
     // a real number -- so a headcount league that has never set a
     // distinct max keeps min===max, unchanged from before this task.
     const maxG = body.max_goalies !== undefined ? Number(body.max_goalies) : (leagueRow && leagueRow.max_goalies);
-    if (Number.isFinite(maxG) && maxG >= 0) {
+    // A maximum under the minimum contradicts it (one goalie wanted, none
+    // allowed): refused when this request sets it, as the league settings
+    // route refuses it; a stale league-row value under the minimum is
+    // left out (the maximum then defaults to the minimum).
+    if (body.max_goalies !== undefined && Number.isFinite(maxG) && Number.isFinite(minG) && maxG < minG) {
+      return Response.json({ ok: false, error: 'The maximum goalies must be at least the minimum.', errorKey: 'HEADCOUNT_MAX_GOALIES_TOO_LOW' }, { status: 400 });
+    }
+    if (Number.isFinite(maxG) && maxG >= 0 && !(Number.isFinite(minG) && maxG < minG)) {
       config.maxGoalies = maxG;
     }
   }

@@ -155,8 +155,14 @@ export function normalizeSeasonConfig(rawConfig) {
     // This is what guarantees min===max, unchanged from before this
     // task, for every league that has never set a real, distinct
     // maximum.
-    maxGoalies: (rawConfig.maxGoalies !== undefined && rawConfig.maxGoalies !== null)
-      ? Number(rawConfig.maxGoalies) : resolvedGoaliesPerTeam,
+    //
+    // Never below the minimum: a maximum under the goalie minimum
+    // contradicts it (a season saved with goaliesPerTeam 1, maxGoalies 0
+    // wants a goalie and counts none -- teamState caps at the max), so it
+    // reads as the minimum. Publishing refuses one now; this repairs any
+    // season saved before that.
+    maxGoalies: (rawConfig.maxGoalies !== undefined && rawConfig.maxGoalies !== null && Number.isFinite(Number(rawConfig.maxGoalies)))
+      ? Math.max(Number(rawConfig.maxGoalies), resolvedGoaliesPerTeam) : resolvedGoaliesPerTeam,
     skatersPerTeam: Number(rawConfig.skatersPerTeam) || DEFAULT_SEASON_CONFIG.skatersPerTeam,
     minSkaters: Number(rawConfig.minSkaters) || DEFAULT_SEASON_CONFIG.minSkaters,
     // Whether minSkaters above came from the league's own configuration
