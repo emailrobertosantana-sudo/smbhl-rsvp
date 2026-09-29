@@ -86,6 +86,9 @@ export const ERROR_I18N = {
   // Nights (2026-09-30): which games overlap is worked out from their
   // times, so every league game needs both.
   START_TIME_REQUIRED: { fr: "Indique l'heure de début du match.", en: "Add the game's start time." },
+  MATCHUP_TEAM_BUSY: { fr: 'Une de ces équipes joue déjà un match à la même heure.', en: 'One of these teams already plays a game at the same time.' },
+  GAME_TIME_DOUBLE_BOOKS: { fr: "À cette heure, {players} seraient dans deux matchs en même temps. Retire-les d'un des deux matchs d'abord.", en: 'At this time, {players} would be in two games at once. Take them out of one of the games first.' },
+  PLAYER_IN_OVERLAPPING_GAME: { fr: "Ce joueur est déjà inscrit à un match qui se joue en même temps. Retire-le de ce match d'abord.", en: 'This player is already in a game at the same time. Take them out of that game first.' },
   END_TIME_REQUIRED: { fr: "Indique l'heure de fin du match : elle sert à savoir quels matchs se chevauchent.", en: "Add the game's end time: it's how we tell which games overlap." },
   SEASON_REQUIRED: { fr: "Il te faut une saison active avant de créer un match. Lance ta saison depuis le tableau de bord.", en: 'You need an active season before creating an event. Start your season from the dashboard.' },
   EVENT_DATE_EXISTS: { fr: 'Un match existe déjà à cette date dans ta ligue.', en: 'An event already exists for this date in your league.' },

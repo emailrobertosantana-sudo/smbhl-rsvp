@@ -27,6 +27,7 @@ import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail, nl
 import { hasCapability } from './super_admin.js';
 import { applyReminderWindowSkipRule } from './reminder_scheduling.js';
 import { usesAdvancedReminders, getEmailSettings, emailSettingsKey } from './reminders.js';
+import { concurrencyClusters, teamClash, doubleBookedPlayers } from './league_nights.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -1363,6 +1364,9 @@ export async function handleLeagueEventMatchupUpdate(req, env) {
   }
   const m = resolveMatchupInput(cfg, body);
   if (m.error) return Response.json(m.error, { status: 400 });
+  if (m.homeTeam && await teamClash(env.DB, leagueId, existing, [m.homeTeam, m.awayTeam])) {
+    return Response.json({ ok: false, error: 'One of these teams already plays a game at the same time.', errorKey: 'MATCHUP_TEAM_BUSY' }, { status: 409 });
+  }
   await env.DB.prepare('UPDATE events SET home_team = ?, away_team = ? WHERE id = ? AND league_id = ?').bind(m.homeTeam, m.awayTeam, eventId, leagueId).run();
   return Response.json({ ok: true, event: { id: eventId, home_team: m.homeTeam, away_team: m.awayTeam } });
 }
@@ -1452,6 +1456,17 @@ export async function handleLeagueEventUpdate(req, env) {
     const m = resolveMatchupInput(cfgForStructure, body);
     if (m.error) return Response.json(m.error, { status: 400 });
     homeTeam = m.homeTeam; awayTeam = m.awayTeam;
+  }
+
+  // Nights (D1): an edit may not put a team, or a player, in two games at
+  // once.
+  const edited = { ...existing, start_time: startTime, end_time: endTime, home_team: homeTeam, away_team: awayTeam };
+  if (isFixedEvent && homeTeam && awayTeam && await teamClash(env.DB, leagueId, edited, [homeTeam, awayTeam])) {
+    return Response.json({ ok: false, error: 'One of these teams already plays a game at the same time.', errorKey: 'MATCHUP_TEAM_BUSY' }, { status: 409 });
+  }
+  const doubleBooked = await doubleBookedPlayers(env.DB, leagueId, edited);
+  if (doubleBooked.length) {
+    return Response.json({ ok: false, error: `${doubleBooked.join(', ')} would be in two games at once at this time.`, errorKey: 'GAME_TIME_DOUBLE_BOOKS', players: doubleBooked }, { status: 409 });
   }
 
   await env.DB.prepare(
@@ -2338,9 +2353,13 @@ export function groupNights(events) {
   }
   return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, evs]) => {
     const sorted = [...evs].sort((x, y) => (x.start_time || '99:99').localeCompare(y.start_time || '99:99') || String(x.id).localeCompare(String(y.id)));
-    const timeOf = e => e.start_time || `none:${e.id}`;
-    const times = [...new Set(sorted.map(timeOf))];
-    return { date, events: sorted, groupOf: sorted.map(e => times.indexOf(timeOf(e))) };
+    // Nights (D1): games that overlap are concurrent (league_nights.js) --
+    // with end times, 10:00-11:00 and 10:30-11:30 too, not only the same
+    // start. A game with no end time is concurrent only with another that
+    // starts at the same time, as before.
+    const clusterOf = new Map();
+    concurrencyClusters(sorted).forEach((c, i) => c.forEach(e => clusterOf.set(e, i)));
+    return { date, events: sorted, groupOf: sorted.map(e => clusterOf.get(e)) };
   });
 }
 

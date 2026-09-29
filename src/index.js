@@ -70,6 +70,7 @@ import {
   SMBHL_SHORTFALL_MIN_SKATERS
 } from './season_config.js';
 import { checkSchemaOnce, formatSchemaDriftMessage } from './schema_guard.js';
+import { gamesOverlap, overlappingGames, concurrencyClusters, byStart, gameInterval } from './league_nights.js';
 
 /* SMBHL attendance
    Signed links, RSVP endpoint, bilingual page, own-team view.
@@ -10182,7 +10183,7 @@ async function submitEventEdit() {
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {
-      errEl.textContent = window.__errorText(data.errorKey, data.error);
+      errEl.textContent = window.__errorText(data.errorKey, data.error, data.players ? { players: data.players.join(', ') } : null);
       errEl.style.display = 'block';
       return;
     }
@@ -12961,7 +12962,7 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
     ? (need === 'goalie' ? `c.role = 'sub_skater' AND c.is_goalie = 1` : `c.role = 'sub_skater' AND c.is_goalie != 1`)
     : `c.role = ?`;
   const poolBinds = usesIndependentGoalieAxis ? [] : [need === 'goalie' ? 'sub_goalie' : 'sub_skater'];
-  const pool = (await env.DB.prepare(
+  let pool = (await env.DB.prepare(
     `SELECT c.player_id FROM contacts c
       WHERE ${poolCondition} AND c.league_id = ? AND c.opted_out = 0 AND c.dormant = 0 AND c.email IS NOT NULL
         ${requireActive ? 'AND c.is_active = 1' : ''}
@@ -12974,6 +12975,12 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
                 AND dedup_key NOT LIKE 'remind:%')
       ORDER BY ${SUB_POOL_ORDER_BY}`
   ).bind(...poolBinds, leagueId, ev.id, ev.id, ev.id, ...subPoolOrderBinds(ev)).all()).results || [];
+  // Nights (D1): a sub already playing a game that overlaps this one is
+  // not called for it.
+  if (pool.length && leagueId !== SMBHL_LEAGUE_ID) {
+    const busy = await playersInOverlappingGames(env, ev);
+    if (busy.size) pool = pool.filter(p => !busy.has(p.player_id));
+  }
 
   if (!pool.length) { if (emptyPools) emptyPools.add(need); return 0; }
   const hrs = hoursOut(ev);
@@ -13061,6 +13068,13 @@ async function openSpots(db, eventId, team, need, cfg) {
 export async function acceptAvailability(env, ev, playerId, need) {
   const now = new Date().toISOString();
   const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
+  // Nights (D1): a sub already playing a game that overlaps this one can't
+  // take a spot in it too. Nothing is recorded, so the waitlist can't
+  // place them here later either.
+  if (leagueId !== SMBHL_LEAGUE_ID) {
+    const clash = await overlapConflict(env, ev, playerId);
+    if (clash) return { placed: null, overlap: clash };
+  }
   await env.DB.prepare(
     `INSERT INTO availability (event_id,player_id,need,status,answered_at,league_id)
      VALUES (?,?,?,'yes',?,?)
@@ -13139,15 +13153,19 @@ export async function acceptAvailability(env, ev, playerId, need) {
 }
 
 async function fillFromWaitlist(env, ev, team, need, cfg) {
-  const next = await env.DB.prepare(
+  const waiting = (await env.DB.prepare(
     `SELECT a.player_id FROM availability a
        JOIN contacts c ON c.player_id = a.player_id
       WHERE a.event_id = ? AND a.need = ? AND a.status = 'yes'
         AND c.opted_out = 0
         AND a.player_id NOT IN (SELECT player_id FROM rsvp
               WHERE event_id = ? AND player_id IS NOT NULL)
-      ORDER BY (c.preferred_team = ?) DESC, a.answered_at ASC LIMIT 1`
-  ).bind(ev.id, need, ev.id, team).first();
+      ORDER BY (c.preferred_team = ?) DESC, a.answered_at ASC`
+  ).bind(ev.id, need, ev.id, team).all()).results || [];
+  // Nights (D1): not someone who has since been placed in a game that
+  // overlaps this one.
+  const busy = (ev.league_id && ev.league_id !== SMBHL_LEAGUE_ID) ? await playersInOverlappingGames(env, ev) : new Set();
+  const next = waiting.find(w => !busy.has(w.player_id));
   if (!next) return false;
 
   const now = new Date().toISOString();
@@ -14325,6 +14343,12 @@ async function availRoute(req, env, url) {
 
   const r = await acceptAvailability(env, ev, playerId, need);
   const logoTooltip = await getStandingsTooltip(env);
+  if (r.overlap) {
+    const o = whenLine(r.overlap);
+    return page('D\u00e9j\u00e0 inscrit', `<h1>Tu joues d\u00e9j\u00e0 \u00e0 cette heure-l\u00e0
+      <span class="en">You're already playing at that time</span></h1>
+      <div class="card"><p>Tu es inscrit \u00e0 un autre match qui se joue en m\u00eame temps (${esc(o.fr)}). On ne peut pas te mettre dans les deux.<span class="en">You're in another game at the same time (${esc(o.en)}). We can't put you in both.</span></p></div>`, logoTooltip);
+  }
   if (r.pool) {
     // A pickup game before its draw: in, team to come.
     return page('Confirmé', `<h1>Tu es inscrit pour ce match
@@ -18664,6 +18688,14 @@ async function verifyLeagueRsvpToken(env, leagueId, eventId, playerId, token) {
 // see leagueRsvpPost's own comment and test/league_rsvp_no_teammate_edit.spec.js.
 async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, statusBy = 'self', season = null) {
   const now = new Date().toISOString();
+  // Nights (D1): no one is in two games that overlap -- a yes to a game
+  // that overlaps one the player is already in is refused, by every route
+  // that writes one (the player's own answer, the admin's, the night's).
+  if (status === 'in' && leagueId !== SMBHL_LEAGUE_ID) {
+    const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+    const clash = ev ? await overlapConflict(env, ev, playerId) : null;
+    if (clash) return { ok: false, errorKey: 'PLAYER_IN_OVERLAPPING_GAME', clash };
+  }
   // Season-level team-structure override task: this event's own SEASON
   // (not just the league's permanent default) decides what gets
   // written to rsvp.team -- a headcount pickup season on an otherwise
@@ -18681,6 +18713,74 @@ async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, 
      ON CONFLICT(event_id, player_id) DO UPDATE SET
        status = excluded.status, status_by = excluded.status_by, updated_at = excluded.updated_at`
   ).bind(eventId, playerId, team, status, role, statusBy, now, leagueId).run();
+  return { ok: true };
+}
+
+/* ---------- Nights (D1): a league's games on the same day ----------
+ * One group of players across the day's games; which games overlap is in
+ * src/league_nights.js. No one is in two games that overlap: every route
+ * that puts a player IN a game checks it (overlapConflict), and sub calls
+ * and the waitlist skip anyone already in an overlapping game.
+ */
+
+// The night of `ev`: its league's games that day, not cancelled, in time
+// order (ev itself included). SMBHL has no nights.
+async function nightGamesOf(env, ev) {
+  const leagueId = ev && ev.league_id;
+  if (!leagueId || leagueId === SMBHL_LEAGUE_ID) return ev ? [ev] : [];
+  const rows = (await env.DB.prepare(
+    `SELECT * FROM events WHERE league_id = ? AND date = ? AND state != 'cancelled'`
+  ).bind(leagueId, ev.date).all()).results || [];
+  if (!rows.some(r => r.id === ev.id)) rows.push(ev);
+  return rows.sort(byStart);
+}
+
+// A league's season configs by season name, each read once.
+function seasonConfigCache(env, leagueId) {
+  const seen = new Map();
+  return season => {
+    const k = season || '';
+    if (!seen.has(k)) seen.set(k, getLeagueSeasonConfig(env, leagueId, season));
+    return seen.get(k);
+  };
+}
+
+// Whether a player's row puts them in this game: 'in' and, for a fixed-
+// teams game with its matchup, on one of its two teams -- the rule every
+// count of the game already uses (leagueGameTeams). An 'in' left on a game
+// their team no longer plays does not count.
+function rowCountsAsIn(game, row, cfg) {
+  if (!row || row.status !== 'in') return false;
+  if ((cfg.teamStructure || 'fixed') !== 'fixed' || !row.team) return true;
+  return gameTeamNames(game, cfg).includes(row.team);
+}
+
+// The game overlapping `ev` that the player is already in, or null.
+async function overlapConflict(env, ev, playerId) {
+  const others = overlappingGames(ev, await nightGamesOf(env, ev));
+  if (!others.length) return null;
+  const cfgOf = seasonConfigCache(env, ev.league_id);
+  for (const g of others) {
+    const row = await env.DB.prepare('SELECT status, team FROM rsvp WHERE event_id = ? AND player_id = ?').bind(g.id, playerId).first();
+    if (rowCountsAsIn(g, row, await cfgOf(g.season))) return g;
+  }
+  return null;
+}
+
+// Everyone already in a game that overlaps `ev`.
+async function playersInOverlappingGames(env, ev) {
+  const busy = new Set();
+  const others = overlappingGames(ev, await nightGamesOf(env, ev));
+  if (!others.length) return busy;
+  const cfgOf = seasonConfigCache(env, ev.league_id);
+  for (const g of others) {
+    const cfg = await cfgOf(g.season);
+    const rows = (await env.DB.prepare(
+      `SELECT player_id, status, team FROM rsvp WHERE event_id = ? AND status = 'in' AND player_id IS NOT NULL`
+    ).bind(g.id).all()).results || [];
+    for (const r of rows) if (rowCountsAsIn(g, r, cfg)) busy.add(r.player_id);
+  }
+  return busy;
 }
 
 // Cheap self-contained lookup so writeLeagueRsvpStatus (and anything
@@ -19718,6 +19818,7 @@ async function leagueRsvpGet(req, env, url) {
       errBadStatus: 'Réponse invalide. Réessaie.',
       errBadToken: 'Ce lien est invalide ou expiré.',
       errLocked: "Cet événement n'accepte plus de réponses.",
+      errOverlap: 'Tu es déjà inscrit à un match qui se joue en même temps.',
       errNetwork: 'Erreur réseau. Réessaie.',
       ...(venueMapLink ? { viewOnMap: 'Voir sur la carte' } : {})
     } : {
@@ -19740,6 +19841,7 @@ async function leagueRsvpGet(req, env, url) {
       errBadStatus: 'Invalid response. Please try again.',
       errBadToken: 'This link is invalid or expired.',
       errLocked: 'This event is no longer accepting responses.',
+      errOverlap: "You're already in a game at the same time.",
       errNetwork: 'Network error. Please try again.',
       ...(venueMapLink ? { viewOnMap: 'View on map' } : {})
     };
@@ -19894,7 +19996,7 @@ function showAnswerForm() {
 // via errorKey, same pattern as every other page's
 // window.__errorText() -- this page just can't use that shared helper
 // (see nlAuthScript's own comment for why its script is separate).
-var RV_ERR_KEY_MAP = { RSVP_BAD_STATUS: 'errBadStatus', RSVP_BAD_TOKEN: 'errBadToken', RSVP_LOCKED: 'errLocked' };
+var RV_ERR_KEY_MAP = { RSVP_BAD_STATUS: 'errBadStatus', RSVP_BAD_TOKEN: 'errBadToken', RSVP_LOCKED: 'errLocked', RSVP_OVERLAPPING_GAME: 'errOverlap' };
 document.querySelectorAll('.rv-answers .nl-btn[data-v]').forEach(function(b) {
   b.addEventListener('click', async function() {
     var v = b.dataset.v;
@@ -19968,8 +20070,9 @@ async function leagueRsvpConfirmPost(req, env, url) {
     // The 12h email's "can't make it" from a confirmed player: the late-
     // reversal alert to the admins, as before.
     const isLateReversalOptOut = status === 'out' && row && row.status === 'in' && form.get('src') === 'logistics12h';
-    await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'self', ev.season);
-    const shortage = status === 'out' ? await maybeInviteSubsForShortage(env, leagueId, ev, contact) : null;
+    const written = await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'self', ev.season);
+    if (!written.ok) return leagueRsvpNotice('Tu es déjà inscrit à un match qui se joue en même temps.', "You're already in a game at the same time.");
+    const shortage =status === 'out' ? await maybeInviteSubsForShortage(env, leagueId, ev, contact) : null;
     if (isLateReversalOptOut) {
       // The alert names the team the player was on for THIS game (a
       // pickup's drawn team, a sub's placed team -- not their roster
@@ -20004,7 +20107,8 @@ async function leagueRsvpPost(req, env, url) {
     return Response.json({ ok: false, error: 'This event is no longer accepting responses.', errorKey: 'RSVP_LOCKED' }, { status: 409 });
   }
 
-  await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'self', ev.season);
+  const written = await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'self', ev.season);
+  if (!written.ok) return Response.json({ ok: false, error: 'Already in a game at the same time.', errorKey: 'RSVP_OVERLAPPING_GAME' }, { status: 409 });
   if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
   return Response.json({ ok: true, league_id: leagueId, status });
 }
@@ -20049,7 +20153,8 @@ async function handleLeagueAdminSetRsvp(req, env, url) {
     .bind(playerId, leagueId).first();
   if (!contact) return Response.json({ ok: false, error: 'Player not found.', errorKey: 'PLAYER_NOT_FOUND' }, { status: 404 });
 
-  await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'manager', ev.season);
+  const written = await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'manager', ev.season);
+  if (!written.ok) return Response.json({ ok: false, error: 'This player is already in a game at the same time.', errorKey: 'PLAYER_IN_OVERLAPPING_GAME' }, { status: 409 });
   if (status === 'out') await maybeInviteSubsForShortage(env, leagueId, ev, contact);
 
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, status });
@@ -29254,6 +29359,8 @@ export {
   body,
   // The hard daily cap (part163) on a direct send.
   sendMail,
+  // Nights (part165): the waitlist skips a sub in an overlapping game.
+  fillFromWaitlist,
   formatFixtureText,
   formatMsgTime,
   renderCancellationEmail,
