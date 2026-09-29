@@ -5034,7 +5034,7 @@ async function handleLeagueCommsPage(req, env, url) {
       // drift apart.
       cadTeamAssigned: 'Équipe assignée (tirage tardif)',
       cadShortAlert: 'Match incomplet (admin)',
-      cadGameCancelled: 'Match annulé',
+      cadGameCancelled: 'Match annulé', cadNightMoved: "Changement d'horaire",
       cadAutoDraw: 'Tirage automatique des équipes',
       btnPreview: 'Aperçu', cadSubCall: 'Appel aux remplaçants', cadLateReversal: 'Alerte de désistement tardif (admin)',
       toggleAria: 'Activer ou désactiver', toggleSaved: 'Enregistré.',
@@ -5078,7 +5078,7 @@ async function handleLeagueCommsPage(req, env, url) {
       cad72: '72h reminder (no reply)', cad24: '24h reminder (no reply)', cad12: '12h details (confirmed)',
       cadTeamAssigned: 'Team assigned (late draw)',
       cadShortAlert: 'Short game (admin)',
-      cadGameCancelled: 'Game cancelled',
+      cadGameCancelled: 'Game cancelled', cadNightMoved: 'Schedule changed',
       cadAutoDraw: 'Automatic team draw',
       btnPreview: 'Preview', cadSubCall: 'Sub call', cadLateReversal: 'Late dropout alert (admin)',
       toggleAria: 'Turn on or off', toggleSaved: 'Saved.',
@@ -5188,7 +5188,7 @@ const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', retrying: '#c4153a', 
 // own wording. Built from the current dict each render, not module-
 // level, so a language switch re-labels it correctly.
 function activityKindLabel(d, kind) {
-  var KIND_LABEL = { reminder_72h: d.cad72, reminder_24h: d.cad24, logistics_12h: d.cad12, team_assigned: d.cadTeamAssigned, short_alert: d.cadShortAlert, game_cancelled: d.cadGameCancelled };
+  var KIND_LABEL = { reminder_72h: d.cad72, reminder_24h: d.cad24, logistics_12h: d.cad12, team_assigned: d.cadTeamAssigned, short_alert: d.cadShortAlert, game_cancelled: d.cadGameCancelled, night_moved: d.cadNightMoved };
   return KIND_LABEL[kind] || kind;
 }
 function renderStats(stats) {
@@ -19084,6 +19084,157 @@ async function fillNightWaitlist(env, leagueId, game) {
   return placed;
 }
 
+// ---- a changed matchup (D1) ----
+// A fixed-teams player answers for the NIGHT; which game their team plays
+// is the league's schedule, not their choice. So when a matchup changes,
+// the answers of each team now in a game move with it, and the players
+// whose games that night changed time or place are told -- only those who
+// had already been told about the night (an ask or details email went out
+// to them), and not those who said no. The email waits a few minutes
+// (MATCHUP_CHANGE_TELL_DELAY_MIN) and one per player per night replaces
+// the last, so moving a team in two steps (out of one game, into another)
+// sends one email with the night as it ends up.
+const MATCHUP_CHANGE_TELL_DELAY_MIN = 10;
+
+// The league's open games before a matchup route runs; null for SMBHL or
+// no league.
+async function leagueMatchupSnapshot(req, env, url) {
+  try {
+    const leagueId = await resolveSessionLeagueId(req, env, url);
+    if (!leagueId || leagueId === SMBHL_LEAGUE_ID) return null;
+    const rows = (await env.DB.prepare(`SELECT * FROM events WHERE league_id = ? AND state = 'open'`).bind(leagueId).all()).results || [];
+    return { leagueId, games: rows };
+  } catch (e) {
+    console.error(`[matchup] snapshot failed: ${e.message}`);
+    return null;
+  }
+}
+
+async function afterLeagueMatchupChange(env, snap, res) {
+  if (!snap || !res || res.status !== 200) return res;
+  try {
+    const before = new Map(snap.games.map(g => [g.id, g]));
+    const after = (await env.DB.prepare(`SELECT * FROM events WHERE league_id = ? AND state = 'open'`).bind(snap.leagueId).all()).results || [];
+    const teamsOf = g => [g.home_team, g.away_team].filter(Boolean);
+    // Per night (date + season): the teams whose games changed.
+    const nights = new Map();
+    for (const g of after) {
+      const b = before.get(g.id);
+      if (!b) continue;
+      const was = teamsOf(b), now = teamsOf(g);
+      const changed = [...now.filter(t => !was.includes(t)), ...was.filter(t => !now.includes(t))];
+      if (!changed.length) continue;
+      const key = `${g.date}|${g.season || ''}`;
+      if (!nights.has(key)) nights.set(key, { game: g, teams: new Set() });
+      for (const t of changed) nights.get(key).teams.add(t);
+    }
+    for (const { game, teams } of nights.values()) {
+      const cfg = await getLeagueSeasonConfig(env, snap.leagueId, game.season);
+      if ((cfg.teamStructure || 'fixed') !== 'fixed') continue;
+      const nightNow = await nightGamesOf(env, game);
+      const nightBefore = snap.games.filter(g => g.date === game.date && (g.season || '') === (game.season || ''));
+      for (const team of teams) await carryTeamNight(env, snap.leagueId, team, nightBefore, nightNow);
+    }
+  } catch (e) {
+    console.error(`[matchup] carrying answers failed: ${e.message}`);
+  }
+  return res;
+}
+
+// One team whose games that night changed: each of its players' answer
+// for the night is written to each game the team now plays, and the
+// players are told when their games' times or places changed.
+async function carryTeamNight(env, leagueId, team, nightBefore, nightNow) {
+  const plays = (games, t) => games.filter(g => g.home_team === t || g.away_team === t);
+  const gamesNow = plays(nightNow, team);
+  const where = games => games.map(g => `${g.start_time}-${g.end_time}@${g.venue_id || g.venue || ''}`).sort().join(',');
+  const moved = where(plays(nightBefore, team)) !== where(gamesNow);
+  const ids = [...new Set([...nightBefore, ...nightNow].map(g => g.id))];
+  const players = (await env.DB.prepare(
+    `SELECT * FROM contacts WHERE league_id = ? AND preferred_team = ? AND role = 'roster' AND COALESCE(is_active, 1) = 1`
+  ).bind(leagueId, team).all()).results || [];
+  for (const c of players) {
+    const rows = (await env.DB.prepare(
+      `SELECT * FROM rsvp WHERE player_id = ? AND event_id IN (${ids.map(() => '?').join(',')})`
+    ).bind(c.player_id, ...ids).all()).results || [];
+    const answers = rows.filter(r => ['in', 'out'].includes(r.status) && !NIGHT_MARKS.includes(r.status_by));
+    const source = answers.find(r => r.status === 'in') || answers.find(r => r.status === 'out') || null;
+    if (source) {
+      for (const g of gamesNow) {
+        if (closedToAnswers(g)) continue;
+        const r = rows.find(x => x.event_id === g.id);
+        if (r && r.status === source.status && r.team === team) continue;
+        await writeLeagueRsvpStatus(env, leagueId, g.id, c.player_id, c, source.status, source.status_by || 'self', g.season);
+      }
+    }
+    const dedupKey = `night-moved:${leagueId}:${nightNow[0] ? nightNow[0].date : ''}:${c.player_id}`;
+    if (!moved || !gamesNow.length || (source && source.status === 'out') || !c.email || c.opted_out) {
+      await cancelPending(env, dedupKey);
+      continue;
+    }
+    const told = await env.DB.prepare(
+      `SELECT 1 FROM outbox WHERE player_id = ? AND sent_at IS NOT NULL
+          AND kind IN ('reminder_72h', 'reminder_24h', 'logistics_12h', 'team_assigned')
+          AND event_id IN (${ids.map(() => '?').join(',')}) LIMIT 1`
+    ).bind(c.player_id, ...ids).first();
+    if (!told) { await cancelPending(env, dedupKey); continue; }
+    const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
+    const cfg = await getLeagueSeasonConfig(env, leagueId, gamesNow[0].season);
+    const mail = await renderNightMovedForContact(env, leagueRow, gamesNow, c, team, source ? 'in' : 'pending');
+    await enqueuePrerenderedMail(env, {
+      kind: 'night_moved', leagueId, eventId: gamesNow[0].id, playerId: c.player_id, team,
+      dedupKey, to: c.email, mail, identity: cfg.league, delayMin: MATCHUP_CHANGE_TELL_DELAY_MIN
+    });
+  }
+}
+
+async function renderNightMovedForContact(env, leagueRow, games, contact, team, answer) {
+  const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
+  const ev = games[0];
+  const barColor = leagueFillColor(leagueRow.color || '#b3122e');
+  const firstName = (contact.name || '').split(' ')[0] || contact.name;
+  const { inLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
+  const pageLink = inLink.replace(/&v=in$/, '');
+  const toContent = lang => {
+    const dayLabel = reminderDayLabel(ev.date, lang);
+    const venues = [...new Set(games.map(g => g.venue).filter(Boolean))];
+    const when = `${formatEventDate(ev.date, lang, 'short')} · ${listJoin(games.map(g => formatEventTime(g.start_time, lang)), lang)}${venues.length ? ' · ' + venues.join(' / ') : ''}`;
+    const d = lang === 'fr' ? {
+      subject: `${firstName}, nouvel horaire pour ${dayLabel || 'ton match'}`,
+      headline: 'Ton horaire a changé',
+      body: `${team} joue maintenant : ${when}.`,
+      answer: answer === 'in' ? 'Ta réponse suit : tu joues toujours. Rien à faire.' : 'On attend encore ta réponse.',
+      btn: answer === 'in' ? 'Voir ma soirée' : 'Répondre',
+      poweredBy: 'Propulsé par Notre Ligue'
+    } : {
+      subject: `${firstName}, new schedule for ${dayLabel || 'your game'}`,
+      headline: 'Your schedule changed',
+      body: `${team} now plays: ${when}.`,
+      answer: answer === 'in' ? "Your answer carries over: you're still playing. Nothing to do." : 'We still need your answer.',
+      btn: answer === 'in' ? 'See my night' : 'Answer',
+      poweredBy: 'Powered by Notre Ligue'
+    };
+    return {
+      subject: d.subject,
+      text: `${d.headline}\n${d.body}\n${d.answer}\n${d.btn}: ${pageLink}`,
+      html: `
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.headline}</h1>
+    <p style="margin:0 0 12px;font-size:16px;line-height:25px;">${esc(d.body)}</p>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${d.answer}</p>
+    ${nlEmailButton(pageLink, d.btn, barColor)}`,
+      poweredBy: d.poweredBy
+    };
+  };
+  const fr = toContent('fr');
+  const en = toContent('en');
+  const assembled = assembleBilingualEmail(forcedLang || 'both', { fr, en });
+  const html = nlEmailWrap({
+    brandName: leagueRow.name, barColor, bodyHtml: assembled.html,
+    footerHtml: nlSentByFooter(forcedLang || 'both', { forName: esc(leagueRow.name), fr: fr.poweredBy, en: en.poweredBy })
+  });
+  return { subject: assembled.subject, text: assembled.text, html };
+}
+
 async function tellPlacedFromWaitlist(env, leagueId, game, contact) {
   const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow || !contact.email || contact.opted_out) return;
@@ -19713,9 +19864,9 @@ async function maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, 
 // (a reminder window the cron just reached, or an admin's action) --
 // except a league on the advanced reminder model, whose automatic waves
 // are held for its quiet hours (quietHours: true, src/reminders.js).
-async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId = null, team = null, dedupKey = null, to, mail, identity = null, quietHours = false }) {
+async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId = null, team = null, dedupKey = null, to, mail, identity = null, quietHours = false, delayMin = 0 }) {
   await enqueue(env, {
-    kind, event_id: eventId, player_id: playerId, team, dedup_key: dedupKey, league_id: leagueId,
+    kind, event_id: eventId, player_id: playerId, team, dedup_key: dedupKey, league_id: leagueId, delayMin,
     skipQuietHours: !quietHours, quietLeagueId: quietHours ? leagueId : null,
     payload: {
       prerendered: {
@@ -29176,8 +29327,9 @@ async function handleFetch(req, env, ctx) {
       // actually be overwritten). Fixed-teams leagues only.
       if (url.pathname === '/league/season/matchups-preview' && req.method === 'POST')
         return await handleLeagueMatchupsPreview(req, env);
+      // Nights (D1): a changed matchup carries the teams' answers.
       if (url.pathname === '/league/season/matchups-confirm' && req.method === 'POST')
-        return await handleLeagueMatchupsConfirm(req, env);
+        return await afterLeagueMatchupChange(env, await leagueMatchupSnapshot(req, env, url), await handleLeagueMatchupsConfirm(req, env));
       // Sub-call rework, Part 4: the same deliberate one-extra invite as
       // SMBHL's /admin/subs/extra-invite, for a league admin (session +
       // CSRF + league access), limited to that league's own game and sub.
@@ -29212,9 +29364,9 @@ async function handleFetch(req, env, ctx) {
       if (url.pathname === '/league/events/reminders' && req.method === 'POST')
         return await handleLeagueEventUpdateReminders(req, env);
       if (url.pathname === '/league/events/update' && req.method === 'POST')
-        return await handleLeagueEventUpdate(req, env);
+        return await afterLeagueMatchupChange(env, await leagueMatchupSnapshot(req, env, url), await handleLeagueEventUpdate(req, env));
       if (url.pathname === '/league/events/matchup' && req.method === 'POST')
-        return await handleLeagueEventMatchupUpdate(req, env);
+        return await afterLeagueMatchupChange(env, await leagueMatchupSnapshot(req, env, url), await handleLeagueEventMatchupUpdate(req, env));
       // Events polish task (C1): delete (genuinely removes the event --
       // mistakes/holidays) and cancel (keeps it on the record, marked
       // cancelled and visible -- a real game that isn't happening).
