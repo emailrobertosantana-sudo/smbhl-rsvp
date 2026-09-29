@@ -19084,6 +19084,100 @@ async function fillNightWaitlist(env, leagueId, game) {
   return placed;
 }
 
+// A player left `game` (they were in it, or might have been): its spot goes
+// to the night's waitlist first, then subs are called, then the admin is
+// told if the game is left thin beside another at that time. Returns the
+// sub call's result.
+async function afterLeftNightGame(env, leagueId, game, contact, { wasIn = true } = {}) {
+  if (wasIn) await fillNightWaitlist(env, leagueId, game);
+  const r = await maybeInviteSubsForShortage(env, leagueId, game, contact);
+  if (wasIn) await alertAdminThinConcurrentGame(env, leagueId, game);
+  return r;
+}
+
+// ---- a game at the same time left thin (D1) ----
+// The system never moves a player between games at the same time, so when
+// one is below its minimum (confirmed players) while another at that time
+// has more confirmed than it needs, the admins are told -- moving someone
+// is theirs to do -- whether or not a sub can be called. Once per game.
+function nightGameMin(cfg, leagueId, goalie) {
+  if ((cfg.teamStructure || 'fixed') === 'weekly_draw') { const t = pickupPoolTargets(cfg); return goalie ? t.minGoalies : t.minSkaters; }
+  return goalie ? (cfg.goaliesPerTeam || 0) : shortfallMinSkaters(cfg, leagueId);
+}
+
+async function alertAdminThinConcurrentGame(env, leagueId, game) {
+  if (!game || !leagueId || leagueId === SMBHL_LEAGUE_ID || closedToAnswers(game)) return 0;
+  const cfg = await getLeagueSeasonConfig(env, leagueId, game.season);
+  if ((cfg.teamStructure || 'fixed') === 'fixed') return 0;
+  const cluster = concurrencyClusters((await nightGamesOf(env, game)).filter(g => g.state === 'open')).find(c => c.some(g => g.id === game.id));
+  if (!cluster || cluster.length < 2) return 0;
+  const cfgOf = seasonConfigCache(env, leagueId);
+  const thin = [];
+  for (const goalie of sportHasGoalie(cfg.sportType) ? [true, false] : [false]) {
+    const min = nightGameMin(cfg, leagueId, goalie);
+    if (!(min > 0)) continue;
+    const have = await countInByPosition(env, game.id, goalie);
+    if (have >= min) continue;
+    const spare = [];
+    for (const g of cluster) {
+      if (g.id === game.id) continue;
+      const gMin = nightGameMin(await cfgOf(g.season), leagueId, goalie);
+      const n = await countInByPosition(env, g.id, goalie);
+      if (n > gMin) spare.push({ game: g, n, extra: n - gMin });
+    }
+    if (spare.length) thin.push({ need: goalie ? 'goalie' : 'skater', have, min, spare });
+  }
+  if (!thin.length) return 0;
+  const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!leagueRow) return 0;
+  let mail = null;
+  let queued = 0;
+  for (const a of await leagueAdminEmails(env, leagueId)) {
+    const dedupKey = `thin-game:${game.id}:${a.email}`;
+    if (await env.DB.prepare('SELECT 1 FROM outbox WHERE dedup_key = ? AND (sent_at IS NOT NULL OR cancelled = 0) LIMIT 1').bind(dedupKey).first()) continue;
+    mail = mail || renderThinGameAdminAlert(env, leagueRow, game, thin);
+    await enqueuePrerenderedMail(env, { kind: 'short_alert', leagueId, eventId: game.id, dedupKey, to: a.email, mail });
+    queued++;
+  }
+  if (queued) await drain(env, MAIL_SENDS_PER_INVOCATION, game.id, leagueId);
+  return queued;
+}
+
+function renderThinGameAdminAlert(env, leagueRow, ev, thin) {
+  const barColor = leagueFillColor(leagueRow.color || '#b3122e');
+  const whenFr = formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false);
+  const whenEn = formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false);
+  const link = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
+  const label = (g, lang) => g.venue || formatEventTime(g.start_time, lang);
+  const lines = lang => thin.flatMap(t => [
+    `${label(ev, lang)}${lang === 'fr' ? ' : ' : ': '}${shortGameLine({ team: null, need: t.need, have: t.have, min: t.min, basis: 'confirmed' }, lang)}`,
+    ...t.spare.map(s => lang === 'fr'
+      ? `${label(s.game, lang)} : ${s.n} ${t.need === 'goalie' ? 'gardien(s) ' : ''}confirmé(s), ${s.extra} de plus que le minimum.`
+      : `${label(s.game, lang)}: ${s.n} ${t.need === 'goalie' ? 'goalie(s) ' : ''}confirmed, ${s.extra} more than it needs.`)
+  ]);
+  const closeFr = "Personne n'est déplacé d'un match à l'autre automatiquement : c'est à vous d'en déplacer un, si vous le souhaitez.";
+  const closeEn = 'No one is moved between games automatically: moving someone is up to you.';
+  const block = (badge, title, when, ls, close, btn) => `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}${badge}</td></tr></table>
+    <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(title)}</h1>
+    <p style="margin:0 0 8px;font-size:16px;line-height:25px;"><b>${esc(when)}</b></p>
+    ${ls.map(l => `<p style="margin:0 0 8px;font-size:16px;line-height:25px;">${esc(l)}</p>`).join('')}
+    <p style="margin:8px 0 24px;font-size:16px;line-height:25px;">${esc(close)}</p>
+    ${nlEmailButton(link, btn, barColor)}`;
+  const fr = {
+    subject: `Matchs à la même heure déséquilibrés · ${whenFr}`,
+    text: `Matchs à la même heure déséquilibrés · ${whenFr}. ${lines('fr').join(' ')} ${closeFr} ${link}`,
+    html: block('Match incomplet', 'Un match manque de joueurs', whenFr, lines('fr'), closeFr, 'Voir le match')
+  };
+  const en = {
+    subject: `Games at the same time are uneven · ${whenEn}`,
+    text: `Games at the same time are uneven · ${whenEn}. ${lines('en').join(' ')} ${closeEn} ${link}`,
+    html: block('Short game', 'A game is short of players', whenEn, lines('en'), closeEn, 'View the game')
+  };
+  const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
+  return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
+}
+
 // ---- a changed matchup (D1) ----
 // A fixed-teams player answers for the NIGHT; which game their team plays
 // is the league's schedule, not their choice. So when a matchup changes,
@@ -20691,8 +20785,7 @@ async function leagueRsvpConfirmPost(req, env, url) {
     const shortages = [];
     if (status === 'out') for (const w of night.written) {
       // A spot the player leaves goes to the night's waitlist first.
-      if (w.wasIn) await fillNightWaitlist(env, leagueId, w.game);
-      shortages.push(await maybeInviteSubsForShortage(env, leagueId, w.game, contact));
+      shortages.push(await afterLeftNightGame(env, leagueId, w.game, contact, { wasIn: w.wasIn }));
     }
     if (isLateReversalOptOut) {
       // The alert names the team the player was on for the (first) game
@@ -20732,8 +20825,7 @@ async function leagueRsvpPost(req, env, url) {
   // Nights (D1): one answer for the player's night.
   const night = await writeLeagueNightStatus(env, leagueId, ev, contact, status, 'self');
   if (status === 'out') for (const w of night.written) {
-    if (w.wasIn) await fillNightWaitlist(env, leagueId, w.game);
-    await maybeInviteSubsForShortage(env, leagueId, w.game, contact);
+    await afterLeftNightGame(env, leagueId, w.game, contact, { wasIn: w.wasIn });
   }
   return Response.json({ ok: true, league_id: leagueId, status });
 }
@@ -20775,8 +20867,7 @@ async function leagueRsvpGamePost(req, env, url) {
   const written = await writeLeagueRsvpStatus(env, leagueId, game.id, playerId, contact, status, 'self', game.season);
   if (!written.ok) return Response.json({ ok: false, error: 'Already in a game at the same time.', errorKey: 'RSVP_OVERLAPPING_GAME' }, { status: 409 });
   if (status === 'out') {
-    await fillNightWaitlist(env, leagueId, game);
-    await maybeInviteSubsForShortage(env, leagueId, game, contact);
+    await afterLeftNightGame(env, leagueId, game, contact);
   } else {
     // In this game: the others at the same time are "in the other game"
     // (no-teams and pickup), as the night's own answer writes them.
@@ -20846,8 +20937,7 @@ async function handleLeagueAdminSetRsvp(req, env, url) {
     const written = await writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, status, 'manager', ev.season);
     if (!written.ok) return Response.json({ ok: false, error: busy, errorKey: 'PLAYER_IN_OVERLAPPING_GAME' }, { status: 409 });
     if (status === 'out') {
-      await fillNightWaitlist(env, leagueId, ev);
-      await maybeInviteSubsForShortage(env, leagueId, ev, contact);
+      await afterLeftNightGame(env, leagueId, ev, contact);
     }
   } else {
     // Already in another game at this time: refused, as before -- the
@@ -20863,8 +20953,7 @@ async function handleLeagueAdminSetRsvp(req, env, url) {
       return Response.json({ ok: false, error: busy, errorKey: 'PLAYER_IN_OVERLAPPING_GAME' }, { status: 409 });
     }
     if (status === 'out') for (const w of night.written) {
-      if (w.wasIn) await fillNightWaitlist(env, leagueId, w.game);
-      await maybeInviteSubsForShortage(env, leagueId, w.game, contact);
+      await afterLeftNightGame(env, leagueId, w.game, contact, { wasIn: w.wasIn });
     }
   }
 
