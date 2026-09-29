@@ -2628,10 +2628,10 @@ function buildOnboardingI18n() {
     lblMinGoalies: 'Minimum de gardiens (optionnel)', lblMaxGoalies: 'Maximum de gardiens (optionnel)',
     teamsTitle: 'Confirme les noms des équipes', teamsSubDefault: 'Choisis les vrais noms de tes équipes — tu pourras les changer plus tard dans Paramètres.',
     teamsSubWeekly: 'Ces équipes changent à chaque match, mais leurs noms restent les mêmes toute la saison. Tu peux garder « Équipe 1, 2… » et revenir plus tard.',
-    // A1 (onboarding polish task): F1 made new leagues start with
-    // reminders OFF -- this copy still claimed the opposite. Reframed
-    // as opting in, since that's what this screen actually is now.
-    remindersTitle: 'Rappels automatiques', remindersSub: "Désactivés par défaut. Active ceux que tu veux — tu peux changer ça n'importe quand dans les réglages.",
+    // New leagues start with every reminder ON (a league that never turned
+    // them on sent nothing at all, sub calls included); this screen is
+    // where an admin turns off what they don't want.
+    remindersTitle: 'Rappels automatiques', remindersSub: "Activés par défaut. Désactive ceux que tu ne veux pas — tu peux changer ça n'importe quand dans les réglages.",
     reminder72Label: 'Rappel 72 h avant (sans réponse)', reminder24Label: 'Rappel 24 h avant (sans réponse)', reminder12Label: 'Détails 12 h avant (confirmés)',
     // Stats tracking task (Part 1): replaced the single "Track
     // stats?" question with two independent ones -- see this step's
@@ -2666,7 +2666,7 @@ function buildOnboardingI18n() {
     lblMinGoalies: 'Minimum goalies (optional)', lblMaxGoalies: 'Maximum goalies (optional)',
     teamsTitle: 'Confirm your team names', teamsSubDefault: 'Pick the real names of your teams — you can change them later in Settings.',
     teamsSubWeekly: 'These teams change every game, but their names stay the same all season. You can keep "Team 1, 2…" and come back later.',
-    remindersTitle: 'Automated reminders', remindersSub: "Off by default. Turn on the ones you want — you can change this any time in Settings.",
+    remindersTitle: 'Automated reminders', remindersSub: "On by default. Turn off the ones you don't want — you can change this any time in Settings.",
     reminder72Label: '72h reminder (no reply yet)', reminder24Label: '24h reminder (no reply yet)', reminder12Label: '12h details (confirmed players)',
     statsTitle: 'Track stats?',
     statsSub: 'Pick what you want to track, independently — you can change this later in Settings.',
@@ -2847,7 +2847,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
     stepHtml = `
   <div class="su-title">
     <h1 data-i18n="remindersTitle">Rappels automatiques</h1>
-    <p class="nl-help" data-i18n="remindersSub">Désactivés par défaut. Active ceux que tu veux — tu peux changer ça n'importe quand dans les réglages.</p>
+    <p class="nl-help" data-i18n="remindersSub">Activés par défaut. Désactive ceux que tu ne veux pas — tu peux changer ça n'importe quand dans les réglages.</p>
   </div>
   <div id="formErr" class="nl-error" style="display:none"></div>
   <div class="nl-toggle">
@@ -5643,7 +5643,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       advQuiet: 'Heures de silence', advQuietDesc: 'Aucun courriel automatique entre ces heures.',
       advQuietFrom: 'De (h)', advQuietTo: 'À (h)',
       autoDrawTitle: 'Tirage automatique des équipes',
-      autoDrawDesc: "Forme les équipes automatiquement un certain nombre d'heures avant chaque match — désactivé par défaut, comme les autres automatismes.",
+      autoDrawDesc: "Forme les équipes automatiquement un certain nombre d'heures avant chaque match — désactivé par défaut.",
       autoDrawEnableLabel: 'Activer le tirage automatique',
       autoDrawEnableDesc: 'Le bouton manuel « Former les équipes » reste toujours disponible en tout temps.',
       autoDrawHoursLabel: 'Heures avant le match',
@@ -5764,7 +5764,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       advQuiet: 'Quiet hours', advQuietDesc: 'No automatic email between these hours.',
       advQuietFrom: 'From (h)', advQuietTo: 'To (h)',
       autoDrawTitle: 'Automatic team draw',
-      autoDrawDesc: 'Automatically forms teams a set number of hours before each game — off by default, like every other automation.',
+      autoDrawDesc: 'Automatically forms teams a set number of hours before each game — off by default.',
       autoDrawEnableLabel: 'Enable automatic draw',
       autoDrawEnableDesc: 'The manual "Draw teams" button always stays available regardless.',
       autoDrawHoursLabel: 'Hours before the game',
@@ -7032,6 +7032,36 @@ async function onboardingRosterReadiness(env, leagueRow, contacts) {
   return { people, minimum };
 }
 
+// Import notice (the Players page's "Import from a spreadsheet"): the
+// upcoming games whose 72h/24h reminder would reach players imported now,
+// within the next 7 days -- the same notice the create-game form has. A
+// step already sent is not resent to new players (league_reminder_log is
+// the gate), and the 12h details only go to confirmed players, so neither
+// counts. Reminders are on by default, so an import days before a game
+// would otherwise email the whole list at the next pass, unannounced.
+async function importReminderGames(env, leagueRow) {
+  const kinds = [['reminder_72h', leagueRow.reminder_72h_enabled], ['reminder_24h', leagueRow.reminder_24h_enabled]].filter(x => x[1]).map(x => x[0]);
+  if (!kinds.length) return [];
+  const adv = (await usesAdvancedReminders(env, leagueRow.id)) ? await getEmailSettings(env.DB, leagueRow.id) : null;
+  const hoursFor = k => (adv ? advancedStepHours(adv, k) : REMINDER_WINDOW_THRESHOLD_HOURS[k]);
+  const from = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const to = new Date(Date.now() + (7 * 24 + Math.max(...kinds.map(hoursFor)) + 48) * 3600000).toISOString().slice(0, 10);
+  const evs = (await env.DB.prepare(
+    `SELECT id, date, start_time FROM events WHERE league_id = ? AND state = 'open' AND auto_reminders_enabled = 1 AND start_time IS NOT NULL AND date >= ? AND date <= ? ORDER BY date, start_time`
+  ).bind(leagueRow.id, from, to).all()).results || [];
+  const out = [];
+  for (const ev of evs) {
+    const start = eventStart(ev);
+    if (!start) continue;
+    const hoursUntil = (start.getTime() - Date.now()) / 3600000;
+    if (hoursUntil <= 0) continue;
+    const sent = new Set(((await env.DB.prepare('SELECT kind FROM league_reminder_log WHERE event_id = ?').bind(ev.id).all()).results || []).map(r => r.kind));
+    const due = kinds.filter(k => !sent.has(k) && hoursUntil - hoursFor(k) <= 168).map(k => ({ kind: k, now: hoursUntil - hoursFor(k) <= 0 }));
+    if (due.length) out.push({ id: ev.id, date: ev.date, start_time: ev.start_time, steps: due });
+  }
+  return out;
+}
+
 async function handleLeagueRosterPage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
@@ -7131,6 +7161,8 @@ async function handleLeagueRosterPage(req, env, url) {
       if (hoursUntil > 0 && hoursUntil <= widestArmedHours) { reminderWindowEvent = candidate; break; }
     }
   }
+
+  const importRemGames = await importReminderGames(env, leagueRow);
 
   const seasonCfg = await getLeagueSeasonConfig(env, leagueId);
   const teamNames = getTeamNames(seasonCfg);
@@ -7232,6 +7264,10 @@ async function handleLeagueRosterPage(req, env, url) {
       bulkStatusOk: 'Sera importé', bulkStatusNoName: 'Ignoré — nom manquant ou invalide',
       bulkStatusDupeBatch: 'Ignoré — doublon dans la liste', bulkEmptyErr: 'Colle au moins une ligne.',
       bulkSummary: '{ok} sur {total} seront importés.',
+      importRemTitle: 'Ces matchs enverront des rappels aux joueurs importés dans les 7 prochains jours :',
+      importRemSuppress: 'Ne pas envoyer de rappels automatiques pour ces {n} matchs (tu peux les réactiver dans la page de chaque match)',
+      importRemSuppressOne: 'Ne pas envoyer de rappels automatiques pour ce match (tu peux les réactiver dans la page du match)',
+      importRem72: 'rappel 72 h', importRem24: 'rappel 24 h', importRemNow: 'dès le prochain envoi',
       bulkResultSummary: '{created} ajouté(s), {skipped} ignoré(s).',
       bulkResultCreated: 'Ajouté', bulkResultSkippedDupeExisting: 'Ignoré — existe déjà dans ta ligue',
       bulkResultSkippedInvalid: 'Ignoré — invalide', bulkResultSkippedDupeBatch: 'Ignoré — doublon dans la liste',
@@ -7271,6 +7307,10 @@ async function handleLeagueRosterPage(req, env, url) {
       bulkStatusOk: 'Will be imported', bulkStatusNoName: 'Skipped — missing or invalid name',
       bulkStatusDupeBatch: 'Skipped — duplicate in list', bulkEmptyErr: 'Paste at least one line.',
       bulkSummary: '{ok} of {total} will be imported.',
+      importRemTitle: 'These games will send reminders to the imported players within the next 7 days:',
+      importRemSuppress: "Don't send automatic reminders for these {n} games (you can turn them back on from each game's page)",
+      importRemSuppressOne: "Don't send automatic reminders for this game (you can turn them back on from the game's page)",
+      importRem72: '72h reminder', importRem24: '24h reminder', importRemNow: 'at the next send',
       bulkResultSummary: '{created} added, {skipped} skipped.',
       bulkResultCreated: 'Added', bulkResultSkippedDupeExisting: 'Skipped — already in your league',
       bulkResultSkippedInvalid: 'Skipped — invalid', bulkResultSkippedDupeBatch: 'Skipped — duplicate in list',
@@ -7540,6 +7580,10 @@ async function handleLeagueRosterPage(req, env, url) {
             <tbody id="ro_bulk_tbody"></tbody>
           </table>
         </div>
+        <div id="ro_bulk_rem_notice" style="display:none;background:var(--surface-sunken);border:1px solid var(--line);border-radius:var(--radius-sm);padding:var(--space-3)">
+          <div id="ro_bulk_rem_body"></div>
+          <label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px"><input type="checkbox" id="ro_bulk_rem_suppress"> <span id="ro_bulk_rem_suppress_label"></span></label>
+        </div>
         <div style="display:flex;gap:8px;">
           <button type="button" class="nl-btn nl-btn--primary" id="ro_bulk_confirm" data-i18n="bulkConfirmBtn" onclick="bulkConfirm()">Confirmer l'import</button>
           <button type="button" class="nl-btn nl-btn--ghost" data-i18n="cancel" onclick="cancelBulkImport()">Annuler</button>
@@ -7791,6 +7835,23 @@ function bulkTableCell(text, cls) {
   td.textContent = text;
   return td;
 }
+var IMPORT_REM_GAMES = ${JSON.stringify(importRemGames).replace(/</g, '\\u003c')};
+function renderImportReminderNotice(okCount) {
+  var box = document.getElementById('ro_bulk_rem_notice');
+  if (!box) return;
+  if (!okCount || !IMPORT_REM_GAMES.length) { box.style.display = 'none'; document.getElementById('ro_bulk_rem_suppress').checked = false; return; }
+  var d = window.__pageDict();
+  var locale = window.__currentLang === 'en' ? 'en-CA' : 'fr-CA';
+  var esc = function(t) { var el = document.createElement('div'); el.textContent = t; return el.innerHTML; };
+  var items = IMPORT_REM_GAMES.map(function(g) {
+    var when = new Date(g.date + 'T12:00:00Z').toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) + ' ' + g.start_time;
+    var what = g.steps.map(function(st) { return (st.kind === 'reminder_72h' ? d.importRem72 : d.importRem24) + (st.now ? ' (' + d.importRemNow + ')' : ''); }).join(', ');
+    return '<li><b>' + esc(when) + '</b> — ' + esc(what) + '</li>';
+  }).join('');
+  document.getElementById('ro_bulk_rem_body').innerHTML = '<p style="margin:0">' + esc(d.importRemTitle) + '</p><ul style="margin:4px 0 0;padding-left:20px">' + items + '</ul>';
+  document.getElementById('ro_bulk_rem_suppress_label').textContent = IMPORT_REM_GAMES.length === 1 ? d.importRemSuppressOne : d.importRemSuppress.split('{n}').join(String(IMPORT_REM_GAMES.length));
+  box.style.display = '';
+}
 function bulkPreview() {
   var errEl = document.getElementById('bulkErr'); errEl.style.display = 'none';
   var dict = window.__pageDict();
@@ -7817,6 +7878,7 @@ function bulkPreview() {
   document.getElementById('ro_bulk_summary').textContent = dict.bulkSummary.split('{ok}').join(String(okCount)).split('{total}').join(String(rows.length));
   document.getElementById('ro_bulk_preview').style.display = 'flex';
   document.getElementById('ro_bulk_confirm').disabled = okCount === 0;
+  renderImportReminderNotice(okCount);
 }
 async function bulkConfirm() {
   if (!BULK_ROWS.length) return;
@@ -7824,6 +7886,20 @@ async function bulkConfirm() {
   btn.disabled = true;
   var errEl = document.getElementById('bulkErr'); errEl.style.display = 'none';
   try {
+    // The admin chose to hold those games' reminders: paused first, so the
+    // import cannot trigger them (the same per-game pause as a game's page).
+    var sup = document.getElementById('ro_bulk_rem_suppress');
+    if (sup && sup.checked) {
+      for (var i = 0; i < IMPORT_REM_GAMES.length; i++) {
+        var pr = await fetch('/league/events/reminders', {
+          method: 'POST', credentials: 'same-origin',
+          headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+          body: JSON.stringify({ event_id: IMPORT_REM_GAMES[i].id, auto_reminders_enabled: false })
+        });
+        var pd = await pr.json().catch(function() { return {}; });
+        if (!pr.ok || !pd.ok) { errEl.textContent = window.__errorText(pd.errorKey, pd.error); errEl.style.display = 'block'; btn.disabled = false; return; }
+      }
+    }
     var res = await fetch('/league/contacts/bulk', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),

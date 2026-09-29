@@ -83,7 +83,7 @@ async function addContact(cookie, csrfToken, body) {
   return (await res.json()).contact;
 }
 
-describe('A1: onboarding reminders copy matches the real off-by-default behaviour', () => {
+describe('A1: onboarding reminders copy matches the real default (on since 2026-09-29, D6)', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     await applyRealSchema(env);
@@ -100,16 +100,14 @@ describe('A1: onboarding reminders copy matches the real off-by-default behaviou
 
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.remindersSub).toBe("Désactivés par défaut. Active ceux que tu veux — tu peux changer ça n'importe quand dans les réglages.");
-    expect(dict.en.remindersSub).toBe('Off by default. Turn on the ones you want — you can change this any time in Settings.');
-    expect(dict.fr.remindersSub).not.toContain('Déjà activés par défaut');
-    expect(dict.en.remindersSub).not.toContain('Already on by default');
+    expect(dict.fr.remindersSub).toBe("Activés par défaut. Désactive ceux que tu ne veux pas — tu peux changer ça n'importe quand dans les réglages.");
+    expect(dict.en.remindersSub).toBe("On by default. Turn off the ones you don't want — you can change this any time in Settings.");
+    expect(dict.fr.remindersSub).not.toContain('Désactivés par défaut');
+    expect(dict.en.remindersSub).not.toContain('Off by default');
 
-    // The toggles genuinely render OFF (F1) and are genuinely
-    // interactive -- opting in during this screen already worked, it
-    // was only the copy that lied about it.
+    // The toggles render ON, matching the copy, and are interactive.
     expect(html).toContain('id="ob_reminder_72h" onclick="obToggle(this)"></button>');
-    expect(html).toContain('aria-checked="false"');
+    expect(html).toMatch(/aria-checked="true" id="ob_reminder_72h"/);
   });
 });
 
@@ -119,10 +117,14 @@ describe('A2: event detail page and Comms agree on reminder state — one source
     await applyRealSchema(env);
   });
 
-  it('a brand-new league (reminders off by default): the event page\'s switch and Comms\' automations card both say off, not off/on', async () => {
+  it('a league with every reminder turned off: the event page\'s switch and Comms\' automations card both say off, not off/on', async () => {
     const { cookie, csrfToken } = await signup('a2.freshleague@example.com', '203.0.211.002');
     await createLeague(cookie, csrfToken, { name: 'A2 Fresh League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
+    await SELF.fetch('http://example.com/league/reminders/settings', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ reminder72h: false, reminder24h: false, reminder12h: false })
+    });
     const ev = await (await createEvent(cookie, csrfToken, { date: '2099-08-01' })).json();
     // The raw per-event column still defaults to armed=1 -- confirming
     // the OLD per-event-only read really would have disagreed with
@@ -176,6 +178,10 @@ describe('A2: event detail page and Comms agree on reminder state — one source
   it('sweep: every other reminder-state surface already reads the league-level cadence columns and needed no fix — dashboard checklist, settings, and the roster backstop banner', async () => {
     const { cookie, csrfToken } = await signup('a2.sweep@example.com', '203.0.211.005');
     await createLeague(cookie, csrfToken, { name: 'A2 Sweep League', teamNames: ['A', 'B'] });
+    await SELF.fetch('http://example.com/league/reminders/settings', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ reminder72h: false, reminder24h: false, reminder12h: false })
+    });
 
     // The pre-season checklist (ckReminders) only ever renders while
     // needsSeason is true -- checked before publishing, not after.

@@ -302,16 +302,22 @@ describe('F1 (players/reminders polish task): new leagues start with automated r
     await applyRealSchema(env);
   });
 
-  it('a freshly created league has all three reminder columns at 0 in the DB, not the schema default of 1', async () => {
-    const { leagueId } = await signupAndCreateLeague('f1.offbydefault@example.com', '203.0.113.951', 'F1 Off By Default League', ['A', 'B']);
+  // Decided 2026-09-29 (D6): reminders are ON for a new league -- a league
+  // that never turned them on sent nothing at all, sub calls included.
+  it('a freshly created league has all three reminder columns at 1', async () => {
+    const { leagueId } = await signupAndCreateLeague('f1.offbydefault@example.com', '203.0.113.951', 'F1 On By Default League', ['A', 'B']);
     const row = await env.DB.prepare('SELECT reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
-    expect(row.reminder_72h_enabled).toBe(0);
-    expect(row.reminder_24h_enabled).toBe(0);
-    expect(row.reminder_12h_enabled).toBe(0);
+    expect(row.reminder_72h_enabled).toBe(1);
+    expect(row.reminder_24h_enabled).toBe(1);
+    expect(row.reminder_12h_enabled).toBe(1);
   });
 
-  it('the Getting Started checklist shows a not-done "turn on reminders" row before any reminder is enabled', async () => {
-    const { cookie } = await signupAndCreateLeague('f1.checklistoff@example.com', '203.0.113.952', 'F1 Checklist Off League', ['A', 'B']);
+  it('the Getting Started checklist shows a not-done "turn on reminders" row once every reminder is turned off', async () => {
+    const { cookie, csrfToken } = await signupAndCreateLeague('f1.checklistoff@example.com', '203.0.113.952', 'F1 Checklist Off League', ['A', 'B']);
+    await SELF.fetch('http://example.com/league/reminders/settings', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ reminder72h: false, reminder24h: false, reminder12h: false })
+    });
     const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
     const html = await res.text();
     expect(html).toContain('data-i18n="ckReminders"');

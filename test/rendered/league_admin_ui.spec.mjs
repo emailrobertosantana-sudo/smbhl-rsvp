@@ -369,3 +369,35 @@ describe('Event page result', () => {
     }, 120000);
   }
 });
+
+describe('Import, with reminders on (D6)', () => {
+  // Reminders are on for a new league: an import days before a game would
+  // email the whole list at the next pass. The import preview names the
+  // games that would, and can hold their reminders first.
+  it('the preview names a game about to send, and holding it pauses that game before importing', async () => {
+    const lid = league.league.id;
+    const at = new Date(Date.now() + 30 * 3600000);
+    const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(at);
+    const g = t => p.find(x => x.type === t).value;
+    const date = `${g('year')}-${g('month')}-${g('day')}`, time = `${g('hour') === '24' ? '00' : g('hour')}:${g('minute')}`;
+    const evId = `${lid}:imp:${date}`;
+    await h.db.prepare(`INSERT INTO events (id, season, week, date, venue, state, start_time, league_id, auto_reminders_enabled) VALUES (?, 'S1', 9, ?, 'Gym', 'open', ?, ?, 1)`).bind(evId, date, time, lid).run();
+    const { page, errors, close } = await open('/league/roster');
+    await page.click('#ro_toggle_bulk');
+    await page.fill('#ro_bulk_text', 'Imp One, imp.one@example.com\nImp Two, imp.two@example.com');
+    await page.click('[data-i18n="bulkPreviewBtn"]');
+    await page.waitForSelector('#ro_bulk_rem_notice', { state: 'visible' });
+    const notice = await page.textContent('#ro_bulk_rem_notice');
+    // In the admin's language (an earlier test may have switched it to English).
+    expect(notice).toMatch(/Ces matchs enverront des rappels aux joueurs importés dans les 7 prochains jours :|These games will send reminders to the imported players within the next 7 days:/);
+    expect(notice).toContain(time);
+    expect(notice).toMatch(/rappel 24 h|24h reminder/);
+    expect(notice).toMatch(/Ne pas envoyer de rappels automatiques pour ce match|Don't send automatic reminders for this game/);
+    await page.check('#ro_bulk_rem_suppress');
+    await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click('#ro_bulk_confirm')]);
+    expect((await h.db.prepare('SELECT auto_reminders_enabled v FROM events WHERE id = ?').bind(evId).first()).v).toBe(0);
+    expect((await h.db.prepare(`SELECT count(*) n FROM contacts WHERE league_id = ? AND email IN ('imp.one@example.com', 'imp.two@example.com')`).bind(lid).first()).n).toBe(2);
+    expect(errors).toEqual([]);
+    await close();
+  }, 120000);
+});

@@ -141,12 +141,12 @@ describe('Part 2: per-league automated reminders', () => {
     await applyRealSchema(env);
   });
 
-  it('all 3 reminder toggles default OFF for a newly created league (F1: mid-setup player adds must not silently email)', async () => {
+  it('all 3 reminder toggles default ON for a newly created league (decided 2026-09-29, D6; imports warn instead)', async () => {
     const { leagueId } = await signupAndCreateLeague('reminders.defaults@example.com', '203.0.113.951', 'Defaults League', ['A', 'B']);
     const row = await env.DB.prepare('SELECT reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
-    expect(row.reminder_72h_enabled).toBe(0);
-    expect(row.reminder_24h_enabled).toBe(0);
-    expect(row.reminder_12h_enabled).toBe(0);
+    expect(row.reminder_72h_enabled).toBe(1);
+    expect(row.reminder_24h_enabled).toBe(1);
+    expect(row.reminder_12h_enabled).toBe(1);
   });
 
   it('each of the 3 settings toggles independently, via the dashboard route', async () => {

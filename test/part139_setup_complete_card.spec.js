@@ -1,8 +1,8 @@
 // Item 1: after setup, something says so. Players is the last setup step;
 // once the checklist (schedule, players, team names, roster size) is done,
 // a dismissible card offers the public page, its settings, the next game
-// and Comms -- and, reminders being off by default, says the league will
-// email no one until they are on. The Players page shows it too, after a
+// and Comms -- and, when reminders are off (they are on by default now),
+// says the league will email no one until they are on. The Players page shows it too, after a
 // spreadsheet import exactly as after a manual add.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -36,7 +36,7 @@ beforeAll(async () => {
 });
 
 describe('Setup complete card', () => {
-  it('absent while a step is left; shown once it is done, with its four links and the reminders-off prompt; dismissible', async () => {
+  it('absent while a step is left; shown once it is done, with its four links (reminders on by default: no reminders-off prompt); dismissible', async () => {
     const s = await almostSetUp('p139.dash@example.com');
     expect(await page(s, '/dashboard')).not.toContain('id="setup_done_card"');
     await post(s, '/league/contacts', { name: 'Lea Player', role: 'roster', team: 'Otters' });
@@ -47,19 +47,19 @@ describe('Setup complete card', () => {
     for (const key of ['setupDoneConfigure', 'setupDoneNextGame', 'setupDoneComms']) expect(html).toContain(`data-i18n="${key}"`);
     expect(html).toMatch(/data-i18n="setupDonePublic(Off)?"/);
     expect(html).toContain('/league/events/detail?e=');
-    expect(html).toContain('data-i18n="setupDoneRemindersOff"');
+    expect(html).not.toContain('data-i18n="setupDoneRemindersOff"');
     // Hidden once dismissed.
     expect((await post(s, '/league/setup-card/dismiss')).status).toBe(200);
     expect(await page(s, '/dashboard')).not.toContain('id="setup_done_card"');
   });
 
-  it('with reminders on, no reminders-off prompt', async () => {
+  it('with every reminder turned off, the reminders-off prompt', async () => {
     const s = await almostSetUp('p139.reminders@example.com');
-    await post(s, '/league/reminders/settings', { reminder72h: true });
+    await post(s, '/league/reminders/settings', { reminder72h: false, reminder24h: false, reminder12h: false });
     await post(s, '/league/contacts', { name: 'Lea Player', role: 'roster', team: 'Otters' });
     const html = await page(s, '/dashboard');
     expect(html).toContain('id="setup_done_card"');
-    expect(html).not.toContain('data-i18n="setupDoneRemindersOff"');
+    expect(html).toContain('data-i18n="setupDoneRemindersOff"');
   });
 
   it('Players page: an import that completes setup shows the card, the same as a manual add', async () => {

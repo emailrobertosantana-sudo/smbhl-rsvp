@@ -377,11 +377,15 @@ describe('F2 (players/reminders polish task): Players page shows a backstop bann
     expect(html).not.toContain('data-i18n="remindersBannerTitlePaused"');
   });
 
-  it('no banner when reminders are off for this league (the F1 default), even with an imminent event', async () => {
+  it('no banner when reminders are off for this league, even with an imminent event', async () => {
     const { cookie, csrfToken } = await signup('f2.banner.off@example.com', '203.0.197.102');
     const league = await createLeague(cookie, csrfToken, { name: 'F2 Banner Off League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    // Reminders left at their F1 default (off) -- no enableAllReminders call.
+    // Reminders start on (D6): turned off here.
+    await SELF.fetch('http://example.com/league/reminders/settings', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ reminder72h: false, reminder24h: false, reminder12h: false })
+    });
     const { date, time } = easternDateTimeHoursFromNow(10);
     await insertEventDirectly(league.id, date, time);
 

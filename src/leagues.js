@@ -3372,7 +3372,7 @@ export async function handleLeagueCreate(req, env) {
     const tracksResultsAtCreate = tracksStats && teamStructure !== 'headcount';
     await env.DB.prepare(
       `INSERT INTO leagues (id, name, division_label, tracks_stats, tracks_results, tracks_player_stats, team_count, team_names, created_by, created_at, slug, team_structure, min_players, max_players, min_goalies, reminder_72h_enabled, reminder_24h_enabled, reminder_12h_enabled, color)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, ?)`
     ).bind(leagueId, name, divisionLabel, tracksStats ? 1 : 0, tracksResultsAtCreate ? 1 : 0, tracksStats ? 1 : 0, teamNames.length, JSON.stringify(teamNames), session.userId, now, slug, teamStructure, minPlayers, maxPlayers, minGoalies, '#c0392b').run();
 
     await env.DB.prepare(

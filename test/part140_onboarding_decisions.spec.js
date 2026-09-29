@@ -68,6 +68,8 @@ describe('3. Skip advances, and what was skipped stays on the checklist', () => 
     const s = await signup('p140.skip.list@example.com');
     await post(s, '/leagues/create', { name: 'P140 Skip List', teamNames: ['Otters', 'Bears'] });
     await post(s, '/league/season/publish', { season_name: 'S1' });
+    // Reminders start on; skipped WITH them off, the step stays on the checklist.
+    await post(s, '/league/reminders/settings', { reminder72h: false, reminder24h: false, reminder12h: false });
     for (const step of ['playoffs', 'reminders', 'stats']) expect((await post(s, '/league/onboarding/step', { step, action: 'skip' })).status).toBe(200);
     let html = await page(s, '/dashboard');
     expect(html).toContain('href="/onboarding/season?step=3" data-i18n="nsPlayoffs">Configurer les séries<');
