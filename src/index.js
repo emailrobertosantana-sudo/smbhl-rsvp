@@ -12371,6 +12371,17 @@ function shortfallMinSkaters(cfg, leagueId) {
   return cfg.minSkaters || 0;
 }
 
+// A league game takes no more answers once it has started. SMBHL's cron
+// locks its game at start time (state 'locked'); a league game stays
+// 'open' after it is played, so without this an old email link changed a
+// player's answer after the game -- a "can't make it" from the 12h email
+// then told the admin they had "just dropped out, 12h before the game" --
+// and a sub could still say yes and be placed. SMBHL: its state, as before.
+function closedToAnswers(ev) {
+  if (!ev || ev.state !== 'open') return true;
+  return (ev.league_id || SMBHL_LEAGUE_ID) !== SMBHL_LEAGUE_ID && eventHasStarted(ev);
+}
+
 async function eventSeasonConfig(env, ev) {
   const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
   return leagueId === SMBHL_LEAGUE_ID
@@ -13960,7 +13971,7 @@ async function availRoute(req, env, url) {
 
   const ev = await getEvent(env.DB, eventId);
   if (!ev) return notice('Match introuvable', 'Game not found');
-  if (ev.state !== 'open') return notice('Les réponses sont fermées', 'Responses are closed');
+  if (closedToAnswers(ev)) return notice('Les réponses sont fermées', 'Responses are closed');
 
   const w = whenLine(ev);
   // Opening the link records nothing (a link scanner said Yes for two
@@ -19234,11 +19245,11 @@ async function leagueRsvpGet(req, env, url) {
   // records nothing when opened -- link scanners open every URL -- it shows
   // a confirmation instead, and POST /league/rsvp/confirm records it.
   const autoVal = url.searchParams.get('v');
-  const confirmFor = (['in', 'out'].includes(autoVal) && ev.state === 'open' && status !== autoVal) ? autoVal : null;
+  const confirmFor = (['in', 'out'].includes(autoVal) && !closedToAnswers(ev) && status !== autoVal) ? autoVal : null;
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
   const leagueCfg = cfg.league;
-  const locked = ev.state !== 'open';
+  const locked = closedToAnswers(ev);
   const forcedLang = leagueCfg.languageMode && leagueCfg.languageMode !== 'both' ? leagueCfg.languageMode : null;
 
   // Team-structure task, Part 4: 'headcount' has no team concept at all
@@ -19545,7 +19556,7 @@ async function leagueRsvpConfirmPost(req, env, url) {
   const form = await req.formData().catch(() => null);
   const status = form && String(form.get('status') || '');
   if (!['in', 'out'].includes(status)) return leagueRsvpNotice('Réponse invalide.', 'Invalid answer.');
-  if (ev.state === 'open') {
+  if (!closedToAnswers(ev)) {
     const row = await env.DB.prepare('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
     // The 12h email's "can't make it" from a confirmed player: the late-
     // reversal alert to the admins, as before.
@@ -19582,7 +19593,7 @@ async function leagueRsvpPost(req, env, url) {
     return Response.json({ ok: false, error: 'Invalid or expired link.', errorKey: 'RSVP_BAD_TOKEN' }, { status: 403 });
   }
   const { contact, ev } = result;
-  if (ev.state !== 'open') {
+  if (closedToAnswers(ev)) {
     return Response.json({ ok: false, error: 'This event is no longer accepting responses.', errorKey: 'RSVP_LOCKED' }, { status: 409 });
   }
 

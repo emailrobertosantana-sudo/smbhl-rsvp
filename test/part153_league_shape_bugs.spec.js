@@ -169,3 +169,54 @@ describe('5. A no-teams league\'s details email names no team', () => {
     }
   }, 120000);
 });
+
+// 6. A league game stays 'open' after it is played (SMBHL's cron locks its
+// own): an old email link changed a player's answer after the game -- and
+// the 12h email's "can't make it" told the admin they had just dropped
+// out -- and a sub could still say yes and be placed.
+describe('6. A league game takes no answers once it has started', () => {
+  it('an old "can\'t make it" link after the game changes nothing and alerts nobody; a sub\'s yes is closed', async () => {
+    const { a, id } = await league('after', { teams: ['Red', 'Blue'] });
+    for (let i = 0; i < 7; i++) await contact(a, `After Red${i}`, 'Red', 'roster', i === 0);
+    for (let i = 0; i < 7; i++) await contact(a, `After Blue${i}`, 'Blue', 'roster', i === 0);
+    const sub = await contact(a, 'After Sub', null, 'sub_skater');
+    const st = START + 4 * DAY;
+    const ev = await game(id, 'rb', st, 'Red', 'Blue');
+    // Everyone answers in; the 12h details email arrives.
+    let details = null;
+    for (let t = START + H; t <= st && !details; t += H) {
+      await pass(t);
+      for (const m of mail.sent.filter(x => !x.seen)) {
+        m.seen = true;
+        const inLink = linksIn(m, '/league/rsvp').find(l => new URL(l).searchParams.get('v') === 'in');
+        if (inLink && /décidé|decided/i.test(m.subject)) await answer(inLink);
+      }
+      details = mail.sent.find(m => m.to === 'after.red2@example.com' && /détails|details/i.test(m.subject));
+    }
+    expect(details).toBeTruthy();
+    const out = linksIn(details, '/league/rsvp').find(l => new URL(l).searchParams.get('v') === 'out');
+    // The day after the game.
+    vi.setSystemTime(new Date(st + 20 * H));
+    const alertsBefore = mail.sent.filter(m => /dropped out/.test(m.subject)).length;
+    const page = await (await SELF.fetch(out)).text();
+    expect(page).not.toContain('rv_confirm'); // no button to press
+    expect(page).toContain("n'accepte plus de réponses");
+    const post = await SELF.fetch(new URL('/league/rsvp/confirm?' + new URL(out).searchParams.toString(), out).toString(), {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'status=out&src=logistics12h', redirect: 'manual'
+    });
+    expect([303, 200]).toContain(post.status);
+    const row = await one(`SELECT r.status FROM rsvp r JOIN contacts c ON c.player_id = r.player_id WHERE r.event_id = ? AND c.email = 'after.red2@example.com'`, ev.id);
+    expect(row.status).toBe('in');
+    expect(mail.sent.filter(m => /dropped out/.test(m.subject)).length).toBe(alertsBefore);
+    // A sub's availability link, after the game: closed, not placed.
+    const { hmac } = await import('../src/crypto_utils.js');
+    const c = await one('SELECT token_salt FROM contacts WHERE player_id = ?', sub);
+    const t = await hmac(env.RSVP_SECRET, `a:${ev.id}:${sub}:skater:${c.token_salt}`);
+    const avail = `http://example.com/avail?e=${encodeURIComponent(ev.id)}&p=${encodeURIComponent(sub)}&n=skater&t=${t}&a=yes`;
+    const availPage = await (await SELF.fetch(avail)).text();
+    expect(availPage).toContain('Responses are closed');
+    const availPost = await SELF.fetch(avail, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'a=yes' });
+    expect(await availPost.text()).toContain('Responses are closed');
+    expect(await one('SELECT team FROM rsvp WHERE event_id = ? AND player_id = ?', ev.id, sub)).toBeNull();
+  }, 120000);
+});
