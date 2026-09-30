@@ -13261,10 +13261,36 @@ async function leagueHasNoSubs(env, leagueId, need, usesIndependentGoalieAxis) {
   return !r;
 }
 
+// Two states are a league being set up, not a game short of players, and
+// send nothing (league product only; SMBHL never comes through here):
+//   - nobody has been asked yet: the alert waits for the hour the league's
+//     first reminder goes out for that game (72 h before by default, the
+//     league's own hour on the advanced model). Before it, no player has
+//     had the chance to answer, so every count is only the roster's size;
+//   - a team with no player on it at all (or, without fixed teams, a league
+//     with no player at all): there is nobody to be short of yet.
+// The check runs again at every pass, so a real shortage is still told,
+// once, as soon as it is one.
+async function shortGameAlertHeld(env, ev) {
+  const advanced = (await usesAdvancedReminders(env, ev.league_id)) ? await getEmailSettings(env.DB, ev.league_id) : null;
+  const firstAskHours = advanced ? advancedStepHours(advanced, 'reminder_72h') : REMINDER_WINDOW_THRESHOLD_HOURS.reminder_72h;
+  return hoursOut(ev) > firstAskHours;
+}
+async function teamsWithPlayers(env, leagueId) {
+  const rows = (await env.DB.prepare(
+    `SELECT preferred_team AS team, COUNT(*) AS n FROM contacts
+      WHERE league_id = ? AND role = 'roster' AND COALESCE(is_active, 1) = 1 GROUP BY preferred_team`
+  ).bind(leagueId).all()).results || [];
+  return { total: rows.reduce((s, r) => s + r.n, 0), byTeam: new Map(rows.map(r => [r.team, r.n])) };
+}
+
 async function alertAdminShortGame(env, ev, shortages) {
   const leagueId = ev.league_id;
+  if (await shortGameAlertHeld(env, ev)) return 0;
+  const roster = await teamsWithPlayers(env, leagueId);
   const open = [];
   for (const sh of shortages) {
+    if (sh.team ? !roster.byTeam.get(sh.team) : !roster.total) continue;
     if (sh.basis === 'available') {
       const waiting = await env.DB.prepare(
         `SELECT 1 FROM outbox o WHERE o.event_id = ? AND o.kind = 'sub_call' AND o.cancelled = 0
