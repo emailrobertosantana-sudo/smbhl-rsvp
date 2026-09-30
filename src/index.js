@@ -355,16 +355,7 @@ window.__csrfHeader = function() {
 // this task (see error_i18n.js's own comment) -- a comment mentioning
 // one of those words directly, inside this same script block, hit the
 // exact bug it was describing.
-window.__errorText = function(errorKey, fallback, vars) {
-  var lang = window.__currentLang || 'fr';
-  var src = window.__ERROR_I18N || {};
-  var dict = src[lang] || src.fr || {};
-  var text = (errorKey && dict[errorKey]) || fallback || (lang === 'fr' ? 'Une erreur est survenue.' : 'An error occurred.');
-  if (vars) {
-    Object.keys(vars).forEach(function(k) { text = text.split('{' + k + '}').join(vars[k]); });
-  }
-  return text;
-};
+${ERROR_TEXT_JS}
 </script>
 <style>
  :root{--ink:#16181d;--soft:#5d636e;--faint:#8b919b;--paper:#eef0f3;--card:#fff;
@@ -892,6 +883,24 @@ function signupHeader(brandLabel) {
 // here verbatim from page()'s script. window.__pageDict() exposes the
 // current page's own dict to page-local scripts (team-name placeholder
 // text, "copied" button label, etc).
+// window.__errorText, the one implementation both shells embed (page()
+// for SMBHL's pages, nlAuthScript for the league pages, login and signup),
+// so the two can't drift. src/error_i18n.js is keyed by error, then
+// language: { KEY: { fr, en } }. It used to be read language first, which
+// never matched: every page showed the generic message or the server's
+// raw English instead of the translated text. The server's own text is
+// used only when the key is unknown, and the generic message only when
+// there is neither. A String.raw literal (never a function's toString:
+// the bundler adds __name() calls), with no backslash, backtick or
+// dollar-brace inside.
+const ERROR_TEXT_JS = String.raw`window.__errorText = function(errorKey, fallback, vars) {
+  var lang = window.__currentLang === 'en' ? 'en' : 'fr';
+  var src = window.__ERROR_I18N || {};
+  var entry = errorKey ? src[errorKey] : null;
+  var text = (entry && (entry[lang] || entry.fr || entry.en)) || fallback || (lang === 'fr' ? 'Une erreur est survenue.' : 'An error occurred.');
+  if (vars) { Object.keys(vars).forEach(function(k) { text = text.split('{' + k + '}').join(vars[k]); }); }
+  return text;
+};`;
 function nlAuthScript(i18nDict) {
   return `
 var __I18N = ${JSON.stringify(i18nDict)};
@@ -900,14 +909,7 @@ window.__csrfHeader = function() {
   var m = document.cookie.match(/(?:^|;\\s*)csrf_token=([^;]+)/);
   return m ? { 'X-CSRF-Token': decodeURIComponent(m[1]) } : {};
 };
-window.__errorText = function(errorKey, fallback, vars) {
-  var lang = window.__currentLang || 'fr';
-  var src = window.__ERROR_I18N || {};
-  var dict = src[lang] || src.fr || {};
-  var text = (errorKey && dict[errorKey]) || fallback || (lang === 'fr' ? 'Une erreur est survenue.' : 'An error occurred.');
-  if (vars) { Object.keys(vars).forEach(function(k) { text = text.split('{' + k + '}').join(vars[k]); }); }
-  return text;
-};
+${ERROR_TEXT_JS}
 (function() {
   var lang = 'fr';
   try {
