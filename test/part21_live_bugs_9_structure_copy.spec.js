@@ -54,7 +54,7 @@ describe('Live-testing Part 3: team-structure copy is clearer and friendlier', (
     const { cookie } = await signup('bugs9.copy.step2.fr@example.com', '203.0.124.001');
     const html = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
     expect(html).toContain('La même équipe toute la saison, comme une ligue régulière.');
-    expect(html).toContain('Juste la liste des présents. Vous formez les équipes sur place.');
+    expect(html).toContain('Juste la liste des présents. Tu formes les équipes sur place.');
     expect(html).toContain('Les équipes sont refaites à chaque match : tirage automatique ou choisies par toi.');
     // The earlier, now-superseded copy generations are gone.
     expect(html).not.toContain('Les mêmes équipes toute la saison.');
