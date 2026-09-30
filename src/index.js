@@ -9087,6 +9087,30 @@ async function handleLeagueSchedulePage(req, env, url) {
     <p class="nl-help" data-i18n="scheduleNudgeDesc">Tes matchs sont créés. Ajoute tes joueurs pour qu'ils puissent commencer à répondre.</p>
     <div style="margin-top:var(--space-2)"><a class="nl-btn nl-btn--secondary nl-btn--sm" href="/league/roster" data-i18n="scheduleNudgeBtn">Ajouter des joueurs</a></div>
   </section>` : ''}
+  <!-- The matchups panel sits here, under the header buttons and the
+       "Next step" card and above everything else, so opening it pushes
+       the game list down. It used to be after the whole list: on a long
+       schedule it opened far below what the admin had just clicked. -->
+  ${showMatchupsPanel ? `<aside class="sc-bulk-panel" id="sc_matchups_panel" data-i18n-aria="matchupsGenTitle" aria-label="Assigner les affrontements">
+    <h2 data-i18n="matchupsGenTitle">Assigner les affrontements</h2>
+    <p class="nl-help" data-i18n="matchupsGenHelp">Assigne un affrontement à chacun de tes matchs déjà créés — séries éliminatoires comprises, une seule prévisualisation pour tout l'horaire. Rien n'est écrasé avant que tu confirmes, et aucun match n'est jamais créé.</p>
+    <div id="matchupsGenErr" class="nl-error" style="display:none"></div>
+    <div id="matchups_form_fields">
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
+        <input type="checkbox" id="mx_regenerate">
+        <span data-i18n="matchupsRegenerateLabel">Tout régénérer (écrase les affrontements déjà assignés)</span>
+      </label>
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="mx_preview_btn" data-i18n="matchupsPreviewBtn" onclick="previewMatchups()">Prévisualiser</button>
+    </div>
+    <div id="matchups_preview_wrap" style="display:none;">
+      <div id="matchups_preview_results" style="display:flex;flex-direction:column;gap:12px;max-height:420px;overflow-y:auto;"></div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
+        <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="mx_confirm_btn" data-i18n="matchupsConfirmBtn" onclick="confirmMatchups()">Assigner ces affrontements</button>
+        <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="matchupsBackBtn" onclick="backToMatchupsForm()">Retour</button>
+      </div>
+    </div>
+    <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleMatchupsPanel()">Annuler</button>
+  </aside>` : ''}
   ${scheduleDistributionText ? `<section class="nl-card" id="sc_distribution">
     <h2 class="h3" data-i18n="distTitle">Répartition des matchs</h2>
     <p class="nl-help" data-case="${esc(scheduleDistribution.case)}" data-date-fr="${esc(scheduleDistributionText.summary.fr)}" data-date-en="${esc(scheduleDistributionText.summary.en)}">${esc(scheduleDistributionText.summary.fr)}</p>
@@ -9235,26 +9259,6 @@ async function handleLeagueSchedulePage(req, env, url) {
         <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleBulkPanel()">Annuler</button>
       </div>
     </aside>
-    ${showMatchupsPanel ? `<aside class="sc-bulk-panel" id="sc_matchups_panel" data-i18n-aria="matchupsGenTitle" aria-label="Assigner les affrontements">
-      <h2 data-i18n="matchupsGenTitle">Assigner les affrontements</h2>
-      <p class="nl-help" data-i18n="matchupsGenHelp">Assigne un affrontement à chacun de tes matchs déjà créés — séries éliminatoires comprises, une seule prévisualisation pour tout l'horaire. Rien n'est écrasé avant que tu confirmes, et aucun match n'est jamais créé.</p>
-      <div id="matchupsGenErr" class="nl-error" style="display:none"></div>
-      <div id="matchups_form_fields">
-        <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
-          <input type="checkbox" id="mx_regenerate">
-          <span data-i18n="matchupsRegenerateLabel">Tout régénérer (écrase les affrontements déjà assignés)</span>
-        </label>
-        <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="mx_preview_btn" data-i18n="matchupsPreviewBtn" onclick="previewMatchups()">Prévisualiser</button>
-      </div>
-      <div id="matchups_preview_wrap" style="display:none;">
-        <div id="matchups_preview_results" style="display:flex;flex-direction:column;gap:12px;max-height:420px;overflow-y:auto;"></div>
-        <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
-          <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="mx_confirm_btn" data-i18n="matchupsConfirmBtn" onclick="confirmMatchups()">Assigner ces affrontements</button>
-          <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="matchupsBackBtn" onclick="backToMatchupsForm()">Retour</button>
-        </div>
-      </div>
-      <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleMatchupsPanel()">Annuler</button>
-    </aside>` : ''}
   </div>
   `}
 </main>
@@ -9595,9 +9599,10 @@ async function submitBulkEvents() {
 // confirm (writes it) cover the regular season AND the playoffs
 // together. Never creates an event, for either half -- only ever
 // UPDATEs one already on the schedule.
-// Same treatment as the create panels (openCreatePanel): the panel sits
-// below the whole event list, so opening it without scrolling looked like
-// nothing happened. Closing stays a plain toggle.
+// Same treatment as the create panels (openCreatePanel): opened from the
+// header button or from the "Next step" card, the panel (at the top of the
+// page, above the game list) scrolls into view and its first control takes
+// the focus. Closing stays a plain toggle.
 function toggleMatchupsPanel() {
   var panel = document.getElementById('sc_matchups_panel');
   if (!panel) return;
@@ -9800,7 +9805,11 @@ function toggleMatchupEdit(eventId) {
   var row = document.getElementById('mx_edit_' + eventId);
   if (!row) return;
   row.style.display = row.style.display === 'none' ? 'flex' : 'none';
-  if (row.style.display === 'flex') { var first = document.getElementById('mx_home_' + eventId); if (first) first.focus(); }
+  if (row.style.display === 'flex') {
+    // Same as the duplicate row: in view first, then the focus.
+    row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    var first = document.getElementById('mx_home_' + eventId); if (first) first.focus({ preventScroll: true });
+  }
 }
 async function saveMatchup(eventId) {
   var err = document.getElementById('mx_err_' + eventId);
