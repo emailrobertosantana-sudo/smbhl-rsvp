@@ -70,6 +70,7 @@ import {
   SMBHL_SHORTFALL_MIN_SKATERS
 } from './season_config.js';
 import { checkSchemaOnce, checkSchemaForPass, formatSchemaDriftMessage } from './schema_guard.js';
+import { getSeasonPricing, listPricingSeasons, saveSeasonPricing, getPlayerDues, listSeasonDues, savePlayerDues, listSeasonCosts, saveSeasonCost, deleteSeasonCost } from './finance_store.js';
 import { gamesOverlap, overlappingGames, concurrencyClusters, byStart, gameInterval } from './league_nights.js';
 
 /* SMBHL attendance
@@ -12003,10 +12004,14 @@ async function prepareOutboxMessage(env, m, rctx, opts = {}) {
         payload.no  = `${base}/avail?${q}&a=no`;
       }
 
-      let pricing = pricingCache.get(ev.season);
+      // The mail's own league's pricing and dues (finance_store.js): a
+      // league's email used to read SMBHL's when their season names matched.
+      const financeLeague = ev.league_id || m.league_id || SMBHL_LEAGUE_ID;
+      const pricingKey = `${financeLeague}\u0000${ev.season}`;
+      let pricing = pricingCache.get(pricingKey);
       if (!pricing && ev.season) {
-        pricing = await env.DB.prepare('SELECT * FROM season_pricing WHERE season = ?').bind(ev.season).first();
-        if (pricing) pricingCache.set(ev.season, pricing);
+        pricing = await getSeasonPricing(env.DB, financeLeague, ev.season);
+        if (pricing) pricingCache.set(pricingKey, pricing);
       }
       const phone = (pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '');
 
@@ -12030,9 +12035,7 @@ async function prepareOutboxMessage(env, m, rctx, opts = {}) {
 
       if (m.kind === 'invite') {
         const isGoalie = (c && (c.is_goalie === 1 || c.role === 'sub_goalie'));
-        const duesRow = await env.DB.prepare(
-          'SELECT custom_due, amount_paid FROM player_dues WHERE season = ? AND player_id = ?'
-        ).bind(ev.season, m.player_id).first();
+        const duesRow = await getPlayerDues(env.DB, financeLeague, ev.season, m.player_id);
 
         let totalDue;
         if (duesRow && duesRow.custom_due !== null && duesRow.custom_due !== undefined) {
@@ -22188,9 +22191,13 @@ async function handleFinancesData(req, env, url) {
 
   // All seasons from data.json + DB
   const seasonsSet = new Set((d.seasons || []).map(s => s.name));
-  const pricingSeasons = (await env.DB.prepare('SELECT DISTINCT season FROM season_pricing').all()).results || [];
-  pricingSeasons.forEach(r => seasonsSet.add(r.season));
-  const eventSeasons = (await env.DB.prepare('SELECT DISTINCT season FROM events').all()).results || [];
+  // SMBHL's finance page: SMBHL's rows only (finance_store.js scopes
+  // every finance query by league; the event and roster queries below are
+  // scoped the same way, so another league's season of the same name never
+  // appears here).
+  const pricingSeasons = await listPricingSeasons(env.DB, SMBHL_LEAGUE_ID);
+  pricingSeasons.forEach(s => seasonsSet.add(s));
+  const eventSeasons = (await env.DB.prepare('SELECT DISTINCT season FROM events WHERE league_id = ?').bind(SMBHL_LEAGUE_ID).all()).results || [];
   eventSeasons.forEach(r => seasonsSet.add(r.season));
   if (seasonParam) seasonsSet.add(seasonParam);
 
@@ -22199,7 +22206,7 @@ async function handleFinancesData(req, env, url) {
   const season = seasonParam || s0?.name || 'Fall 2026';
 
   // 1. Season Pricing
-  let pricing = await env.DB.prepare('SELECT * FROM season_pricing WHERE season = ?').bind(season).first();
+  let pricing = await getSeasonPricing(env.DB, SMBHL_LEAGUE_ID, season);
   if (!pricing) {
     pricing = {
       season,
@@ -22213,7 +22220,7 @@ async function handleFinancesData(req, env, url) {
   }
 
   // 2. D1 Player Dues records
-  const duesRows = (await env.DB.prepare('SELECT * FROM player_dues WHERE season = ?').bind(season).all()).results || [];
+  const duesRows = await listSeasonDues(env.DB, SMBHL_LEAGUE_ID, season);
   const duesMap = new Map(duesRows.map(r => [r.player_id, r]));
 
   // 3. Games a sub is charged for: ONLY games confirmed by a PUBLISHED
@@ -22230,15 +22237,15 @@ async function handleFinancesData(req, env, url) {
   const awaitingRows = (await env.DB.prepare(
     `SELECT r.player_id, count(*) AS n
        FROM rsvp r JOIN events e ON e.id = r.event_id
-      WHERE e.season = ? AND e.state = 'locked' AND r.status = 'in' AND r.player_id IS NOT NULL
+      WHERE e.league_id = ? AND e.season = ? AND e.state = 'locked' AND r.status = 'in' AND r.player_id IS NOT NULL
       GROUP BY r.player_id`
-  ).bind(season).all()).results || [];
+  ).bind(SMBHL_LEAGUE_ID, season).all()).results || [];
   const awaitingMap = new Map(awaitingRows.map(r => [r.player_id, r.n]));
 
   // 4. Contacts
   const contactsList = (await env.DB.prepare(
-    'SELECT player_id, name, email, role, is_goalie, is_sub, preferred_team FROM contacts'
-  ).all()).results || [];
+    'SELECT player_id, name, email, role, is_goalie, is_sub, preferred_team FROM contacts WHERE league_id = ?'
+  ).bind(SMBHL_LEAGUE_ID).all()).results || [];
   const contactMap = new Map(contactsList.map(c => [c.player_id, c]));
 
   // 5. Gather players for this season
@@ -22303,8 +22310,8 @@ async function handleFinancesData(req, env, url) {
        FROM rsvp r
        JOIN events e ON e.id = r.event_id
        LEFT JOIN contacts c ON c.player_id = r.player_id
-      WHERE e.season = ? AND r.role = 'roster' AND r.player_id IS NOT NULL`
-  ).bind(season).all()).results || [];
+      WHERE e.league_id = ? AND e.season = ? AND r.role = 'roster' AND r.player_id IS NOT NULL`
+  ).bind(SMBHL_LEAGUE_ID, season).all()).results || [];
 
   for (const rr of rsvpRosterRows) {
     if (!processedPlayerIds.has(rr.player_id)) {
@@ -22431,9 +22438,7 @@ async function handleFinancesData(req, env, url) {
     return a.name.localeCompare(b.name);
   });
 
-  const costRows = (await env.DB.prepare(
-    'SELECT id, season, category, description, amount, created_at FROM season_costs WHERE season = ? ORDER BY created_at DESC'
-  ).bind(season).all()).results || [];
+  const costRows = await listSeasonCosts(env.DB, SMBHL_LEAGUE_ID, season);
 
   const costSummary = {
     rental: costRows.filter(c => c.category === 'rental').reduce((sum, c) => sum + Number(c.amount || 0), 0),
@@ -22483,17 +22488,7 @@ async function handleFinancesPricingSave(req, env) {
   const etransferPhone = b.etransfer_phone !== undefined ? String(b.etransfer_phone || '').trim() : null;
   const now = new Date().toISOString();
 
-  await env.DB.prepare(
-    `INSERT INTO season_pricing (season, price_player, price_goalie, price_sub_player, price_sub_goalie, etransfer_phone, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(season) DO UPDATE SET
-       price_player = excluded.price_player,
-       price_goalie = excluded.price_goalie,
-       price_sub_player = excluded.price_sub_player,
-       price_sub_goalie = excluded.price_sub_goalie,
-       etransfer_phone = excluded.etransfer_phone,
-       updated_at = excluded.updated_at`
-  ).bind(season, pricePlayer, priceGoalie, priceSubPlayer, priceSubGoalie, etransferPhone, now).run();
+  await saveSeasonPricing(env.DB, SMBHL_LEAGUE_ID, season, { pricePlayer, priceGoalie, priceSubPlayer, priceSubGoalie, etransferPhone }, now);
 
   return Response.json({ ok: true, season });
 }
@@ -22510,16 +22505,7 @@ async function handleFinancesPlayerSave(req, env) {
   const notes = b.notes !== undefined ? String(b.notes || '').trim() : null;
   const now = new Date().toISOString();
 
-  await env.DB.prepare(
-    `INSERT INTO player_dues (season, player_id, custom_due, adjustment, amount_paid, notes, updated_at)
-     VALUES (?, ?, ?, 0, ?, ?, ?)
-     ON CONFLICT(season, player_id) DO UPDATE SET
-       custom_due = excluded.custom_due,
-       adjustment = 0,
-       amount_paid = excluded.amount_paid,
-       notes = excluded.notes,
-       updated_at = excluded.updated_at`
-  ).bind(season, playerId, customDue, amountPaid, notes, now).run();
+  await savePlayerDues(env.DB, SMBHL_LEAGUE_ID, season, playerId, { customDue, amountPaid, notes }, now);
 
   return Response.json({ ok: true, season, player_id: playerId });
 }
@@ -22540,15 +22526,7 @@ async function handleFinancesCostSave(req, env) {
   const id = b.id ? String(b.id).trim() : 'cost_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
   const now = new Date().toISOString();
 
-  await env.DB.prepare(
-    `INSERT INTO season_costs (id, season, category, description, amount, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       category = excluded.category,
-       description = excluded.description,
-       amount = excluded.amount,
-       updated_at = excluded.updated_at`
-  ).bind(id, season, cat, description, amount, now, now).run();
+  await saveSeasonCost(env.DB, SMBHL_LEAGUE_ID, { id, season, category: cat, description, amount }, now);
 
   return Response.json({ ok: true, id, season });
 }
@@ -22559,11 +22537,7 @@ async function handleFinancesCostDelete(req, env) {
   const season = String(b.season || '').trim();
   if (!id) return new Response('id required', { status: 400 });
 
-  if (season) {
-    await env.DB.prepare('DELETE FROM season_costs WHERE id = ? AND season = ?').bind(id, season).run();
-  } else {
-    await env.DB.prepare('DELETE FROM season_costs WHERE id = ?').bind(id).run();
-  }
+  await deleteSeasonCost(env.DB, SMBHL_LEAGUE_ID, id, season || null);
 
   return Response.json({ ok: true, id });
 }
@@ -25684,7 +25658,8 @@ async function handleSendSampleInvites(req, env) {
   }
 
   // Load pricing
-  let pricing = await env.DB.prepare('SELECT * FROM season_pricing WHERE season = ?').bind(ev.season).first();
+  const financeLeague = ev.league_id || SMBHL_LEAGUE_ID;
+  let pricing = await getSeasonPricing(env.DB, financeLeague, ev.season);
   const phone = (pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '514-575-5251');
 
   // Load league message if configured
@@ -25708,7 +25683,7 @@ async function handleSendSampleInvites(req, env) {
     const linkReg = `${base}/rsvp?e=${encodeURIComponent(ev.id)}&p=${regId}&t=${tReg}`;
 
     // Balance calculation
-    const duesRow = await env.DB.prepare('SELECT custom_due, amount_paid FROM player_dues WHERE season = ? AND player_id = ?').bind(ev.season, regId).first();
+    const duesRow = await getPlayerDues(env.DB, financeLeague, ev.season, regId);
     const isGoalie = (cReg.is_goalie === 1 || cReg.role === 'sub_goalie');
     const basePrice = isGoalie ? Number(pricing?.price_goalie ?? 0) : Number(pricing?.price_player ?? 170);
     const totalDue = (duesRow && duesRow.custom_due !== null && duesRow.custom_due !== undefined)
@@ -25764,7 +25739,7 @@ async function handleSendSampleInvites(req, env) {
     const q = `e=${encodeURIComponent(ev.id)}&p=${subId}&n=${need}&t=${atSub}`;
 
     // Sub balance calculation
-    const duesRow = await env.DB.prepare('SELECT custom_due, amount_paid FROM player_dues WHERE season = ? AND player_id = ?').bind(ev.season, subId).first();
+    const duesRow = await getPlayerDues(env.DB, financeLeague, ev.season, subId);
     let totalDue;
     if (duesRow && duesRow.custom_due !== null && duesRow.custom_due !== undefined) {
       totalDue = Math.max(0, Number(duesRow.custom_due));

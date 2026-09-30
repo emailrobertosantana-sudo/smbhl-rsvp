@@ -17,7 +17,9 @@
 // `ALTER TABLE x ADD COLUMN y ...` are tracked -- the only two
 // statement shapes that have ever introduced a table or column in this
 // repo's migration history (verified by hand against all 44 files
-// before writing this parser). DROP TABLE, CREATE INDEX, and data
+// before writing this parser) -- and `ALTER TABLE a RENAME TO b`, whose
+// scratch table's columns are merged into b (a rebuild adds no table of
+// its own; see parseFile). DROP TABLE, CREATE INDEX, and data
 // statements (INSERT/UPDATE/SELECT) are deliberately ignored: they
 // don't change what tables/columns exist. ORDER DOES NOT MATTER for
 // this purpose (unlike test/support/real_schema.js, which has to apply
@@ -99,6 +101,16 @@ function parseFile(sql, manifest) {
         if (TABLE_CONSTRAINT_KEYWORDS.has(colMatch[1].toUpperCase())) continue;
         addColumn(manifest, table, colMatch[1]);
       }
+      continue;
+    }
+    // A table rebuilt under a scratch name and renamed into place (SQLite's
+    // way of changing a primary key -- migrate-054): its columns belong to
+    // the final name, and the scratch name is not a table of its own.
+    const renameMatch = stmt.match(/^ALTER TABLE\s+(\w+)\s+RENAME TO\s+(\w+)\s*$/i);
+    if (renameMatch) {
+      const [, from, to] = renameMatch;
+      for (const column of manifest[from] || []) addColumn(manifest, to, column);
+      delete manifest[from];
       continue;
     }
     const alterMatch = stmt.match(/^ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)/i);

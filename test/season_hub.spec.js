@@ -394,7 +394,8 @@ describe('Season Hub - 1-Click Publishing & Database Sync', () => {
               } else if (sql.includes('INSERT INTO settings')) {
                 dbSettings[args[0]] = args[1];
               } else if (sql.includes('INSERT INTO season_pricing')) {
-                dbPricing.push({ season: args[0], price_player: args[1], price_sub_player: args[2] });
+                // (league_id, season, price_player, price_sub_player): scoped by league since migrate-054.
+                dbPricing.push({ league_id: args[0], season: args[1], price_player: args[2], price_sub_player: args[3] });
               }
               return {};
             },
@@ -457,6 +458,7 @@ describe('Season Hub - 1-Click Publishing & Database Sync', () => {
 
     // Auto-sync into season_pricing verified
     expect(dbPricing).toHaveLength(1);
+    expect(dbPricing[0].league_id).toBe('smbhl');
     expect(dbPricing[0].season).toBe('Winter 2027');
     expect(dbPricing[0].price_player).toBe(220);
     expect(dbPricing[0].price_sub_player).toBe(15);

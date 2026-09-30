@@ -21,6 +21,7 @@ import {
   smbhlSeasonConfig
 } from './season_config.js';
 import { SMBHL_LEAGUE_ID, makeEventId } from './league_ids.js';
+import { getSeasonPricing, saveSeasonPlayerPrices } from './finance_store.js';
 
 export const TEAM_COLORS = getTeamNames(DEFAULT_SEASON_CONFIG);
 export const TEAM_LABELS = {
@@ -1047,14 +1048,7 @@ export async function publishSeasonToProduction(env, { seasonName, startDate, ro
     `).bind(JSON.stringify(fees)).run();
 
     try {
-      await db.prepare(`
-        INSERT INTO season_pricing (season, price_player, price_goalie, price_sub_player, price_sub_goalie, updated_at)
-        VALUES (?, ?, 0, ?, 0, datetime('now'))
-        ON CONFLICT(season) DO UPDATE SET
-          price_player=excluded.price_player,
-          price_sub_player=excluded.price_sub_player,
-          updated_at=excluded.updated_at
-      `).bind(seasonName, Number(fees.regularDues) || 220, Number(fees.subFee) || 15).run();
+      await saveSeasonPlayerPrices(db, SMBHL_LEAGUE_ID, seasonName, Number(fees.regularDues) || 220, Number(fees.subFee) || 15);
     } catch (_) {}
   }
 
@@ -1130,7 +1124,7 @@ export async function handleSeasonData(req, env, url) {
   // Check if target season has pricing in season_pricing (e.g. from Finances + Saison future)
   const targetSeason = url.searchParams.get('s') || url.searchParams.get('season') || 'Winter 2027';
   try {
-    const pricingRow = await db.prepare("SELECT price_player, price_sub_player FROM season_pricing WHERE season = ?").bind(targetSeason).first();
+    const pricingRow = await getSeasonPricing(db, SMBHL_LEAGUE_ID, targetSeason);
     if (pricingRow) {
       if (pricingRow.price_player != null) fees.regularDues = Number(pricingRow.price_player);
       if (pricingRow.price_sub_player != null) fees.subFee = Number(pricingRow.price_sub_player);
@@ -1405,14 +1399,7 @@ export async function handleSeasonSaveConfig(req, env) {
 
     const targetSeason = body.seasonName || body.season || 'Winter 2027';
     try {
-      await db.prepare(`
-        INSERT INTO season_pricing (season, price_player, price_goalie, price_sub_player, price_sub_goalie, updated_at)
-        VALUES (?, ?, 0, ?, 0, datetime('now'))
-        ON CONFLICT(season) DO UPDATE SET
-          price_player=excluded.price_player,
-          price_sub_player=excluded.price_sub_player,
-          updated_at=excluded.updated_at
-      `).bind(targetSeason, Number(fees.regularDues) || 220, Number(fees.subFee) || 15).run();
+      await saveSeasonPlayerPrices(db, SMBHL_LEAGUE_ID, targetSeason, Number(fees.regularDues) || 220, Number(fees.subFee) || 15);
     } catch (_) {}
   }
 
