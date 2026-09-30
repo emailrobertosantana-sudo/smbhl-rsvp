@@ -6028,7 +6028,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée. Ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
       lblColor: 'Couleur de la ligue', save: 'Enregistrer', saved: 'Enregistré !',
       addEmailsLabel: "Envoyer un courriel aux joueurs lorsqu'ils sont ajoutés",
-      addEmailsDesc: "Un remplaçant ajouté est appelé tout de suite par courriel quand un match des 8 prochains jours manque de joueurs. Désactivé : il est ajouté sans courriel, et tu l'invites toi-même avec « Inviter des remplaçants » sur la page d'un match.",
+      addEmailsDesc: "Un remplaçant que tu ajoutes, ou un joueur que tu changes en remplaçant, est appelé tout de suite par courriel quand un match à venir manque de joueurs. Désactivé : aucun courriel automatique pour lui, et tu l'invites toi-même sur la page d'un match, avec « Inviter des joueurs » ou « Inviter un gardien ».",
       lblTracksResults: 'Résultats des matchs',
       lblTracksResultsDesc: 'Le score de chaque match, calculé en classement (V-D-N).',
       lblTracksResultsDescPickup: "Le score de chaque match, gardé comme historique. Les équipes changent chaque semaine, donc pas de classement.",
@@ -6183,7 +6183,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed. That guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
       lblColor: 'League colour', save: 'Save', saved: 'Saved!',
       addEmailsLabel: 'Email players when they are added',
-      addEmailsDesc: 'A sub you add is called by email right away when a game in the next 8 days is short of players. Off: they are added with no email, and you invite them yourself with "Invite subs" on a game\'s page.',
+      addEmailsDesc: 'A sub you add, or a player you make a sub, is called by email right away when an upcoming game is short of players. Off: no automatic email for them, and you invite them yourself on a game\'s page, with "Invite players" or "Invite a goalie".',
       lblTracksResults: 'Game results',
       lblTracksResultsDesc: "Each game's score, computed into a standings table (W-L-T).",
       lblTracksResultsDescPickup: "Each game's score, kept as history. Teams change every week, so there's no standings table.",
@@ -6822,7 +6822,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="reminder_12h_switch" onclick="toggleReminderSwitch(this,'reminder12h')"></button>
     </div>
     <div class="nl-toggle">
-      <div><div class="nl-label" data-i18n="addEmailsLabel">Envoyer un courriel aux joueurs lorsqu'ils sont ajoutés</div><div class="nl-help" data-i18n="addEmailsDesc">Un remplaçant ajouté est appelé tout de suite par courriel quand un match des 8 prochains jours manque de joueurs. Désactivé : il est ajouté sans courriel, et tu l'invites toi-même avec « Inviter des remplaçants » sur la page d'un match.</div></div>
+      <div><div class="nl-label" data-i18n="addEmailsLabel">Envoyer un courriel aux joueurs lorsqu'ils sont ajoutés</div><div class="nl-help" data-i18n="addEmailsDesc">Un remplaçant que tu ajoutes, ou un joueur que tu changes en remplaçant, est appelé tout de suite par courriel quand un match à venir manque de joueurs. Désactivé : aucun courriel automatique pour lui, et tu l'invites toi-même sur la page d'un match, avec « Inviter des joueurs » ou « Inviter un gardien ».</div></div>
       <button type="button" class="nl-switch" role="switch" aria-checked="${addEmailsOn ? 'true' : 'false'}" id="add_emails_switch" onclick="toggleAddEmailsSwitch(this)"></button>
     </div>
     ${advancedCadence ? `
@@ -7806,6 +7806,9 @@ async function handleLeagueRosterPage(req, env, url) {
       addEmailsSend: 'Ajouter et envoyer les courriels', addEmailsSkip: 'Ajouter sans envoyer de courriel',
       addEmailsTurnOff: 'Désactiver les courriels automatiques pour cette ligue à partir de maintenant',
       addEmailsClose: 'Fermer',
+      // Making a regular player a sub, in a league that has not chosen yet.
+      roleEmailsOne: 'Faire de ce joueur un remplaçant lui enverra un courriel tout de suite.',
+      roleEmailsSend: 'Changer et envoyer le courriel', roleEmailsSkip: 'Changer sans envoyer de courriel',
       // The notice for regular players (the first time they are added in a
       // league). {date}: the next game, in the page's language.
       addNoticeReminderOne: 'Ajouter ce joueur ne lui enverra pas de courriel maintenant. Son premier courriel sera le rappel envoyé {hours} heures avant le prochain match ({date}).',
@@ -7874,6 +7877,8 @@ async function handleLeagueRosterPage(req, env, url) {
       addEmailsSend: 'Add and send emails', addEmailsSkip: 'Add without emailing',
       addEmailsTurnOff: 'Turn off automatic emails for this league from now on',
       addEmailsClose: 'Close',
+      roleEmailsOne: 'Making this player a sub will email them right away.',
+      roleEmailsSend: 'Change and send the email', roleEmailsSkip: 'Change without emailing',
       addNoticeReminderOne: "Adding this player won't email them now. Their first email will be the reminder {hours} hours before the next game ({date}).",
 
       addNoticeReminderMany: "Adding these {n} players won't email them now. Their first email will be the reminder {hours} hours before the next game ({date}).",
@@ -8551,6 +8556,12 @@ async function toggleRosterField(playerId, body) {
     body: JSON.stringify(Object.assign({ player_id: playerId }, body))
   });
   var data = await res.json().catch(function() { return {}; });
+  // Making a player a sub, in a league that has not chosen yet: the same
+  // step as adding a sub. The change waits for the answer.
+  if (data.needsEmailChoice) {
+    openAddEmailsDialog(data, function(extra) { return postContacts('/league/contacts/update', Object.assign({ player_id: playerId }, body), extra); });
+    var stop = new Error(''); stop.waitsForDialog = true; throw stop;
+  }
   if (!res.ok || !data.ok) throw new Error(window.__errorText(data.errorKey, data.error));
   return data;
 }
@@ -8572,7 +8583,7 @@ document.querySelectorAll('[data-toggle-role]').forEach(function(btn) {
       // rather than re-deriving preferred_team-vs-subs bucketing here.
       window.location.reload();
     } catch (e) {
-      showErr(String(e.message));
+      if (!e.waitsForDialog) showErr(String(e.message));
     } finally {
       btn.disabled = false;
     }
@@ -8739,7 +8750,9 @@ function openAddEmailsDialog(data, retry) {
     document.getElementById('add_notice_ok').textContent = window.__pluralText(d.addNoticeBtn, { n: rc });
   }
   var n = Number(data.emailCount) || 0, total = Number(data.addCount) || n;
-  var text = n < total ? window.__pluralText(d.addEmailsSome, { n: n }) : (n === 1 ? d.addEmailsOne : window.__pluralText(d.addEmailsMany, { n: n }));
+  var text = data.roleChange ? d.roleEmailsOne : n < total ? window.__pluralText(d.addEmailsSome, { n: n }) : (n === 1 ? d.addEmailsOne : window.__pluralText(d.addEmailsMany, { n: n }));
+  document.getElementById('add_emails_send').textContent = data.roleChange ? d.roleEmailsSend : d.addEmailsSend;
+  document.getElementById('add_emails_skip').textContent = data.roleChange ? d.roleEmailsSkip : d.addEmailsSkip;
   window.__addNoticeDue = notice;
   document.getElementById('add_emails_text').textContent = text;
   document.getElementById('add_emails_off').checked = false;
@@ -13734,7 +13747,9 @@ async function shortNeedsForEvent(env, ev) {
 // substitutes who would be emailed as soon as they are added: a sub with a
 // usable email that is not already in the league, whose position a game in
 // range is short at.
-async function subsCalledOnAdd(env, leagueId, rows) {
+// existing: the rows are players already in the league (a role change),
+// so their email being known is not a duplicate.
+async function subsCalledOnAdd(env, leagueId, rows, { existing = false } = {}) {
   const subs = rows.filter(r => r && String(r.role || 'roster').trim() === 'sub_skater' && String(r.name || '').trim() && sanitizeAndValidateEmail(String(r.email || '').trim()).valid);
   if (!subs.length) return 0;
   const evs = (await env.DB.prepare(`SELECT * FROM events WHERE league_id = ? AND state = 'open'`).bind(leagueId).all()).results || [];
@@ -13747,7 +13762,7 @@ async function subsCalledOnAdd(env, leagueId, rows) {
   let n = 0;
   for (const r of subs) {
     const email = sanitizeAndValidateEmail(String(r.email).trim()).email.toLowerCase();
-    if (known.has(email)) continue; // a duplicate: it will not be created
+    if (!existing && known.has(email)) continue; // a duplicate: it will not be created
     known.add(email);
     if (needs.has(goalieAxis && r.is_goalie === true ? 'goalie' : 'skater')) n++;
   }
@@ -13854,6 +13869,42 @@ async function addContactsWithEmailChoice(req, env, url, handler) {
   const mode = setting.mode === null && choice ? (body.turnOffAutoEmails === true ? 'off' : 'on') : setting.mode;
   const regularNotice = setting.regularNotice || (body.regularNoticeSeen === true && regulars.length > 0);
   if (mode !== setting.mode || held.length !== setting.held.length || regularNotice !== setting.regularNotice) await saveAddEmails(env.DB, leagueId, { mode, held, regularNotice });
+  return afterLeagueRosterOrScheduleChange(req, env, url, res);
+}
+
+// POST /league/contacts/update, when it makes a regular player a sub: the
+// same setting as adding a sub (a sub is called as soon as they become
+// one when a game is short). Off: the change is made and the player is
+// held (not called automatically). No choice saved yet and they would be
+// called now: 409 with needsEmailChoice and roleChange, nothing changed,
+// until the page sends the answer. Any other update is exactly as before.
+async function updateContactWithEmailChoice(req, env, url) {
+  const plain = async () => afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueContactUpdate(req, env, url));
+  const session = await checkUserSession(req, env);
+  if (!session || !(await checkCsrfToken(req, env, session))) return plain();
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId || leagueId === SMBHL_LEAGUE_ID || (await checkLeagueAccess(req, env, leagueId)) !== 'ok') return plain();
+  const body = await req.clone().json().catch(() => ({}));
+  if (String(body.role || '').trim() !== 'sub_skater') return plain();
+  const c = await env.DB.prepare('SELECT player_id, name, email, role, is_goalie FROM contacts WHERE player_id = ? AND league_id = ?').bind(String(body.player_id || ''), leagueId).first();
+  if (!c || c.role !== 'roster' || !c.email) return plain();
+  const setting = await getAddEmails(env.DB, leagueId);
+  const choice = body.emailChoice === 'send' || body.emailChoice === 'skip' ? body.emailChoice : null;
+  let send = setting.mode !== 'off';
+  if (setting.mode === null) {
+    if (choice) send = choice === 'send';
+    else {
+      const emailCount = await subsCalledOnAdd(env, leagueId, [{ name: c.name, email: c.email, role: 'sub_skater', is_goalie: c.is_goalie === 1 }], { existing: true });
+      if (emailCount > 0) {
+        return Response.json({ ok: false, error: 'Choose whether this player is emailed.', errorKey: 'ADD_EMAIL_CHOICE_REQUIRED', needsEmailChoice: true, roleChange: true, emailCount, addCount: 1 }, { status: 409 });
+      }
+    }
+  }
+  const res = await handleLeagueContactUpdate(req, env, url);
+  if (res.status !== 200) return res;
+  const mode = setting.mode === null && choice ? (body.turnOffAutoEmails === true ? 'off' : 'on') : setting.mode;
+  const held = send ? setting.held : setting.held.concat([c.player_id]);
+  if (mode !== setting.mode || held.length !== setting.held.length) await saveAddEmails(env.DB, leagueId, { mode, held });
   return afterLeagueRosterOrScheduleChange(req, env, url, res);
 }
 
@@ -30521,7 +30572,7 @@ async function handleFetch(req, env, ctx) {
       // on the roster list -- see handleLeagueContactUpdate's own
       // comment (leagues.js).
       if (url.pathname === '/league/contacts/update' && req.method === 'POST')
-        return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueContactUpdate(req, env, url));
+        return await updateContactWithEmailChoice(req, env, url);
       // Item 3 (players polish task): inactive players.
       if (url.pathname === '/league/contacts/active' && req.method === 'POST')
         return await handleLeagueContactSetActive(req, env, url);

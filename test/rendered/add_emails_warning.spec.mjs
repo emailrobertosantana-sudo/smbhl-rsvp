@@ -229,3 +229,38 @@ describe('The notice before regular players are added, once per league', () => {
     }, 180000);
   }
 });
+
+// Making a regular player a sub, from the role button: the same step, with
+// its own sentence and buttons (test/part186 for the rules).
+describe('The warning before a player made a sub is emailed', () => {
+  for (const lang of ['fr', 'en']) {
+    it(`${lang}: the role button opens the step; closing changes nothing; "change without emailing" makes the change and sends nothing`, async () => {
+      const s = await h.signup(`role.${lang}@add-emails.example`);
+      const j = async (p, body) => (await h.api(p, { ...s, body })).json();
+      const lg = (await j('/leagues/create', { name: 'Ligue du vendredi', teamNames: ['Bulls', 'Parade'], tracksStats: false })).league;
+      await j('/league/season/publish', { season_name: 'S1' });
+      await j('/league/contacts', { name: 'Bulls One', email: `rb1.${lang}@add-emails.example`, team: 'Bulls' });
+      const pid = (await j('/league/contacts', { name: 'Soon Sub', email: `soon.${lang}@add-emails.example` })).contact.player_id;
+      await j('/league/events', { date: day(2), start_time: '19:00', end_time: '20:00', venue: 'Gym', home_team: 'Bulls', away_team: 'Parade' });
+      const { page, errors, close } = await openPlayers(lang, s);
+      const btn = `[data-toggle-role="${pid}"]`;
+      await page.click(btn);
+      await page.waitForFunction(() => document.getElementById('add_emails_dialog').style.display === 'flex');
+      const st = await page.evaluate(() => ({ text: document.getElementById('add_emails_text').textContent.trim(), send: document.getElementById('add_emails_send').textContent.trim(), skip: document.getElementById('add_emails_skip').textContent.trim(), notice: document.getElementById('add_notice_part').style.display }));
+      expect(st).toEqual(lang === 'fr'
+        ? { text: 'Faire de ce joueur un remplaçant lui enverra un courriel tout de suite.', send: 'Changer et envoyer le courriel', skip: 'Changer sans envoyer de courriel', notice: 'none' }
+        : { text: 'Making this player a sub will email them right away.', send: 'Change and send the email', skip: 'Change without emailing', notice: 'none' });
+      if (SHOTS) await page.screenshot({ path: `${SHOTS}/role_change_${lang}.png` });
+      const role = async () => (await h.db.prepare('SELECT role FROM contacts WHERE player_id = ?').bind(pid).first()).role;
+      await page.click('#add_emails_close');
+      expect(await role()).toBe('roster');
+      await page.click(btn);
+      await page.waitForFunction(() => document.getElementById('add_emails_dialog').style.display === 'flex');
+      await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click('#add_emails_skip')]);
+      expect(await role()).toBe('sub_skater');
+      expect((await h.db.prepare(`SELECT COUNT(*) AS n FROM outbox WHERE player_id = ? AND kind = 'sub_call'`).bind(pid).first()).n).toBe(0);
+      expect(errors).toEqual([]);
+      await close();
+    }, 180000);
+  }
+});
