@@ -91,12 +91,31 @@ export function leagueAccessResponse(status) {
 // Returns null if there's no session, or the session's user administers no
 // league yet — callers treat that as "no session-based access available",
 // not an error on its own.
+// The league chosen last: a game link from another league the admin runs
+// opens it and sets the nl_league cookie (index.js
+// gamePageInAdminsLeague), so the pages and actions that follow are that
+// league's. Used only while the user still administers that league and it
+// is active; otherwise the most recent league, as before.
+function chosenLeagueCookie(req) {
+  const m = (req.headers.get('cookie') || '').match(/(?:^|;\s*)nl_league=([^;]+)/);
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch (_) { return null; }
+}
+
 export async function resolveSessionLeagueId(req, env, url) {
   const explicit = url.searchParams.get('league_id');
   if (explicit) return explicit;
 
   const session = await checkUserSession(req, env);
   if (!session) return null;
+
+  const chosen = chosenLeagueCookie(req);
+  if (chosen) {
+    const ok = await env.DB.prepare(
+      'SELECT 1 FROM league_admins la JOIN leagues l ON l.id = la.league_id WHERE la.user_id = ? AND la.league_id = ? AND l.deactivated_at IS NULL'
+    ).bind(session.userId, chosen).first();
+    if (ok) return chosen;
+  }
 
   const row = await env.DB.prepare(
     `SELECT la.league_id FROM league_admins la JOIN leagues l ON l.id = la.league_id

@@ -10140,12 +10140,37 @@ async function confirmDeleteEvent(eventId) {
 // buttons (the backend distinguishes skater vs goalie shortage; the
 // reference's one combined button doesn't, so both are kept, shown only
 // when that specific need is actually open).
-async function handleLeagueEventDetailPage(req, env, url) {
+// A game link (an admin's email, a bookmark) names the game, not its
+// league. For an admin of several leagues it used to be looked up in their
+// most recent league only: another league's game showed "not found". It is
+// now looked up in the league that owns it, when this admin runs that
+// league, and that league becomes the current one (the nl_league cookie,
+// read by resolveSessionLeagueId), so the page's own actions act on it. A
+// game of a league this admin does not run is answered exactly like a game
+// that does not exist: the page reveals nothing.
+async function gamePageInAdminsLeague(req, env, url) {
+  const eventId = url.searchParams.get('e');
+  const session = await checkUserSession(req, env);
+  if (!session || !eventId || url.searchParams.get('league_id')) return handleLeagueEventDetailPage(req, env, url);
+  const owner = await env.DB.prepare('SELECT league_id FROM events WHERE id = ?').bind(eventId).first();
+  const current = await resolveSessionLeagueId(req, env, url);
+  if (!owner || !owner.league_id || owner.league_id === current || (await checkLeagueAccess(req, env, owner.league_id)) !== 'ok') {
+    return handleLeagueEventDetailPage(req, env, url);
+  }
+  const res = await handleLeagueEventDetailPage(req, env, url, owner.league_id);
+  const out = new Response(res.body, res);
+  out.headers.append('set-cookie', `nl_league=${encodeURIComponent(owner.league_id)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${url.protocol === 'https:' ? '; Secure' : ''}`);
+  return out;
+}
+
+// forcedLeagueId: the game's own league (gamePageInAdminsLeague), already
+// checked to be one this admin runs.
+async function handleLeagueEventDetailPage(req, env, url, forcedLeagueId = null) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(loginUrlFor(url), 302);
 
-  const leagueId = await resolveSessionLeagueId(req, env, url);
+  const leagueId = forcedLeagueId || await resolveSessionLeagueId(req, env, url);
   if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
@@ -30681,7 +30706,7 @@ async function handleFetch(req, env, ctx) {
       if ((url.pathname === '/league/schedule' || url.pathname === '/league/schedule/') && req.method === 'GET')
         return await handleLeagueSchedulePage(req, env, url);
       if (url.pathname === '/league/events/detail' && req.method === 'GET')
-        return await handleLeagueEventDetailPage(req, env, url);
+        return await gamePageInAdminsLeague(req, env, url);
       // Live-testing task, Part 1: consolidated settings page.
       if ((url.pathname === '/league/settings' || url.pathname === '/league/settings/') && req.method === 'GET')
         return await handleLeagueSettingsPage(req, env, url);
