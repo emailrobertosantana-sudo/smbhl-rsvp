@@ -395,7 +395,11 @@ describe('Import, with reminders on (D6)', () => {
     expect(notice).toMatch(/rappel 24 h|24h reminder/);
     expect(notice).toMatch(/Ne pas envoyer de rappels automatiques pour ce match|Don't send automatic reminders for this game/);
     await page.check('#ro_bulk_rem_suppress');
-    await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click('#ro_bulk_confirm')]);
+    // The league's first add of regular players from the page: the notice
+    // of when they get their first email comes first (test/part185).
+    await page.click('#ro_bulk_confirm');
+    await page.waitForFunction(() => document.getElementById('add_emails_dialog').style.display === 'flex');
+    await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click('#add_notice_ok')]);
     expect((await h.db.prepare('SELECT auto_reminders_enabled v FROM events WHERE id = ?').bind(evId).first()).v).toBe(0);
     expect((await h.db.prepare(`SELECT count(*) n FROM contacts WHERE league_id = ? AND email IN ('imp.one@example.com', 'imp.two@example.com')`).bind(lid).first()).n).toBe(2);
     expect(errors).toEqual([]);

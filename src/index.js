@@ -8046,7 +8046,7 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-bulk-table { width: 100%; border-collapse: collapse; font-size: 14px; }
   .ro-bulk-table th, .ro-bulk-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
   .ro-bulk-table .ro-bulk-skip { color: var(--ink-muted); font-style: italic; }
-  .ro-dialog-back { position: fixed; inset: 0; z-index: 50; background: rgba(22, 24, 29, 0.55); align-items: center; justify-content: center; padding: var(--space-4); }
+  .ro-dialog-back { position: fixed; inset: 0; z-index: 1000; background: rgba(22, 24, 29, 0.55); align-items: center; justify-content: center; padding: var(--space-4); }
   .ro-dialog { background: var(--surface-raised); color: var(--ink); border-radius: var(--radius-lg); padding: var(--space-5); width: 100%; max-width: 460px; max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-4); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3); }
   .ro-dialog h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; margin: 0; }
   .ro-bulk-summary { font-size: 14px; color: var(--ink-muted); }
