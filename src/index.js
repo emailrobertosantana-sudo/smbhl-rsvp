@@ -292,12 +292,15 @@ function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = 
   const titles = title && typeof title === 'object' ? title : null;
   const titleFr = titles ? titles.fr : title;
   // "Page | League" for a league's pages. SMBHL's own tab titles keep the
-  // dash they have always had (—): nothing of SMBHL's changes here.
-  const titleSep = league.name === DEFAULT_SEASON_CONFIG.league.name ? ' — ' : ' | ';
+  // dash they have always had (U+2014, written as an escape below): nothing of SMBHL's changes here.
+  // titles.brand: a league-product page that has no league to name (an
+  // invitation link that is not valid) says "Notre Ligue", not SMBHL.
+  const brand = (titles && titles.brand) || league.name;
+  const titleSep = brand === DEFAULT_SEASON_CONFIG.league.name ? ' — ' : ' | ';
   return `<!DOCTYPE html><html lang="fr-CA"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ${CLIENT_ERROR_REPORTER}
-<title>${esc(titleFr)}${titleSep}${esc(league.name)}</title>${titles ? `<meta name="nl-titles" data-title-fr="${esc(titles.fr)}${titleSep}${esc(league.name)}" data-title-en="${esc(titles.en)}${titleSep}${esc(league.name)}">` : ''}
+<title>${esc(titleFr)}${titleSep}${esc(brand)}</title>${titles ? `<meta name="nl-titles" data-title-fr="${esc(titles.fr)}${titleSep}${esc(brand)}" data-title-en="${esc(titles.en)}${titleSep}${esc(brand)}">` : ''}
 <meta name="description" content="Plateforme de présence et gestion d’équipe de la ligue de hockey balle ${esc(league.name)} (${esc(league.tagline)}).">
 <meta name="rating" content="general">
 <meta name="rating" content="safe for kids">
@@ -3144,7 +3147,7 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
   const result = await verifyInviteToken(env, token);
 
   if (!result.ok) {
-    return new Response(page('Invitation invalide', `
+    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: 'Notre Ligue' }, `
       <h1>Invitation invalide ou expirée<span class="en">Invalid or expired invitation</span></h1>
       <p class="state">Demandez à l'administrateur de la ligue de vous envoyer une nouvelle invitation.<span class="en" style="display:block;">Ask the league admin to send you a new invitation.</span></p>
     `), { status: result.error === 'expired' ? 410 : 400, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
@@ -3152,7 +3155,7 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
 
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(result.leagueId).first();
   if (!leagueRow) {
-    return new Response(page('Invitation invalide', `
+    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: 'Notre Ligue' }, `
       <h1>Cette ligue n'existe plus<span class="en">This league no longer exists</span></h1>
     `), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
