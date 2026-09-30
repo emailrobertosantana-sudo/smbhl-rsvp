@@ -99,6 +99,10 @@ export function classifySendError(err) {
     if ([400, 404, 409, 422].includes(status)) return 'permanent';
     return 'transient'; // 401/403 configuration, 429 rate limit, 5xx
   }
+  // Cloudflare Email Sending (src/mail_provider.js): a suppressed recipient
+  // (bounced or complained before) or an address it refuses cannot succeed
+  // on a retry. Anything else it says is retried, bounded like the rest.
+  if (/^cloudflare: /.test(msg) && /suppress|invalid recipient|recipient.*(not allowed|rejected)|not a valid/i.test(msg)) return 'permanent';
   if (/invalid email format|no email on file|event gone|contact gone|unknown kind/i.test(msg)) return 'permanent';
   return 'transient'; // network errors, timeouts, missing API key, anything unexpected -- bounded by MAX_SEND_ATTEMPTS
 }

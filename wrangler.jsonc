@@ -54,8 +54,16 @@
         // Demo shares production's Resend account: a HARD cap on every
         // kind of email (MAIL_DAILY_CAP only holds back sub calls). See
         // src/mail_queue.js hardDailyCapFromEnv.
-        "MAIL_HARD_DAILY_CAP": "10"
+        "MAIL_HARD_DAILY_CAP": "10",
+        // Notre Ligue mail (From mail.notreligue.ca) goes through Cloudflare
+        // Email Sending here, via the send_email binding below. SMBHL mail,
+        // and every environment without this var, stays on Resend. See
+        // src/mail_provider.js and the README's "Mail provider" section.
+        "MAIL_PROVIDER": "cloudflare"
       },
+      "send_email": [
+        { "name": "SEND_EMAIL" }
+      ],
       "d1_databases": [
         {
           "binding": "DB",

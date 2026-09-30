@@ -7,6 +7,7 @@ import { ERROR_I18N } from './error_i18n.js';
 import { pluralText, PLURAL_TEXT_JS } from './plural.js';
 import { safeNextPath, loginUrlFor, nextQuery, nextForScript } from './next_path.js';
 import { getAddEmails, saveAddEmails } from './add_emails.js';
+import { chooseMailProvider, parseAddress } from './mail_provider.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
@@ -11552,7 +11553,12 @@ async function sendMail(env, to, subject, text, html = null, attachments = null,
     // for tomorrow like a Resend quota refusal (src/mail_queue.js).
     const hard = hardDailyCapFromEnv(env);
     if (hard && env.DB && (await readDailyCount(env.DB)).sent >= hard) throw hardCapError(hard);
-    await sendMailViaResend(env, to, subject, text, html, attachments, leagueCfg);
+    // Resend, or Cloudflare Email Sending for a Notre Ligue message when the
+    // environment says so (src/mail_provider.js). Everything around the send
+    // (outbox, retries, quiet hours, caps) is the same for both.
+    const fromAddr = (leagueCfg && leagueCfg.fromEmail) || defaultMailIdentity(env).from;
+    if (chooseMailProvider(env, fromAddr) === 'cloudflare') await sendMailViaCloudflare(env, to, subject, text, html, attachments, leagueCfg);
+    else await sendMailViaResend(env, to, subject, text, html, attachments, leagueCfg);
   } catch (e) {
     if (!opts.fromQueue && env.DB && isResendQuotaError(e)) {
       const until = await queueDeferredDirectMail(env, { to, subject, text, html, attachments, leagueCfg, ...opts });
@@ -11620,6 +11626,43 @@ async function sendMailViaResend(env, to, subject, text, html = null, attachment
     body: JSON.stringify(payload)
   });
   if (!r.ok) throw new Error(`resend ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return true;
+}
+
+// Cloudflare Email Sending, through the send_email binding SEND_EMAIL
+// (wrangler.jsonc, env.demo only). Same From, Reply-To and List-Unsubscribe
+// as sendMailViaResend. One recipient per message, like every send here.
+// A refusal (a suppressed recipient, a sender the service does not accept,
+// anything else) is thrown as "cloudflare: <reason>": the outbox classifies
+// it (src/mail_queue.js classifySendError), retries or marks it failed, and
+// the health alerts report failures. Nothing falls back to Resend.
+async function sendMailViaCloudflare(env, to, subject, text, html = null, attachments = null, leagueCfg = null) {
+  if (!env.SEND_EMAIL || typeof env.SEND_EMAIL.send !== 'function') throw new Error('cloudflare: the SEND_EMAIL binding is not set for this environment');
+  const check = sanitizeAndValidateEmail(to);
+  if (!check.valid) throw new Error(`invalid email format: "${to}"`);
+  const dflt = defaultMailIdentity(env);
+  const fromAddr = (leagueCfg && leagueCfg.fromEmail) || dflt.from;
+  const replyTo = (leagueCfg && leagueCfg.replyToEmail) || dflt.replyTo;
+  const from = parseAddress(fromAddr);
+  const message = {
+    from: from.name ? { email: from.email, name: from.name } : from.email,
+    to: check.email,
+    replyTo: parseAddress(replyTo).email,
+    subject,
+    text,
+    headers: { 'List-Unsubscribe': `<mailto:${from.email}?subject=unsubscribe>` }
+  };
+  if (html) message.html = html;
+  if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+    message.attachments = attachments.map(a => ({ filename: a.filename, content: a.content, type: a.content_type || a.type || 'application/octet-stream', disposition: 'attachment' }));
+  }
+  let result;
+  try {
+    result = await env.SEND_EMAIL.send(message);
+  } catch (e) {
+    throw new Error(`cloudflare: ${String((e && e.message) || e).slice(0, 300)}`);
+  }
+  console.log(`[mail] sent via cloudflare, message id ${(result && result.messageId) || '(none returned)'}`);
   return true;
 }
 

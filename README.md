@@ -144,6 +144,23 @@ No new migrations since `migrate-017.sql`; the season-config engine lives entire
 | `DEMO_ENV` | Variable | `"true"` | Enables `noindex`/`robots.txt` protection (**Section 2**). |
 | `crons` | Trigger | `[]` | Cron disabled in demo — no automated outbox/reminder sweeps. |
 | Route | Custom domain | `rsvp.notreligue.ca` | Attaches the demo Worker to its own domain. |
+| `MAIL_PROVIDER` | Variable | `"cloudflare"` | Notre Ligue mail goes through Cloudflare Email Sending (see **Mail provider** below). |
+| `SEND_EMAIL` | Send Email binding | (unrestricted) | The Cloudflare Email Sending binding that `MAIL_PROVIDER` uses. |
+
+### Mail provider: Resend or Cloudflare Email Sending
+
+Every email goes through `sendMail` (src/index.js), which picks the service with `chooseMailProvider` (src/mail_provider.js):
+
+- `MAIL_PROVIDER` unset or `"resend"`: everything goes through Resend (`RESEND_API_KEY`). This is production.
+- `MAIL_PROVIDER` `"cloudflare"`: a message **From `mail.notreligue.ca`** (Notre Ligue and its leagues) goes through Cloudflare Email Sending via the `SEND_EMAIL` send_email binding. Everything else, and so **SMBHL always** (From `joueur@smbhl.com`), still goes through Resend. This is demo.
+
+The outbox, retries, quiet hours, the daily caps and the health alerts are the same for both. A Cloudflare refusal is thrown as `cloudflare: <reason>`: a suppressed or refused recipient is a permanent failure, anything else is retried (about 4 h 20 in all) and then marked failed. Nothing falls back to Resend on its own. Each Cloudflare send logs `[mail] sent via cloudflare, message id <id>` (the outbox has no provider column).
+
+**Switch a Notre Ligue environment to Cloudflare:** in that environment's block of `wrangler.jsonc`, add `"MAIL_PROVIDER": "cloudflare"` to `vars` and `"send_email": [{ "name": "SEND_EMAIL" }]` (an environment block does not inherit either), then deploy it (`npm run deploy:demo`).
+
+**Roll back to Resend:** set `"MAIL_PROVIDER": "resend"` (or remove it) in that block and deploy again. The binding can stay; it is only used when the variable says `cloudflare`.
+
+**Keep Resend's DNS records** (`resend._domainkey.mail.notreligue.ca`, `send.mail.notreligue.ca`) while any mail goes through Resend: SMBHL, production, and any environment on `"resend"`. `_dmarc.mail.notreligue.ca` is `p=reject`: without those records, every Resend message From `mail.notreligue.ca` would be rejected.
 
 ### KV Namespace Key Patterns (`SHEETS_KV`, both environments — same key names, separate data)
 
