@@ -913,8 +913,8 @@ describe("SMBHL Worker", () => {
 		await env.SHEETS_KV.put("data_json", JSON.stringify(mockData));
 
 		const tooltip = await getStandingsTooltip(env);
-		expect(tooltip).toContain("Classement SMBHL — 1er : Black (4 pts) · 2e : Red (2 pts) · 3e : Blue (2 pts) · 4e : White (0 pt)");
-		expect(tooltip).toContain("SMBHL Standings — 1st: Black (4 pts) · 2nd: Red (2 pts) · 3rd: Blue (2 pts) · 4th: White (0 pt)");
+		expect(tooltip).toContain("Classement SMBHL : 1er : Black (4 pts) · 2e : Red (2 pts) · 3e : Blue (2 pts) · 4e : White (0 pt)");
+		expect(tooltip).toContain("SMBHL Standings: 1st: Black (4 pts) · 2nd: Red (2 pts) · 3rd: Blue (2 pts) · 4th: White (0 pt)");
 	});
 
 	it("renders logo with standings tooltip title attribute on /team-rsvp", async () => {
@@ -944,7 +944,7 @@ describe("SMBHL Worker", () => {
 		const html = await resp.text();
 
 		expect(resp.status).toBe(200);
-		expect(html).toContain('title="Classement SMBHL — 1er : Black (4 pts) · 2e : Red (2 pts)');
+		expect(html).toContain('title="Classement SMBHL : 1er : Black (4 pts) · 2e : Red (2 pts)');
 	});
 
 	it("sorts standings tooltip using official 5 tie-breaking rules (Points -> Wins -> +/- -> GF -> Regular Player Goals)", async () => {
@@ -4243,7 +4243,7 @@ describe("SMBHL Worker", () => {
 			expect(backupEmail.subject).toContain('[SMBHL]');
 			expect(backupEmail.text).toContain('smbhl.com');
 			expect(backupEmail.text).toContain('SMBHL Automation');
-			expect(backupEmail.html).toContain('SMBHL — Sauvegarde Automatique');
+			expect(backupEmail.html).toContain('SMBHL : Sauvegarde Automatique');
 			expect(backupEmail.html).toContain('smbhl.com');
 			// Live-testing task, Part 9: this email's <head> must opt out of
 			// client auto dark-mode (see review.js's own comment on this
@@ -4312,7 +4312,7 @@ describe("SMBHL Worker", () => {
 			expect(backupEmail.subject).toContain('[TestLeague2026]');
 			expect(backupEmail.text).toContain('testleague.example');
 			expect(backupEmail.text).toContain('TestLeague2026 Automation');
-			expect(backupEmail.html).toContain('TestLeague2026 — Sauvegarde Automatique');
+			expect(backupEmail.html).toContain('TestLeague2026 : Sauvegarde Automatique');
 			expect(backupEmail.html).toContain('testleague.example');
 			expect(backupEmail.subject).not.toContain('SMBHL');
 			// The download link still uses env.PUBLIC_URL's fallback (rsvp.smbhl.com) — a

@@ -1678,7 +1678,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
       <div class="parity-banner" id="parity-banner">
         <div>
           <b style="font-size:16px;"><span data-i18n="parityTitle">Indicateur de Parité de la Ligue : </span><span id="parity-score-val">--%</span></b>
-          <div style="font-size:13px; color:#047857;" id="parity-detail-text">Écart maximal : — pts/match entre équipes</div>
+          <div style="font-size:13px; color:#047857;" id="parity-detail-text">Écart maximal : – pts/match entre équipes</div>
         </div>
         <div class="action-row" style="margin:0;">
           <button class="btn-action primary" onclick="runAutoDraft()" data-i18n="suggestDraftBtn">✨ Suggérer un alignement équilibré</button>

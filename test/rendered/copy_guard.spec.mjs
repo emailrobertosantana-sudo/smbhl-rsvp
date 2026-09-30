@@ -20,12 +20,10 @@
 // and every value of the error dictionary.
 //
 // Emails: every league email the preview can render (the real renderer,
-// see src/email_preview.js). A kind listed in SHARED_WITH_GOLDEN is built
-// by the cron's shared template, whose exact content the golden recordings
-// (test/part114_reminders_golden_*.spec.js) pin for SMBHL and for the
-// leagues: its separators stay until those recordings are re-recorded on
-// purpose. It is listed here so that the day they are, this guard covers
-// it by deleting one line.
+// see src/email_preview.js), the cron's shared template included (its
+// separators became "---" when the golden recordings were re-recorded).
+// SMBHL's pages and emails have the same guard in
+// test/rendered/smbhl_em_dash.spec.mjs.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startPublicPageWorker, seedPopulatedLeague, launchChromium } from './support/public_page_harness.mjs';
 import { hmac } from '../../src/crypto_utils.js';
@@ -33,7 +31,6 @@ import { PREVIEW_KINDS } from '../../src/email_preview.js';
 
 const EM_DASH = '—';
 const RSVP_SECRET = 'em-dash-guard-secret';
-const SHARED_WITH_GOLDEN = new Set([]);
 // "vous", "votre", "vos", "veuillez" and "substitut(s)" as whole words (a bilingual email also says "substitutes", which is English).
 const FORMAL_FR = /(^|[^a-zà-ÿ])(vous|votre|vos|veuillez)(?![a-zà-ÿ])|substituts?(?![a-zà-ÿ])/i;
 const formalHit = v => { const m = FORMAL_FR.exec(v); return m ? v.slice(Math.max(0, m.index - 50), m.index + 60).replace(/\s+/g, ' ') : null; };
@@ -142,7 +139,6 @@ describe('The copy of the league product: no em dash, and French that says tu an
       const r = await (await h.api('/league/comms/preview', { ...league.session, body })).json();
       if (!r.ok) { rendered.push(`${kind}: not rendered (${r.error && r.error.en})`); continue; }
       rendered.push(`${kind}: rendered`);
-      if (SHARED_WITH_GOLDEN.has(kind)) continue;
       for (const [part, v] of [['subject', r.subject], ['html', r.html || ''], ['text', r.text || '']]) {
         if (v.includes(EM_DASH)) { const i = v.indexOf(EM_DASH); hits.push(`${kind} | ${part} | ${v.slice(Math.max(0, i - 60), i + 60).replace(/\s+/g, ' ')}`); }
         const shown = part === 'html' ? v.replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' ') : v;

@@ -57,7 +57,7 @@ export async function buildSummaryText(env, ev) {
       WHERE a.event_id=? AND a.status='yes'
         AND a.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id=? AND player_id IS NOT NULL)
       ORDER BY a.answered_at`).bind(ev.id, ev.id).all()).results || [];
-  return `Semaine ${ev.week} — ${dateFR(ev.date)}\n\n` + lines.join('\n') +
+  return `Semaine ${ev.week} : ${dateFR(ev.date)}\n\n` + lines.join('\n') +
     (wait.length ? `\n\nListe d'attente: ` +
       wait.map(w => `${w.name} (${w.need === 'goalie' ? 'G' : 'J'})`).join(', ') : '');
 }

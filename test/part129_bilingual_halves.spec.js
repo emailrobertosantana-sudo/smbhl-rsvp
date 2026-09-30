@@ -13,7 +13,7 @@ import { nlSentByFooter } from '../src/design_system.js';
 
 const HR = '<hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">';
 const halves = html => { const i = html.indexOf(HR); expect(i).toBeGreaterThan(0); return [html.slice(0, i), html.slice(i)]; };
-const textHalves = text => { const i = text.indexOf('\n—\n'); expect(i).toBeGreaterThan(0); return [text.slice(0, i), text.slice(i)]; };
+const textHalves = text => { const i = text.indexOf('\n---\n'); expect(i).toBeGreaterThan(0); return [text.slice(0, i), text.slice(i)]; };
 
 const ev = { id: 'smbhl:2026-09-28', season: 'Fall 2026', week: 4, date: 'Sunday September 28 2026', start_time: '10:30', venue: 'Collège Laval', state: 'open' };
 const matches = [{ time: '10:30 AM', opp: 'Blue', oppFR: 'Bleu', venue: 'Collège Laval' }, { time: '11:30 AM', opp: 'Black', oppFR: 'Noir', venue: 'Collège Laval' }];

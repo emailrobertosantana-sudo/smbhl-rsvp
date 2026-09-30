@@ -125,7 +125,7 @@ describe('Part 2: league branding on session-based pages', () => {
     const res = await SELF.fetch('http://example.com/admin/board');
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('<title>Tableau —');
+    expect(html).toContain('<title>Tableau |');
     expect(html).toContain('SMBHL');
   });
 });

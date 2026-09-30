@@ -229,7 +229,7 @@ async function getStandingsTooltip(env) {
     const sorted = sortStandings(s.standings, regGoals);
     const fr = sorted.map((t, i) => `${i + 1}${i === 0 ? 'er' : 'e'} : ${t.team} (${t.pts} pt${t.pts > 1 ? 's' : ''})`).join(' · ');
     const en = sorted.map((t, i) => `${i + 1}${i === 0 ? 'st' : i === 1 ? 'nd' : i === 2 ? 'rd' : 'th'}: ${t.team} (${t.pts} pt${t.pts > 1 ? 's' : ''})`).join(' · ');
-    return `Classement SMBHL — ${fr} / SMBHL Standings — ${en}`;
+    return `Classement SMBHL : ${fr} / SMBHL Standings: ${en}`;
   } catch (e) {
     return '';
   }
@@ -294,12 +294,11 @@ function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = 
   const titleAttr = logoTooltip ? ` title="${esc(logoTooltip)}"` : '';
   const titles = title && typeof title === 'object' ? title : null;
   const titleFr = titles ? titles.fr : title;
-  // "Page | League" for a league's pages. SMBHL's own tab titles keep the
-  // dash they have always had (U+2014, written as an escape below): nothing of SMBHL's changes here.
+  // "Page | League", for SMBHL and for a league.
   // titles.brand: a league-product page that has no league to name (an
   // invitation link that is not valid) says "Notre Ligue", not SMBHL.
   const brand = (titles && titles.brand) || league.name;
-  const titleSep = brand === DEFAULT_SEASON_CONFIG.league.name ? ' — ' : ' | ';
+  const titleSep = ' | ';
   return `<!DOCTYPE html><html lang="fr-CA"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ${CLIENT_ERROR_REPORTER}
@@ -11383,7 +11382,7 @@ async function allCounts(db, eventId, teamNames = TEAMS) {
 }
 
 function renderTeam(rows, counts, team, teamNames = TEAMS) {
-  const label = { in: 'PRÉSENT', out: 'ABSENT', pending: '—' };
+  const label = { in: 'PRÉSENT', out: 'ABSENT', pending: '–' };
   const list = rows.map(r => {
     const name = r.name || r.guest_name || '?';
     const by = r.status !== 'pending' && r.status_by !== 'self'
@@ -11398,10 +11397,10 @@ function renderTeam(rows, counts, team, teamNames = TEAMS) {
 
   return `<div class="card">
     <h2>${esc(team)}<span class="en">Ton équipe / Your team</span></h2>
-    <table>${list || '<tr><td>—</td></tr>'}</table>
+    <table>${list || '<tr><td>–</td></tr>'}</table>
   </div>
   <div class="card">
-    <h2>Les autres équipes<span class="en">Other teams — confirmed</span></h2>
+    <h2>Les autres équipes<span class="en">Other teams, confirmed</span></h2>
     <ul class="counts">${others}</ul>
   </div>`;
 }
@@ -12045,7 +12044,7 @@ function body(kind, { ev, name, team, link, payload, leagueCfg = null, teamless 
         en: `${formatEventDateTime(ev.date, ev.start_time, 'en', 'long')}${ev.venue ? ' at ' + ev.venue : ''}`
       }
     : whenLine(ev);
-  const sign = `\n\n—\n${league.name} · ${siteHost}`;
+  const sign = `\n\n---\n${league.name} · ${siteHost}`;
   const matchInfo = payload && payload.fixtureText ? payload.fixtureText : '';
   // The English half's own matchups (B1/B4); a payload from before it existed
   // falls back to the French text rather than to nothing.
@@ -12097,7 +12096,7 @@ ${matchInfo}
 OUI (Présent) : ${payload.yes}
 NON (Absent)  : ${payload.no}
 
-—
+---
 
 We still do not have your answer for ${w.en}.
 ${matchInfoEn}
@@ -12253,7 +12252,7 @@ ${listText('fr')}
 
 📋 Voir l'alignement et le tableau : ${teamUrl}
 
-—
+---
 
 Hi ${name},
 
@@ -12312,7 +12311,7 @@ ${listText('fr')}
 📋 Voir le tableau d'équipe : ${teamUrl}
 À tout de suite pour le match !
 
-—
+---
 
 Hi ${name},
 
@@ -12351,7 +12350,7 @@ ${payload.by === 'manager' ? 'L\u2019admin' : 'Un coéquipier'} t'a marqué ${
   payload.status === 'in' ? 'PRÉSENT' : 'ABSENT'} pour ${w.fr}.
 Si ce n'est pas exact, corrige-le : ${link}
 
-—
+---
 
 ${payload.by === 'manager' ? 'The admin' : 'A teammate'} marked you ${
   payload.status === 'in' ? 'IN' : 'OUT'} for ${w.en}.
@@ -12391,7 +12390,7 @@ Tu es inscrit avec ${tFR(team)} ${w.fr}.
 ${cavFr}
 Tes détails : ${link}
 
-—
+---
 
 You're signed up with ${team} ${w.en}.
 ${cavEn}
@@ -12417,7 +12416,7 @@ Your details: ${link}${sign}`;
 
 Finalement on n'a plus besoin de toi avec ${tFR(team)} ${w.fr}. Désolé du dérangement.
 
-—
+---
 
 We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}`;
 
@@ -12477,7 +12476,7 @@ Want off the sub list? Just reply to this email.`;
         ${teamNoteFr ? `<p style="font-size:14px; margin:0 0 16px;">${esc(teamNoteFr)}</p>` : ''}
         <p style="font-size:15px; font-weight:600; margin:0 0 10px;">Disponible ?</p>
         <div style="margin:0 0 20px;">
-          ${emailBtn(payload.yes, '✅ OUI — Je suis disponible', '#15803d', '#ffffff')}
+          ${emailBtn(payload.yes, '✅ OUI : Je suis disponible', '#15803d', '#ffffff')}
           ${emailBtn(payload.no, 'NON', '#f1f5f9', '#475569', '1px solid #cbd5e1')}
         </div>
         <p style="font-size:13px; color:#64748b; margin:0 0 4px;">
@@ -12492,7 +12491,7 @@ Want off the sub list? Just reply to this email.`;
         ${teamNoteEn ? `<p style="font-size:14px; margin:0 0 16px; color:#334155;">${esc(teamNoteEn)}</p>` : ''}
         <p style="font-size:14px; font-weight:600; margin:0 0 10px; color:#334155;">Available?</p>
         <div style="margin:0 0 20px;">
-          ${emailBtn(payload.yes, '✅ YES — Available', '#15803d', '#ffffff')}
+          ${emailBtn(payload.yes, '✅ YES: Available', '#15803d', '#ffffff')}
           ${emailBtn(payload.no, 'NO', '#f1f5f9', '#475569', '1px solid #cbd5e1')}
         </div>
         <p style="font-size:13px; color:#64748b; margin:0 0 4px;">
@@ -12519,7 +12518,7 @@ Want off the sub list? Just reply to this email.`;
         // the assembler defaults to for every other bilingual template
         // (28px/#e3e3e0 html hr, '---' text).
         htmlSeparator: '<hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">',
-        textSeparator: '—'
+        textSeparator: '---'
       });
       return { subject: assembled.subject, text: `${assembled.text}${sign}`, html: wrapEmail(assembled.subject, assembled.html) };
     }
@@ -12541,7 +12540,7 @@ ${tFR(team)} ${fr} pour ${w.fr}.
 Regarde qui n'a pas répondu, ajoute un substitut ou un invité :
 ${payload.teamLink}
 
-—
+---
 
 ${team} ${en} for ${w.en}.
 
@@ -12591,7 +12590,7 @@ Tu peux maintenant accéder à la page d'administration pour :
 👉 Accéder au bilan :
 ${recapUrl}
 
-—
+---
 ${league.name} Automation`;
 
       const html = wrapEmail(
@@ -12623,7 +12622,7 @@ ${league.name} Automation`;
       const awards = (payload && payload.awards) || {};
       const intro = (payload && payload.intro_note) || '';
       const outro = (payload && payload.outro_note) || '';
-      const subj = `${league.name} — Félicitations aux Champions (${champFr}) & Bilan ${season} !`;
+      const subj = `${league.name} : Félicitations aux Champions (${champFr}) & Bilan ${season} !`;
 
       const awardDefs = [
         { key: 'rocketRichard', name: 'Rocket Richard', desc: 'Meilleur buteur, Top Goal Scorer', icon: '🚀' },
@@ -12658,7 +12657,7 @@ ${siteUrl}
 
 Merci à tous pour cette excellente saison et à très bientôt pour la prochaine saison !
 
-—
+---
 ${league.name} · ${league.tagline} · ${siteHost}`;
 
       const awardsHtml = awardDefs.map(a => {
@@ -14478,8 +14477,8 @@ async function buildCreatedNoticeText(env, ev, players) {
       links.push(`${team} (${tFR(team, cfg)}):\n${env.PUBLIC_URL}` +
         `/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${team}&t=${tk}`);
     }
-    return `Semaine ${ev.week} — ${dateFR(ev.date)}${ev.start_time ? ' ' + ev.start_time : ''}` +
-      `${ev.venue ? ' — ' + ev.venue : ''}\n${players} joueurs au dossier.\n\n` +
+    return `Semaine ${ev.week} : ${dateFR(ev.date)}${ev.start_time ? ' ' + ev.start_time : ''}` +
+      `${ev.venue ? ', ' + ev.venue : ''}\n${players} joueurs au dossier.\n\n` +
       `Liens d'équipe (à partager sur WhatsApp) :\n\n${links.join('\n\n')}\n`;
   }
 }
@@ -14633,9 +14632,9 @@ async function deadMan(env) {
     const list = fresh.map(f => `- ${f.p}`).join('\n');
     // Also by webhook (src/health.js): this email is about mail not going
     // out, and may not go out itself.
-    await postWebhook(env, 'SMBHL — le système a manqué quelque chose / something did not run', list);
+    await postWebhook(env, 'SMBHL : le système a manqué quelque chose / something did not run', list);
     try {
-      await sendMail(env, env.ADMIN_EMAIL || ADMIN_EMAIL, 'SMBHL — le système a manqué quelque chose',
+      await sendMail(env, env.ADMIN_EMAIL || ADMIN_EMAIL, 'SMBHL : le système a manqué quelque chose',
         `Quelque chose ne s'est pas exécuté :\n\n${list}\n\n` +
         `Something did not run:\n\n${list}\n\n` +
         `Check: the Comms tab (Failed filter) and the jobs table.`);
@@ -14865,7 +14864,7 @@ async function pollGet(req, env, url) {
         ${myVote ? 'Changer mon vote pour / Change vote to :' : 'Mon choix / My choice :'}
       </label>
       <select id="poll-candidate-id" style="width:100%;font:inherit;font-size:15px;padding:10px;border:1px solid var(--rule2);border-radius:4px;background:#fff;">
-        <option value="">— Choisis un candidat / Select a candidate —</option>
+        <option value="">Choisis un candidat / Select a candidate</option>
         ${candOpts}
       </select>
     </div>
@@ -15048,13 +15047,13 @@ async function teamGet(req, env, url) {
         data-act="remove">RETIRER</button></td></tr>`).join('');
 
   const options = addable.map(p =>
-    `<option value="${esc(p.player_id)}">${esc(p.name)} — ${esc(kind(p))}, ${esc(state(p))}</option>`
+    `<option value="${esc(p.player_id)}">${esc(p.name)} : ${esc(kind(p))}, ${esc(state(p))}</option>`
   ).join('');
 
   const unavailRows = unavailable.map(p =>
     `<tr><td style="opacity:.55">${esc(p.name)}<span class="by">${
       p.placed ? 'déjà avec / already with ' + esc(p.placed) : 'a dit non / said no'}</span></td>
-      <td class="s">—</td></tr>`).join('');
+      <td class="s">–</td></tr>`).join('');
 
   const messages = await getTeamMessages(env.DB, ev.id, team, 20);
   const msgItems = messages.length > 0
@@ -15083,7 +15082,7 @@ async function teamGet(req, env, url) {
          <input type="hidden" id="msgauthor" value="${esc(me.player_id)}" data-name="${esc(me.name)}">
        </div>`
     : `<select id="msgauthor" style="width:100%; font:inherit; font-size:15px; padding:10px; border:1px solid var(--rule2); border-radius:3px; background:var(--card); margin-bottom:8px;">
-         <option value="">— Choisis ton nom / Select your name —</option>
+         <option value="">Choisis ton nom / Select your name</option>
          ${authorOptions}
          <option value="other" data-name="Autre">Autre joueur / Other</option>
        </select>`;
@@ -15155,7 +15154,7 @@ async function teamGet(req, env, url) {
 
   <div class="card">
     <h2>Substituts sur l'équipe<span class="en">Subs already on this team</span></h2>
-    <table>${onTeamRows || '<tr><td>—</td></tr>'}</table>
+    <table>${onTeamRows || '<tr><td>–</td></tr>'}</table>
   </div>
 
   <div class="card">
@@ -15167,7 +15166,7 @@ async function teamGet(req, env, url) {
       that they are playing for ${esc(team)}.</span></p>
     <select id="subsel" style="width:100%;font:inherit;font-size:15px;padding:11px;
       border:1px solid var(--rule2);border-radius:3px;background:var(--card)">
-      <option value="">— choisir / choose —</option>
+      <option value="">choisir / choose</option>
       ${options}
     </select>
     <div class="btns" style="margin-top:10px">
@@ -15182,7 +15181,7 @@ async function teamGet(req, env, url) {
   </div>
 
   <div class="card">
-    <h2>Ajouter un invité<span class="en">Add a guest — someone not in the pool</span></h2>
+    <h2>Ajouter un invité<span class="en">Add a guest: someone not in the pool</span></h2>
     <input id="gname" placeholder="Prénom Nom" style="width:100%;font:inherit;padding:11px;
       border:1px solid var(--rule2);border-radius:3px">
     <div class="btns" style="margin-top:10px">
@@ -15191,7 +15190,7 @@ async function teamGet(req, env, url) {
   </div>
 
   <div class="card">
-    <h2>Les autres équipes<span class="en">Other teams — confirmed</span></h2>
+    <h2>Les autres équipes<span class="en">Other teams, confirmed</span></h2>
     <ul class="counts">${others}</ul>
   </div>
 
@@ -15671,7 +15670,7 @@ function superAdminPage(isAuthed = false) {
   const flagLabelsJson = JSON.stringify(Object.fromEntries(CAPABILITY_FLAGS.map(f => [f.key, f.label])));
   return page('Super-admin', `
   <h1>Super-admin</h1>
-  <p class="state">Liste de toutes les ligues — palier et indicateurs de capacité. / List of every league — plan tier and capability flags.</p>
+  <p class="state">Liste de toutes les ligues : palier et indicateurs de capacité. / List of every league: plan tier and capability flags.</p>
   ${renderKeyGate(isAuthed)}
   <div id="sa-main"${isAuthed ? '' : ' style="display:none"'}>
     <div id="sa-err" class="state"></div>
@@ -16022,7 +16021,7 @@ function who(p, team, eventId) {
     : '';
   const g = p.is_goalie ? '<span class="by">G</span>' : posBadge;
   const cls = p.status === 'in' ? 'in' : p.status === 'out' ? 'out' : 'pend';
-  const lbl = p.status === 'in' ? t('statusIn') : p.status === 'out' ? t('statusOut') : '—';
+  const lbl = p.status === 'in' ? t('statusIn') : p.status === 'out' ? t('statusOut') : '–';
   return '<tr><td>' + esc(p.name) + g + ppgTag + tag + by + '</td><td class="s ' + cls + '">' + lbl + '</td></tr>';
 }
 
@@ -16111,7 +16110,7 @@ function renderBoardUI() {
         return '<div style="background:#fff;border:1px solid var(--rule);border-radius:4px;padding:8px 10px;display:flex;flex-direction:column;gap:3px">' +
           '<div style="display:flex;justify-content:space-between;align-items:center">' +
             '<span style="font-size:11px;font-weight:700;padding:1px 6px;border-radius:3px;' + sty + '">' + esc(tItem.team) + '</span>' +
-            '<span style="font-size:14px;font-weight:800;color:var(--ink)">' + (tItem.expected_pts != null ? tItem.expected_pts : '—') + ' ' + esc(t('ptsLabel')) + '</span>' +
+            '<span style="font-size:14px;font-weight:800;color:var(--ink)">' + (tItem.expected_pts != null ? tItem.expected_pts : '–') + ' ' + esc(t('ptsLabel')) + '</span>' +
           '</div>' +
           '<div style="font-size:11px;color:var(--soft);display:flex;justify-content:space-between">' +
             '<span>' + (tItem.confirmed_skaters || 0) + ' ' + esc(t('skatersLabel')) + ' · ' + (tItem.avg_ppg || 0) + ' ' + esc(t('ptsPerGame')) + '</span>' +
@@ -16152,7 +16151,7 @@ function renderBoardUI() {
     const netBadge = tItem.net_diff != null && tItem.net_diff !== 0
       ? ' <span class="by" style="font-size:11px;font-weight:700;color:' + (tItem.net_diff > 0 ? 'var(--green)' : 'var(--red)') + '" title="' + esc(t('diffFromAvg', avgPts)) + '">(' + (tItem.net_diff > 0 ? '+' : '') + tItem.net_diff + ' ' + esc(t('ptsLabel')) + ')</span>'
       : '';
-    h += '<div class="card"><h2>' + esc(tItem.team) + ' — ' + tItem.skaters + ' + ' + tItem.goalies + 'G' +
+    h += '<div class="card"><h2>' + esc(tItem.team) + ' : ' + tItem.skaters + ' + ' + tItem.goalies + 'G' +
       ptsBadge + netBadge +
       (tItem.short ? ' <span class="short">· ' + esc(t('teamIncomplete')) + '</span>' : '') +
       '<div style="font-size:13px;font-weight:400;color:var(--soft);margin-top:2px">' + tItem.pending + ' ' + esc(t('noAnswerYet')) + '</div></h2>' +
@@ -16829,7 +16828,7 @@ const I18N_SUBS = {
     scheduledForPrefix: 'Prévu',
     forTeamPrefix: 'pour',
     answeredAtPrefix: 'répondu',
-    statusPlaced: 'PRÉSENT —',
+    statusPlaced: 'PRÉSENT :',
     statusWaitlist: 'LISTE D’ATTENTE',
     statusWaitlistSub: 'disponible',
     statusDeclined: 'REFUSÉ',
@@ -16913,7 +16912,7 @@ const I18N_SUBS = {
     scheduledForPrefix: 'Scheduled',
     forTeamPrefix: 'for',
     answeredAtPrefix: 'replied',
-    statusPlaced: 'CONFIRMED —',
+    statusPlaced: 'CONFIRMED:',
     statusWaitlist: 'WAITLIST',
     statusWaitlistSub: 'available',
     statusDeclined: 'DECLINED',
@@ -17130,7 +17129,7 @@ function renderSubsUI() {
       } else if (s.statusCode === 'cancelled') {
         statusHtml = '<span class="by" style="opacity:.6">' + esc(t('statusCancelled')) + '</span><div class="by">' + esc(t('statusCancelledSub')) + '</div>';
       } else {
-        statusHtml = '<span class="pend">—</span>';
+        statusHtml = '<span class="pend">–</span>';
       }
 
       rows += '<tr><td><div><b>' + esc(s.name) + '</b> ' + g + pref + ppgTag + streak + '</div>' + infoSpan + '</td>' +
@@ -17150,7 +17149,7 @@ function renderSubsUI() {
       const pref = p.preferred_team ? '<span class="by" style="color:var(--blue)">' + esc(t('preferredPrefix')) + ' ' + esc(p.preferred_team) + '</span>' : '';
       const ppgTag = p.ppg != null ? '<span class="by" title="' + (p.gp || 0) + ' ' + (currentLang === 'en' ? 'GP' : 'PJ') + '" style="font-weight:600;color:var(--soft)">' + p.ppg + ' ' + esc(t('ptsPerGame')) + '</span>' : '';
       const lastAskedTxt = p.last_asked ? fmtTime(p.last_asked) : esc(t('neverAsked'));
-      const lastPlayedTxt = p.last_played ? esc(p.last_played) : '—';
+      const lastPlayedTxt = p.last_played ? esc(p.last_played) : '–';
       const stateTxt = p.dormant
         ? '<span class="by" style="color:var(--red)">' + esc(t('dormantBadge')) + ' (' + p.asked_streak + ')</span>'
         : (p.asked_streak > 3 ? '<span class="by">' + p.asked_streak + ' ' + esc(t('noAnswerStreak')) + '</span>' : '');
@@ -17423,8 +17422,8 @@ async function subsData(env, url) {
     if (rsvp && rsvp.role === 'sub' && rsvp.status === 'in') {
       statusCode = 'placed';
       sortPriority = 1;
-      statusLabelFr = `Confirmé — ${rsvp.team}`;
-      statusLabelEn = `Confirmed — ${rsvp.team}`;
+      statusLabelFr = `Confirmé : ${rsvp.team}`;
+      statusLabelEn = `Confirmed: ${rsvp.team}`;
       const byDesc = rsvp.status_by === 'auto' ? 'promu auto' : (rsvp.status_by === 'self' ? 'réponse directe' : rsvp.status_by);
       statusDetail = `${rsvp.team} (${byDesc})`;
     } else if (avail && avail.status === 'yes') {
@@ -17725,7 +17724,7 @@ async function peoplePage(env = null, isAuthed = false) {
     <!-- Active season info banner -->
     <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:4px; padding:10px 14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
       <div>
-        <span style="font-size:15px; font-weight:700; color:#15803d;">🏒 <span data-i18n="activeSeasonLbl">Saison active :</span> <span id="lbl-season">—</span></span>
+        <span style="font-size:15px; font-weight:700; color:#15803d;">🏒 <span data-i18n="activeSeasonLbl">Saison active :</span> <span id="lbl-season">–</span></span>
         <span style="font-size:13px; color:var(--soft); margin-left:8px; display:inline-block;" data-i18n="bannerDesc">Coordonnées officielles pour les convocations et communications (courriel & SMS futur). Alignement de la saison en cours et substituts disponibles.</span>
       </div>
       <div id="msg" style="font-size:13px; font-weight:600;"></div>
@@ -17826,7 +17825,7 @@ async function peoplePage(env = null, isAuthed = false) {
     <!-- Table 1: Alignement régulier -->
     <div class="card" style="margin-bottom:16px;">
       <div class="sec-header">
-        <h2>🏒 <span data-i18n="t1Title">Alignement Régulier</span> — <span id="lbl-season-title">Saison active</span></h2>
+        <h2>🏒 <span data-i18n="t1Title">Alignement Régulier</span> : <span id="lbl-season-title">Saison active</span></h2>
         <span id="lbl-roster-count" style="font-size:13px; color:var(--soft);">32 joueurs confirmés pour la saison en cours</span>
       </div>
       <div class="tbl-wrap">
@@ -17849,7 +17848,7 @@ async function peoplePage(env = null, isAuthed = false) {
     <!-- Table 2: Substituts Joueurs -->
     <div class="card" style="margin-bottom:16px;">
       <div class="sec-header">
-        <h2>🧤 <span data-i18n="t2Title">Substituts — Joueurs</span></h2>
+        <h2>🧤 <span data-i18n="t2Title">Substituts : Joueurs</span></h2>
         <span id="sub-skater-desc" style="font-size:13px; color:var(--soft);"></span>
       </div>
       <div class="tbl-wrap">
@@ -17871,7 +17870,7 @@ async function peoplePage(env = null, isAuthed = false) {
     <!-- Table 3: Substituts Gardiens -->
     <div class="card" style="margin-bottom:16px;">
       <div class="sec-header">
-        <h2>🥅 <span data-i18n="t3Title">Substituts — Gardiens</span></h2>
+        <h2>🥅 <span data-i18n="t3Title">Substituts : Gardiens</span></h2>
         <span id="sub-goalie-desc" style="font-size:13px; color:var(--soft);"></span>
       </div>
       <div class="tbl-wrap">
@@ -17893,7 +17892,7 @@ async function peoplePage(env = null, isAuthed = false) {
     <!-- Table 4: Archives & Inactifs -->
     <div class="card" style="margin-bottom:16px;">
       <div class="sec-header">
-        <h2>📦 <span data-i18n="t4Title">Archives & Inactifs — Pause de saison, blessures & retraités</span></h2>
+        <h2>📦 <span data-i18n="t4Title">Archives & Inactifs : Pause de saison, blessures & retraités</span></h2>
         <span id="lbl-archive-count" style="font-size:13px; color:var(--soft);"></span>
       </div>
       <p style="font-size:13px; color:var(--soft); margin:0 0 10px;" data-i18n="t4Desc">Joueurs réguliers en pause de saison, blessés, ou substituts inactifs/en veille (10+ convocations sans réponse). Leurs coordonnées restent sauvegardées mais ils ne reçoivent plus de courriels.</p>
@@ -17944,9 +17943,9 @@ const I18N_CONTACTS = {
     btnImportAll: "📥 Importer l'historique SMBHL en substituts",
     btnSeasonReset: "🔄 Démarrer nouvelle saison (remettre réguliers en subs)",
     t1Title: "Alignement Régulier",
-    t2Title: "Substituts — Joueurs",
-    t3Title: "Substituts — Gardiens",
-    t4Title: "Archives & Inactifs — Pause de saison, blessures & retraités",
+    t2Title: "Substituts : Joueurs",
+    t3Title: "Substituts : Gardiens",
+    t4Title: "Archives & Inactifs : Pause de saison, blessures & retraités",
     t4Desc: "Joueurs réguliers en pause de saison, blessés, ou substituts inactifs/en veille (10+ convocations sans réponse). Leurs coordonnées restent sauvegardées mais ils ne reçoivent plus de courriels.",
     colPos: "Pos",
     colPlayer: "Joueur",
@@ -18022,9 +18021,9 @@ const I18N_CONTACTS = {
     btnImportAll: "📥 Import SMBHL History as Subs",
     btnSeasonReset: "🔄 Start New Season (Reset regulars to subs)",
     t1Title: "Regular Roster",
-    t2Title: "Substitutes — Skaters",
-    t3Title: "Substitutes — Goalies",
-    t4Title: "Archives & Inactive — Season off, injuries & retired",
+    t2Title: "Substitutes: Skaters",
+    t3Title: "Substitutes: Goalies",
+    t4Title: "Archives & Inactive: Season off, injuries & retired",
     t4Desc: "Regular players on season break, injured, or inactive/dormant subs (10+ invites without response). Their contact info remains saved but they no longer receive emails.",
     colPos: "Pos",
     colPlayer: "Player",
@@ -18166,7 +18165,7 @@ function renderContacts(d) {
       : (p.position === 'D' ? '<span class="pos-badge pos-D">D</span>' : '<span class="pos-badge pos-F">' + (currentLang === 'en' ? 'F' : 'A') + '</span>'));
     const teamBadge = p.current_team
       ? '<span class="team-badge ' + esc(p.current_team) + '">' + esc(p.current_team) + '</span>'
-      : '<span style="color:var(--soft);font-size:12px;">—</span>';
+      : '<span style="color:var(--soft);font-size:12px;">–</span>';
     // Live-testing task (batch 6), Part 1: this used to be type="email" --
     // editing a contact's email silently saved the OLD value, every
     // time, only for email, never for phone. wire()'s own change
@@ -18509,7 +18508,7 @@ async function addNew(role) {
     const r = await api('/admin/contacts', { method: 'POST',
       body: JSON.stringify({ action: 'new', name, email, phone, role }) });
     $('nname').value = ''; $('nmail').value = ''; $('nphone').value = '';
-    $('nmsg').textContent = (currentLang === 'en' ? 'Successfully added — ' : 'Ajouté avec succès — ') + r.player_id;
+    $('nmsg').textContent = (currentLang === 'en' ? 'Successfully added: ' : 'Ajouté avec succès : ') + r.player_id;
     $('nmsg').style.color = 'var(--green, #15803d)';
     load();
   } catch (e) {
@@ -18530,7 +18529,7 @@ $('q').addEventListener('input', () => {
     const d = await api('/admin/contacts/search?q=' + encodeURIComponent(tVal));
     $('hits').innerHTML = '<table class="contact-tbl">' + d.hits.map(h =>
       '<tr><td>' + esc(h.name) + (h.have ? ' <span class="by">' + esc(t('alreadyEnrolled')) + '</span>' : '') +
-      '</td><td style="text-align:right;">' + (h.have ? '—' :
+      '</td><td style="text-align:right;">' + (h.have ? '–' :
         '<button class="mini in" data-add="' + esc(h.id) + '" data-role="sub_skater">' + esc(t('btnSkater')) + '</button> ' +
         '<button class="mini in" data-add="' + esc(h.id) + '" data-role="sub_goalie">' + esc(t('btnGoalie')) + '</button>') +
       '</td></tr>').join('') + '</table>';
@@ -19169,7 +19168,7 @@ ${teamUrl ? `Alignement d'équipe / Team lineup :\n${teamUrl}\n` : ''}
 Tableau général / Master board :
 ${boardUrl}
 
-—
+---
 ${adminHello(env, 'en')}
 
 Goalie ${goalieName} was marked OUT for ${teamEN}${prevNoteEN}.
@@ -19186,7 +19185,7 @@ ${teamUrl ? `Team lineup:\n${teamUrl}\n` : ''}
 Master board:
 ${boardUrl}
 
-—
+---
 SMBHL Alert System`;
 
   const enLine = s => `<br><span style="color:#64748b; font-size:13px;">${esc(s)}</span>`;
@@ -19458,7 +19457,7 @@ async function rsvpGet(req, env, url) {
           ${hasVoted ? 'Modifier mon vote pour / Change vote to :' : 'Mon choix / My choice :'}
         </label>
         <select id="poll-candidate-id" style="width:100%;font:inherit;font-size:14px;padding:9px;border:1px solid var(--rule2);border-radius:4px;background:var(--card);color:var(--ink);">
-          <option value="">— Choisis un candidat / Select a candidate —</option>
+          <option value="">Choisis un candidat / Select a candidate</option>
           ${candOpts}
         </select>
       </div>
@@ -23686,7 +23685,7 @@ async function financesPage(env = null, isAuthed = false) {
     .tbl-inp:focus { outline:none; border-color:var(--ink); }
     /* Finance tab regression fix: the due/paid amount inputs below use
        step="10" so the native up/down spinner arrows move by whole
-       dollars again, not step="any"/no step at all — but a typed
+       dollars again, not step="any"/no step at all, but a typed
        non-round amount (e.g. 12.50) is still a completely valid,
        intentional value here (custom dues, partial payments), so the
        browser's own default :invalid styling (a visible glow/outline
@@ -24259,7 +24258,7 @@ async function financesPage(env = null, isAuthed = false) {
 
     $('duesTable').innerHTML = filtered.map(p => {
       const teamClass = p.team ? ('pill-team-' + esc(p.team)) : 'pill-team-none';
-      const teamHtml = p.team ? '<span class="pill ' + teamClass + '">' + esc(p.team) + '</span>' : '<span style="color:var(--faint);">—</span>';
+      const teamHtml = p.team ? '<span class="pill ' + teamClass + '">' + esc(p.team) + '</span>' : '<span style="color:var(--faint);">–</span>';
       
       let roleLabel = p.is_goalie ? t('roleGoalie') : t('rolePlayer');
       if (p.is_sub) roleLabel = p.is_goalie ? t('roleSubGoalie') : t('roleSubPlayer');
@@ -24766,7 +24765,7 @@ ${poll.description ? '\n' + poll.description + '\n' : ''}
 Pour soumettre ou modifier ton vote, clique sur ce lien direct :
 ${voteUrl}
 
-—
+---
 SMBHL · smbhl.com`;
 
     const html = emailWrap(
@@ -24864,7 +24863,7 @@ ${poll.description ? '\n' + poll.description + '\n' : ''}
 Pour soumettre ou modifier ton vote, clique sur ce lien direct :
 ${voteUrl}
 
-—
+---
 SMBHL · smbhl.com`;
 
       const html = emailWrap(
@@ -24920,7 +24919,7 @@ async function pollsPage(env = null, isAuthed = false) {
       <div style="margin-bottom:10px;">
         <label style="display:block;font-size:12px;font-weight:600;color:var(--soft);margin-bottom:4px;" data-i18n="presetLbl">Modèle prédéfini</label>
         <select id="preset-sel" style="width:100%;font:inherit;font-size:14px;padding:8px;border:1px solid var(--rule2);border-radius:3px;background:var(--card);">
-          <option value="" data-i18n="optPresetPrompt">— Choisir un modèle ou créer sur mesure —</option>
+          <option value="" data-i18n="optPresetPrompt">Choisir un modèle ou créer sur mesure</option>
           <option value="norris" data-i18n="optPresetNorris">🏆 Candidat Trophée Norris (Défenseurs uniquement)</option>
           <option value="mvp" data-i18n="optPresetMvp">👑 Candidat Trophée Hart / MVP (Tous les patineurs)</option>
           <option value="custom" data-i18n="optPresetCustom">❓ Question personnalisée</option>
@@ -24983,7 +24982,7 @@ const I18N_POLLS = {
     title: "Sondages & Trophées",
     newPollTitle: "Nouveau sondage",
     presetLbl: "Modèle prédéfini",
-    optPresetPrompt: "— Choisir un modèle ou créer sur mesure —",
+    optPresetPrompt: "Choisir un modèle ou créer sur mesure",
     optPresetNorris: "🏆 Candidat Trophée Norris (Défenseurs uniquement)",
     optPresetMvp: "👑 Candidat Trophée Hart / MVP (Tous les patineurs)",
     optPresetCustom: "❓ Question personnalisée",
@@ -25046,7 +25045,7 @@ const I18N_POLLS = {
     title: "Polls & Awards Voting",
     newPollTitle: "New Poll",
     presetLbl: "Preset template",
-    optPresetPrompt: "— Choose a template or create custom —",
+    optPresetPrompt: "Choose a template or create custom",
     optPresetNorris: "🏆 Norris Trophy Candidate (Defensemen only)",
     optPresetMvp: "👑 Hart Trophy Candidate / MVP (All skaters)",
     optPresetCustom: "❓ Custom Poll",
@@ -25941,7 +25940,7 @@ async function schedulePage(env = null, isAuthed = false) {
           teamTooltip = Object.entries(stats.by_team).map(([tm, c]) => tm + ': ' + c.in + ' in' + (c.goalies_in ? ' (' + c.goalies_in + 'G)' : '')).join(' · ');
         }
 
-        const timeStr = e.start_time ? (esc(e.start_time) + (e.end_time ? '–' + esc(e.end_time) : '')) : '—';
+        const timeStr = e.start_time ? (esc(e.start_time) + (e.end_time ? '–' + esc(e.end_time) : '')) : '–';
 
         // Quick state action buttons
         let quickBtns = '';
@@ -25961,7 +25960,7 @@ async function schedulePage(env = null, isAuthed = false) {
         h += '<tr>' +
           '<td><b>' + weekLabel + esc(e.week) + '</b></td>' +
           '<td data-label="Date & Heure"><b>' + esc(e.date) + '</b><br><span style="font-size:12px; color:var(--soft);">' + timeStr + '</span></td>' +
-          '<td data-label="Lieu">' + (e.venue ? esc(e.venue) : '<span style="color:var(--soft);">—</span>') + '</td>' +
+          '<td data-label="Lieu">' + (e.venue ? esc(e.venue) : '<span style="color:var(--soft);">–</span>') + '</td>' +
           '<td data-label="Statut">' + stateBadge + '</td>' +
           '<td data-label="Présences">' +
             '<div class="rsvp-pill" title="' + esc(teamTooltip) + '">' +
@@ -25990,8 +25989,8 @@ async function schedulePage(env = null, isAuthed = false) {
     } else {
       let ph = '';
       filteredPlanned.forEach(p => {
-        const timeStr = p.start_time ? (esc(p.start_time) + (p.end_time ? '–' + esc(p.end_time) : '')) : '—';
-        const matchups = (p.games || []).map(g => g.home + ' vs ' + g.away + ' (' + g.time + ')').join(', ') || '—';
+        const timeStr = p.start_time ? (esc(p.start_time) + (p.end_time ? '–' + esc(p.end_time) : '')) : '–';
+        const matchups = (p.games || []).map(g => g.home + ' vs ' + g.away + ' (' + g.time + ')').join(', ') || '–';
 
         let badge = '';
         let actBtn = '';
@@ -26010,7 +26009,7 @@ async function schedulePage(env = null, isAuthed = false) {
         ph += '<tr>' +
           '<td><b>' + weekLabel + esc(p.week) + '</b></td>' +
           '<td data-label="Date & Heure"><b>' + esc(p.date) + '</b><br><span style="font-size:12px; color:var(--soft);">' + timeStr + '</span></td>' +
-          '<td data-label="Lieu">' + (p.venue ? esc(p.venue) : '<span style="color:var(--soft);">—</span>') + '</td>' +
+          '<td data-label="Lieu">' + (p.venue ? esc(p.venue) : '<span style="color:var(--soft);">–</span>') + '</td>' +
           '<td data-label="Matchs" style="font-size:13px; color:var(--soft);">' + esc(matchups) + '</td>' +
           '<td data-label="État D1">' + badge + '</td>' +
           '<td style="text-align:right;">' + actBtn + '</td>' +
@@ -27150,7 +27149,7 @@ async function smbhlBroadcastRecipients(env, target, event_id) {
 
 // An SMBHL broadcast's text and HTML (the subject is the admin's own).
 function renderSmbhlBroadcastEmail(subj, msg) {
-  const plain = `${msg}\n\n—\nSMBHL · Ligue de Dek Hockey / Ball Hockey League\nscores@smbhl.com · https://smbhl.com`;
+  const plain = `${msg}\n\n---\nSMBHL · Ligue de Dek Hockey / Ball Hockey League\nscores@smbhl.com · https://smbhl.com`;
   const formattedHtmlMsg = msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
   const html = emailWrap(
     subj,
@@ -28180,7 +28179,7 @@ async function emailsPage(env = null, isAuthed = false) {
   }
 
   function fmtLocalTime(isoStr, includeSec = false) {
-    if (!isoStr) return '—';
+    if (!isoStr) return '–';
     const s = (isoStr.endsWith('Z') || isoStr.includes('+')) ? isoStr : (isoStr + 'Z');
     const d = new Date(s);
     if (isNaN(d.getTime())) return esc(isoStr);
@@ -28384,7 +28383,7 @@ async function emailsPage(env = null, isAuthed = false) {
       const subKind = o.kind === 'notice' ? '<div style="font-size:10px; color:#7e22ce; font-weight:700; margin-top:2px;">' + (currentLang === 'en' ? '(By teammate)' : '(Par coéquipier)') + '</div>' : '';
       const typeBadge = '<span class="badge ' + ki.badgeClass + '" title="' + esc(ki.desc) + '" style="cursor:help;">' + esc(ki.label) + '</span>' + subKind;
 
-      let evText = esc(o.event_id || '—');
+      let evText = esc(o.event_id || '–');
       if (o.event_week) {
         evText = '<div style="font-weight:700;">' + (currentLang === 'en' ? 'Wk ' : 'Sem. ') + esc(o.event_week) + '</div>' +
           (o.event_date ? '<div style="font-size:11px; color:var(--soft);">' + esc(o.event_date) + '</div>' : '');
@@ -28401,7 +28400,7 @@ async function emailsPage(env = null, isAuthed = false) {
         '<td data-label="' + esc(dict.thType) + '">' + typeBadge + '</td>' +
         '<td data-label="' + esc(dict.thGame) + '">' + evText + '</td>' +
         '<td data-label="' + esc(dict.thRecipient) + '">' + playerText + '</td>' +
-        '<td data-label="' + esc(dict.thTeam) + '"><b>' + esc(o.team || '—') + '</b></td>' +
+        '<td data-label="' + esc(dict.thTeam) + '"><b>' + esc(o.team || '–') + '</b></td>' +
         '<td data-label="' + esc(dict.thScheduled) + '" style="font-family:monospace; font-size:12px;" title="' + (currentLang === 'en' ? 'Montreal local time' : 'Heure locale Montréal') + '">' + esc(sendAfterFmt) + '</td>' +
         '<td data-label="' + esc(dict.thStatus) + '">' + badge + '</td>' +
         '<td>' +
@@ -28536,8 +28535,8 @@ async function emailsPage(env = null, isAuthed = false) {
     '</div>' +
     '<div style="background:#f8fafc; border:1px solid var(--rule); border-radius:6px; padding:12px 14px; margin-bottom:14px; font-size:13px; line-height:1.5;">' +
       '<div><b>' + (isEn ? '👤 Recipient: ' : '👤 Destinataire : ') + '</b>' + esc(o.player_name || o.player_id || (isEn ? 'All' : 'Tous')) + (o.player_email ? ' &lt;' + esc(o.player_email) + '&gt;' : '') + '</div>' +
-      '<div><b>' + (isEn ? '🏒 Team: ' : '🏒 Équipe : ') + '</b>' + esc(o.team || '—') + '</div>' +
-      '<div><b>' + (isEn ? '📅 Game: ' : '📅 Match : ') + '</b>' + (isEn ? 'Week ' : 'Semaine ') + esc(o.event_week || '—') + (o.event_date ? ' (' + esc(o.event_date) + ')' : '') + '</div>' +
+      '<div><b>' + (isEn ? '🏒 Team: ' : '🏒 Équipe : ') + '</b>' + esc(o.team || '–') + '</div>' +
+      '<div><b>' + (isEn ? '📅 Game: ' : '📅 Match : ') + '</b>' + (isEn ? 'Week ' : 'Semaine ') + esc(o.event_week || '–') + (o.event_date ? ' (' + esc(o.event_date) + ')' : '') + '</div>' +
       '<div><b>' + (isEn ? '⏰ Scheduled for: ' : '⏰ Prévu pour : ') + '</b>' + esc(fmtLocalTime(o.send_after)) + ' <span style="font-size:11px; color:var(--soft);">' + (isEn ? '(Montreal local time)' : '(Heure locale Montréal)') + '</span></div>' +
       (o.sent_at ? '<div><b>' + (isEn ? '✅ Sent on: ' : '✅ Envoyé le : ') + '</b>' + esc(fmtLocalTime(o.sent_at, true)) + ' <span style="font-size:11px; color:var(--soft);">' + (isEn ? '(Montreal local time)' : '(Heure locale Montréal)') + '</span></div>' : '') +
       audBadge +
@@ -28721,7 +28720,7 @@ async function emailsPage(env = null, isAuthed = false) {
       const d = (res && res.drain) || { due: 0, sent: 0, failed: 0 };
       let msg;
       if (d.due === 0) {
-        msg = isEn ? "Nothing was pending — the queue is already empty." : "Rien n’était en attente — la file est déjà vide.";
+        msg = isEn ? "Nothing was pending: the queue is already empty." : "Rien n’était en attente : la file est déjà vide.";
       } else if (d.failed > 0) {
         msg = isEn ? (d.sent + " sent, " + d.failed + " failed.") : (d.sent + " envoyé(s), " + d.failed + " échec(s).");
       } else {
@@ -29395,7 +29394,7 @@ async function teamsPage(env = null, isAuthed = false) {
     <div id="teams-readonly-banner" style="display:none; background:#fffbeb; border:1px solid #fde68a; border-left:4px solid #f59e0b; color:#92400e; padding:12px 16px; border-radius:4px; margin-bottom:20px; font-size:14px; font-weight:600; align-items:center; gap:10px;">
       <span style="font-size:18px;">🔒</span>
       <div id="teams-readonly-banner-text" data-i18n="readonlyBanner">
-        <b>Saison archivée (Mode consultation seule)</b> — Les alignements, échanges et ajouts sont verrouillés pour cette saison passée.
+        <b>Saison archivée (Mode consultation seule)</b> : Les alignements, échanges et ajouts sont verrouillés pour cette saison passée.
       </div>
     </div>
 
@@ -29536,7 +29535,7 @@ async function teamsPage(env = null, isAuthed = false) {
       seasonLbl: "Saison :",
       refreshBtn: "🔄 Rafraîchir",
       addPlayerBtn: "+ Ajouter un joueur",
-      readonlyBanner: "<b>Saison archivée (Mode consultation seule)</b> — Les alignements, échanges et ajouts sont verrouillés pour cette saison passée.",
+      readonlyBanner: "<b>Saison archivée (Mode consultation seule)</b> : Les alignements, échanges et ajouts sont verrouillés pour cette saison passée.",
       activeSeason: "(Active)",
       archiveSeason: "(Archive - Lecture seule)",
       playerSingle: "joueur",
@@ -29597,7 +29596,7 @@ async function teamsPage(env = null, isAuthed = false) {
       seasonLbl: "Season:",
       refreshBtn: "🔄 Refresh",
       addPlayerBtn: "+ Add a Player",
-      readonlyBanner: "<b>Archived Season (Read-Only)</b> — Rosters, trades, and additions are locked for this past season.",
+      readonlyBanner: "<b>Archived Season (Read-Only)</b>: Rosters, trades, and additions are locked for this past season.",
       activeSeason: "(Active)",
       archiveSeason: "(Archive - Read-Only)",
       playerSingle: "skater",

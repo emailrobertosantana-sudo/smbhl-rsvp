@@ -1109,7 +1109,7 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
 
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:10px;">
     <h1 style="font-family:'Barlow Condensed',sans-serif; font-size:28px; font-weight:700; margin:0;">
-      🏒 <span id="pageTitleText">Feuilles de match — Semaine ${review.week}</span> <span style="color:var(--ink-soft); font-size:18px; font-weight:normal;">(${esc(review.season)})</span>
+      🏒 <span id="pageTitleText">Feuilles de match : Semaine ${review.week}</span> <span style="color:var(--ink-soft); font-size:18px; font-weight:normal;">(${esc(review.season)})</span>
     </h1>
     <div>
       <span id="reviewStatusBadge" class="badge-status status-${review.status}">${review.status}</span>
@@ -1405,7 +1405,7 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
 </div>
 
 <script>
-// The server never embeds the admin key — it's resolved client-side the same
+// The server never embeds the admin key, it's resolved client-side the same
 // way every other admin page does (URL param, then localStorage, then the
 // admin_key cookie the server sets once you're authenticated).
 let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
@@ -1419,7 +1419,7 @@ if (window.history && window.history.replaceState) {
 }
 const reviewId = ${JSON.stringify(review.id)};
 // Scoped single-review token, present only for a scoresheet-email link
-// visitor. Forwarded on every subsequent action below alongside x-admin —
+// visitor. Forwarded on every subsequent action below alongside x-admin,
 // checkReviewAuth accepts either. Never a substitute for the ADMIN_KEY on
 // any route outside this one review.
 const RT = ${JSON.stringify(reviewToken.rt)};
@@ -1434,7 +1434,7 @@ const gamesCount = ${games.length};
 const I18N_REVIEW_PAGE = {
   fr: {
     docTitle: w => "SMBHL · Validation des feuilles (Semaine " + w + ")",
-    pageTitleText: w => "Feuilles de match — Semaine " + w,
+    pageTitleText: w => "Feuilles de match : Semaine " + w,
     statusDraft: "Brouillon",
     statusPublished: "Publié",
     statusDiscarded: "Rejeté",
@@ -1509,7 +1509,7 @@ const I18N_REVIEW_PAGE = {
   },
   en: {
     docTitle: w => "SMBHL · Scoresheet Validation (Week " + w + ")",
-    pageTitleText: w => "Scoresheets — Week " + w,
+    pageTitleText: w => "Scoresheets: Week " + w,
     statusDraft: "Draft",
     statusPublished: "Published",
     statusDiscarded: "Discarded",
@@ -2386,7 +2386,7 @@ export function renderReviewIndex(reviews = [], backups = [], showStatsTabs = tr
 </div>
 
 <script>
-// The server never embeds the admin key — it's resolved client-side the same
+// The server never embeds the admin key, it's resolved client-side the same
 // way every other admin page does (URL param, then localStorage, then the
 // admin_key cookie the server sets once you're authenticated).
 let K = new URLSearchParams(location.search).get('key') || new URLSearchParams(location.search).get('k') || new URLSearchParams(location.search).get('t') || localStorage.getItem('adminkey') || (document.cookie.match(/(?:^|;\\s*)admin_key=([^;]+)/)?.[1] ? decodeURIComponent(RegExp.$1) : '') || '';
@@ -2813,7 +2813,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
       `Cliquez sur le lien suivant pour vérifier et publier en direct sur le site :\n` +
       `${magicLink}\n\n` +
       `Note : Dès que vous confirmerez la publication, toutes les photos temporaires seront définitivement supprimées du serveur.\n\n` +
-      `—\n${notifyLeagueCfg.name} Automation`;
+      `---\n${notifyLeagueCfg.name} Automation`;
 
     const escH = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
     const html = `<!DOCTYPE html>
@@ -2829,7 +2829,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
   <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:540px; margin:0 auto; background-color:#ffffff; border:1px solid #dde1e7; border-radius:8px; overflow:hidden;">
     <tr>
       <td style="background-color:#16181d; padding:14px 20px; color:#ffffff;">
-        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 ${notifyLeagueCfg.name} — Feuilles de match</span>
+        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 ${notifyLeagueCfg.name} : Feuilles de match</span>
       </td>
     </tr>
     <tr>
@@ -3348,7 +3348,7 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
       const downloadUrl = `${publicUrl}/api/backups/download?key=${encodeURIComponent(backupKey)}`;
       const league = publishLeagueCfg;
       const siteHost = String(league.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
-      const subj = `[${league.name}] ✅ Semaine ${weekNum} publiée — Sauvegarde automatique data.json`;
+      const subj = `[${league.name}] ✅ Semaine ${weekNum} publiée : Sauvegarde automatique data.json`;
 
       const gameLines = (games || []).map(g => {
         const hScore = g.home_score != null ? g.home_score : '-';
@@ -3371,7 +3371,7 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
         `Le fichier data.json à jour est joint à ce courriel.\n\n` +
         `Lien direct de téléchargement de cette sauvegarde :\n${downloadUrl}\n\n` +
         `Site en direct : ${league.siteUrl}\n\n` +
-        `—\n${league.name} Automation`;
+        `---\n${league.name} Automation`;
 
       let attachments = [];
       try {
@@ -3402,7 +3402,7 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
   <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:540px; margin:0 auto; background-color:#ffffff; border:1px solid #dde1e7; border-radius:8px; overflow:hidden;">
     <tr>
       <td style="background-color:#16181d; padding:14px 20px; color:#ffffff;">
-        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 ${league.name} — Sauvegarde Automatique</span>
+        <span style="font-size:18px; font-weight:700; letter-spacing:0.02em;">🏒 ${league.name} : Sauvegarde Automatique</span>
       </td>
     </tr>
     <tr>

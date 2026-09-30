@@ -52,8 +52,8 @@ describe('SMBHL sub call, as delivered to Resend', () => {
       expect(body, `${part}: English opt-out line`).toContain('Want off the sub list? Just reply to this email.');
     }
     const html = visibleText(m.html);
-    expect(html).toContain('OUI — Je suis disponible');
-    expect(html).toContain('YES — Available');
+    expect(html).toContain('OUI : Je suis disponible');
+    expect(html).toContain('YES: Available');
   });
 
   it('the reminder too: "(rappel) / (reminder)" and both languages', async () => {
