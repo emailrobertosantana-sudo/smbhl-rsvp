@@ -3,9 +3,19 @@
 -- Apply with:
 --   npx wrangler d1 execute notreligue-demo --env demo --remote --file=./migrate-054.sql
 --   (production: npx wrangler d1 execute smbhl-rsvp --remote --file=./migrate-054.sql)
---   Either order with the code that reads it: src/finance_store.js scopes
---   every query by league and upserts with a target-less ON CONFLICT, so
---   it runs the same against the tables before and after this migration.
+--   ORDER MATTERS, one way only. The code written for this schema
+--   (src/finance_store.js, from commit a87a981) scopes every query by
+--   league and upserts with a target-less ON CONFLICT, so it runs the same
+--   against the tables before and after this migration: that code may be
+--   deployed first. The code from BEFORE it must not run on the new
+--   schema: its upserts name the old keys (ON CONFLICT(season),
+--   ON CONFLICT(season, player_id)) and fail on the rebuilt tables with
+--   "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE
+--   constraint". Production was left that way on 2026-09-30 (migration
+--   applied, code not deployed): saving pricing or a player's dues failed.
+--   The rule for any migration that changes a key or a constraint: deploy
+--   the new code right after applying it, or ship code that works on both
+--   schemas first.
 --
 -- migrate-020 gave season_pricing, player_dues and season_costs a
 -- league_id column (every row 'smbhl'), but not a key: season_pricing was
