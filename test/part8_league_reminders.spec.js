@@ -363,7 +363,9 @@ describe('Part 2: per-league automated reminders', () => {
     // A sub, eligible to be invited when the shortage triggers.
     await SELF.fetch('http://example.com/league/contacts', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ name: 'Eligible Sub', role: 'sub_skater', email: 'eligiblesub@example.com' })
+      // emailChoice: the game is short, so adding this sub emails them at once,
+      // and a league that has not chosen yet is asked first (test/part184).
+      body: JSON.stringify({ name: 'Eligible Sub', role: 'sub_skater', email: 'eligiblesub@example.com', emailChoice: 'send' })
     });
     await SELF.fetch('http://example.com/league/rsvp/admin', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
