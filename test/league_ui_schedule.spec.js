@@ -168,7 +168,9 @@ describe('UI task Part T: GET /league/schedule', () => {
       expect(res.status).toBe(200);
     }
 
-    const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
+    const page = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: c.cookie } })).text();
+    // The game list only: the create panels above it list the saved venues.
+    const html = page.slice(page.indexOf('id="scheduleList"'));
     const idx = {
       nearFuture: html.indexOf('Near Future Rink'),   // 2099-03-10 -- soonest upcoming
       farFuture: html.indexOf('Far Future Rink'),      // 2099-03-20
