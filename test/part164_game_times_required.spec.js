@@ -29,7 +29,8 @@ describe('The routes refuse a game without its times', () => {
     const noEnd = await a.post('/league/events', { date: '2099-05-05', season: 'S1', start_time: '19:00' });
     expect([noEnd.status, noEnd.json.errorKey]).toEqual([400, 'END_TIME_REQUIRED']);
     const bulk = await a.post('/league/events/bulk', { startDate: '2099-05-12', occurrences: 2, season: 'S1', start_time: '19:00' });
-    expect([bulk.status, bulk.json.errorKey]).toEqual([400, 'END_TIME_REQUIRED']);
+    // The bulk form's own key for the same rule (beside the field).
+    expect([bulk.status, bulk.json.errorKey]).toEqual([400, 'BULK_END_TIME_REQUIRED']);
     expect((await env.DB.prepare("SELECT COUNT(*) n FROM events WHERE date IN ('2099-05-05', '2099-05-12', '2099-05-19')").first()).n).toBe(0);
 
     const ok = await must(a.post('/league/events', { date: '2099-05-05', season: 'S1', start_time: '19:00', end_time: '20:00' }), 'with times');

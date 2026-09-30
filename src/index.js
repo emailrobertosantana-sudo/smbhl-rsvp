@@ -9178,23 +9178,28 @@ async function handleLeagueSchedulePage(req, env, url) {
       <div class="nl-field">
         <label class="nl-label" for="be_start_date" data-i18n="lblStartDate">Première date</label>
         <input class="nl-input" id="be_start_date" type="date" required>
+        <p class="nl-error" id="be_err_startDate" role="alert" style="display:none"></p>
       </div>
       <div class="nl-field">
         <label class="nl-label" for="be_occurrences" data-i18n="lblOccurrences">Nombre de matchs</label>
         <input class="nl-input" id="be_occurrences" type="number" min="1" max="52" value="10">
+        <p class="nl-error" id="be_err_occurrences" role="alert" style="display:none"></p>
       </div>
       <div class="nl-field">
         <label class="nl-label" for="be_end_date" data-i18n="lblEndDate">ou date de fin (optionnel)</label>
         <input class="nl-input" id="be_end_date" type="date">
+        <p class="nl-error" id="be_err_endDate" role="alert" style="display:none"></p>
       </div>
       <div class="sc-two">
         <div class="nl-field">
           <label class="nl-label" for="be_start" data-i18n="startOpt">Heure de début</label>
           <input class="nl-input" id="be_start" type="time" required>
+        <p class="nl-error" id="be_err_startTime" role="alert" style="display:none"></p>
         </div>
         <div class="nl-field">
           <label class="nl-label" for="be_end" data-i18n="endOpt">Heure de fin</label>
           <input class="nl-input" id="be_end" type="time" required>
+        <p class="nl-error" id="be_err_endTime" role="alert" style="display:none"></p>
         </div>
       </div>
       ${venues.length ? `<div class="nl-field">
@@ -9480,7 +9485,8 @@ function gameMinutes(start, end) {
 // Asks only when the length is implausible: more than 6 hours.
 var GAME_LENGTH_WARN_MINUTES = 360;
 function confirmGameLength(start, end) {
-  if (!start || !end) return true;
+  // Equal times are refused by the server (not a 24 hour game).
+  if (!start || !end || start === end) return true;
   var m = gameMinutes(start, end);
   if (m <= GAME_LENGTH_WARN_MINUTES) return true;
   var dict = window.__pageDict ? window.__pageDict() : {};
@@ -9489,12 +9495,51 @@ function confirmGameLength(start, end) {
   var msg = (dict.longGameWarning || 'This game would last {d} ({start} to {end}). Continue anyway?').split('{d}').join(d).split('{start}').join(start).split('{end}').join(end);
   return window.confirm(msg);
 }
+// The form's fields, by the name the server's rules use
+// (src/bulk_events_validation.js). The server checks every one before
+// creating anything and names the field of each problem; it is shown
+// under that field, the field is highlighted, and the first one takes focus.
+var BULK_FIELDS = { startDate: 'be_start_date', occurrences: 'be_occurrences', endDate: 'be_end_date', startTime: 'be_start', endTime: 'be_end' };
+function clearBulkFieldError(field) {
+  var input = document.getElementById(BULK_FIELDS[field]);
+  var line = document.getElementById('be_err_' + field);
+  if (input) { input.classList.remove('nl-input--error'); input.removeAttribute('aria-invalid'); input.removeAttribute('aria-describedby'); }
+  if (line) { line.textContent = ''; line.style.display = 'none'; }
+}
+function showBulkFieldErrors(fields) {
+  Object.keys(BULK_FIELDS).forEach(clearBulkFieldError);
+  var first = null;
+  (fields || []).forEach(function(f) {
+    var input = document.getElementById(BULK_FIELDS[f.field]);
+    var line = document.getElementById('be_err_' + f.field);
+    if (!input || !line) return;
+    input.classList.add('nl-input--error');
+    input.setAttribute('aria-invalid', 'true');
+    input.setAttribute('aria-describedby', line.id);
+    line.textContent = window.__errorText(f.errorKey);
+    line.style.display = 'flex';
+    if (!first) first = input;
+  });
+  if (first) first.focus();
+  return !!first;
+}
+Object.keys(BULK_FIELDS).forEach(function(field) {
+  var input = document.getElementById(BULK_FIELDS[field]);
+  if (input) input.addEventListener('input', function() { clearBulkFieldError(field); });
+});
 async function submitBulkEvents() {
   document.getElementById('bulkEventErr').style.display = 'none';
   document.getElementById('bulkEventOk').style.display = 'none';
-  var startDate = document.getElementById('be_start_date').value;
+  Object.keys(BULK_FIELDS).forEach(clearBulkFieldError);
+  var startDateEl = document.getElementById('be_start_date');
+  var endDateEl = document.getElementById('be_end_date');
+  var startDate = startDateEl.value;
   var occurrences = document.getElementById('be_occurrences').value;
-  var endDate = document.getElementById('be_end_date').value;
+  var endDate = endDateEl.value;
+  // A date the browser could not read (09/31/2026) comes back empty with
+  // its badInput flag set: that is an invalid date, not an empty one.
+  var startDateInvalid = !!(startDateEl.validity && startDateEl.validity.badInput);
+  var endDateInvalid = !!(endDateEl.validity && endDateEl.validity.badInput);
   var start_time = document.getElementById('be_start').value;
   var end_time = document.getElementById('be_end').value;
   var venue = document.getElementById('be_venue').value.trim();
@@ -9509,9 +9554,6 @@ async function submitBulkEvents() {
   var autoRemindersEnabled = true;
   var suppressEl = document.getElementById('be_suppress_soon');
   var suppressDates = (suppressEl && suppressEl.checked) ? bulkSoonGames().map(function(g) { return g.date; }) : [];
-  if (!startDate) { showBulkErr(window.__errorText('DATE_REQUIRED_CLIENT')); return; }
-  if (!start_time) { showBulkErr(window.__errorText('START_TIME_REQUIRED')); return; }
-  if (!end_time) { showBulkErr(window.__errorText('END_TIME_REQUIRED')); return; }
   // Same check as the single-event form, for every game in the series.
   if (!confirmGameLength(start_time, end_time)) return;
   var btn = document.getElementById('be_submit');
@@ -9522,8 +9564,11 @@ async function submitBulkEvents() {
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
       body: JSON.stringify({
         startDate: startDate,
-        occurrences: (occurrences && !endDate) ? Number(occurrences) : undefined,
+        startDateInvalid: startDateInvalid || undefined,
+        // The end date wins over the count when one is given (or typed but unreadable).
+        occurrences: (occurrences && !endDate && !endDateInvalid) ? occurrences : undefined,
         endDate: endDate || undefined,
+        endDateInvalid: endDateInvalid || undefined,
         start_time: start_time || undefined, end_time: end_time || undefined,
         venue: venueId ? undefined : (venue || undefined), venue_id: venueId || undefined,
         venue_address: venueAddress || undefined, venue_map_link: venueMapLink || undefined,
@@ -9532,10 +9577,17 @@ async function submitBulkEvents() {
       })
     });
     var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { showBulkErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
+    if (!res.ok || !data.ok) {
+      // Field problems go beside their fields; anything else (not a field
+      // the form can point to) is shown above the form.
+      if (!showBulkFieldErrors(data.fields)) showBulkErr(window.__errorText(data.errorKey));
+      btn.disabled = false;
+      return;
+    }
     window.location.reload();
   } catch (e) {
-    showBulkErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
+    console.error('[bulk-events] request failed', e);
+    showBulkErr(window.__errorText('BULK_NETWORK_ERROR')); btn.disabled = false;
   }
 }
 // Scheduling correction task (Part 1): ONE POOL OF SLOTS -- a single
@@ -30069,8 +30121,17 @@ async function handleFetch(req, env, ctx) {
       }
       if (url.pathname === '/league/events' && req.method === 'POST')
         return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueEventCreate(req, env));
-      if (url.pathname === '/league/events/bulk' && req.method === 'POST')
-        return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueEventsBulkCreate(req, env));
+      // An unexpected failure (not a field the form can point to) is
+      // logged, and answered with no error key: the page shows its generic
+      // message for it and nothing else.
+      if (url.pathname === '/league/events/bulk' && req.method === 'POST') {
+        try {
+          return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueEventsBulkCreate(req, env));
+        } catch (e) {
+          console.error(`[bulk-events] unexpected failure: ${(e && e.stack) || e}`);
+          return Response.json({ ok: false, error: 'Unexpected error.' }, { status: 500 });
+        }
+      }
       if (url.pathname === '/league/events/duplicate' && req.method === 'POST')
         return await handleLeagueEventDuplicate(req, env);
       if (url.pathname === '/league/venues' && req.method === 'POST')

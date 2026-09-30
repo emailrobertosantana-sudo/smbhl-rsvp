@@ -116,19 +116,20 @@ describe('Part 7 (live-testing task): bulk event creation (POST /league/events/b
     await createLeagueWithSeason(cookie, csrfToken, 'Bulk Events No Recurrence League');
     const { status, json } = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-11-01' });
     expect(status).toBe(400);
-    expect(json.errorKey).toBe('BULK_EVENTS_RECURRENCE_REQUIRED');
+    // Its own field and message now (src/bulk_events_validation.js).
+    expect(json.errorKey).toBe('BULK_COUNT_OR_END_REQUIRED');
+    expect(json.fields).toEqual([{ field: 'occurrences', errorKey: 'BULK_COUNT_OR_END_REQUIRED' }]);
   });
 
-  // Flaky-timeout fix: this one HTTP call fans out into 52 sequential
-  // server-side event-row creations (collision check + insert each) --
-  // can intermittently exceed vitest's 5000ms default under parallel
-  // test-suite load. Slow by nature, not broken.
-  it('caps occurrences at 52 even if a larger number is requested', async () => {
+  // Revised: a count above 52 used to be cut to 52 without a word; it is
+  // now refused, with its field, and nothing is created.
+  it('refuses more than 52 occurrences instead of capping them', async () => {
     const { cookie, csrfToken } = await signup('bulk.events.cap@example.com', '203.0.129.005');
     await createLeagueWithSeason(cookie, csrfToken, 'Bulk Events Cap League');
-    const { json } = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-04', occurrences: 300 });
-    expect(json.createdCount).toBe(52);
-  }, 15000);
+    const { status, json } = await bulkCreateEvents(cookie, csrfToken, { startDate: '2099-01-04', occurrences: 300 });
+    expect(status).toBe(400);
+    expect(json.fields).toEqual([{ field: 'occurrences', errorKey: 'BULK_COUNT_RANGE' }]);
+  });
 
   it('this route cannot be used against SMBHL', async () => {
     const { cookie, csrfToken } = await signup('bulk.events.smbhl.blocked@example.com', '203.0.129.006');

@@ -20,6 +20,7 @@ import { passCached } from './pass_cache.js';
 import { checkUserSession, checkCsrfToken, hashPassword, sessionResponseHeaders } from './auth.js';
 import { isMailDeferred } from './mail_queue.js';
 import { sanitizeAndValidateEmail } from './validation.js';
+import { validateBulkEvents, BULK_INTERVAL_DAYS } from './bulk_events_validation.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS, eventHasStarted } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie, generateRoundRobinRounds } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
@@ -1158,28 +1159,17 @@ export async function handleLeagueEventsBulkCreate(req, env) {
     return Response.json({ ok: false, error: 'This route cannot create events for SMBHL.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 });
   }
 
-  const startDate = String(body.startDate || '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-    return Response.json({ ok: false, error: 'date is required, in YYYY-MM-DD format.', errorKey: 'DATE_REQUIRED' }, { status: 400 });
+  // Every rule in one place (src/bulk_events_validation.js), checked before
+  // anything is created: a date that does not exist (2026-09-31), a count
+  // outside 1 to 52 (refused, never capped), an end date before the first
+  // date, a time that is not a real HH:MM, equal start and end times. Each
+  // problem comes back with its field, for the form to show beside it.
+  const check = validateBulkEvents(body);
+  if (!check.ok) {
+    return Response.json({ ok: false, error: 'Some fields are not valid.', errorKey: check.errors[0].errorKey, fields: check.errors }, { status: 400 });
   }
-
-  const INTERVAL_DAYS = 7;
-  let occurrences = Number(body.occurrences);
-  if (!Number.isFinite(occurrences) || occurrences < 1) {
-    const endDate = String(body.endDate || '').trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
-      const spanMs = Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`);
-      occurrences = spanMs >= 0 ? Math.floor(spanMs / (INTERVAL_DAYS * 86400000)) + 1 : 0;
-    }
-  }
-  if (!Number.isFinite(occurrences) || occurrences < 1) {
-    return Response.json({ ok: false, error: 'Provide an occurrence count or an end date after the start date.', errorKey: 'BULK_EVENTS_RECURRENCE_REQUIRED' }, { status: 400 });
-  }
-  occurrences = Math.min(Math.floor(occurrences), 52);
-  // Nights (D1): the times are required; refuse the whole series up front
-  // rather than skipping every one of its games as invalid.
-  if (!String(body.start_time || '').trim()) return Response.json({ ok: false, error: 'start_time is required.', errorKey: 'START_TIME_REQUIRED' }, { status: 400 });
-  if (!String(body.end_time || '').trim()) return Response.json({ ok: false, error: 'end_time is required.', errorKey: 'END_TIME_REQUIRED' }, { status: 400 });
+  const { startDate, occurrences } = check.value;
+  const INTERVAL_DAYS = BULK_INTERVAL_DAYS;
 
   const leagueData = await getLeagueDataJson(env, leagueId);
   // Item 10c: the games the form named as sending reminders soon, whose
