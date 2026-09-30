@@ -86,16 +86,16 @@ describe('The rules themselves, and their messages', () => {
   });
   it('every key has its copy, verbatim, FR and EN, with no em dash', () => {
     const want = {
-      BULK_DATE_INVALID: ["Cette date n'existe pas. Veuillez choisir une date valide.", 'This date does not exist. Please choose a valid date.'],
-      BULK_COUNT_OR_END_REQUIRED: ["Indiquez un nombre d'événements ou une date de fin.", 'Enter a number of events or an end date.'],
+      BULK_DATE_INVALID: ["Cette date n'existe pas. Choisis une date valide.", 'This date does not exist. Please choose a valid date.'],
+      BULK_COUNT_OR_END_REQUIRED: ["Indique un nombre d'événements ou une date de fin.", 'Enter a number of events or an end date.'],
       BULK_COUNT_RANGE: ["Le nombre d'événements doit être entre 1 et 52.", 'The number of events must be between 1 and 52.'],
       BULK_END_BEFORE_START: ['La date de fin doit être postérieure à la première date.', 'The end date must be after the first date.'],
-      BULK_START_TIME_REQUIRED: ['Choisissez une heure de début.', 'Choose a start time.'],
-      BULK_END_TIME_REQUIRED: ['Choisissez une heure de fin.', 'Choose an end time.'],
+      BULK_START_TIME_REQUIRED: ['Choisis une heure de début.', 'Choose a start time.'],
+      BULK_END_TIME_REQUIRED: ['Choisis une heure de fin.', 'Choose an end time.'],
       BULK_TIMES_EQUAL: ["L'heure de fin doit être différente de l'heure de début.", 'The end time must be different from the start time.'],
       BULK_TIME_INVALID: ["Cette heure n'est pas valide.", 'This time is not valid.'],
-      BULK_FIRST_DATE_REQUIRED: ['Choisissez une première date.', 'Choose a first date.'],
-      BULK_NETWORK_ERROR: ['La connexion a échoué. Vérifiez votre connexion Internet et réessayez.', 'The connection failed. Check your internet connection and try again.']
+      BULK_FIRST_DATE_REQUIRED: ['Choisis une première date.', 'Choose a first date.'],
+      BULK_NETWORK_ERROR: ['La connexion a échoué. Vérifie ta connexion Internet et réessaie.', 'The connection failed. Check your internet connection and try again.']
     };
     for (const [k, [fr, en]] of Object.entries(want)) {
       expect(ERROR_I18N[k], k).toEqual({ fr, en });

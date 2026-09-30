@@ -44,10 +44,10 @@ async function submit(page) {
 }
 
 const COPY = {
-  BULK_DATE_INVALID: { fr: "Cette date n'existe pas. Veuillez choisir une date valide.", en: 'This date does not exist. Please choose a valid date.' },
+  BULK_DATE_INVALID: { fr: "Cette date n'existe pas. Choisis une date valide.", en: 'This date does not exist. Please choose a valid date.' },
   BULK_TIMES_EQUAL: { fr: "L'heure de fin doit être différente de l'heure de début.", en: 'The end time must be different from the start time.' },
   BULK_COUNT_RANGE: { fr: "Le nombre d'événements doit être entre 1 et 52.", en: 'The number of events must be between 1 and 52.' },
-  BULK_NETWORK_ERROR: { fr: 'La connexion a échoué. Vérifiez votre connexion Internet et réessayez.', en: 'The connection failed. Check your internet connection and try again.' }
+  BULK_NETWORK_ERROR: { fr: 'La connexion a échoué. Vérifie ta connexion Internet et réessaie.', en: 'The connection failed. Check your internet connection and try again.' }
 };
 
 describe('Create multiple events: the message beside the field', () => {
