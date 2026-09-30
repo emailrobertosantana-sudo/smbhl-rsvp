@@ -9315,6 +9315,143 @@ async function handleLeagueSchedulePage(req, env, url) {
     </div>
     <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleMatchupsPanel()">Annuler</button>
   </aside>` : ''}
+  <!-- The two create panels sit here too, like the matchups panel: under
+       the header buttons and the "Next step" card, above the game list.
+       One panel is open at a time (openCreatePanel closes the others; what
+       was typed in a closed one stays in its fields). -->
+  <aside class="sc-panel" id="sc_panel" data-i18n-aria="createEvent" aria-label="Créer un match">
+    <h2 data-i18n="createEvent">Créer un match</h2>
+    <div id="formErr" class="nl-error" style="display:none"></div>
+    <div class="nl-field">
+      <label class="nl-label" for="e_date" data-i18n="date">Date</label>
+      <input class="nl-input" id="e_date" type="date" required>
+    </div>
+    ${showMatchupPicker ? `<div class="nl-field">
+      <label class="nl-label" for="e_home_team"><span data-i18n="matchupLabel">Qui joue?</span> <span class="nl-help" data-i18n="matchupOptional" style="font-weight:400">(optionnel, peut être précisé plus tard)</span></label>
+      <div class="sc-two">
+        <select class="nl-select" id="e_home_team" data-i18n-aria="matchupTeam1" aria-label="Équipe 1">
+          <option value="" data-i18n="matchupTeam1">Équipe 1</option>
+          ${scheduleTeamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+        </select>
+        <select class="nl-select" id="e_away_team" data-i18n-aria="matchupTeam2" aria-label="Équipe 2">
+          <option value="" data-i18n="matchupTeam2">Équipe 2</option>
+          ${scheduleTeamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+        </select>
+      </div>
+    </div>` : ''}
+    <div class="sc-two">
+      <div class="nl-field">
+        <label class="nl-label" for="e_start" data-i18n="startOpt">Heure de début</label>
+        <!-- D2 (forms polish task): the :00/:15/:30/:45 quick-set
+             buttons that used to sit here were removed -- they
+             wrapped badly and weren't useful. Prefill from the last
+             used start time (below) is kept; the native time picker
+             handles everything else. -->
+        <input class="nl-input" id="e_start" type="time" value="${esc(lastUsedStartTime)}" required>
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="e_end" data-i18n="endOpt">Heure de fin</label>
+        <input class="nl-input" id="e_end" type="time" required>
+      </div>
+    </div>
+    ${venues.length ? `<div class="nl-field">
+      <label class="nl-label" for="e_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
+      <select class="nl-select" id="e_venue_select" onchange="onVenueSelectChange()">
+        <option value="" data-i18n="venueSelectNone">Aucun (texte libre ci-dessous)</option>
+        ${venues.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('')}
+      </select>
+    </div>` : ''}
+    <div class="nl-field" id="e_venue_wrap">
+      <label class="nl-label" for="e_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
+      <input class="nl-input" id="e_venue" type="text">
+    </div>
+    <div class="sc-two" id="e_venue_extra_wrap">
+      <div class="nl-field">
+        <label class="nl-label" for="e_venue_address" data-i18n="lblVenueAddress">Adresse (optionnel)</label>
+        <input class="nl-input" id="e_venue_address" type="text" data-i18n-ph="venueAddressPh" placeholder="123 rue Principale, Ville">
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="e_venue_map_link" data-i18n="lblVenueMapLink">Lien vers une carte (optionnel)</label>
+        <input class="nl-input" id="e_venue_map_link" type="text" data-i18n-ph="venueMapLinkPh" placeholder="https://maps.google.com/...">
+      </div>
+    </div>
+    ${showReminderWarning ? `<div class="sc-reminder-warn" id="e_reminder_notice" style="display:none">
+      <div class="nl-help" style="margin:0" id="e_reminder_notice_body"></div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px;">
+        <input type="checkbox" id="e_reminders_optout">
+        <span data-i18n="remindersOptOutLabel">Ne pas envoyer les rappels automatiques pour ce match</span>
+      </label>
+    </div>` : ''}
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="e_submit" data-i18n="createBtn" onclick="submitEvent()">Créer le match</button>
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleSchedulePanel()">Annuler</button>
+    </div>
+  </aside>
+  <aside class="sc-bulk-panel" id="sc_bulk_panel" data-i18n-aria="bulkCreateTitle" aria-label="Créer plusieurs matchs">
+    <h2 data-i18n="bulkCreateTitle">Créer plusieurs matchs</h2>
+    <p class="nl-help" data-i18n="bulkCreateHelp">Crée une série de matchs chaque semaine, même heure et même lieu.</p>
+    <div id="bulkEventErr" class="nl-error" style="display:none"></div>
+    <div id="bulkEventOk" class="nl-ok" style="display:none"></div>
+    <div class="nl-field">
+      <label class="nl-label" for="be_start_date" data-i18n="lblStartDate">Première date</label>
+      <input class="nl-input" id="be_start_date" type="date" required>
+      <p class="nl-error" id="be_err_startDate" role="alert" style="display:none"></p>
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" for="be_occurrences" data-i18n="lblOccurrences">Nombre de matchs</label>
+      <input class="nl-input" id="be_occurrences" type="number" min="1" max="52" value="10">
+      <p class="nl-error" id="be_err_occurrences" role="alert" style="display:none"></p>
+    </div>
+    <div class="nl-field">
+      <label class="nl-label" for="be_end_date" data-i18n="lblEndDate">ou date de fin (optionnel)</label>
+      <input class="nl-input" id="be_end_date" type="date">
+      <p class="nl-error" id="be_err_endDate" role="alert" style="display:none"></p>
+    </div>
+    <div class="sc-two">
+      <div class="nl-field">
+        <label class="nl-label" for="be_start" data-i18n="startOpt">Heure de début</label>
+        <input class="nl-input" id="be_start" type="time" required>
+      <p class="nl-error" id="be_err_startTime" role="alert" style="display:none"></p>
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="be_end" data-i18n="endOpt">Heure de fin</label>
+        <input class="nl-input" id="be_end" type="time" required>
+      <p class="nl-error" id="be_err_endTime" role="alert" style="display:none"></p>
+      </div>
+    </div>
+    ${venues.length ? `<div class="nl-field">
+      <label class="nl-label" for="be_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
+      <select class="nl-select" id="be_venue_select" onchange="onBulkVenueSelectChange()">
+        <option value="" data-i18n="venueSelectNone">Aucun (texte libre ci-dessous)</option>
+        ${venues.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('')}
+      </select>
+    </div>` : ''}
+    <div class="nl-field" id="be_venue_wrap">
+      <label class="nl-label" for="be_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
+      <input class="nl-input" id="be_venue" type="text">
+    </div>
+    <div class="sc-two" id="be_venue_extra_wrap">
+      <div class="nl-field">
+        <label class="nl-label" for="be_venue_address" data-i18n="lblVenueAddress">Adresse (optionnel)</label>
+        <input class="nl-input" id="be_venue_address" type="text" data-i18n-ph="venueAddressPh" placeholder="123 rue Principale, Ville">
+      </div>
+      <div class="nl-field">
+        <label class="nl-label" for="be_venue_map_link" data-i18n="lblVenueMapLink">Lien vers une carte (optionnel)</label>
+        <input class="nl-input" id="be_venue_map_link" type="text" data-i18n-ph="venueMapLinkPh" placeholder="https://maps.google.com/...">
+      </div>
+    </div>
+    ${showReminderWarning ? `<div class="sc-reminder-warn" id="be_reminder_notice" style="display:none">
+      <div class="nl-help" style="margin:0" id="be_reminder_notice_body"></div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px;">
+        <input type="checkbox" id="be_suppress_soon">
+        <span id="be_suppress_soon_label"></span>
+      </label>
+    </div>` : ''}
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="be_submit" data-i18n="bulkCreateSubmit" onclick="submitBulkEvents()">Créer la série</button>
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleBulkPanel()">Annuler</button>
+    </div>
+  </aside>
   ${scheduleDistributionText ? `<section class="nl-card" id="sc_distribution">
     <h2 class="h3" data-i18n="distTitle">Répartition des matchs</h2>
     ${scheduleDistributionText.summary ? `<p class="nl-help" data-case="${esc(scheduleDistribution.case)}" data-date-fr="${esc(scheduleDistributionText.summary.fr)}" data-date-en="${esc(scheduleDistributionText.summary.en)}">${esc(scheduleDistributionText.summary.fr)}</p>` : ''}
@@ -9330,139 +9467,6 @@ async function handleLeagueSchedulePage(req, env, url) {
   </section>` : ''}
   <div style="display:grid;grid-template-columns:1fr;gap:var(--space-4);">
     <div class="sc-list" id="scheduleList">${rowsHtml}</div>
-    <aside class="sc-panel" id="sc_panel" data-i18n-aria="createEvent" aria-label="Créer un match">
-      <h2 data-i18n="createEvent">Créer un match</h2>
-      <div id="formErr" class="nl-error" style="display:none"></div>
-      <div class="nl-field">
-        <label class="nl-label" for="e_date" data-i18n="date">Date</label>
-        <input class="nl-input" id="e_date" type="date" required>
-      </div>
-      ${showMatchupPicker ? `<div class="nl-field">
-        <label class="nl-label" for="e_home_team"><span data-i18n="matchupLabel">Qui joue?</span> <span class="nl-help" data-i18n="matchupOptional" style="font-weight:400">(optionnel, peut être précisé plus tard)</span></label>
-        <div class="sc-two">
-          <select class="nl-select" id="e_home_team" data-i18n-aria="matchupTeam1" aria-label="Équipe 1">
-            <option value="" data-i18n="matchupTeam1">Équipe 1</option>
-            ${scheduleTeamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
-          </select>
-          <select class="nl-select" id="e_away_team" data-i18n-aria="matchupTeam2" aria-label="Équipe 2">
-            <option value="" data-i18n="matchupTeam2">Équipe 2</option>
-            ${scheduleTeamNames.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
-          </select>
-        </div>
-      </div>` : ''}
-      <div class="sc-two">
-        <div class="nl-field">
-          <label class="nl-label" for="e_start" data-i18n="startOpt">Heure de début</label>
-          <!-- D2 (forms polish task): the :00/:15/:30/:45 quick-set
-               buttons that used to sit here were removed -- they
-               wrapped badly and weren't useful. Prefill from the last
-               used start time (below) is kept; the native time picker
-               handles everything else. -->
-          <input class="nl-input" id="e_start" type="time" value="${esc(lastUsedStartTime)}" required>
-        </div>
-        <div class="nl-field">
-          <label class="nl-label" for="e_end" data-i18n="endOpt">Heure de fin</label>
-          <input class="nl-input" id="e_end" type="time" required>
-        </div>
-      </div>
-      ${venues.length ? `<div class="nl-field">
-        <label class="nl-label" for="e_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
-        <select class="nl-select" id="e_venue_select" onchange="onVenueSelectChange()">
-          <option value="" data-i18n="venueSelectNone">Aucun (texte libre ci-dessous)</option>
-          ${venues.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('')}
-        </select>
-      </div>` : ''}
-      <div class="nl-field" id="e_venue_wrap">
-        <label class="nl-label" for="e_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
-        <input class="nl-input" id="e_venue" type="text">
-      </div>
-      <div class="sc-two" id="e_venue_extra_wrap">
-        <div class="nl-field">
-          <label class="nl-label" for="e_venue_address" data-i18n="lblVenueAddress">Adresse (optionnel)</label>
-          <input class="nl-input" id="e_venue_address" type="text" data-i18n-ph="venueAddressPh" placeholder="123 rue Principale, Ville">
-        </div>
-        <div class="nl-field">
-          <label class="nl-label" for="e_venue_map_link" data-i18n="lblVenueMapLink">Lien vers une carte (optionnel)</label>
-          <input class="nl-input" id="e_venue_map_link" type="text" data-i18n-ph="venueMapLinkPh" placeholder="https://maps.google.com/...">
-        </div>
-      </div>
-      ${showReminderWarning ? `<div class="sc-reminder-warn" id="e_reminder_notice" style="display:none">
-        <div class="nl-help" style="margin:0" id="e_reminder_notice_body"></div>
-        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px;">
-          <input type="checkbox" id="e_reminders_optout">
-          <span data-i18n="remindersOptOutLabel">Ne pas envoyer les rappels automatiques pour ce match</span>
-        </label>
-      </div>` : ''}
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="e_submit" data-i18n="createBtn" onclick="submitEvent()">Créer le match</button>
-        <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleSchedulePanel()">Annuler</button>
-      </div>
-    </aside>
-    <aside class="sc-bulk-panel" id="sc_bulk_panel" data-i18n-aria="bulkCreateTitle" aria-label="Créer plusieurs matchs">
-      <h2 data-i18n="bulkCreateTitle">Créer plusieurs matchs</h2>
-      <p class="nl-help" data-i18n="bulkCreateHelp">Crée une série de matchs chaque semaine, même heure et même lieu.</p>
-      <div id="bulkEventErr" class="nl-error" style="display:none"></div>
-      <div id="bulkEventOk" class="nl-ok" style="display:none"></div>
-      <div class="nl-field">
-        <label class="nl-label" for="be_start_date" data-i18n="lblStartDate">Première date</label>
-        <input class="nl-input" id="be_start_date" type="date" required>
-        <p class="nl-error" id="be_err_startDate" role="alert" style="display:none"></p>
-      </div>
-      <div class="nl-field">
-        <label class="nl-label" for="be_occurrences" data-i18n="lblOccurrences">Nombre de matchs</label>
-        <input class="nl-input" id="be_occurrences" type="number" min="1" max="52" value="10">
-        <p class="nl-error" id="be_err_occurrences" role="alert" style="display:none"></p>
-      </div>
-      <div class="nl-field">
-        <label class="nl-label" for="be_end_date" data-i18n="lblEndDate">ou date de fin (optionnel)</label>
-        <input class="nl-input" id="be_end_date" type="date">
-        <p class="nl-error" id="be_err_endDate" role="alert" style="display:none"></p>
-      </div>
-      <div class="sc-two">
-        <div class="nl-field">
-          <label class="nl-label" for="be_start" data-i18n="startOpt">Heure de début</label>
-          <input class="nl-input" id="be_start" type="time" required>
-        <p class="nl-error" id="be_err_startTime" role="alert" style="display:none"></p>
-        </div>
-        <div class="nl-field">
-          <label class="nl-label" for="be_end" data-i18n="endOpt">Heure de fin</label>
-          <input class="nl-input" id="be_end" type="time" required>
-        <p class="nl-error" id="be_err_endTime" role="alert" style="display:none"></p>
-        </div>
-      </div>
-      ${venues.length ? `<div class="nl-field">
-        <label class="nl-label" for="be_venue_select" data-i18n="venueSelectOpt">Lieu enregistré (optionnel)</label>
-        <select class="nl-select" id="be_venue_select" onchange="onBulkVenueSelectChange()">
-          <option value="" data-i18n="venueSelectNone">Aucun (texte libre ci-dessous)</option>
-          ${venues.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('')}
-        </select>
-      </div>` : ''}
-      <div class="nl-field" id="be_venue_wrap">
-        <label class="nl-label" for="be_venue" data-i18n="venueOpt">Lieu (optionnel)</label>
-        <input class="nl-input" id="be_venue" type="text">
-      </div>
-      <div class="sc-two" id="be_venue_extra_wrap">
-        <div class="nl-field">
-          <label class="nl-label" for="be_venue_address" data-i18n="lblVenueAddress">Adresse (optionnel)</label>
-          <input class="nl-input" id="be_venue_address" type="text" data-i18n-ph="venueAddressPh" placeholder="123 rue Principale, Ville">
-        </div>
-        <div class="nl-field">
-          <label class="nl-label" for="be_venue_map_link" data-i18n="lblVenueMapLink">Lien vers une carte (optionnel)</label>
-          <input class="nl-input" id="be_venue_map_link" type="text" data-i18n-ph="venueMapLinkPh" placeholder="https://maps.google.com/...">
-        </div>
-      </div>
-      ${showReminderWarning ? `<div class="sc-reminder-warn" id="be_reminder_notice" style="display:none">
-        <div class="nl-help" style="margin:0" id="be_reminder_notice_body"></div>
-        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px;">
-          <input type="checkbox" id="be_suppress_soon">
-          <span id="be_suppress_soon_label"></span>
-        </label>
-      </div>` : ''}
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="be_submit" data-i18n="bulkCreateSubmit" onclick="submitBulkEvents()">Créer la série</button>
-        <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="cancel" onclick="toggleBulkPanel()">Annuler</button>
-      </div>
-    </aside>
   </div>
   `}
 </main>
@@ -9479,9 +9483,14 @@ function toggleSchedulePanel() { document.getElementById('sc_panel').classList.t
 // -- that's still the panel's own Cancel button's job), scrolls it
 // into view, and focuses its first real field. Applied to every
 // create-button of this shape.
+// The Schedule page's three panels (create a game, create several, assign
+// matchups) sit at the top of the page; one is open at a time. Opening one
+// closes the others, which keep whatever was typed in them.
+var SC_PANELS = ['sc_panel', 'sc_bulk_panel', 'sc_matchups_panel'];
 function openCreatePanel(panelId, firstFieldId) {
   var panel = document.getElementById(panelId);
   if (!panel) return;
+  SC_PANELS.forEach(function(id) { var p = document.getElementById(id); if (p && id !== panelId) p.classList.remove('open'); });
   panel.classList.add('open');
   panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   var field = firstFieldId ? document.getElementById(firstFieldId) : null;

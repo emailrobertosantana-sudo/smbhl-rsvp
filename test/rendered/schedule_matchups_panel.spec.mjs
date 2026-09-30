@@ -201,3 +201,58 @@ describe('Game distribution: playing twice in a night is only mentioned when a n
     }
   }, 240000);
 });
+
+// The two create panels ("Create an event", "Create multiple events") sit
+// at the top too, and only one panel is open at a time: opening one closes
+// the others, which keep what was typed in them.
+describe('Create panels at the top, one panel open at a time', () => {
+  const where = (page, id) => page.evaluate(i => {
+    const panel = document.getElementById(i);
+    const list = document.getElementById('scheduleList');
+    const r = panel.getBoundingClientRect();
+    return {
+      open: panel.classList.contains('open'),
+      beforeList: !!(panel.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING),
+      aboveList: r.bottom <= list.getBoundingClientRect().top,
+      onScreen: r.top >= 0 && r.top < window.innerHeight,
+      focused: document.activeElement ? document.activeElement.id : ''
+    };
+  }, id);
+  const openOnes = page => page.evaluate(() => ['sc_panel', 'sc_bulk_panel', 'sc_matchups_panel'].filter(id => document.getElementById(id) && document.getElementById(id).classList.contains('open')));
+
+  for (const lang of ['fr', 'en']) {
+    it(`${lang}: each header button opens its panel above the list, in view, with the focus on its first field`, async () => {
+      const { page, errors, close } = await openSchedule(single, lang);
+      for (const [btn, id, field] of [['openSchedulePanel()', 'sc_panel', 'e_date'], ['openBulkPanel()', 'sc_bulk_panel', 'be_start_date']]) {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await page.evaluate(b => document.querySelector(`.sc-top button[onclick="${b}"]`).click(), btn);
+        await settled(page);
+        expect(await where(page, id)).toEqual({ open: true, beforeList: true, aboveList: true, onScreen: true, focused: field });
+        if (SHOTS) await page.screenshot({ path: `${SHOTS}/${id}_${lang}.png` });
+        expect(await openOnes(page)).toEqual([id]);
+      }
+      expect(errors).toEqual([]);
+      await close();
+    }, 120000);
+  }
+
+  it('opening another panel closes the open one, and what was typed in it is still there when it opens again', async () => {
+    const { page, errors, close } = await openSchedule(single, 'en');
+    await page.evaluate(() => openSchedulePanel());
+    await page.fill('#e_venue', 'Gym B');
+    await page.fill('#e_start', '20:15');
+    await page.evaluate(() => openBulkPanel());
+    expect(await openOnes(page)).toEqual(['sc_bulk_panel']);
+    await page.fill('#be_venue', 'Arena');
+    await page.evaluate(() => toggleMatchupsPanel());
+    expect(await openOnes(page)).toEqual(['sc_matchups_panel']);
+    await page.evaluate(() => openSchedulePanel());
+    expect(await openOnes(page)).toEqual(['sc_panel']);
+    expect(await page.inputValue('#e_venue')).toBe('Gym B');
+    expect(await page.inputValue('#e_start')).toBe('20:15');
+    await page.evaluate(() => openBulkPanel());
+    expect(await page.inputValue('#be_venue')).toBe('Arena');
+    expect(errors).toEqual([]);
+    await close();
+  }, 120000);
+});
