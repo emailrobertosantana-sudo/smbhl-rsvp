@@ -53,7 +53,7 @@ describe('A game at the same time left thin by a drop-out', () => {
       const alerts = thinAlerts(seen, tag);
       expect(alerts.length).toBe(1);
       expect(alerts[0].text).toContain('Rink 2');
-      expect(alerts[0].text).toContain('2 player(s) confirmed against a minimum of 3');
+      expect(alerts[0].text).toContain('Players: 2 of 3 needed (confirmed).');
       expect(alerts[0].text).toContain('Rink 1: 4 confirmed, 1 more than it needs.');
       // Once per game.
       const again = mail.sent.length;

@@ -5052,7 +5052,7 @@ async function handleLeagueCommsPage(req, env, url) {
       // that column reuses cad72/cad24/cad12 verbatim so the two never
       // drift apart.
       cadTeamAssigned: 'Équipe assignée (tirage tardif)',
-      cadShortAlert: 'Match incomplet (admin)',
+      cadShortAlert: 'Manque de joueurs (admin)',
       cadGameCancelled: 'Match annulé', cadNightMoved: "Changement d'horaire",
       cadAutoDraw: 'Tirage automatique des équipes',
       btnPreview: 'Aperçu', cadSubCall: 'Appel aux remplaçants', cadLateReversal: 'Alerte de désistement tardif (admin)',
@@ -5096,7 +5096,7 @@ async function handleLeagueCommsPage(req, env, url) {
       cadenceTitle: 'Active automations',
       cad72: '72h reminder (no reply)', cad24: '24h reminder (no reply)', cad12: '12h details (confirmed)',
       cadTeamAssigned: 'Team assigned (late draw)',
-      cadShortAlert: 'Short game (admin)',
+      cadShortAlert: 'Short of players (admin)',
       cadGameCancelled: 'Game cancelled', cadNightMoved: 'Schedule changed',
       cadAutoDraw: 'Automatic team draw',
       btnPreview: 'Preview', cadSubCall: 'Sub call', cadLateReversal: 'Late dropout alert (admin)',
@@ -13300,17 +13300,21 @@ function leagueGamePageLink(env, ev) {
   return `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
 }
 
+// One shortage, in words: "Bulls, goalies: 0 of 1 needed (confirmed or no
+// reply yet)." The count is who the game can still count on: basis
+// 'available' counts the players who said yes and those who have not
+// answered; basis 'confirmed' (the last 24 hours) only those who said yes.
+// No team name for a league without fixed teams.
 function shortGameLine(sh, lang) {
   const g = sh.need === 'goalie';
-  const t = sh.team ? (lang === 'fr' ? `${sh.team} : ` : `${sh.team}: `) : '';
   if (lang === 'fr') {
-    return sh.basis === 'confirmed'
-      ? `${t}${sh.have} ${g ? 'gardien(s)' : 'joueur(s)'} confirmé(s) pour un minimum de ${sh.min}.`
-      : `${t}${sh.have} ${g ? 'gardien(s)' : 'joueur(s)'} disponible(s) (confirmés ou sans réponse) pour un minimum de ${sh.min}.`;
+    const what = g ? 'gardiens' : 'joueurs';
+    const head = sh.team ? `${sh.team}, ${what}` : what[0].toUpperCase() + what.slice(1);
+    return `${head} : ${sh.have} sur ${sh.min} requis (${sh.basis === 'confirmed' ? 'confirmés' : 'confirmés ou sans réponse'}).`;
   }
-  return sh.basis === 'confirmed'
-    ? `${t}${sh.have} ${g ? 'goalie(s)' : 'player(s)'} confirmed against a minimum of ${sh.min}.`
-    : `${t}${sh.have} ${g ? 'goalie(s)' : 'player(s)'} available (confirmed or not yet answered) against a minimum of ${sh.min}.`;
+  const what = g ? 'goalies' : 'players';
+  const head = sh.team ? `${sh.team}, ${what}` : what[0].toUpperCase() + what.slice(1);
+  return `${head}: ${sh.have} of ${sh.min} needed (${sh.basis === 'confirmed' ? 'confirmed' : 'confirmed or no reply yet'}).`;
 }
 
 function renderShortGameAdminAlert(env, leagueRow, ev, shortages) {
@@ -13318,8 +13322,12 @@ function renderShortGameAdminAlert(env, leagueRow, ev, shortages) {
   const whenFr = formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false);
   const whenEn = formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false);
   const link = leagueGamePageLink(env, ev);
-  const closeFr = "Il n'y a plus aucun remplaçant à appeler. Les joueurs n'ont pas été prévenus.";
-  const closeEn = 'There is no sub left to call. Players have not been told.';
+  // Both statements are true whenever this email goes out: it is only
+  // queued for a shortage no sub can be called for (no sub in the league
+  // for that position, or every one of them already called and answered),
+  // and nothing here or elsewhere tells the players about a shortage.
+  const closeFr = "Il ne reste aucun substitut à appeler. Vos joueurs n'ont pas été avisés de ce manque.";
+  const closeEn = 'No substitutes are left to call. Your players have not been told about this shortage.';
   const block = (badge, title, when, lines, close, btn) => `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}${badge}</td></tr></table>
     <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(title)}</h1>
@@ -13330,14 +13338,14 @@ function renderShortGameAdminAlert(env, leagueRow, ev, shortages) {
   const linesFr = shortages.map(sh => shortGameLine(sh, 'fr'));
   const linesEn = shortages.map(sh => shortGameLine(sh, 'en'));
   const fr = {
-    subject: `Il manque des joueurs · ${whenFr}`,
-    text: `Il manque des joueurs · ${whenFr}. ${linesFr.join(' ')} ${closeFr} ${link}`,
-    html: block('Match incomplet', 'Il manque des joueurs', whenFr, linesFr, closeFr, 'Voir le match')
+    subject: `Manque de joueurs · ${whenFr}`,
+    text: `Manque de joueurs · ${whenFr}. ${linesFr.join(' ')} ${closeFr} ${link}`,
+    html: block('Action requise', 'Manque de joueurs', whenFr, linesFr, closeFr, 'Voir le match')
   };
   const en = {
     subject: `Short of players · ${whenEn}`,
     text: `Short of players · ${whenEn}. ${linesEn.join(' ')} ${closeEn} ${link}`,
-    html: block('Short game', 'Short of players', whenEn, linesEn, closeEn, 'View the game')
+    html: block('Action needed', 'Short of players', whenEn, linesEn, closeEn, 'View the game')
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
   return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
@@ -19790,8 +19798,8 @@ function renderThinGameAdminAlert(env, leagueRow, ev, thin) {
   const lines = lang => thin.flatMap(t => [
     `${label(ev, lang)}${lang === 'fr' ? ' : ' : ': '}${shortGameLine({ team: null, need: t.need, have: t.have, min: t.min, basis: 'confirmed' }, lang)}`,
     ...t.spare.map(s => lang === 'fr'
-      ? `${label(s.game, lang)} : ${s.n} ${t.need === 'goalie' ? 'gardien(s) ' : ''}confirmé(s), ${s.extra} de plus que le minimum.`
-      : `${label(s.game, lang)}: ${s.n} ${t.need === 'goalie' ? 'goalie(s) ' : ''}confirmed, ${s.extra} more than it needs.`)
+      ? `${label(s.game, lang)} : ${s.n} ${t.need === 'goalie' ? (s.n > 1 ? 'gardiens confirmés' : 'gardien confirmé') : (s.n > 1 ? 'confirmés' : 'confirmé')}, ${s.extra} de plus que le minimum.`
+      : `${label(s.game, lang)}: ${s.n} ${t.need === 'goalie' ? (s.n === 1 ? 'goalie ' : 'goalies ') : ''}confirmed, ${s.extra} more than it needs.`)
   ]);
   const closeFr = "Personne n'est déplacé d'un match à l'autre automatiquement : c'est à vous d'en déplacer un, si vous le souhaitez.";
   const closeEn = 'No one is moved between games automatically: moving someone is up to you.';
@@ -19805,12 +19813,12 @@ function renderThinGameAdminAlert(env, leagueRow, ev, thin) {
   const fr = {
     subject: `Matchs à la même heure déséquilibrés · ${whenFr}`,
     text: `Matchs à la même heure déséquilibrés · ${whenFr}. ${lines('fr').join(' ')} ${closeFr} ${link}`,
-    html: block('Match incomplet', 'Un match manque de joueurs', whenFr, lines('fr'), closeFr, 'Voir le match')
+    html: block('Action requise', 'Un match manque de joueurs', whenFr, lines('fr'), closeFr, 'Voir le match')
   };
   const en = {
     subject: `Games at the same time are uneven · ${whenEn}`,
     text: `Games at the same time are uneven · ${whenEn}. ${lines('en').join(' ')} ${closeEn} ${link}`,
-    html: block('Short game', 'A game is short of players', whenEn, lines('en'), closeEn, 'View the game')
+    html: block('Action needed', 'A game is short of players', whenEn, lines('en'), closeEn, 'View the game')
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
   return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
