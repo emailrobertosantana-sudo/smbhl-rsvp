@@ -9113,11 +9113,11 @@ async function handleLeagueSchedulePage(req, env, url) {
   </aside>` : ''}
   ${scheduleDistributionText ? `<section class="nl-card" id="sc_distribution">
     <h2 class="h3" data-i18n="distTitle">Répartition des matchs</h2>
-    <p class="nl-help" data-case="${esc(scheduleDistribution.case)}" data-date-fr="${esc(scheduleDistributionText.summary.fr)}" data-date-en="${esc(scheduleDistributionText.summary.en)}">${esc(scheduleDistributionText.summary.fr)}</p>
+    ${scheduleDistributionText.summary ? `<p class="nl-help" data-case="${esc(scheduleDistribution.case)}" data-date-fr="${esc(scheduleDistributionText.summary.fr)}" data-date-en="${esc(scheduleDistributionText.summary.en)}">${esc(scheduleDistributionText.summary.fr)}</p>` : ''}
     ${scheduleDistributionText.warnings.length ? `<ul class="sc-dist-warn">${scheduleDistributionText.warnings.map(w => `<li data-date-fr="${esc(w.fr)}" data-date-en="${esc(w.en)}">${esc(w.fr)}</li>`).join('')}</ul>` : ''}
     <div class="sc-dist-table"><table>
-      <thead><tr><th data-i18n="distColTeam">Équipe</th><th data-i18n="distColGames">Matchs</th><th data-i18n="distColDoubles">Soirs à deux matchs ou plus</th></tr></thead>
-      <tbody>${scheduleDistribution.teams.map(r => `<tr data-dist-team="${esc(r.team)}"><td>${esc(r.team)}</td><td class="tnum">${r.games}</td><td class="tnum">${r.doubleNights}</td></tr>`).join('')}</tbody>
+      <thead><tr><th data-i18n="distColTeam">Équipe</th><th data-i18n="distColGames">Matchs</th>${scheduleDistribution.multiGameNights ? '<th data-i18n="distColDoubles">Soirs à deux matchs ou plus</th>' : ''}</tr></thead>
+      <tbody>${scheduleDistribution.teams.map(r => `<tr data-dist-team="${esc(r.team)}"><td>${esc(r.team)}</td><td class="tnum">${r.games}</td>${scheduleDistribution.multiGameNights ? `<td class="tnum">${r.doubleNights}</td>` : ''}</tr>`).join('')}</tbody>
     </table></div>
   </section>` : ''}
   ${noEndCount ? `<section class="nl-card" id="sc_no_end">
@@ -9678,10 +9678,14 @@ function renderMatchupsPreview(container, data, dict) {
     distHead.className = 'h3'; distHead.style.fontSize = '15px'; distHead.style.marginTop = '8px';
     distHead.textContent = dict.distTitle || 'Game distribution';
     container.appendChild(distHead);
-    var distSum = document.createElement('p');
-    distSum.className = 'nl-help'; distSum.id = 'mx_dist_summary';
-    distSum.textContent = dist.text.summary[lang];
-    container.appendChild(distSum);
+    // One game a night: nobody could play twice, so no sentence about it
+    // and no "nights with two or more games" column (dist.multiGameNights).
+    if (dist.text.summary) {
+      var distSum = document.createElement('p');
+      distSum.className = 'nl-help'; distSum.id = 'mx_dist_summary';
+      distSum.textContent = dist.text.summary[lang];
+      container.appendChild(distSum);
+    }
     dist.text.warnings.forEach(function(w) {
       var wEl = document.createElement('p');
       wEl.className = 'nl-help'; wEl.style.color = 'var(--danger, #b3122e)';
@@ -9691,11 +9695,11 @@ function renderMatchupsPreview(container, data, dict) {
     var tbl = document.createElement('table');
     tbl.id = 'mx_dist_table'; tbl.style.marginTop = '4px'; tbl.style.fontSize = '14px';
     var hr = document.createElement('tr');
-    [dict.distColTeam || 'Team', dict.distColGames || 'Games', dict.distColDoubles || 'Nights with two or more games'].forEach(function(h) { var th = document.createElement('th'); th.textContent = h; th.style.textAlign = 'left'; th.style.paddingRight = '12px'; hr.appendChild(th); });
+    [dict.distColTeam || 'Team', dict.distColGames || 'Games'].concat(dist.multiGameNights ? [dict.distColDoubles || 'Nights with two or more games'] : []).forEach(function(h) { var th = document.createElement('th'); th.textContent = h; th.style.textAlign = 'left'; th.style.paddingRight = '12px'; hr.appendChild(th); });
     tbl.appendChild(hr);
     dist.teams.forEach(function(r) {
       var tr = document.createElement('tr');
-      [r.team, String(r.games), String(r.doubleNights)].forEach(function(v) { var td = document.createElement('td'); td.textContent = v; td.style.paddingRight = '12px'; tr.appendChild(td); });
+      [r.team, String(r.games)].concat(dist.multiGameNights ? [String(r.doubleNights)] : []).forEach(function(v) { var td = document.createElement('td'); td.textContent = v; td.style.paddingRight = '12px'; tr.appendChild(td); });
       tbl.appendChild(tr);
     });
     container.appendChild(tbl);

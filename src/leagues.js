@@ -2545,6 +2545,11 @@ export function planNightAwareMatchups(events, teams, mode) {
 // including matchups edited by hand). `games`: [{ date, start_time, id,
 // home_team, away_team }] of the regular season; slots without a matchup
 // count toward a night's size but give nobody a game.
+// multiGameNights: at least one night has two games or more. Only then can
+// a team play twice in a night, so only then is there anything to say about
+// it: a schedule of one game a night gets no sentence and no "nights with
+// two or more games" column (describeMatchupDistribution, the Schedule page
+// and the preview all read this one flag).
 export function computeMatchupDistribution(games, teams) {
   const T = teams.length;
   const teamRows = Object.fromEntries(teams.map(t => [t, { team: t, games: 0, doubleNights: 0 }]));
@@ -2584,6 +2589,7 @@ export function computeMatchupDistribution(games, teams) {
     case: kase, nights: counts, teamCount: T,
     slotsPerNight: uniform && nights ? [...slotSizes][0] : null,
     gamesPerTeamPerNight: kase === 'unavoidable' ? unavoidableK : null,
+    multiGameNights: [...slotSizes].some(n => n >= 2),
     teams: teams.map(t => teamRows[t]),
     warnings
   };
@@ -2592,11 +2598,15 @@ export function computeMatchupDistribution(games, teams) {
 // The distribution in words, both languages -- the one copy of these
 // sentences, used by the preview (client) and the Schedule page (server).
 // Warnings are grouped per team and kind, with the nights they happen.
+// summary is null when every night has one game: nobody could play twice,
+// so there is nothing to reassure anyone about.
 export function describeMatchupDistribution(dist) {
   if (!dist || !dist.case) return null;
   const s = dist.slotsPerNight, t = dist.teamCount, n = dist.nights;
   let summary;
-  if (dist.case === 'avoidable') {
+  if (!dist.multiGameNights) {
+    summary = null;
+  } else if (dist.case === 'avoidable') {
     const clean = !dist.warnings.some(w => w.kind === 'unneeded');
     summary = {
       fr: "Personne n'a besoin de jouer deux fois le même soir." + (clean ? ' Personne ne le fait.' : ''),

@@ -120,3 +120,84 @@ describe('Assign matchups: the panel is at the top, in view, with the focus', ()
     }, 120000);
   }
 });
+
+// A schedule of one game a night says nothing about playing twice in a
+// night: no sentence, and the table has the team and its games only. With
+// two games a night the sentence and the "nights with two or more games"
+// column are there, in the preview and on the Schedule page's card.
+const DOUBLES = { fr: 'Soirs à deux matchs ou plus', en: 'Nights with two or more games' };
+const NOBODY = { fr: "Personne n'a besoin de jouer deux fois le même soir. Personne ne le fait.", en: 'Nobody needs to play twice in a night. Nobody does.' };
+const HEADS = { fr: ['Équipe', 'Matchs'], en: ['Team', 'Games'] };
+
+async function previewState(page) {
+  await page.evaluate(() => toggleMatchupsPanel());
+  await page.click('#mx_preview_btn');
+  await page.waitForSelector('#mx_dist_table');
+  return page.evaluate(() => ({
+    heads: [...document.querySelectorAll('#mx_dist_table th')].map(th => th.textContent),
+    cells: document.querySelectorAll('#mx_dist_table tr')[1].children.length,
+    summary: document.getElementById('mx_dist_summary') ? document.getElementById('mx_dist_summary').textContent : null,
+    text: document.getElementById('sc_matchups_panel').innerText
+  }));
+}
+const cardState = page => page.evaluate(() => {
+  const card = document.getElementById('sc_distribution');
+  const p = card.querySelector('p.nl-help');
+  return { heads: [...card.querySelectorAll('th')].map(th => th.textContent), cells: card.querySelector('tbody tr').children.length, summary: p ? p.textContent : null, text: card.innerText };
+});
+async function saveProof(page, selector, name, lang) {
+  if (!SHOTS) return;
+  const fs = await import('node:fs');
+  await page.locator(selector).screenshot({ path: `${SHOTS}/${name}_${lang}.png` });
+  fs.writeFileSync(`${SHOTS}/${name}_${lang}.html`, await page.locator(selector).evaluate(el => el.outerHTML));
+}
+
+describe('Game distribution: playing twice in a night is only mentioned when a night has two games', () => {
+  for (const lang of ['fr', 'en']) {
+    it(`${lang}: preview, one game a night: Team and Games only, no sentence`, async () => {
+      const { page, errors, close } = await openSchedule(single, lang);
+      const st = await previewState(page);
+      await saveProof(page, '#sc_matchups_panel', 'preview_one_game', lang);
+      expect(st.heads).toEqual(HEADS[lang]);
+      expect(st.cells).toBe(2);
+      expect(st.summary).toBe(null);
+      expect(st.text).not.toContain(DOUBLES[lang]);
+      expect(st.text).not.toContain(NOBODY[lang].split('.')[0]);
+      expect(errors).toEqual([]);
+      await close();
+    }, 120000);
+
+    it(`${lang}: preview, two games a night: the sentence and the third column`, async () => {
+      const { page, errors, close } = await openSchedule(double, lang);
+      const st = await previewState(page);
+      await saveProof(page, '#sc_matchups_panel', 'preview_two_games', lang);
+      expect(st.heads).toEqual([...HEADS[lang], DOUBLES[lang]]);
+      expect(st.cells).toBe(3);
+      expect(st.summary).toBe(NOBODY[lang]);
+      expect(errors).toEqual([]);
+      await close();
+    }, 120000);
+  }
+
+  it('after assigning: the Schedule page card follows the same rule, FR and EN', async () => {
+    for (const league of [single, double]) {
+      const res = await (await h.api('/league/season/matchups-confirm', { ...league.session, body: { mode: 'fill_blanks' } })).json();
+      expect(res.ok).toBe(true);
+    }
+    for (const lang of ['fr', 'en']) {
+      let { page, errors, close } = await openSchedule(single, lang);
+      let st = await cardState(page);
+      await saveProof(page, '#sc_distribution', 'card_one_game', lang);
+      expect(st).toMatchObject({ heads: HEADS[lang], cells: 2, summary: null });
+      expect(st.text).not.toContain(DOUBLES[lang]);
+      expect(errors).toEqual([]);
+      await close();
+      ({ page, errors, close } = await openSchedule(double, lang));
+      st = await cardState(page);
+      await saveProof(page, '#sc_distribution', 'card_two_games', lang);
+      expect(st).toMatchObject({ heads: [...HEADS[lang], DOUBLES[lang]], cells: 3, summary: NOBODY[lang] });
+      expect(errors).toEqual([]);
+      await close();
+    }
+  }, 240000);
+});

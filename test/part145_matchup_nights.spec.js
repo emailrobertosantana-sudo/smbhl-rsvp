@@ -5,7 +5,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
-import { classifyNight, planNightAwareMatchups, computeMatchupDistribution, groupNights } from '../src/leagues.js';
+import { classifyNight, planNightAwareMatchups, computeMatchupDistribution, describeMatchupDistribution, groupNights } from '../src/leagues.js';
 import { generateRoundRobinRounds } from '../src/season_config.js';
 import { generateRoundRobinRounds as hubRounds } from '../src/season_hub.js';
 import { withGameTimes } from './support/game_times.js';
@@ -113,6 +113,26 @@ describe('The three cases, scheduled', () => {
     evs[0].home_team = 'Red'; evs[0].away_team = 'White';
     const { plan } = planNightAwareMatchups(evs, teams, 'fill_blanks');
     expect(plan[0]).toMatchObject({ home: 'Red', away: 'White', alreadyAssigned: true, willWrite: false });
+  });
+});
+
+describe('Playing twice in a night is only mentioned when a night has two games', () => {
+  it('one game a night: no sentence, multiGameNights false; two games a night (the SMBHL shape included): the sentence stays', () => {
+    const teams = ['Red', 'Blue', 'White', 'Black'];
+    const one = run(teams, nights(12, ['19:00'])).dist;
+    expect(one.case).toBe('avoidable');
+    expect(one.multiGameNights).toBe(false);
+    expect(describeMatchupDistribution(one)).toEqual({ summary: null, warnings: [] });
+    const two = run(teams, nights(6, ['19:00', '20:00'])).dist;
+    expect(two.multiGameNights).toBe(true);
+    expect(describeMatchupDistribution(two).summary).toEqual({ fr: "Personne n'a besoin de jouer deux fois le même soir. Personne ne le fait.", en: 'Nobody needs to play twice in a night. Nobody does.' });
+    // SMBHL's shape in the league product: two concurrent pairs, four teams.
+    const smbhl = run(teams, nights(6, ['20:30', '20:30', '21:30', '21:30'])).dist;
+    expect(smbhl.multiGameNights).toBe(true);
+    expect(describeMatchupDistribution(smbhl).summary.en).toBe('With 4 games a night and 4 teams, every team plays 2 times every night: nothing to balance.');
+    // One night of two games among single-game nights is enough.
+    const mixed = computeMatchupDistribution([...nights(3, ['19:00']), { id: 'x', date: '2099-01-05', start_time: '20:00' }], teams);
+    expect(mixed.multiGameNights).toBe(true);
   });
 });
 
