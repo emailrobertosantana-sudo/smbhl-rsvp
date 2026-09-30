@@ -211,5 +211,37 @@ export const ERROR_I18N = {
   NAME_REQUIRED_CLIENT: { fr: 'Le nom est requis.', en: 'Name is required.' },
   DATE_REQUIRED_CLIENT: { fr: 'La date est requise.', en: 'Date is required.' },
   SEASON_NAME_REQUIRED_CLIENT: { fr: 'Le nom de la saison est requis.', en: 'Season name is required.' },
-  NETWORK_ERROR: { fr: 'Erreur réseau. Réessaie.', en: 'Network error. Please try again.' }
+  NETWORK_ERROR: { fr: 'Erreur réseau. Réessaie.', en: 'Network error. Please try again.' },
+  // Server messages that used to reach a French page in English: each had
+  // an errorKey (or none) with no entry here, so the page fell back to the
+  // server's own English text. A count or a name the server puts in its
+  // own text is left out: the page cannot fill it in.
+  EVENT_SLOT_EXISTS: { fr: 'Un match existe déjà à cette date, à ce lieu et à cette heure dans ta ligue.', en: 'A game already exists for this date, venue and time in your league.' },
+  EVENT_HAS_RSVPS: { fr: 'Des joueurs ont déjà répondu pour ce match. Le supprimer effacera leurs réponses. Confirme pour continuer.', en: 'Players have already answered for this game. Deleting it will lose their answers. Confirm to proceed.' },
+  SEASON_CLOSED: { fr: "Cette saison est fermée, en lecture seule. Lance une nouvelle saison au lieu de republier une saison fermée.", en: 'This season is closed and read-only. Start a new season instead of republishing a closed one.' },
+  SEASON_MOVE_SAME: { fr: "La saison de départ et la saison d'arrivée doivent être différentes.", en: 'The season to move from and the season to move to must be different.' },
+  SEASON_MOVE_TARGET_NOT_CURRENT: { fr: "La saison d'arrivée doit être la saison en cours de ta ligue.", en: "The season to move to must be your league's current season." },
+  FIXTURE_REQUIRES_FIXED_TEAMS: { fr: 'Offert seulement aux ligues à équipes fixes.', en: 'This is only offered for leagues with fixed teams.' },
+  FIXTURE_NEEDS_TWO_TEAMS: { fr: 'Il faut au moins 2 équipes dans ta ligue pour générer un horaire.', en: 'Your league needs at least 2 teams to generate a schedule.' },
+  MULTI_ADMIN_DISABLED: { fr: 'Cette ligue est limitée à un seul administrateur.', en: 'This league is limited to a single admin.' },
+  ORGANIZER_NOTE_TOO_LONG: { fr: "Le mot de l'organisateur doit compter 500 caractères ou moins.", en: 'The organizer note must be 500 characters or fewer.' },
+  PLAYOFFS_REQUIRE_FIXED_TEAMS: { fr: 'Les séries sont offertes seulement aux ligues à équipes fixes.', en: 'Playoffs are only offered for leagues with fixed teams.' },
+  INVALID_PLAYOFF_FORMAT: { fr: 'Choisis un format de séries valide.', en: 'Choose a valid playoff format.' },
+  PLAYOFF_RESERVED_SLOTS_REQUIRED: { fr: 'Réserve au moins 1 match pour les séries.', en: 'Reserve at least 1 game for the playoffs.' },
+  INVALID_PLAYOFF_TEAMS: { fr: "Le nombre d'équipes en séries doit être entre 2 et le nombre d'équipes de ta ligue.", en: 'The number of playoff teams must be between 2 and the number of teams in your league.' },
+  INVALID_PLAYOFF_BEST_OF: { fr: 'Une série doit compter au moins 1 match.', en: 'A series must have at least 1 game.' },
+  RESULTS_REQUIRE_TEAMS: { fr: "Un résultat a besoin de deux équipes. Ce n'est pas offert pour une ligue sans équipes.", en: 'A game result needs two sides. It is not offered for a league without teams.' },
+  RESULTS_NOT_TRACKED: { fr: 'Cette ligue ne suit pas les résultats des matchs.', en: 'This league does not track game results.' },
+  NO_MATCHUP_SET: { fr: "Aucun affrontement n'est choisi pour ce match. Choisis-en un avant d'entrer un résultat.", en: 'No matchup is set for this game yet. Set one before entering a score.' },
+  DRAW_NOT_TWO_TEAMS: { fr: "Le tirage de ce match n'a pas donné exactement deux équipes. Un résultat en demande deux.", en: 'The draw for this game did not give exactly two teams. A score needs two.' },
+  EVENT_CANCELLED: { fr: 'Ce match a été annulé : on ne peut pas y entrer de résultat.', en: 'This game was cancelled and cannot be scored.' },
+  INVALID_SCORE: { fr: 'Entre un score pour chaque équipe : un nombre entier, zéro ou plus.', en: 'Enter a score for each team: a whole number, zero or more.' },
+  PLAYER_STATS_NOT_TRACKED: { fr: 'Cette ligue ne suit pas les statistiques des joueurs.', en: 'This league does not track player stats.' },
+  ENTRIES_REQUIRED: { fr: 'Entre au moins une ligne de statistiques.', en: 'Enter at least one line of stats.' },
+  PLAYER_NOT_CONFIRMED: { fr: "Un des joueurs n'était pas confirmé présent à ce match.", en: 'One of the players was not confirmed in for this game.' },
+  GOALIE_STATS_REQUIRE_RESULTS: { fr: 'Les statistiques de gardien ont besoin que les résultats des matchs soient activés pour cette ligue.', en: 'Goalie stats need game results turned on for this league.' },
+  INVALID_GOALS_AGAINST: { fr: 'Entre les buts accordés de chaque gardien : zéro ou plus.', en: "Enter each goalie's goals against: zero or more." },
+  ROUTE_BLOCKED_PREVIEW: { fr: "Cet aperçu n'est pas offert pour cette ligue.", en: 'This preview is not available for this league.' },
+  ONBOARDING_STEP_UNKNOWN: { fr: "Cette étape n'existe pas.", en: 'This step does not exist.' },
+  LEAGUE_ID_REQUIRED: { fr: "L'identifiant de la ligue est requis.", en: 'The league id is required.' }
 };

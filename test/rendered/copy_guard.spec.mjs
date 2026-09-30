@@ -1,3 +1,12 @@
+// The copy guard, in a real browser.
+//
+// French voice: Notre Ligue says "tu" everywhere and calls a substitute
+// "remplaçant". No French string of a league page (its dictionary, the
+// error dictionary, the text on screen in French) and no league email the
+// preview renders may contain "vous", "votre", "vos", "veuillez" or
+// "substitut". (The emails a league really sends are checked the same way
+// in test/part182_email_links.spec.js.)
+//
 // The em dash guard. No user-facing string of the league product, in
 // either language, may contain U+2014: not the text on screen, not the tab
 // title, not a placeholder or a label read by a screen reader, and not a
@@ -25,6 +34,9 @@ import { PREVIEW_KINDS } from '../../src/email_preview.js';
 const EM_DASH = '—';
 const RSVP_SECRET = 'em-dash-guard-secret';
 const SHARED_WITH_GOLDEN = new Set([]);
+// "vous", "votre", "vos", "veuillez" and "substitut(s)" as whole words (a bilingual email also says "substitutes", which is English).
+const FORMAL_FR = /(^|[^a-zà-ÿ])(vous|votre|vos|veuillez)(?![a-zà-ÿ])|substituts?(?![a-zà-ÿ])/i;
+const formalHit = v => { const m = FORMAL_FR.exec(v); return m ? v.slice(Math.max(0, m.index - 50), m.index + 60).replace(/\s+/g, ' ') : null; };
 
 let h, browser, league, pages;
 
@@ -89,9 +101,10 @@ const collect = () => {
   return out;
 };
 
-describe('No em dash in the copy of the league product', () => {
+describe('The copy of the league product: no em dash, and French that says tu and remplaçant', () => {
   it('every page, French and English: text, title, labels, and both languages of its dictionaries', async () => {
     const hits = [];
+    const voice = [];
     let checked = 0;
     for (const lang of ['fr', 'en']) {
       for (const [label, path, signedIn] of pages) {
@@ -107,12 +120,16 @@ describe('No em dash in the copy of the league product', () => {
         checked += strings.length;
         for (const [where, v] of strings) {
           if (v.includes(EM_DASH)) { const i = v.indexOf(EM_DASH); hits.push(`${lang} | ${label} | ${where} | ${v.slice(Math.max(0, i - 60), i + 60).replace(/\s+/g, ' ')}`); }
+          // French only: a dictionary's fr side, and what a French page shows.
+          const french = /^page dictionary\.fr\./.test(where) || /^error dictionary\..*\.fr$/.test(where) || (lang === 'fr' && !/dictionary/.test(where));
+          if (french && formalHit(v)) voice.push(`${label} | ${where} | ${formalHit(v)}`);
         }
         await context.close();
       }
     }
     expect(checked).toBeGreaterThan(5000); // the dictionaries were really read
     expect([...new Set(hits)]).toEqual([]);
+    expect([...new Set(voice)]).toEqual([]);
   }, 600000);
 
   it('every league email the preview renders: subject, HTML and text', async () => {
@@ -128,6 +145,8 @@ describe('No em dash in the copy of the league product', () => {
       if (SHARED_WITH_GOLDEN.has(kind)) continue;
       for (const [part, v] of [['subject', r.subject], ['html', r.html || ''], ['text', r.text || '']]) {
         if (v.includes(EM_DASH)) { const i = v.indexOf(EM_DASH); hits.push(`${kind} | ${part} | ${v.slice(Math.max(0, i - 60), i + 60).replace(/\s+/g, ' ')}`); }
+        const shown = part === 'html' ? v.replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' ') : v;
+        if (formalHit(shown)) hits.push(`${kind} | ${part} | French voice: ${formalHit(shown)}`);
       }
     }
     expect(hits, rendered.join('; ')).toEqual([]);

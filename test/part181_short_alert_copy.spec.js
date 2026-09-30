@@ -55,7 +55,7 @@ const min = async lg => { const r = await one('SELECT min_players, min_goalies F
 const FR = {
   subject: /^Manque de joueurs · /,
   lines: ['Bulls, gardiens : 0 sur 1 requis (confirmés ou sans réponse).', 'Bulls, joueurs : 1 sur 5 requis (confirmés ou sans réponse).', 'Parade, joueurs : 4 sur 5 requis (confirmés ou sans réponse).'],
-  close: "Il ne reste aucun substitut à appeler. Vos joueurs n'ont pas été avisés de ce manque.",
+  close: "Il ne reste aucun remplaçant à appeler. Tes joueurs n'ont pas été avisés de ce manque.",
   tag: 'Action requise', heading: 'Manque de joueurs', button: 'Voir le match'
 };
 const EN = {

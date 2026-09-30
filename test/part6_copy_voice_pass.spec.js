@@ -27,6 +27,9 @@ describe('Part 6: copy voice pass -- tutoiement in error messages', () => {
       expect(fr, `${key}: "${fr}"`).not.toMatch(/\bvous\b/i);
       expect(fr, `${key}: "${fr}"`).not.toMatch(/\bvotre\b/i);
       expect(fr, `${key}: "${fr}"`).not.toMatch(/\bveuillez\b/i);
+      expect(fr, `${key}: "${fr}"`).not.toMatch(/\bvos\b/i);
+      // A substitute is a "remplaçant" in Notre Ligue.
+      expect(fr, `${key}: "${fr}"`).not.toMatch(/substitut/i);
     }
   });
 

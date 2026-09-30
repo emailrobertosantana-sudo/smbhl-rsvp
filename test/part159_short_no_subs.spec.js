@@ -48,7 +48,7 @@ describe('A short game with no subs tells the admin', () => {
     expect(adminAlerts('hc')).toHaveLength(1);
     const m = adminAlerts('hc')[0];
     expect(m.subject).toMatch(/^Manque de joueurs · .+ \/ Short of players · /);
-    expect(m.text).toContain("Joueurs : 8 sur 10 requis (confirmés ou sans réponse). Il ne reste aucun substitut à appeler. Vos joueurs n'ont pas été avisés de ce manque.");
+    expect(m.text).toContain("Joueurs : 8 sur 10 requis (confirmés ou sans réponse). Il ne reste aucun remplaçant à appeler. Tes joueurs n'ont pas été avisés de ce manque.");
     expect(m.text).toContain('Players: 8 of 10 needed (confirmed or no reply yet). No substitutes are left to call. Your players have not been told about this shortage.');
     expect(m.text).not.toContain('Tous');
     expect(mail.sent.filter(x => x.to.startsWith('hc.'))).toEqual([]);

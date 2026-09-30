@@ -720,7 +720,7 @@ const I18N_SIGNUP = {
     // sounds like the person. "attitrées" (not "fixes") keeps the drop-in
     // label apart from pickup's "Sans équipes fixes".
     structureMyTeamTitle: 'Juste mon équipe', structureMyTeamDesc: "Une seule équipe qui joue dans une autre ligue, celle d'une ville par exemple : présences et remplaçants, sans classement.",
-    structureHeadcountTitle: 'Drop-in, sans équipes attitrées', structureHeadcountDesc: 'Juste la liste des présents. Vous formez les équipes sur place.',
+    structureHeadcountTitle: 'Drop-in, sans équipes attitrées', structureHeadcountDesc: 'Juste la liste des présents. Tu formes les équipes sur place.',
     back: 'Retour',
     step3: 'Étape 3 sur 8', title3: "Combien d'équipes?",
     teamCountGroupAria: "Nombre d'équipes", decreaseTeamsAria: 'Moins', increaseTeamsAria: 'Plus',
@@ -1142,7 +1142,7 @@ function renderSignupStep2(langParam) {
       </label>
       <label class="su-structure-opt" data-value="headcount" data-label="drop_in">
         <input type="radio" name="su_structure" value="headcount" id="su_structure_drop_in">
-        <span><span class="t" data-i18n="structureHeadcountTitle">Drop-in, sans équipes attitrées</span><span class="d" data-i18n="structureHeadcountDesc">Juste la liste des présents. Vous formez les équipes sur place.</span></span>
+        <span><span class="t" data-i18n="structureHeadcountTitle">Drop-in, sans équipes attitrées</span><span class="d" data-i18n="structureHeadcountDesc">Juste la liste des présents. Tu formes les équipes sur place.</span></span>
       </label>
       <label class="su-structure-opt" data-value="weekly_draw">
         <input type="radio" name="su_structure" value="weekly_draw">
@@ -1714,7 +1714,7 @@ async function handleOnboardingStepMark(req, env, url) {
   if (access !== 'ok') return leagueAccessResponse(access);
   const body = await req.json().catch(() => ({}));
   const step = String(body.step || '');
-  if (!['roster', 'teams', 'playoffs', 'reminders', 'stats'].includes(step)) return Response.json({ ok: false, error: 'Unknown step.' }, { status: 400 });
+  if (!['roster', 'teams', 'playoffs', 'reminders', 'stats'].includes(step)) return Response.json({ ok: false, error: 'Unknown step.', errorKey: 'ONBOARDING_STEP_UNKNOWN' }, { status: 400 });
   const skipped = new Set(await readOnboardingSkips(env, leagueId));
   if (body.action === 'skip') skipped.add(step); else skipped.delete(step);
   await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(onboardingSkipKey(leagueId), JSON.stringify([...skipped])).run();
@@ -3154,7 +3154,7 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
   if (!result.ok) {
     return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: 'Notre Ligue' }, `
       <h1>Invitation invalide ou expirée<span class="en">Invalid or expired invitation</span></h1>
-      <p class="state">Demandez à l'administrateur de la ligue de vous envoyer une nouvelle invitation.<span class="en" style="display:block;">Ask the league admin to send you a new invitation.</span></p>
+      <p class="state">Demande à l'administrateur de la ligue de t'envoyer une nouvelle invitation.<span class="en" style="display:block;">Ask the league admin to send you a new invitation.</span></p>
     `), { status: result.error === 'expired' ? 410 : 400, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
 
@@ -3230,7 +3230,7 @@ window.addEventListener('admin_lang_changed', function(e) {
       body = `
         <h1 data-i18n data-fr="Rejoindre ${esc(leagueRow.name)}" data-en="Join ${esc(leagueRow.name)}">Rejoindre ${esc(leagueRow.name)}</h1>
         <div class="card">
-          <p class="state" style="margin-top:0;" data-i18n data-fr="Un compte existe déjà pour <b>${esc(result.email)}</b>. Connectez-vous avec ce compte, puis revenez sur ce lien pour accepter." data-en="An account already exists for <b>${esc(result.email)}</b>. Log in with that account, then come back to this link to accept.">Un compte existe déjà pour <b>${esc(result.email)}</b>. Connectez-vous avec ce compte, puis revenez sur ce lien pour accepter.</p>
+          <p class="state" style="margin-top:0;" data-i18n data-fr="Un compte existe déjà pour <b>${esc(result.email)}</b>. Connecte-toi avec ce compte, puis reviens sur ce lien pour accepter." data-en="An account already exists for <b>${esc(result.email)}</b>. Log in with that account, then come back to this link to accept.">Un compte existe déjà pour <b>${esc(result.email)}</b>. Connecte-toi avec ce compte, puis reviens sur ce lien pour accepter.</p>
           <div class="btns">
             <a class="btn" href="/login" data-i18n data-fr="SE CONNECTER" data-en="LOG IN">SE CONNECTER</a>
           </div>
@@ -3240,7 +3240,7 @@ window.addEventListener('admin_lang_changed', function(e) {
     body = `
       <h1 data-i18n data-fr="Rejoindre ${esc(leagueRow.name)}" data-en="Join ${esc(leagueRow.name)}">Rejoindre ${esc(leagueRow.name)}</h1>
       <div class="card">
-        <p class="state" style="margin-top:0;" data-i18n data-fr="Créez votre mot de passe pour co-administrer cette ligue avec <b>${esc(result.email)}</b>." data-en="Create your password to co-admin this league as <b>${esc(result.email)}</b>.">Créez votre mot de passe pour co-administrer cette ligue avec <b>${esc(result.email)}</b>.</p>
+        <p class="state" style="margin-top:0;" data-i18n data-fr="Crée ton mot de passe pour co-administrer cette ligue avec <b>${esc(result.email)}</b>." data-en="Create your password to co-admin this league as <b>${esc(result.email)}</b>.">Crée ton mot de passe pour co-administrer cette ligue avec <b>${esc(result.email)}</b>.</p>
         <div id="formErr" class="state" style="display:none;color:var(--red);font-weight:600;"></div>
         <label style="display:block;margin-bottom:12px;">
           <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n data-fr="Mot de passe (8 caractères min.)" data-en="Password (min. 8 characters)">Mot de passe (8 caractères min.)</span>
@@ -5080,7 +5080,7 @@ async function handleLeagueCommsPage(req, env, url) {
       drainSent: '{sent|# courriel envoyé|# courriels envoyés}.', drainSentFailed: '{sent|# courriel envoyé|# courriels envoyés}, {failed|# échec|# échecs}.',
       broadcastTitle: 'Composer une diffusion', broadcastDesc: 'Envoyer un message ponctuel à un groupe de joueurs.',
       lblBcTarget: 'Destinataires', lblBcEvent: 'Match', lblBcSubject: 'Sujet', lblBcMessage: 'Message',
-      bcTargetAll: '👥 Tout le monde (réguliers et substituts)', bcTargetRoster: '🏒 Joueurs réguliers seulement', bcTargetSubs: '🧤 Substituts actifs seulement',
+      bcTargetAll: '👥 Tout le monde (réguliers et remplaçants)', bcTargetRoster: '🏒 Joueurs réguliers seulement', bcTargetSubs: '🧤 Remplaçants actifs seulement',
       bcTargetTeamGroup: 'Par équipe', bcTargetStatusGroup: 'Par statut de présence (ce match)',
       bcTargetPending: '⏳ Sans réponse (pending)', bcTargetIn: '✅ Confirmés (in)',
       bcSubjectPh: 'ex. Info importante pour les séries', bcMessagePh: 'Écris ton message ici...',
@@ -13469,7 +13469,7 @@ function renderShortGameAdminAlert(env, leagueRow, ev, shortages) {
   // queued for a shortage no sub can be called for (no sub in the league
   // for that position, or every one of them already called and answered),
   // and nothing here or elsewhere tells the players about a shortage.
-  const closeFr = "Il ne reste aucun substitut à appeler. Vos joueurs n'ont pas été avisés de ce manque.";
+  const closeFr = "Il ne reste aucun remplaçant à appeler. Tes joueurs n'ont pas été avisés de ce manque.";
   const closeEn = 'No substitutes are left to call. Your players have not been told about this shortage.';
   const block = (badge, title, when, lines, close, btn) => `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}${badge}</td></tr></table>
@@ -19961,7 +19961,7 @@ function renderNightWaitlistAdminAlert(env, leagueRow, ev, contact, alone = fals
     <p style="margin:0 0 8px;font-size:16px;line-height:25px;"><b>${esc(when)}</b></p>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${esc(line)}</p>
     ${nlEmailButton(link, btn, barColor)}`;
-  const lineFr = `${alone ? 'Le match est complet' : 'Les matchs de cette heure-là sont complets'}. ${contact.name} a dit oui et attend une place : on lui donnera la première qui se libère. Personne n'a été placé au-delà de votre maximum.`;
+  const lineFr = `${alone ? 'Le match est complet' : 'Les matchs de cette heure-là sont complets'}. ${contact.name} a dit oui et attend une place : on lui donnera la première qui se libère. Personne n'a été placé au-delà de ton maximum.`;
   const lineEn = `${alone ? 'The game is full' : 'The games at that time are full'}. ${contact.name} said yes and is waiting for a spot: they get the first one that opens. No one was placed past your maximum.`;
   const fr = {
     subject: `Liste d'attente · ${whenFr}`,
@@ -20083,7 +20083,7 @@ function renderThinGameAdminAlert(env, leagueRow, ev, thin) {
       ? `${label(s.game, lang)} : ${s.n} ${t.need === 'goalie' ? (s.n > 1 ? 'gardiens confirmés' : 'gardien confirmé') : (s.n > 1 ? 'confirmés' : 'confirmé')}, ${s.extra} de plus que le minimum.`
       : `${label(s.game, lang)}: ${s.n} ${t.need === 'goalie' ? (s.n === 1 ? 'goalie ' : 'goalies ') : ''}confirmed, ${s.extra} more than it needs.`)
   ]);
-  const closeFr = "Personne n'est déplacé d'un match à l'autre automatiquement : c'est à vous d'en déplacer un, si vous le souhaitez.";
+  const closeFr = "Personne n'est déplacé d'un match à l'autre automatiquement : c'est à toi d'en déplacer un, si tu le souhaites.";
   const closeEn = 'No one is moved between games automatically: moving someone is up to you.';
   const block = (badge, title, when, ls, close, btn) => `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}${badge}</td></tr></table>
@@ -22009,18 +22009,18 @@ async function handleLeagueEventStatus(req, env, url) {
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) {
-    return Response.json({ ok: false, error: 'No league found for this account.' }, { status: 404 });
+    return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
 
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok') return leagueAccessResponse(access);
 
   const eventId = url.searchParams.get('e');
-  if (!eventId) return Response.json({ ok: false, error: 'e (event id) is required.' }, { status: 400 });
+  if (!eventId) return Response.json({ ok: false, error: 'e (event id) is required.', errorKey: 'EVENT_ID_REQUIRED' }, { status: 400 });
 
   const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
     .bind(eventId, leagueId).first();
-  if (!ev) return Response.json({ ok: false, error: 'Event not found.' }, { status: 404 });
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
   const teams = [];
