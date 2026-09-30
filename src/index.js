@@ -6,6 +6,7 @@ import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
 import { pluralText, PLURAL_TEXT_JS } from './plural.js';
 import { safeNextPath, loginUrlFor, nextQuery, nextForScript } from './next_path.js';
+import { getAddEmails, saveAddEmails } from './add_emails.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
@@ -5925,6 +5926,9 @@ async function handleLeagueSettingsPage(req, env, url) {
   // The advanced reminder timing block, in the same Comms section as the
   // on/off toggles -- shown only when a super-admin turned the league's
   // advanced_reminders flag on (src/reminders.js).
+  // "Email players when they are added" (src/add_emails.js): on unless the
+  // league turned it off.
+  const addEmailsOn = (await getAddEmails(env.DB, leagueId)).mode !== 'off';
   const advancedCadence = leagueRow && (await usesAdvancedReminders(env, leagueId)) ? await getEmailSettings(env.DB, leagueId) : null;
   const cadVal = v => (v === null || v === undefined ? '' : esc(String(v)));
   const leagueSlug = await getOrCreateLeagueSlug(env, leagueRow);
@@ -6023,6 +6027,8 @@ async function handleLeagueSettingsPage(req, env, url) {
       identityTitle: 'Identité de la ligue', lblLeagueName: 'Nom de la ligue',
       lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée. Ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
       lblColor: 'Couleur de la ligue', save: 'Enregistrer', saved: 'Enregistré !',
+      addEmailsLabel: "Envoyer un courriel aux joueurs lorsqu'ils sont ajoutés",
+      addEmailsDesc: "Un remplaçant ajouté est appelé tout de suite par courriel quand un match des 8 prochains jours manque de joueurs. Désactivé : il est ajouté sans courriel, et tu l'invites toi-même avec « Inviter des remplaçants » sur la page d'un match.",
       lblTracksResults: 'Résultats des matchs',
       lblTracksResultsDesc: 'Le score de chaque match, calculé en classement (V-D-N).',
       lblTracksResultsDescPickup: "Le score de chaque match, gardé comme historique. Les équipes changent chaque semaine, donc pas de classement.",
@@ -6176,6 +6182,8 @@ async function handleLeagueSettingsPage(req, env, url) {
       identityTitle: 'League identity', lblLeagueName: 'League name',
       lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed. That guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
       lblColor: 'League colour', save: 'Save', saved: 'Saved!',
+      addEmailsLabel: 'Email players when they are added',
+      addEmailsDesc: 'A sub you add is called by email right away when a game in the next 8 days is short of players. Off: they are added with no email, and you invite them yourself with "Invite subs" on a game\'s page.',
       lblTracksResults: 'Game results',
       lblTracksResultsDesc: "Each game's score, computed into a standings table (W-L-T).",
       lblTracksResultsDescPickup: "Each game's score, kept as history. Teams change every week, so there's no standings table.",
@@ -6813,6 +6821,10 @@ async function handleLeagueSettingsPage(req, env, url) {
       <div><div class="nl-label" data-i18n="reminder12Label">Détails 12 h avant (joueurs confirmés)</div><div class="nl-help" data-i18n="reminder12Desc">Heure, lieu, et un lien pour se désister si besoin.</div><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" style="margin-top:6px" data-email-preview="logistics_12h" data-preview-endpoint="/league/comms/preview" data-i18n="btnPreview">Aperçu</button> <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" style="margin-top:6px" data-email-preview="late_reversal" data-preview-endpoint="/league/comms/preview" data-i18n="btnPreviewLateReversal">Aperçu de l'alerte à l'admin</button></div>
       <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="reminder_12h_switch" onclick="toggleReminderSwitch(this,'reminder12h')"></button>
     </div>
+    <div class="nl-toggle">
+      <div><div class="nl-label" data-i18n="addEmailsLabel">Envoyer un courriel aux joueurs lorsqu'ils sont ajoutés</div><div class="nl-help" data-i18n="addEmailsDesc">Un remplaçant ajouté est appelé tout de suite par courriel quand un match des 8 prochains jours manque de joueurs. Désactivé : il est ajouté sans courriel, et tu l'invites toi-même avec « Inviter des remplaçants » sur la page d'un match.</div></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${addEmailsOn ? 'true' : 'false'}" id="add_emails_switch" onclick="toggleAddEmailsSwitch(this)"></button>
+    </div>
     ${advancedCadence ? `
     <div id="advanced-cadence" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--rule,#e2e4e8)">
       <div class="nl-label" data-i18n="advTitle">Horaire avancé</div>
@@ -7331,6 +7343,25 @@ async function submitLanguageMode() {
     ok.textContent = window.__pageDict().saved; ok.style.display = 'block'; btn.disabled = false;
   } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
 }
+// "Email players when they are added": saved as soon as it is switched.
+async function toggleAddEmailsSwitch(btn) {
+  var err = document.getElementById('remindersErr'); var ok = document.getElementById('remindersOk');
+  err.style.display = 'none'; ok.style.display = 'none';
+  var next = btn.getAttribute('aria-checked') !== 'true';
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/settings/add-emails', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ enabled: next })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    btn.setAttribute('aria-checked', String(next));
+    ok.textContent = window.__pageDict().saved; ok.style.display = 'block';
+  } catch (e) { err.style.display = 'block'; err.textContent = window.__errorText('NETWORK_ERROR'); }
+  btn.disabled = false;
+}
 async function toggleReminderSwitch(btn, bodyKey) {
   var err = document.getElementById('remindersErr'); var ok = document.getElementById('remindersOk');
   err.style.display = 'none'; ok.style.display = 'none';
@@ -7764,6 +7795,17 @@ async function handleLeagueRosterPage(req, env, url) {
       canAlsoGoalie: 'Peut aussi jouer gardien',
       goalieBadge: 'G',
       bulkImport: "Importer d'un tableur", bulkImportTitle: 'Importer des joueurs',
+      // The warning before an add or an import that emails someone (its own
+      // step, not a field of the form). addEmails*: every player added would
+      // be emailed; addEmailsSome*: only some of them (the substitutes).
+      addEmailsTitle: "Courriels d'invitation",
+      addEmailsOne: 'Ajouter ce joueur lui enverra un courriel tout de suite.',
+      addEmailsMany: 'Ajouter ces {n} joueurs enverra un courriel à chacun d\'eux tout de suite.',
+      addEmailsSome: '{n|# des joueurs que tu ajoutes recevra un courriel tout de suite|# des joueurs que tu ajoutes recevront un courriel tout de suite}.',
+      addEmailsWhy: "Un remplaçant est appelé dès son ajout quand un match des 8 prochains jours manque de joueurs.",
+      addEmailsSend: 'Ajouter et envoyer les courriels', addEmailsSkip: 'Ajouter sans envoyer de courriel',
+      addEmailsTurnOff: 'Désactiver les courriels automatiques pour cette ligue à partir de maintenant',
+      addEmailsClose: 'Fermer',
       bulkImportHelp: "Colle une liste copiée d'un tableur (Excel, Google Sheets) : une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée.",
       bulkPreviewBtn: 'Prévisualiser', bulkConfirmBtn: "Confirmer l'import",
       lblEmailCol: 'Courriel', lblPhoneCol: 'Téléphone', bulkStatusCol: 'Statut',
@@ -7807,6 +7849,14 @@ async function handleLeagueRosterPage(req, env, url) {
       canAlsoGoalie: 'Can also play goalie',
       goalieBadge: 'G',
       bulkImport: 'Import from spreadsheet', bulkImportTitle: 'Import players',
+      addEmailsTitle: 'Invitation emails',
+      addEmailsOne: 'Adding this player will email them right away.',
+      addEmailsMany: 'Adding these {n} players will email each of them right away.',
+      addEmailsSome: '{n|# of the players you are adding will be emailed right away|# of the players you are adding will be emailed right away}.',
+      addEmailsWhy: 'A sub is called as soon as they are added when a game in the next 8 days is short of players.',
+      addEmailsSend: 'Add and send emails', addEmailsSkip: 'Add without emailing',
+      addEmailsTurnOff: 'Turn off automatic emails for this league from now on',
+      addEmailsClose: 'Close',
       bulkImportHelp: 'Paste a list copied from a spreadsheet (Excel, Google Sheets): one person per line, columns separated by a tab or comma. A header row is fine, it will be skipped.',
       bulkPreviewBtn: 'Preview', bulkConfirmBtn: 'Confirm import',
       lblEmailCol: 'Email', lblPhoneCol: 'Phone', bulkStatusCol: 'Status',
@@ -7959,6 +8009,9 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-bulk-table { width: 100%; border-collapse: collapse; font-size: 14px; }
   .ro-bulk-table th, .ro-bulk-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
   .ro-bulk-table .ro-bulk-skip { color: var(--ink-muted); font-style: italic; }
+  .ro-dialog-back { position: fixed; inset: 0; z-index: 50; background: rgba(22, 24, 29, 0.55); align-items: center; justify-content: center; padding: var(--space-4); }
+  .ro-dialog { background: var(--surface-raised); color: var(--ink); border-radius: var(--radius-lg); padding: var(--space-5); width: 100%; max-width: 460px; max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-4); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3); }
+  .ro-dialog h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; margin: 0; }
   .ro-bulk-summary { font-size: 14px; color: var(--ink-muted); }
   .ro-edit-panel { padding: var(--space-3) 0; display: flex; flex-direction: column; gap: var(--space-2); max-width: 480px; }
   .ro-inactive-toggle { width: 100%; display: flex; align-items: center; gap: 8px; padding: 14px var(--space-4); background: none; border: 0; font: 600 15px/1 var(--font-sans); color: var(--ink); cursor: pointer; text-align: left; }
@@ -8098,6 +8151,26 @@ async function handleLeagueRosterPage(req, env, url) {
     </div>
   </div>
 </main>
+<!-- The warning before an add or an import that emails someone: its own
+     step, over the page. Closing it (the button, the backdrop or Escape)
+     sends nothing, and nothing has been created. -->
+<div class="ro-dialog-back" id="add_emails_dialog" style="display:none" onclick="if (event.target === this) closeAddEmailsDialog()">
+  <div class="ro-dialog" role="dialog" aria-modal="true" aria-labelledby="add_emails_title">
+    <h2 id="add_emails_title" data-i18n="addEmailsTitle">Courriels d'invitation</h2>
+    <p id="add_emails_text" style="margin:0;font-size:16px;line-height:24px;"></p>
+    <p class="nl-help" style="margin:0" data-i18n="addEmailsWhy">Un remplaçant est appelé dès son ajout quand un match des 8 prochains jours manque de joueurs.</p>
+    <label style="display:flex;align-items:flex-start;gap:8px;font-size:14px;line-height:20px;">
+      <input type="checkbox" id="add_emails_off" style="margin-top:3px">
+      <span data-i18n="addEmailsTurnOff">Désactiver les courriels automatiques pour cette ligue à partir de maintenant</span>
+    </label>
+    <p class="nl-error" id="add_emails_err" role="alert" style="display:none;margin:0"></p>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="add_emails_send" data-i18n="addEmailsSend" onclick="answerAddEmails('send')">Ajouter et envoyer les courriels</button>
+      <button type="button" class="nl-btn nl-btn--secondary nl-btn--block" id="add_emails_skip" data-i18n="addEmailsSkip" onclick="answerAddEmails('skip')">Ajouter sans envoyer de courriel</button>
+      <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" id="add_emails_close" data-i18n="addEmailsClose" onclick="closeAddEmailsDialog()">Fermer</button>
+    </div>
+  </div>
+</div>
 ${tabbar}`;
 
   Object.assign(I18N_ROSTER.fr, SETUP_CARD_I18N.fr);
@@ -8406,13 +8479,10 @@ async function bulkConfirm() {
         if (!pr.ok || !pd.ok) { errEl.textContent = window.__errorText(pd.errorKey, pd.error); errEl.style.display = 'block'; btn.disabled = false; return; }
       }
     }
-    var res = await fetch('/league/contacts/bulk', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ contacts: BULK_ROWS.map(function(r) { return { name: r.name, email: r.email || undefined, phone: r.phone || undefined }; }) })
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { errEl.textContent = window.__errorText(data.errorKey, data.error); errEl.style.display = 'block'; btn.disabled = false; return; }
+    var bulkBody = { contacts: BULK_ROWS.map(function(r) { return { name: r.name, email: r.email || undefined, phone: r.phone || undefined }; }) };
+    var r = await postContacts('/league/contacts/bulk', bulkBody);
+    if (r.data.needsEmailChoice) { btn.disabled = false; openAddEmailsDialog(r.data, function(extra) { return postContacts('/league/contacts/bulk', bulkBody, extra); }); return; }
+    if (!r.ok) { errEl.textContent = r.message; errEl.style.display = 'block'; btn.disabled = false; return; }
     window.location.reload();
   } catch (e) {
     errEl.textContent = window.__errorText('NETWORK_ERROR'); errEl.style.display = 'block'; btn.disabled = false;
@@ -8597,6 +8667,56 @@ async function setPlayerActive(playerId, isActive, btn) {
 }
 function deactivatePlayer(playerId, btn) { return setPlayerActive(playerId, false, btn); }
 function reactivatePlayer(playerId, btn) { return setPlayerActive(playerId, true, btn); }
+// ---- the warning before players are emailed (its own step) ----
+// The server answers an add or an import that would email someone with
+// needsEmailChoice and the count, and creates nothing. This dialog asks;
+// the same request is then sent again with the answer. Closing it sends
+// nothing: nothing was created.
+var ADD_EMAILS_RETRY = null;
+function openAddEmailsDialog(data, retry) {
+  var d = window.__pageDict();
+  var n = Number(data.emailCount) || 0, total = Number(data.addCount) || n;
+  var text = n < total ? window.__pluralText(d.addEmailsSome, { n: n }) : (n === 1 ? d.addEmailsOne : window.__pluralText(d.addEmailsMany, { n: n }));
+  document.getElementById('add_emails_text').textContent = text;
+  document.getElementById('add_emails_off').checked = false;
+  document.getElementById('add_emails_err').style.display = 'none';
+  ADD_EMAILS_RETRY = retry;
+  var dlg = document.getElementById('add_emails_dialog');
+  dlg.style.display = 'flex';
+  document.getElementById('add_emails_send').focus();
+}
+function closeAddEmailsDialog() {
+  ADD_EMAILS_RETRY = null;
+  document.getElementById('add_emails_dialog').style.display = 'none';
+}
+async function answerAddEmails(choice) {
+  if (!ADD_EMAILS_RETRY) return;
+  var btns = document.querySelectorAll('#add_emails_dialog button');
+  btns.forEach(function(b) { b.disabled = true; });
+  var err = document.getElementById('add_emails_err');
+  err.style.display = 'none';
+  try {
+    var r = await ADD_EMAILS_RETRY({ emailChoice: choice, turnOffAutoEmails: document.getElementById('add_emails_off').checked });
+    if (r.ok) { window.location.reload(); return; }
+    err.textContent = r.message; err.style.display = 'block';
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block';
+  }
+  btns.forEach(function(b) { b.disabled = false; });
+}
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && document.getElementById('add_emails_dialog').style.display === 'flex') closeAddEmailsDialog();
+});
+// POSTs an add or an import; extra carries the dialog's answer.
+async function postContacts(path, body, extra) {
+  var res = await fetch(path, {
+    method: 'POST', credentials: 'same-origin',
+    headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+    body: JSON.stringify(Object.assign({}, body, extra || {}))
+  });
+  var data = await res.json().catch(function() { return {}; });
+  return { ok: res.ok && !!data.ok, data: data, message: window.__errorText(data.errorKey, data.error) };
+}
 async function submitContact() {
   document.getElementById('formErr').style.display = 'none';
   var name = document.getElementById('r_name').value.trim();
@@ -8608,13 +8728,10 @@ async function submitContact() {
   var btn = document.getElementById('r_submit');
   btn.disabled = true;
   try {
-    var res = await fetch('/league/contacts', {
-      method: 'POST', credentials: 'same-origin',
-      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined, is_goalie: ${showGoalieAxis ? 'r_goalie' : 'undefined'}, is_backup_goalie: ${showGoalieAxis ? "(!r_goalie && document.getElementById('r_backup_goalie').checked)" : 'undefined'} })
-    });
-    var data = await res.json().catch(function() { return {}; });
-    if (!res.ok || !data.ok) { showErr(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
+    var addBody = { name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined, is_goalie: ${showGoalieAxis ? 'r_goalie' : 'undefined'}, is_backup_goalie: ${showGoalieAxis ? "(!r_goalie && document.getElementById('r_backup_goalie').checked)" : 'undefined'} };
+    var r = await postContacts('/league/contacts', addBody);
+    if (r.data.needsEmailChoice) { btn.disabled = false; openAddEmailsDialog(r.data, function(extra) { return postContacts('/league/contacts', addBody, extra); }); return; }
+    if (!r.ok) { showErr(r.message); btn.disabled = false; return; }
     window.location.reload();
   } catch (e) {
     showErr(window.__errorText('NETWORK_ERROR')); btn.disabled = false;
@@ -13511,6 +13628,138 @@ async function callSubsForShortfall(env, ev, { drainNow = false } = {}) {
   return queued;
 }
 
+// ---- email players when they are added (src/add_emails.js) ----
+// Which positions a league game is short at right now, the way
+// callSubsForShortfall decides it (same window, same counts, same
+// minimums): used only to tell an admin, BEFORE anything is created, how
+// many of the substitutes they are adding would be called by email at
+// once. It sends nothing and writes nothing. test/part184 checks that the
+// number announced is the number of players then emailed.
+async function shortNeedsForEvent(env, ev) {
+  const out = new Set();
+  if (!ev || ev.state !== 'open' || !ev.league_id || ev.league_id === SMBHL_LEAGUE_ID) return out;
+  const hrs = hoursOut(ev);
+  if (hrs < CUTOFF_HOURS || hrs > SHORTFALL_HORIZON_HOURS) return out;
+  const cfg = await eventSeasonConfig(env, ev);
+  const structure = cfg.teamStructure || 'fixed';
+  const hasGoalies = sportHasGoalie(cfg.sportType);
+  if (structure === 'weekly_draw') {
+    if (await pickupDrawn(env, ev)) return out;
+    const pool = await pickupPool(env, ev, cfg, { confirmedOnly: false });
+    const need = pickupPoolTargets(cfg);
+    if (hasGoalies && pool.goalies < need.minGoalies) out.add('goalie');
+    if (pool.skaters < need.minSkaters) out.add('skater');
+    return out;
+  }
+  const isHeadcount = structure === 'headcount';
+  const minG = cfg.goaliesPerTeam || 0;
+  const minSk = shortfallMinSkaters(cfg, ev.league_id);
+  for (const team of (isHeadcount ? [HEADCOUNT_TEAM_NAME] : gameTeamNames(ev, cfg))) {
+    const a = await availableForTeam(env, ev, team, cfg, isHeadcount);
+    if (hasGoalies && a.goalies < minG) out.add('goalie');
+    if (a.skaters < minSk) out.add('skater');
+  }
+  return out;
+}
+
+// How many of these rows (the body of an add, or an import's rows) are
+// substitutes who would be emailed as soon as they are added: a sub with a
+// usable email that is not already in the league, whose position a game in
+// range is short at.
+async function subsCalledOnAdd(env, leagueId, rows) {
+  const subs = rows.filter(r => r && String(r.role || 'roster').trim() === 'sub_skater' && String(r.name || '').trim() && sanitizeAndValidateEmail(String(r.email || '').trim()).valid);
+  if (!subs.length) return 0;
+  const evs = (await env.DB.prepare(`SELECT * FROM events WHERE league_id = ? AND state = 'open'`).bind(leagueId).all()).results || [];
+  const needs = new Set();
+  for (const ev of evs) for (const n of await shortNeedsForEvent(env, ev)) needs.add(n);
+  if (!needs.size) return 0;
+  const cfg = await getLeagueSeasonConfig(env, leagueId);
+  const goalieAxis = sportHasGoalie(cfg.sportType);
+  const known = new Set(((await env.DB.prepare('SELECT lower(email) AS e FROM contacts WHERE league_id = ? AND email IS NOT NULL').bind(leagueId).all()).results || []).map(r => r.e));
+  let n = 0;
+  for (const r of subs) {
+    const email = sanitizeAndValidateEmail(String(r.email).trim()).email.toLowerCase();
+    if (known.has(email)) continue; // a duplicate: it will not be created
+    known.add(email);
+    if (needs.has(goalieAxis && r.is_goalie === true ? 'goalie' : 'skater')) n++;
+  }
+  return n;
+}
+
+async function releaseHeldSubs(env, leagueId, only = null) {
+  const s = await getAddEmails(env.DB, leagueId);
+  if (!s.held.length) return;
+  await saveAddEmails(env.DB, leagueId, { mode: s.mode, held: only ? s.held.filter(id => !only.includes(id)) : [] });
+}
+
+// POST /league/contacts and /league/contacts/bulk, with the league's
+// "email players when they are added" setting around the handler.
+//   body.emailChoice  'send' | 'skip'   the admin's answer to the warning
+//   body.turnOffAutoEmails  true        "turn off automatic emails for this
+//                                       league from now on"
+// No saved choice, no answer, and the add would email someone: nothing is
+// created and nothing is sent; the answer is 409 with needsEmailChoice and
+// the number of players who would be emailed. With an answer, it applies
+// to this add, and the choice is saved: the league is not asked again.
+// A saved choice of 'off', or 'skip' for this add: the players are created,
+// and the substitutes among them are held (not called automatically).
+// Anything the handler itself refuses (no session, CSRF, SMBHL) is left to
+// the handler, exactly as before.
+async function addContactsWithEmailChoice(req, env, url, handler) {
+  const plain = async () => afterLeagueRosterOrScheduleChange(req, env, url, await handler(req, env));
+  const session = await checkUserSession(req, env);
+  if (!session || !(await checkCsrfToken(req, env, session))) return plain();
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId || leagueId === SMBHL_LEAGUE_ID || (await checkLeagueAccess(req, env, leagueId)) !== 'ok') return plain();
+  const body = await req.clone().json().catch(() => ({}));
+  const rows = Array.isArray(body.contacts) ? body.contacts.slice(0, 200) : [body];
+  const setting = await getAddEmails(env.DB, leagueId);
+  const choice = body.emailChoice === 'send' || body.emailChoice === 'skip' ? body.emailChoice : null;
+  let send = setting.mode !== 'off';
+  if (setting.mode === null) {
+    if (choice) send = choice === 'send';
+    else {
+      const emailCount = await subsCalledOnAdd(env, leagueId, rows);
+      if (emailCount > 0) {
+        return Response.json({ ok: false, error: 'Choose whether these players are emailed.', errorKey: 'ADD_EMAIL_CHOICE_REQUIRED', needsEmailChoice: true, emailCount, addCount: rows.length }, { status: 409 });
+      }
+    }
+  }
+  const res = await handler(req, env);
+  if (res.status !== 200) return res;
+  let held = setting.held;
+  if (!send) {
+    let data = null;
+    try { data = await res.clone().json(); } catch (_) {}
+    const created = data ? (data.contact ? [data.contact] : (data.results || []).filter(r => r.status === 'created').map(r => r.contact)) : [];
+    held = held.concat(created.filter(c => c && c.role === 'sub_skater' && c.email).map(c => c.player_id));
+  }
+  const mode = setting.mode === null && choice ? (body.turnOffAutoEmails === true ? 'off' : 'on') : setting.mode;
+  if (mode !== setting.mode || held.length !== setting.held.length) await saveAddEmails(env.DB, leagueId, { mode, held });
+  return afterLeagueRosterOrScheduleChange(req, env, url, res);
+}
+
+// POST /league/settings/add-emails { enabled }: the same setting, from the
+// Settings page. Turning it on releases the substitutes who were held: the
+// league's automatic sub calls include them again.
+async function handleLeagueAddEmailsSetting(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) return Response.json({ ok: false, error: 'This route cannot change settings for SMBHL.', errorKey: 'ROUTE_BLOCKED_CONTACTS' }, { status: 403 });
+  const body = await req.json().catch(() => ({}));
+  if (typeof body.enabled !== 'boolean') return Response.json({ ok: false, error: 'enabled (true or false) is required.', errorKey: 'ADD_EMAILS_ENABLED_REQUIRED' }, { status: 400 });
+  const s = await getAddEmails(env.DB, leagueId);
+  await saveAddEmails(env.DB, leagueId, { mode: body.enabled ? 'on' : 'off', held: body.enabled ? [] : s.held });
+  return Response.json({ ok: true, enabled: body.enabled });
+}
+
 // A sub was just added (or became a sub): if any of the league's games
 // in range is short, they are called straight away -- not at the next
 // wave or cron pass.
@@ -13712,6 +13961,13 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
   if (pool.length && leagueId !== SMBHL_LEAGUE_ID) {
     const busy = await playersInOverlappingGames(env, ev);
     if (busy.size) pool = pool.filter(p => !busy.has(p.player_id));
+  }
+  // A league's substitutes added without emailing (src/add_emails.js) are
+  // not called until an admin invites subs by hand or turns the league's
+  // automatic emails back on. SMBHL has no such list.
+  if (pool.length && leagueId !== SMBHL_LEAGUE_ID) {
+    const { held } = await getAddEmails(env.DB, leagueId);
+    if (held.length) pool = pool.filter(p => !held.includes(p.player_id));
   }
 
   if (!pool.length) { if (emptyPools) emptyPools.add(need); return 0; }
@@ -21830,6 +22086,10 @@ async function handleLeagueInviteSubs(req, env, url) {
   const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
     .bind(eventId, leagueId).first();
   if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+
+  // The admin is inviting subs by hand: the ones added without emailing
+  // (src/add_emails.js) are invited with the others from now on.
+  await releaseHeldSubs(env, leagueId);
 
   const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
 
@@ -30134,9 +30394,11 @@ async function handleFetch(req, env, ctx) {
       // session+checkLeagueAccess-gated ONLY, no ADMIN_KEY path at all —
       // these must never become a new door into SMBHL's data.
       if (url.pathname === '/league/contacts' && req.method === 'POST')
-        return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueContactCreate(req, env));
+        return await addContactsWithEmailChoice(req, env, url, handleLeagueContactCreate);
       if (url.pathname === '/league/contacts/bulk' && req.method === 'POST')
-        return await afterLeagueRosterOrScheduleChange(req, env, url, await handleLeagueContactsBulkCreate(req, env));
+        return await addContactsWithEmailChoice(req, env, url, handleLeagueContactsBulkCreate);
+      if (url.pathname === '/league/settings/add-emails' && req.method === 'POST')
+        return await handleLeagueAddEmailsSetting(req, env, url);
       // Live-testing task (batch 6), Part 5: inline role/goalie editing
       // on the roster list -- see handleLeagueContactUpdate's own
       // comment (leagues.js).
@@ -30185,6 +30447,7 @@ async function handleFetch(req, env, ctx) {
         if (!ev) return Response.json({ ok: false, code: 'event_not_found' }, { status: 404 });
         const inLeague = await env.DB.prepare('SELECT 1 FROM contacts WHERE player_id = ? AND league_id = ?').bind(String(player_id || ''), leagueId).first();
         if (!inLeague) return Response.json({ ok: false, code: 'unknown_player' }, { status: 404 });
+        await releaseHeldSubs(env, leagueId, [String(player_id)]);
         const result = await sendExtraSubInvite(env, ev, String(player_id));
         return Response.json(result, { status: result.ok ? 200 : 409 });
       }
