@@ -152,7 +152,7 @@ describe('Part 6 (live-testing task, batch 2): date/time formatting', () => {
       expect(html).toContain('data-date-en="Sunday Sep 27');
       // The <title> tag is real, user-visible text too (browser tab,
       // bookmarks, history) -- also fixed, not raw ISO either.
-      expect(html).toContain('<title>Dim 27 sept —');
+      expect(html).toContain('<title>Dim 27 sept |');
       const scripts = extractInlineScripts(html);
       for (const s of scripts) expect(() => new Function(s)).not.toThrow();
     });

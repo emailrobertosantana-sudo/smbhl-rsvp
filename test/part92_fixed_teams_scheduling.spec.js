@@ -114,7 +114,7 @@ describe('Part 1 (fixed-teams investigation follow-up): the event page shows onl
     expect(m).toBeTruthy();
     const dict = JSON.parse(m[1]);
     expect(dict.en.noMatchupSetTitle).toBe('No matchup set');
-    expect(dict.en.noMatchupSetDesc).toBe("This league has more than two teams — who's playing needs to be known before rosters can be shown.");
+    expect(dict.en.noMatchupSetDesc).toBe("This league has more than two teams: who's playing needs to be known before rosters can be shown.");
   });
 
   it('a 2-team fixed league: both teams still render, completely unchanged — no matchup data is needed when both teams always play', async () => {

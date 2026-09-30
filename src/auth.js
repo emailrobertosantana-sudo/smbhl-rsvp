@@ -473,7 +473,7 @@ Ce lien expire dans 1 heure. Si tu n'as pas demandé ceci, ignore ce courriel --
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Réinitialise ton mot de passe</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Tu as demandé à réinitialiser ton mot de passe. Clique sur le bouton ci-dessous pour en choisir un nouveau.</p>
     ${nlEmailButton(resetLink, 'Choisir un nouveau mot de passe')}
-    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 1 heure. Si tu n'as pas demandé ceci, ignore ce courriel — ton mot de passe actuel reste inchangé.</p>`
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 1 heure. Si tu n'as pas demandé ceci, ignore ce courriel : ton mot de passe actuel reste inchangé.</p>`
   };
   const en = {
     subject: 'Reset your password',
@@ -485,7 +485,7 @@ This link expires in 1 hour. If you didn't request this, you can ignore this ema
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Reset your password</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">You requested a password reset. Click the button below to choose a new one.</p>
     ${nlEmailButton(resetLink, 'Choose a new password')}
-    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 1 hour. If you didn't request this, you can ignore this email — your current password stays unchanged.</p>`
+    <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 1 hour. If you didn't request this, you can ignore this email: your current password stays unchanged.</p>`
   };
   const assembled = assembleBilingualEmail(languageMode, { fr, en });
   const html = nlEmailWrap({

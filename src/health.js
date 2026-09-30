@@ -265,13 +265,13 @@ async function outboxProblems(env, leagueIds, now, { afterStartOnly = false } = 
       if (!leagueIds.has(r.league_id)) continue;
       if (r.failed > 0) out.push({
         scope: r.league_id, key: 'outbox_failed',
-        fr: `${r.failed} courriel(s) n'ont pas pu être envoyés dans les dernières 24 h (adresse refusée ou essais épuisés).`,
-        en: `${r.failed} email(s) could not be sent in the last 24 hours (address rejected or retries used up).`
+        fr: `${r.failed > 1 ? `${r.failed} courriels n'ont pas pu être envoyés` : `${r.failed} courriel n'a pas pu être envoyé`} dans les dernières 24 h (adresse refusée ou essais épuisés).`,
+        en: `${r.failed} ${r.failed === 1 ? 'email' : 'emails'} could not be sent in the last 24 hours (address rejected or retries used up).`
       });
       if (r.stuck > 0) out.push({
         scope: r.league_id, key: 'outbox_stuck',
-        fr: `${r.stuck} courriel(s) attendent depuis plus d'une heure sans partir.`,
-        en: `${r.stuck} email(s) have been waiting more than an hour without going out.`
+        fr: `${r.stuck > 1 ? `${r.stuck} courriels attendent` : `${r.stuck} courriel attend`} depuis plus d'une heure sans partir.`,
+        en: `${r.stuck === 1 ? '1 email has' : `${r.stuck} emails have`} been waiting more than an hour without going out.`
       });
     }
   }
@@ -296,8 +296,8 @@ async function outboxProblems(env, leagueIds, now, { afterStartOnly = false } = 
   for (const [eid, v] of late) out.push({
     scope: v.league,
     key: `outbox_after_start:${eid}`,
-    fr: `${v.n} courriel(s) pour le match du ${gameLabel(v.ev)} sont prévus après le début du match.`,
-    en: `${v.n} email(s) for the ${gameLabel(v.ev)} game are scheduled to go out after it starts.`
+    fr: `${v.n > 1 ? `${v.n} courriels pour le match du ${gameLabel(v.ev)} sont prévus` : `${v.n} courriel pour le match du ${gameLabel(v.ev)} est prévu`} après le début du match.`,
+    en: `${v.n === 1 ? '1 email' : `${v.n} emails`} for the ${gameLabel(v.ev)} game ${v.n === 1 ? 'is' : 'are'} scheduled to go out after it starts.`
   });
   return out;
 }
@@ -421,7 +421,7 @@ export async function notifyAlerts(env, host, alerts, now = new Date()) {
   if (pendingOps.length) {
     const lines = pendingOps.map(a => `- [${leagueName(names, a.scope)}] ${a.fr}`).join('\n');
     const linesEn = pendingOps.map(a => `- [${leagueName(names, a.scope)}] ${a.en}`).join('\n');
-    const title = `Notre Ligue — ${pendingOps.length} alerte(s) / alert(s)`;
+    const title = `Notre Ligue : ${pendingOps.length} ${pendingOps.length > 1 ? 'alertes' : 'alerte'} / ${pendingOps.length === 1 ? 'alert' : 'alerts'}`;
     const body = `${lines}\n\n---\n\n${linesEn}\n\n${host.publicUrl || ''}/health/status`;
     // The channel that does not go through Resend first.
     const hooked = await postWebhook(env, title, body);
@@ -481,7 +481,7 @@ export async function checkCronOnRequest(env, host, now = new Date()) {
   const last = await getJson(env.DB, key);
   if (last && now.getTime() - Date.parse(last) < 3600000) return status;
   await putJson(env.DB, key, nowIso(now));
-  const title = `Notre Ligue — cron ${status.product} arrêté / stopped`;
+  const title = `Notre Ligue : cron ${status.product} arrêté / stopped`;
   const text = `Le cron ne roule plus : dernier passage réussi il y a ${status.age_minutes} min.\n\nThe cron has stopped: last successful pass ${status.age_minutes} min ago.`;
   await postWebhook(env, title, text);
   try { await host.sendMail(env, host.opsEmail, title, text); } catch (e) { console.error(`[health] stale-cron email failed: ${e.message}`); }

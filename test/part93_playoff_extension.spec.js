@@ -172,9 +172,9 @@ describe('Playoff extension, Part 2/3: buildPlayoffPlaceholders matches computeP
 
   it('playoffRoleLabel matches the task\'s own examples exactly, both languages, for a round-1 (real seed) matchup', () => {
     expect(playoffRoleLabel({ role: 'semifinal', matchupIndexInRound: 1, seedA: 1, seedB: 4, seriesLength: 1 }, 'en'))
-      .toBe('Semi-final 1 — seed 1 vs seed 4');
+      .toBe('Semi-final 1: seed 1 vs seed 4');
     expect(playoffRoleLabel({ role: 'semifinal', matchupIndexInRound: 1, seedA: 1, seedB: 4, seriesLength: 1 }, 'fr'))
-      .toBe('Demi-finale 1 — tête de série 1 contre tête de série 4');
+      .toBe('Demi-finale 1 : tête de série 1 contre tête de série 4');
     expect(playoffRoleLabel({ role: 'final', seriesLength: 1 }, 'en')).toBe('Final');
     expect(playoffRoleLabel({ role: 'final', seriesLength: 1 }, 'fr')).toBe('Finale');
     expect(playoffRoleLabel({ role: 'third_place', seriesLength: 1 }, 'en')).toBe('Third-place game');
@@ -190,14 +190,14 @@ describe('Playoff extension, Part 2/3: buildPlayoffPlaceholders matches computeP
   // round-1 seed -- the two can even mix on the same matchup.
   it('playoffRoleLabel: a later round with two real feeder matchups reads "Winner SF1 vs Winner SF2", never a seed number', () => {
     expect(playoffRoleLabel({ role: 'final', feederA: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 1 }, feederB: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 2 }, seriesLength: 1 }, 'en'))
-      .toBe('Final — Winner SF1 vs Winner SF2');
+      .toBe('Final: Winner SF1 vs Winner SF2');
     expect(playoffRoleLabel({ role: 'final', feederA: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 1 }, feederB: { kind: 'matchup', role: 'semifinal', matchupIndexInRound: 2 }, seriesLength: 1 }, 'fr'))
-      .toBe('Finale — Gagnant DF1 contre Gagnant DF2');
+      .toBe('Finale : Gagnant DF1 contre Gagnant DF2');
   });
 
   it('playoffRoleLabel: a later round can mix a real bye seed on one side with an unresolved matchup on the other', () => {
     expect(playoffRoleLabel({ role: 'semifinal', matchupIndexInRound: 1, feederA: { kind: 'bye', seed: 1 }, feederB: { kind: 'matchup', role: 'quarterfinal', matchupIndexInRound: 1 }, seriesLength: 1 }, 'en'))
-      .toBe('Semi-final 1 — seed 1 vs Winner QF1');
+      .toBe('Semi-final 1: seed 1 vs Winner QF1');
   });
 
   it('buildPlayoffPlaceholders: round 1 keeps real seedA/seedB; every later round gets feederA/feederB instead, never both', () => {
@@ -451,8 +451,8 @@ describe('Playoff extension, Part 2/3: one pool of slots, end to end', () => {
 
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.en.playoffAwaitingSeedingTitle).toBe('Playoff game — awaiting results');
-    expect(dict.fr.playoffAwaitingSeedingTitle).toBe('Match de séries — en attente des résultats');
+    expect(dict.en.playoffAwaitingSeedingTitle).toBe('Playoff game, awaiting results');
+    expect(dict.fr.playoffAwaitingSeedingTitle).toBe('Match de séries, en attente des résultats');
   });
 
   it('the final\'s own placeholder reads "Winner SF1 vs Winner SF2" before either semifinal is decided', async () => {

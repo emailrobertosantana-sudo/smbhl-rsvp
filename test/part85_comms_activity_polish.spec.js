@@ -138,11 +138,11 @@ describe('E1/E2/E3 (Comms polish task): Recent Activity table', () => {
     const html = await (await SELF.fetch('http://example.com/league/comms', { headers: { cookie } })).text();
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.recipientCountLabel).toBe('{n} destinataire(s)');
-    expect(dict.en.recipientCountLabel).toBe('{n} recipient(s)');
+    expect(dict.fr.recipientCountLabel).toBe('{n|# destinataire|# destinataires}');
+    expect(dict.en.recipientCountLabel).toBe('{n|# recipient|# recipients}');
     expect(dict.fr.recipientCountLabel).not.toContain('recipient(s)');
     expect(dict.en.recipientCountLabel).not.toContain('destinataire');
-    expect(html).toContain("d.recipientCountLabel.replace('{n}', a.recipientCount)");
+    expect(html).toContain('window.__pluralText(d.recipientCountLabel, { n: a.recipientCount })');
   });
 
   it('E3: statusNoRecipients/noRecipientsReason copy exists in both languages, wired into renderActivity with a non-green color', async () => {

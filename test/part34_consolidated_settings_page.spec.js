@@ -552,7 +552,7 @@ describe('B2: structure option wording in both settings cards ("Cette saison" an
       ['structureFixedTitle', 'Équipes fixes'],
       ['structureFixedDesc', 'La même équipe toute la saison, comme une ligue régulière.'],
       ['structureWeeklyTitle', 'Sans équipes fixes'],
-      ['structureWeeklyDesc', 'Les équipes sont refaites à chaque match — tirage automatique ou choisies par toi.'],
+      ['structureWeeklyDesc', 'Les équipes sont refaites à chaque match : tirage automatique ou choisies par toi.'],
       // D5 (2026-09-29): one no-teams option, named for both of its uses.
       ['structureHeadcountTitle', 'Juste mon équipe, ou drop-in'],
       ['structureHeadcountDesc', 'Pas de répartition en équipes : une seule liste de joueurs, avec présences et remplaçants.']
@@ -577,7 +577,7 @@ describe('B2: structure option wording in both settings cards ("Cette saison" an
     expect(dict.en.structureFixedTitle).toBe('Fixed teams');
     expect(dict.en.structureFixedDesc).toBe('The same team all season, like a regular league.');
     expect(dict.en.structureWeeklyTitle).toBe('Pickup with teams');
-    expect(dict.en.structureWeeklyDesc).toBe('Pickup, but split into teams each game — drawn automatically or set by you.');
+    expect(dict.en.structureWeeklyDesc).toBe('Pickup, but split into teams each game, drawn automatically or set by you.');
     expect(dict.en.structureHeadcountTitle).toBe('Just my team, or drop-in');
     expect(dict.en.structureHeadcountDesc).toBe('No split into teams: one player list, with attendance and subs.');
     expect(dict.en.structureWeeklyTitle.toLowerCase()).not.toContain('shuffle');

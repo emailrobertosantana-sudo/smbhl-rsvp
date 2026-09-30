@@ -180,8 +180,8 @@ describe('Stats tracking, Part 1: two independent switches', () => {
 
     const m = step4.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.lblTracksResultsDescPickup).toBe("Le score de chaque match, gardé comme historique — les équipes changent chaque semaine, donc pas de classement.");
-    expect(dict.en.lblTracksResultsDescPickup).toBe("Each game's score, kept as history — teams change every week, so there's no standings table.");
+    expect(dict.fr.lblTracksResultsDescPickup).toBe("Le score de chaque match, gardé comme historique. Les équipes changent chaque semaine, donc pas de classement.");
+    expect(dict.en.lblTracksResultsDescPickup).toBe("Each game's score, kept as history. Teams change every week, so there's no standings table.");
   });
 
   it('a no-teams (headcount) league never offers game results at all — onboarding, Settings, and the route itself all reject it', async () => {
@@ -383,7 +383,7 @@ describe('Stats tracking, Part 2: score entry', () => {
 
     await submitScore(cookie, csrfToken, { event_id: ev.id, home_score: 2, away_score: 1 });
     const after = await eventDetailHtml(cookie, ev.id);
-    expect(after).toContain('Rouge 2 — 1 Bleu');
+    expect(after).toContain('Rouge 2 – 1 Bleu');
     expect(after).toContain('data-i18n="scoreEditBtn"');
   });
 
@@ -910,8 +910,8 @@ describe('Stats correctness task, Part 2a: goalie goals-against is derived, not 
     const html = await eventDetailHtml(cookie, ev.id);
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.goalsAgainstDerivedTitle).toBe("Calculé automatiquement à partir du résultat du match — le nombre de buts de l'équipe adverse.");
-    expect(dict.en.goalsAgainstDerivedTitle).toBe("Calculated automatically from the recorded result — the opposing team's own score.");
+    expect(dict.fr.goalsAgainstDerivedTitle).toBe("Calculé automatiquement à partir du résultat du match : le nombre de buts de l'équipe adverse.");
+    expect(dict.en.goalsAgainstDerivedTitle).toBe("Calculated automatically from the recorded result: the opposing team's own score.");
   });
 });
 

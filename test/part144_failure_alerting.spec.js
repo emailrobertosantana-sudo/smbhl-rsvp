@@ -81,9 +81,9 @@ describe('1a. A league\'s failure reaches its own admin and the operator', () =>
     expect(to).toContain(OPS);
     expect(to).not.toContain('admin.b@p144.example');
     const adminMail = calls.resend.find(c => c.to === 'admin.a@p144.example');
-    expect(adminMail.subject).toContain("P144 League A — quelque chose n'a pas fonctionné");
-    expect(adminMail.text).toContain("1 courriel(s) n'ont pas pu être envoyés dans les dernières 24 h");
-    expect(adminMail.text).toContain('1 email(s) could not be sent in the last 24 hours');
+    expect(adminMail.subject).toContain("P144 League A : quelque chose n'a pas fonctionné");
+    expect(adminMail.text).toContain("1 courriel n'a pas pu être envoyé dans les dernières 24 h");
+    expect(adminMail.text).toContain('1 email could not be sent in the last 24 hours');
     expect(calls.webhook.length).toBe(1);
     expect(calls.webhook[0].body).toContain('[P144 League A]');
     // Told once: the next pass sends nothing new.
@@ -94,7 +94,7 @@ describe('1a. A league\'s failure reaches its own admin and the operator', () =>
     // And the admin sees it on the dashboard while it is open.
     const dash = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie: a.s.cookie } })).text();
     expect(dash).toContain('id="dash_health"');
-    expect(dash).toContain('data-date-en="1 email(s) could not be sent in the last 24 hours (address rejected or retries used up)."');
+    expect(dash).toContain('data-date-en="1 email could not be sent in the last 24 hours (address rejected or retries used up)."');
     await env.DB.prepare('DELETE FROM outbox WHERE league_id = ?').bind(a.league.id).run();
   });
 

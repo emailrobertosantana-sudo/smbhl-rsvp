@@ -80,7 +80,7 @@ describe('Part 2: league branding on session-based pages', () => {
   it('GET /dashboard shows the real league name, not SMBHL', async () => {
     const res = await SELF.fetch('http://example.com/dashboard', { headers: { cookie } });
     const html = await res.text();
-    expect(html).toContain(`<title>Tableau de bord — ${LEAGUE_NAME}</title>`);
+    expect(html).toContain(`<title>Tableau de bord | ${LEAGUE_NAME}</title>`);
     expect(html).not.toContain('SMBHL');
   });
 
@@ -89,7 +89,7 @@ describe('Part 2: league branding on session-based pages', () => {
     const html = await res.text();
     // Design system Part 3: "Effectif" -> "Joueurs" (the same term the
     // real nav/tabbar use throughout, ScreenRoster's own heading).
-    expect(html).toContain(`<title>Joueurs — ${LEAGUE_NAME}</title>`);
+    expect(html).toContain(`<title>Joueurs | ${LEAGUE_NAME}</title>`);
     expect(html).not.toContain('SMBHL');
   });
 
@@ -98,7 +98,7 @@ describe('Part 2: league branding on session-based pages', () => {
     const html = await res.text();
     // Design system Part 3: "Calendrier" -> "Horaire" (the same term
     // the nav/tabbar already use).
-    expect(html).toContain(`<title>Horaire — ${LEAGUE_NAME}</title>`);
+    expect(html).toContain(`<title>Horaire | ${LEAGUE_NAME}</title>`);
     expect(html).not.toContain('SMBHL');
   });
 
@@ -109,7 +109,7 @@ describe('Part 2: league branding on session-based pages', () => {
     // Superseded by live-testing task (batch 2), Part 6: dates now
     // render in the design system's own format -- 2026-12-13 is a
     // Sunday, so "Dim 13 déc" replaces the old raw ISO title.
-    expect(html).toContain(`<title>Dim 13 déc — ${LEAGUE_NAME}</title>`);
+    expect(html).toContain(`<title>Dim 13 déc | ${LEAGUE_NAME}</title>`);
     expect(html).not.toContain('SMBHL');
   });
 
@@ -117,7 +117,7 @@ describe('Part 2: league branding on session-based pages', () => {
     const res = await SELF.fetch('http://example.com/league/events/detail?e=does-not-exist', { headers: { cookie } });
     expect(res.status).toBe(404);
     const html = await res.text();
-    expect(html).toContain(`<title>Match introuvable — ${LEAGUE_NAME}</title>`);
+    expect(html).toContain(`<title>Match introuvable | ${LEAGUE_NAME}</title>`);
     expect(html).not.toContain('SMBHL');
   });
 

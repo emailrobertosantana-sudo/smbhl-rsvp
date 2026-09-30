@@ -1428,7 +1428,7 @@ export async function handleLeagueEventUpdate(req, env) {
     venueMapLink = null;
   }
   // (Editing an event to free text stays free text: the edit form's own
-  // "Aucun — texte libre ci-dessous" is a deliberate one-off choice.
+  // "Aucun (texte libre ci-dessous)" is a deliberate one-off choice.
   // Creating one saves the venue -- createLeagueEventRow.)
 
   // Fixed-teams scheduling task (Part 2): the matchup Part 1's "no
@@ -1582,7 +1582,7 @@ export async function handleLeagueEventDelete(req, env) {
   if (rsvpCount > 0 && body.confirm !== true) {
     return Response.json({
       ok: false,
-      error: `This event has ${rsvpCount} RSVP(s) — deleting it will lose them. Confirm to proceed.`,
+      error: `This event has ${rsvpCount} ${rsvpCount === 1 ? 'RSVP' : 'RSVPs'}. Deleting it will lose them. Confirm to proceed.`,
       errorKey: 'EVENT_HAS_RSVPS',
       rsvpCount
     }, { status: 409 });
@@ -2624,8 +2624,8 @@ export function describeMatchupDistribution(dist) {
     };
   } else {
     summary = {
-      fr: `Les soirs n'ont pas tous la même structure : ${n.avoidable} soir(s) où personne n'a besoin de jouer deux fois, ${n.partly_avoidable} où il faut répartir des matchs en plus, ${n.unavoidable} où chaque équipe joue plusieurs fois.`,
-      en: `Not every night has the same structure: ${n.avoidable} night(s) where nobody needs to play twice, ${n.partly_avoidable} where extra games must be shared out, ${n.unavoidable} where every team plays more than once.`
+      fr: `Les soirs n'ont pas tous la même structure : ${n.avoidable} ${n.avoidable > 1 ? 'soirs' : 'soir'} où personne n'a besoin de jouer deux fois, ${n.partly_avoidable} où il faut répartir des matchs en plus, ${n.unavoidable} où chaque équipe joue plusieurs fois.`,
+      en: `Not every night has the same structure: ${n.avoidable} ${n.avoidable === 1 ? 'night' : 'nights'} where nobody needs to play twice, ${n.partly_avoidable} where extra games must be shared out, ${n.unavoidable} where every team plays more than once.`
     };
   }
   const grouped = new Map();
@@ -2668,7 +2668,7 @@ async function handleSeasonAssignmentRequest(req, env, { write }) {
 
   const events = await loadSeasonEvents(env, leagueId, season);
   if (!events.length) {
-    return Response.json({ ok: false, error: "This league has no events yet to assign matchups to — create your schedule's gym slots first (Create a game / Create multiple games).", errorKey: 'MATCHUPS_NO_EVENTS' }, { status: 409 });
+    return Response.json({ ok: false, error: "This league has no events yet to assign matchups to. Create your schedule's gym slots first (Create a game / Create multiple games).", errorKey: 'MATCHUPS_NO_EVENTS' }, { status: 409 });
   }
   const planResult = buildSeasonAssignmentPlan(events, teams, playoffConfig, mode);
   if (planResult.error) return Response.json(planResult.error, { status: 409 });
@@ -2685,7 +2685,7 @@ async function handleSeasonAssignmentRequest(req, env, { write }) {
   // needs an explicit second confirmation, never silently clobbered on
   // the first call.
   if (mode === 'regenerate' && alreadyAssignedCount > 0 && !body.confirmOverwrite) {
-    return Response.json({ ok: false, error: `This will overwrite ${alreadyAssignedCount} event(s) that already have a matchup.`, errorKey: 'MATCHUPS_OVERWRITE_NEEDS_CONFIRM', alreadyAssignedCount }, { status: 409 });
+    return Response.json({ ok: false, error: `This will overwrite ${alreadyAssignedCount === 1 ? '1 event that already has' : `${alreadyAssignedCount} events that already have`} a matchup.`, errorKey: 'MATCHUPS_OVERWRITE_NEEDS_CONFIRM', alreadyAssignedCount }, { status: 409 });
   }
 
   // Classification (is_playoff/playoff_meta) is always written fresh
@@ -3052,8 +3052,10 @@ export function playoffRoleLabel(meta, lang) {
   else if (meta.role === 'bracket') base = (en ? 'Playoff round 1, game ' : 'Ronde 1 des séries, match ') + meta.matchupIndexInRound;
   else if (meta.role === 'reserved') base = (en ? 'Playoff game ' : 'Match de séries ') + meta.matchupIndexInRound;
   else base = en ? 'Playoff game' : 'Match de séries';
-  if (meta.seedA && meta.seedB) base += ` — ${seed(meta.seedA)} ${vsWord} ${seed(meta.seedB)}`;
-  else if (meta.feederA || meta.feederB) base += ` — ${describeSide(meta.feederA)} ${vsWord} ${describeSide(meta.feederB)}`;
+  // A colon, set the way each language sets it.
+  const sep = en ? ': ' : ' : ';
+  if (meta.seedA && meta.seedB) base += `${sep}${seed(meta.seedA)} ${vsWord} ${seed(meta.seedB)}`;
+  else if (meta.feederA || meta.feederB) base += `${sep}${describeSide(meta.feederA)} ${vsWord} ${describeSide(meta.feederB)}`;
   if (meta.gameNumber && meta.seriesLength > 1) base += ` (${en ? `Game ${meta.gameNumber} of ${meta.seriesLength}` : `Match ${meta.gameNumber} de ${meta.seriesLength}`})`;
   return base;
 }
@@ -3113,7 +3115,7 @@ export function buildSeasonAssignmentPlan(events, teams, playoffConfig, mode) {
     return {
       error: {
         ok: false,
-        error: `This league's playoffs need ${playoffSlots} game(s), but only ${totalSlots} event(s) exist. Create more events, or reduce the playoff format in Settings.`,
+        error: `This league's playoffs need ${playoffSlots} ${playoffSlots === 1 ? 'game' : 'games'}, but only ${totalSlots} ${totalSlots === 1 ? 'event exists' : 'events exist'}. Create more events, or reduce the playoff format in Settings.`,
         errorKey: 'MATCHUPS_TOO_FEW_SLOTS', playoffSlots, totalSlots
       }
     };
@@ -4002,7 +4004,7 @@ export async function handleLeagueUpdateIdentity(req, env, url) {
     const structure = (structRow && structRow.team_structure) || 'fixed';
     if (typeof body.tracksResults === 'boolean') {
       if (body.tracksResults && structure === 'headcount') {
-        return Response.json({ ok: false, error: 'Game results need two sides to attach a score to — not offered for a no-teams league.', errorKey: 'RESULTS_REQUIRE_TEAMS' }, { status: 409 });
+        return Response.json({ ok: false, error: 'Game results need two sides to attach a score to: not offered for a no-teams league.', errorKey: 'RESULTS_REQUIRE_TEAMS' }, { status: 409 });
       }
       updates.push('tracks_results = ?'); params.push(body.tracksResults ? 1 : 0);
     }
@@ -4334,7 +4336,7 @@ export async function handleLeagueUpdateStructure(req, env, url) {
       let existingNames = [];
       try { existingNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
       if (!Array.isArray(existingNames) || existingNames.filter(Boolean).length < 2) {
-        return Response.json({ ok: false, error: 'This league has no team names on file yet — set them in the Teams section first.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
+        return Response.json({ ok: false, error: 'This league has no team names on file yet. Set them in the Teams section first.', errorKey: 'NO_TEAM_NAMES' }, { status: 400 });
       }
     }
     newStructure = val;
@@ -4600,7 +4602,7 @@ async function resolveScoreEventSides(env, leagueId, teamStructure, ev, body) {
       // resolver, so it has to actually be there once a score exists.
       return { value: { homeTeam: teamNames[0], awayTeam: teamNames[1], persist: true } };
     }
-    return { error: { ok: false, error: 'No matchup is set for this event yet — set one before entering a score.', errorKey: 'NO_MATCHUP_SET' } };
+    return { error: { ok: false, error: 'No matchup is set for this event yet. Set one before entering a score.', errorKey: 'NO_MATCHUP_SET' } };
   }
   if (teamStructure === 'weekly_draw') {
     if (ev.home_team && ev.away_team) {
@@ -4610,11 +4612,11 @@ async function resolveScoreEventSides(env, leagueId, teamStructure, ev, body) {
       `SELECT DISTINCT team FROM rsvp WHERE event_id = ? AND status = 'in' AND team IS NOT NULL ORDER BY team`
     ).bind(ev.id).all()).results || [];
     if (drawn.length !== 2) {
-      return { error: { ok: false, error: `This event has ${drawn.length} team(s) drawn — a score needs exactly two.`, errorKey: 'DRAW_NOT_TWO_TEAMS' } };
+      return { error: { ok: false, error: `This event has ${drawn.length} ${drawn.length === 1 ? 'team' : 'teams'} drawn. A score needs exactly two.`, errorKey: 'DRAW_NOT_TWO_TEAMS' } };
     }
     return { value: { homeTeam: drawn[0].team, awayTeam: drawn[1].team, persist: true } };
   }
-  return { error: { ok: false, error: 'Game results need two sides to attach a score to — not offered for a no-teams league.', errorKey: 'RESULTS_REQUIRE_TEAMS' } };
+  return { error: { ok: false, error: 'Game results need two sides to attach a score to: not offered for a no-teams league.', errorKey: 'RESULTS_REQUIRE_TEAMS' } };
 }
 
 export async function handleLeagueEventScore(req, env) {

@@ -134,23 +134,23 @@ describe('Server-side language persistence: resolveServerLang + translated <titl
 
       const dashFr = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie: withLang('fr') } })).text();
       const dashEn = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie: withLang('en') } })).text();
-      expect(extractTitle(dashFr)).toBe(`Tableau de bord — ${league.name}`);
-      expect(extractTitle(dashEn)).toBe(`Dashboard — ${league.name}`);
+      expect(extractTitle(dashFr)).toBe(`Tableau de bord | ${league.name}`);
+      expect(extractTitle(dashEn)).toBe(`Dashboard | ${league.name}`);
 
       const settingsFr = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie: withLang('fr') } })).text();
       const settingsEn = await (await SELF.fetch('http://example.com/league/settings', { headers: { cookie: withLang('en') } })).text();
-      expect(extractTitle(settingsFr)).toBe(`Paramètres — ${league.name}`);
-      expect(extractTitle(settingsEn)).toBe(`Settings — ${league.name}`);
+      expect(extractTitle(settingsFr)).toBe(`Paramètres | ${league.name}`);
+      expect(extractTitle(settingsEn)).toBe(`Settings | ${league.name}`);
 
       const rosterFr = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie: withLang('fr') } })).text();
       const rosterEn = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie: withLang('en') } })).text();
-      expect(extractTitle(rosterFr)).toBe(`Joueurs — ${league.name}`);
-      expect(extractTitle(rosterEn)).toBe(`Players — ${league.name}`);
+      expect(extractTitle(rosterFr)).toBe(`Joueurs | ${league.name}`);
+      expect(extractTitle(rosterEn)).toBe(`Players | ${league.name}`);
 
       const schedFr = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: withLang('fr') } })).text();
       const schedEn = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie: withLang('en') } })).text();
-      expect(extractTitle(schedFr)).toBe(`Horaire — ${league.name}`);
-      expect(extractTitle(schedEn)).toBe(`Schedule — ${league.name}`);
+      expect(extractTitle(schedFr)).toBe(`Horaire | ${league.name}`);
+      expect(extractTitle(schedEn)).toBe(`Schedule | ${league.name}`);
     });
 
     it('onboarding, comms and the event-not-found 404 also translate', async () => {
@@ -160,17 +160,17 @@ describe('Server-side language persistence: resolveServerLang + translated <titl
       const withLang = (l) => `${sessionCookie}; nl_lang=${l}`;
 
       const obEn = await (await SELF.fetch('http://example.com/onboarding/season', { headers: { cookie: withLang('en') } })).text();
-      expect(extractTitle(obEn)).toBe(`Welcome — ${league.name}`);
+      expect(extractTitle(obEn)).toBe(`Welcome | ${league.name}`);
       const obFr = await (await SELF.fetch('http://example.com/onboarding/season', { headers: { cookie: withLang('fr') } })).text();
-      expect(extractTitle(obFr)).toBe(`Bienvenue — ${league.name}`);
+      expect(extractTitle(obFr)).toBe(`Bienvenue | ${league.name}`);
 
       const commsEn = await (await SELF.fetch('http://example.com/league/comms', { headers: { cookie: withLang('en') } })).text();
       expect(commsEn).toContain('<html lang="en-CA">');
-      expect(extractTitle(commsEn)).toBe(`Communications — ${league.name}`);
+      expect(extractTitle(commsEn)).toBe(`Communications | ${league.name}`);
 
       const notFoundRes = await SELF.fetch('http://example.com/league/events/detail?e=nonexistent', { headers: { cookie: withLang('en') } });
       expect(notFoundRes.status).toBe(404);
-      expect(extractTitle(await notFoundRes.text())).toBe(`Event not found — ${league.name}`);
+      expect(extractTitle(await notFoundRes.text())).toBe(`Event not found | ${league.name}`);
     });
   });
 

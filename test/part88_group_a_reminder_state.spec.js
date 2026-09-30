@@ -101,8 +101,8 @@ describe('A1: onboarding reminders copy matches the real default (on since 2026-
 
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.remindersSub).toBe("Activés par défaut. Désactive ceux que tu ne veux pas — tu peux changer ça n'importe quand dans les réglages.");
-    expect(dict.en.remindersSub).toBe("On by default. Turn off the ones you don't want — you can change this any time in Settings.");
+    expect(dict.fr.remindersSub).toBe("Activés par défaut. Désactive ceux que tu ne veux pas. Tu peux changer ça n'importe quand dans les réglages.");
+    expect(dict.en.remindersSub).toBe("On by default. Turn off the ones you don't want. You can change this any time in Settings.");
     expect(dict.fr.remindersSub).not.toContain('Désactivés par défaut');
     expect(dict.en.remindersSub).not.toContain('Off by default');
 

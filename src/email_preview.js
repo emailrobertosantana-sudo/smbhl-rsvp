@@ -507,7 +507,7 @@ const EMAIL_PREVIEW_CLIENT_JS = String.raw`(function () {
   function show(d) {
     var t = T[lang()];
     var u = build();
-    u.title.textContent = t.title + ' — ' + pick(d.label);
+    u.title.textContent = t.title + ' · ' + pick(d.label);
     u.meta.innerHTML = '';
     u.meta.appendChild(row(t.subject, d.subject || '', 'ep-subject'));
     u.meta.appendChild(row(t.to, d.to || t.none));
