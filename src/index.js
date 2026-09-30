@@ -7806,6 +7806,23 @@ async function handleLeagueRosterPage(req, env, url) {
       addEmailsSend: 'Ajouter et envoyer les courriels', addEmailsSkip: 'Ajouter sans envoyer de courriel',
       addEmailsTurnOff: 'Désactiver les courriels automatiques pour cette ligue à partir de maintenant',
       addEmailsClose: 'Fermer',
+      // The notice for regular players (the first time they are added in a
+      // league). {date}: the next game, in the page's language.
+      addNoticeReminderOne: 'Ajouter ce joueur ne lui enverra pas de courriel maintenant. Son premier courriel sera le rappel envoyé {hours} heures avant le prochain match ({date}).',
+
+      addNoticeReminderMany: 'Ajouter ces {n} joueurs ne leur enverra pas de courriel maintenant. Leur premier courriel sera le rappel envoyé {hours} heures avant le prochain match ({date}).',
+      addNoticeSoonOne: 'Ajouter ce joueur ne lui enverra pas de courriel maintenant. Son premier courriel sera le rappel du prochain match ({date}), qui part dans les prochaines minutes.',
+
+      addNoticeSoonMany: 'Ajouter ces {n} joueurs ne leur enverra pas de courriel maintenant. Leur premier courriel sera le rappel du prochain match ({date}), qui part dans les prochaines minutes.',
+      addNoticeNoGameOne: 'Ajouter ce joueur ne lui enverra pas de courriel maintenant. Son premier courriel sera le rappel avant son premier match.',
+
+      addNoticeNoGameMany: 'Ajouter ces {n} joueurs ne leur enverra pas de courriel maintenant. Leur premier courriel sera le rappel avant leur premier match.',
+      addNoticeRemindersOffOne: 'Ajouter ce joueur ne lui enverra pas de courriel maintenant. Les rappels automatiques sont désactivés pour cette ligue : il ne recevra aucun courriel tant que tu ne les actives pas dans les Paramètres.',
+
+      addNoticeRemindersOffMany: 'Ajouter ces {n} joueurs ne leur enverra pas de courriel maintenant. Les rappels automatiques sont désactivés pour cette ligue : ils ne recevront aucun courriel tant que tu ne les actives pas dans les Paramètres.',
+      addNoticeTeamless: "{n|Ce joueur n'a pas d'équipe : il ne recevra aucun rappel tant que tu ne lui en donnes pas une.|# de ces joueurs n'ont pas d'équipe : ils ne recevront aucun rappel tant que tu ne leur en donnes pas une.}",
+      addNoticeTeamlessOne: "1 de ces joueurs n'a pas d'équipe : il ne recevra aucun rappel tant que tu ne lui en donnes pas une.",
+      addNoticeBtn: '{n|Ajouter le joueur|Ajouter les joueurs}',
       bulkImportHelp: "Colle une liste copiée d'un tableur (Excel, Google Sheets) : une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée.",
       bulkPreviewBtn: 'Prévisualiser', bulkConfirmBtn: "Confirmer l'import",
       lblEmailCol: 'Courriel', lblPhoneCol: 'Téléphone', bulkStatusCol: 'Statut',
@@ -7857,6 +7874,21 @@ async function handleLeagueRosterPage(req, env, url) {
       addEmailsSend: 'Add and send emails', addEmailsSkip: 'Add without emailing',
       addEmailsTurnOff: 'Turn off automatic emails for this league from now on',
       addEmailsClose: 'Close',
+      addNoticeReminderOne: "Adding this player won't email them now. Their first email will be the reminder {hours} hours before the next game ({date}).",
+
+      addNoticeReminderMany: "Adding these {n} players won't email them now. Their first email will be the reminder {hours} hours before the next game ({date}).",
+      addNoticeSoonOne: "Adding this player won't email them now. Their first email will be the reminder for the next game ({date}), which goes out in the next few minutes.",
+
+      addNoticeSoonMany: "Adding these {n} players won't email them now. Their first email will be the reminder for the next game ({date}), which goes out in the next few minutes.",
+      addNoticeNoGameOne: "Adding this player won't email them now. Their first email will be the reminder before their first game.",
+
+      addNoticeNoGameMany: "Adding these {n} players won't email them now. Their first email will be the reminder before their first game.",
+      addNoticeRemindersOffOne: "Adding this player won't email them now. The automatic reminders are off for this league, so they will get no email until you turn them on in Settings.",
+
+      addNoticeRemindersOffMany: "Adding these {n} players won't email them now. The automatic reminders are off for this league, so they will get no email until you turn them on in Settings.",
+      addNoticeTeamless: '{n|This player has no team: they get no reminder until you give them one.|# of these players have no team: they get no reminder until you give them one.}',
+      addNoticeTeamlessOne: '1 of these players has no team: they get no reminder until you give them one.',
+      addNoticeBtn: '{n|Add the player|Add the players}',
       bulkImportHelp: 'Paste a list copied from a spreadsheet (Excel, Google Sheets): one person per line, columns separated by a tab or comma. A header row is fine, it will be skipped.',
       bulkPreviewBtn: 'Preview', bulkConfirmBtn: 'Confirm import',
       lblEmailCol: 'Email', lblPhoneCol: 'Phone', bulkStatusCol: 'Status',
@@ -8157,14 +8189,21 @@ async function handleLeagueRosterPage(req, env, url) {
 <div class="ro-dialog-back" id="add_emails_dialog" style="display:none" onclick="if (event.target === this) closeAddEmailsDialog()">
   <div class="ro-dialog" role="dialog" aria-modal="true" aria-labelledby="add_emails_title">
     <h2 id="add_emails_title" data-i18n="addEmailsTitle">Courriels d'invitation</h2>
+    <div id="add_notice_part" style="display:none;flex-direction:column;gap:8px;">
+      <p id="add_notice_text" style="margin:0;font-size:16px;line-height:24px;"></p>
+      <p id="add_notice_teamless" class="nl-help" style="margin:0;display:none"></p>
+    </div>
+    <div id="add_emails_part" style="display:flex;flex-direction:column;gap:var(--space-4);">
     <p id="add_emails_text" style="margin:0;font-size:16px;line-height:24px;"></p>
     <p class="nl-help" style="margin:0" data-i18n="addEmailsWhy">Un remplaçant est appelé dès son ajout quand un match des 8 prochains jours manque de joueurs.</p>
     <label style="display:flex;align-items:flex-start;gap:8px;font-size:14px;line-height:20px;">
       <input type="checkbox" id="add_emails_off" style="margin-top:3px">
       <span data-i18n="addEmailsTurnOff">Désactiver les courriels automatiques pour cette ligue à partir de maintenant</span>
     </label>
+    </div>
     <p class="nl-error" id="add_emails_err" role="alert" style="display:none;margin:0"></p>
     <div style="display:flex;flex-direction:column;gap:8px;">
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="add_notice_ok" style="display:none" onclick="answerAddEmails(null)"></button>
       <button type="button" class="nl-btn nl-btn--primary nl-btn--block" id="add_emails_send" data-i18n="addEmailsSend" onclick="answerAddEmails('send')">Ajouter et envoyer les courriels</button>
       <button type="button" class="nl-btn nl-btn--secondary nl-btn--block" id="add_emails_skip" data-i18n="addEmailsSkip" onclick="answerAddEmails('skip')">Ajouter sans envoyer de courriel</button>
       <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" id="add_emails_close" data-i18n="addEmailsClose" onclick="closeAddEmailsDialog()">Fermer</button>
@@ -8480,8 +8519,8 @@ async function bulkConfirm() {
       }
     }
     var bulkBody = { contacts: BULK_ROWS.map(function(r) { return { name: r.name, email: r.email || undefined, phone: r.phone || undefined }; }) };
-    var r = await postContacts('/league/contacts/bulk', bulkBody);
-    if (r.data.needsEmailChoice) { btn.disabled = false; openAddEmailsDialog(r.data, function(extra) { return postContacts('/league/contacts/bulk', bulkBody, extra); }); return; }
+    var r = await postContacts('/league/contacts/bulk', bulkBody, { wantsNotice: true });
+    if (r.data.needsEmailChoice || r.data.needsRegularNotice) { btn.disabled = false; openAddEmailsDialog(r.data, function(extra) { return postContacts('/league/contacts/bulk', bulkBody, extra); }); return; }
     if (!r.ok) { errEl.textContent = r.message; errEl.style.display = 'block'; btn.disabled = false; return; }
     window.location.reload();
   } catch (e) {
@@ -8673,17 +8712,42 @@ function reactivatePlayer(playerId, btn) { return setPlayerActive(playerId, true
 // the same request is then sent again with the answer. Closing it sends
 // nothing: nothing was created.
 var ADD_EMAILS_RETRY = null;
+// The same step also carries the notice for regular players (they are
+// not emailed now; this is when their first email comes), shown once per
+// league. When only the notice is due, its one button adds the players.
+function addNoticeText(data, d) {
+  var lang = window.__currentLang === 'en' ? 'en' : 'fr';
+  var fe = data.firstEmail || { kind: 'none_scheduled' };
+  var key = fe.kind === 'reminder' ? (fe.soon ? 'addNoticeSoon' : 'addNoticeReminder') : fe.kind === 'reminders_off' ? 'addNoticeRemindersOff' : 'addNoticeNoGame';
+  var n = Number(data.regularCount) || 1;
+  return window.__pluralText(d[key + (n === 1 ? 'One' : 'Many')], { n: n, hours: fe.hours, date: fe.date ? fe.date[lang] : '' });
+}
 function openAddEmailsDialog(data, retry) {
   var d = window.__pageDict();
+  var notice = !!data.needsRegularNotice, choice = !!data.needsEmailChoice;
+  document.getElementById('add_notice_part').style.display = notice ? 'flex' : 'none';
+  document.getElementById('add_emails_part').style.display = choice ? 'flex' : 'none';
+  document.getElementById('add_notice_ok').style.display = choice ? 'none' : '';
+  document.getElementById('add_emails_send').style.display = choice ? '' : 'none';
+  document.getElementById('add_emails_skip').style.display = choice ? '' : 'none';
+  if (notice) {
+    document.getElementById('add_notice_text').textContent = addNoticeText(data, d);
+    var tl = Number(data.teamlessCount) || 0, rc = Number(data.regularCount) || 0;
+    var tlEl = document.getElementById('add_notice_teamless');
+    tlEl.style.display = tl > 0 ? '' : 'none';
+    tlEl.textContent = tl === 1 && rc > 1 ? d.addNoticeTeamlessOne : window.__pluralText(d.addNoticeTeamless, { n: tl });
+    document.getElementById('add_notice_ok').textContent = window.__pluralText(d.addNoticeBtn, { n: rc });
+  }
   var n = Number(data.emailCount) || 0, total = Number(data.addCount) || n;
   var text = n < total ? window.__pluralText(d.addEmailsSome, { n: n }) : (n === 1 ? d.addEmailsOne : window.__pluralText(d.addEmailsMany, { n: n }));
+  window.__addNoticeDue = notice;
   document.getElementById('add_emails_text').textContent = text;
   document.getElementById('add_emails_off').checked = false;
   document.getElementById('add_emails_err').style.display = 'none';
   ADD_EMAILS_RETRY = retry;
   var dlg = document.getElementById('add_emails_dialog');
   dlg.style.display = 'flex';
-  document.getElementById('add_emails_send').focus();
+  document.getElementById(choice ? 'add_emails_send' : 'add_notice_ok').focus();
 }
 function closeAddEmailsDialog() {
   ADD_EMAILS_RETRY = null;
@@ -8696,7 +8760,11 @@ async function answerAddEmails(choice) {
   var err = document.getElementById('add_emails_err');
   err.style.display = 'none';
   try {
-    var r = await ADD_EMAILS_RETRY({ emailChoice: choice, turnOffAutoEmails: document.getElementById('add_emails_off').checked });
+    var extra = { wantsNotice: true };
+    if (window.__addNoticeDue) extra.regularNoticeSeen = true;
+    if (choice) { extra.emailChoice = choice; extra.turnOffAutoEmails = document.getElementById('add_emails_off').checked; }
+    var r = await ADD_EMAILS_RETRY(extra);
+    if (r.data && (r.data.needsEmailChoice || r.data.needsRegularNotice)) { btns.forEach(function(b) { b.disabled = false; }); openAddEmailsDialog(r.data, ADD_EMAILS_RETRY); return; }
     if (r.ok) { window.location.reload(); return; }
     err.textContent = r.message; err.style.display = 'block';
   } catch (e) {
@@ -8729,8 +8797,8 @@ async function submitContact() {
   btn.disabled = true;
   try {
     var addBody = { name: name, email: email || undefined, phone: phone || undefined, role: r_role, team: team || undefined, is_goalie: ${showGoalieAxis ? 'r_goalie' : 'undefined'}, is_backup_goalie: ${showGoalieAxis ? "(!r_goalie && document.getElementById('r_backup_goalie').checked)" : 'undefined'} };
-    var r = await postContacts('/league/contacts', addBody);
-    if (r.data.needsEmailChoice) { btn.disabled = false; openAddEmailsDialog(r.data, function(extra) { return postContacts('/league/contacts', addBody, extra); }); return; }
+    var r = await postContacts('/league/contacts', addBody, { wantsNotice: true });
+    if (r.data.needsEmailChoice || r.data.needsRegularNotice) { btn.disabled = false; openAddEmailsDialog(r.data, function(extra) { return postContacts('/league/contacts', addBody, extra); }); return; }
     if (!r.ok) { showErr(r.message); btn.disabled = false; return; }
     window.location.reload();
   } catch (e) {
@@ -13686,10 +13754,45 @@ async function subsCalledOnAdd(env, leagueId, rows) {
   return n;
 }
 
+// When a regular player added now gets their first email. Nothing is
+// sent when they are added (test/part184): their first email is the
+// league's next reminder that asks who is coming (72 h or 24 h before, or
+// the league's own hours on the advanced model), for the next game that
+// still has one to send. A step already sent, or skipped, for a game is in
+// league_reminder_log. The 12 h details only go to players who said yes.
+//   { kind: 'reminder', hours, soon, date: { fr, en } }  soon: the window
+//        is already open, so it goes out at the next pass (every 15 min)
+//   { kind: 'none_scheduled' }   no game still to ask about
+//   { kind: 'reminders_off' }    the league sends no reminder that asks
+async function firstEmailForNewRegulars(env, leagueId) {
+  const lg = await env.DB.prepare('SELECT reminder_72h_enabled, reminder_24h_enabled FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!lg) return { kind: 'reminders_off' };
+  const advanced = (await usesAdvancedReminders(env, leagueId)) ? await getEmailSettings(env.DB, leagueId) : null;
+  const steps = [['reminder_72h', lg.reminder_72h_enabled], ['reminder_24h', lg.reminder_24h_enabled]]
+    .filter(x => x[1]).map(([kind]) => ({ kind, hours: advanced ? advancedStepHours(advanced, kind) : REMINDER_WINDOW_THRESHOLD_HOURS[kind] }))
+    .sort((a, b) => b.hours - a.hours);
+  if (!steps.length) return { kind: 'reminders_off' };
+  const evs = (await env.DB.prepare(
+    `SELECT * FROM events WHERE league_id = ? AND state = 'open' AND start_time IS NOT NULL AND auto_reminders_enabled = 1`
+  ).bind(leagueId).all()).results || [];
+  const upcoming = evs.map(ev => ({ ev, t: (eventStart(ev) || new Date(0)).getTime() })).filter(x => x.t > Date.now()).sort((a, b) => a.t - b.t);
+  for (const { ev, t } of upcoming) {
+    const hoursUntil = (t - Date.now()) / 3600000;
+    for (const st of steps) {
+      if (await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(ev.id, st.kind).first()) continue;
+      return {
+        kind: 'reminder', hours: st.hours, soon: hoursUntil <= st.hours,
+        date: { fr: formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false), en: formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false) }
+      };
+    }
+  }
+  return { kind: 'none_scheduled' };
+}
+
 async function releaseHeldSubs(env, leagueId, only = null) {
   const s = await getAddEmails(env.DB, leagueId);
   if (!s.held.length) return;
-  await saveAddEmails(env.DB, leagueId, { mode: s.mode, held: only ? s.held.filter(id => !only.includes(id)) : [] });
+  await saveAddEmails(env.DB, leagueId, { held: only ? s.held.filter(id => !only.includes(id)) : [] });
 }
 
 // POST /league/contacts and /league/contacts/bulk, with the league's
@@ -13705,6 +13808,12 @@ async function releaseHeldSubs(env, leagueId, only = null) {
 // and the substitutes among them are held (not called automatically).
 // Anything the handler itself refuses (no session, CSRF, SMBHL) is left to
 // the handler, exactly as before.
+// The notice for regular players: the Players page sends wantsNotice. The
+// first time it adds regular players in a league, the answer is 409 with
+// needsRegularNotice, the count and when their first email comes; nothing
+// is created. Sent again with regularNoticeSeen, the players are added and
+// the notice is saved as shown. Both steps due at once are one answer. An
+// API caller that does not send wantsNotice is not asked.
 async function addContactsWithEmailChoice(req, env, url, handler) {
   const plain = async () => afterLeagueRosterOrScheduleChange(req, env, url, await handler(req, env));
   const session = await checkUserSession(req, env);
@@ -13716,14 +13825,22 @@ async function addContactsWithEmailChoice(req, env, url, handler) {
   const setting = await getAddEmails(env.DB, leagueId);
   const choice = body.emailChoice === 'send' || body.emailChoice === 'skip' ? body.emailChoice : null;
   let send = setting.mode !== 'off';
+  let emailCount = 0;
   if (setting.mode === null) {
     if (choice) send = choice === 'send';
-    else {
-      const emailCount = await subsCalledOnAdd(env, leagueId, rows);
-      if (emailCount > 0) {
-        return Response.json({ ok: false, error: 'Choose whether these players are emailed.', errorKey: 'ADD_EMAIL_CHOICE_REQUIRED', needsEmailChoice: true, emailCount, addCount: rows.length }, { status: 409 });
-      }
+    else emailCount = await subsCalledOnAdd(env, leagueId, rows);
+  }
+  const regulars = rows.filter(r => r && String(r.role || 'roster').trim() === 'roster' && String(r.name || '').trim());
+  const noticeDue = body.wantsNotice === true && regulars.length > 0 && !setting.regularNotice && body.regularNoticeSeen !== true;
+  if (emailCount > 0 || noticeDue) {
+    const out = { ok: false, error: 'Choose whether these players are emailed.', errorKey: emailCount > 0 ? 'ADD_EMAIL_CHOICE_REQUIRED' : 'ADD_NOTICE_REQUIRED', addCount: rows.length };
+    if (emailCount > 0) Object.assign(out, { needsEmailChoice: true, emailCount });
+    if (noticeDue) {
+      const cfg = await getLeagueSeasonConfig(env, leagueId);
+      const fixed = (cfg.teamStructure || 'fixed') === 'fixed';
+      Object.assign(out, { needsRegularNotice: true, regularCount: regulars.length, teamlessCount: fixed ? regulars.filter(r => !String(r.team || '').trim()).length : 0, firstEmail: await firstEmailForNewRegulars(env, leagueId) });
     }
+    return Response.json(out, { status: 409 });
   }
   const res = await handler(req, env);
   if (res.status !== 200) return res;
@@ -13735,7 +13852,8 @@ async function addContactsWithEmailChoice(req, env, url, handler) {
     held = held.concat(created.filter(c => c && c.role === 'sub_skater' && c.email).map(c => c.player_id));
   }
   const mode = setting.mode === null && choice ? (body.turnOffAutoEmails === true ? 'off' : 'on') : setting.mode;
-  if (mode !== setting.mode || held.length !== setting.held.length) await saveAddEmails(env.DB, leagueId, { mode, held });
+  const regularNotice = setting.regularNotice || (body.regularNoticeSeen === true && regulars.length > 0);
+  if (mode !== setting.mode || held.length !== setting.held.length || regularNotice !== setting.regularNotice) await saveAddEmails(env.DB, leagueId, { mode, held, regularNotice });
   return afterLeagueRosterOrScheduleChange(req, env, url, res);
 }
 

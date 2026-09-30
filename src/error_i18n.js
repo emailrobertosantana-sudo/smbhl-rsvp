@@ -97,6 +97,7 @@ export const ERROR_I18N = {
   // Adding players: the admin has to say whether they are emailed (the
   // Players page answers this one with its own dialog, never as an error).
   ADD_EMAILS_ENABLED_REQUIRED: { fr: 'Indique si les courriels sont activés ou non.', en: 'Say whether emails are on or off.' },
+  ADD_NOTICE_REQUIRED: { fr: "Lis d'abord quand ces joueurs recevront leur premier courriel.", en: 'Read first when these players will get their first email.' },
   ADD_EMAIL_CHOICE_REQUIRED: { fr: "Choisis d'abord si ces joueurs reçoivent un courriel.", en: 'Choose first whether these players are emailed.' },
   BULK_FIRST_DATE_REQUIRED: { fr: 'Choisis une première date.', en: 'Choose a first date.' },
   BULK_DATE_INVALID: { fr: "Cette date n'existe pas. Choisis une date valide.", en: 'This date does not exist. Please choose a valid date.' },

@@ -26,9 +26,9 @@ beforeAll(async () => {
 }, 240000);
 afterAll(async () => { await browser?.close(); await h?.dispose(); });
 
-async function openPlayers(lang) {
+async function openPlayers(lang, who = session) {
   const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1100, height: 900 } });
-  await context.addCookies(session.cookie.split('; ').map(c => { const i = c.indexOf('='); return { name: c.slice(0, i), value: c.slice(i + 1), url: h.baseUrl + '/' }; }));
+  await context.addCookies(who.cookie.split('; ').map(c => { const i = c.indexOf('='); return { name: c.slice(0, i), value: c.slice(i + 1), url: h.baseUrl + '/' }; }));
   await context.addInitScript(l => { try { localStorage.setItem('smbhl_admin_lang', l); } catch (e) {} }, lang);
   const page = await context.newPage();
   const errors = [];
@@ -137,8 +137,95 @@ describe('The warning before players are emailed', () => {
     await page.click('#add_emails_switch');
     await page.waitForFunction(() => document.getElementById('add_emails_switch').getAttribute('aria-checked') === 'true');
     const after = JSON.parse((await h.db.prepare('SELECT value FROM settings WHERE key = ?').bind(`league_add_emails:${league.id}`).first()).value);
-    expect(after).toEqual({ mode: 'on', held: [] });
+    expect(after).toEqual({ mode: 'on', held: [], regularNotice: false });
     expect(errors).toEqual([]);
     await close();
   }, 120000);
+});
+
+// The notice for regular players: shown the first time regular players are
+// added in a league (test/part185 for the rules). Nothing to choose: one
+// button adds them, closing adds nothing.
+const NOTICE = {
+  fr: {
+    one: 'Ajouter ce joueur ne lui enverra pas de courriel maintenant. Son premier courriel sera le rappel envoyé 72 heures avant le prochain match (',
+    many: 'Ajouter ces 20 joueurs ne leur enverra pas de courriel maintenant. Leur premier courriel sera le rappel envoyé 72 heures avant le prochain match (',
+    noGame: 'Ajouter ces 3 joueurs ne leur enverra pas de courriel maintenant. Leur premier courriel sera le rappel avant leur premier match.',
+    off: 'Ajouter ce joueur ne lui enverra pas de courriel maintenant. Les rappels automatiques sont désactivés pour cette ligue : il ne recevra aucun courriel tant que tu ne les actives pas dans les Paramètres.',
+    teamlessOne: "Ce joueur n'a pas d'équipe : il ne recevra aucun rappel tant que tu ne lui en donnes pas une.",
+    teamless: "20 de ces joueurs n'ont pas d'équipe : ils ne recevront aucun rappel tant que tu ne leur en donnes pas une.",
+    btnOne: 'Ajouter le joueur', btnMany: 'Ajouter les joueurs',
+    date: 'jeudi 15 oct · 19 h'
+  },
+  en: {
+    one: "Adding this player won't email them now. Their first email will be the reminder 72 hours before the next game (",
+    many: "Adding these 20 players won't email them now. Their first email will be the reminder 72 hours before the next game (",
+    noGame: "Adding these 3 players won't email them now. Their first email will be the reminder before their first game.",
+    off: "Adding this player won't email them now. The automatic reminders are off for this league, so they will get no email until you turn them on in Settings.",
+    teamlessOne: 'This player has no team: they get no reminder until you give them one.',
+    teamless: '20 of these players have no team: they get no reminder until you give them one.',
+    btnOne: 'Add the player', btnMany: 'Add the players',
+    date: 'Thursday Oct 15 · 7 PM'
+  }
+};
+const noticeState = page => page.evaluate(() => ({
+  shown: document.getElementById('add_emails_dialog').style.display === 'flex',
+  text: document.getElementById('add_notice_text').textContent.trim(),
+  teamless: document.getElementById('add_notice_teamless').style.display === 'none' ? '' : document.getElementById('add_notice_teamless').textContent.trim(),
+  button: document.getElementById('add_notice_ok').textContent.trim(),
+  subPart: document.getElementById('add_emails_part').style.display
+}));
+const FORBIDDEN = /\((s|es|e)\)|—|(^|[^a-zà-ÿ])(vous|votre|vos|veuillez)(?![a-zà-ÿ])|substituts?(?![a-zà-ÿ])/i;
+
+describe('The notice before regular players are added, once per league', () => {
+  for (const lang of ['fr', 'en']) {
+    it(`${lang}: one regular player, a game in 10 days: the notice, one button; closing adds nothing; the button adds the player and it never shows again`, async () => {
+      const s = await h.signup(`notice.${lang}@add-emails.example`);
+      const j = async (p, body) => (await h.api(p, { ...s, body })).json();
+      const lg = (await j('/leagues/create', { name: 'Ligue du jeudi', teamNames: ['Bulls', 'Parade'], tracksStats: false })).league;
+      await j('/league/season/publish', { season_name: 'S1' });
+      await j('/league/events', { date: day(10), start_time: '19:00', end_time: '20:00', venue: 'Gym', home_team: 'Bulls', away_team: 'Parade' });
+      const { page, errors, close } = await openPlayers(lang, s);
+      const openForm = () => page.evaluate(() => { const p = document.getElementById('ro_panel'); if (!p.classList.contains('open')) p.classList.add('open'); });
+      await openForm();
+      await page.fill('#r_name', 'Rita Regular');
+      await page.fill('#r_email', `rita.${lang}@add-emails.example`);
+      await page.click('#r_submit');
+      await page.waitForFunction(() => document.getElementById('add_emails_dialog').style.display === 'flex');
+      let st = await noticeState(page);
+      expect(st.text.startsWith(NOTICE[lang].one), st.text).toBe(true);
+      expect(st).toMatchObject({ button: NOTICE[lang].btnOne, subPart: 'none', teamless: NOTICE[lang].teamlessOne });
+      if (SHOTS) await page.screenshot({ path: `${SHOTS}/notice_singular_${lang}.png` });
+      const count = async () => (await h.db.prepare(`SELECT COUNT(*) AS n FROM contacts WHERE league_id = ? AND role = 'roster'`).bind(lg.id).first()).n;
+      await page.click('#add_emails_close');
+      expect(await count()).toBe(0);
+      await page.click('#r_submit');
+      await page.waitForFunction(() => document.getElementById('add_emails_dialog').style.display === 'flex');
+      await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click('#add_notice_ok')]);
+      expect(await count()).toBe(1);
+      expect((await h.db.prepare(`SELECT COUNT(*) AS n FROM outbox WHERE league_id = ? AND kind != 'short_alert'`).bind(lg.id).first()).n).toBe(0);
+      // Never again in this league.
+      await openForm();
+      await page.fill('#r_name', 'Rob Regular');
+      await page.fill('#r_email', `rob.${lang}@add-emails.example`);
+      await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click('#r_submit')]);
+      expect(await count()).toBe(2);
+      // The plural and the other cases, drawn by the same dialog.
+      const show = async data => { await page.evaluate(d => openAddEmailsDialog(d, function() { return Promise.resolve({ ok: false, message: '' }); }), data); return noticeState(page); };
+      st = await show({ needsRegularNotice: true, regularCount: 20, teamlessCount: 20, addCount: 20, firstEmail: { kind: 'reminder', hours: 72, soon: false, date: { fr: NOTICE.fr.date, en: NOTICE.en.date } } });
+      expect(st.text).toBe(NOTICE[lang].many + NOTICE[lang].date + ').');
+      expect(st).toMatchObject({ teamless: NOTICE[lang].teamless, button: NOTICE[lang].btnMany });
+      if (SHOTS) await page.screenshot({ path: `${SHOTS}/notice_plural_${lang}.png` });
+      expect((await show({ needsRegularNotice: true, regularCount: 3, teamlessCount: 0, addCount: 3, firstEmail: { kind: 'none_scheduled' } })).text).toBe(NOTICE[lang].noGame);
+      expect((await show({ needsRegularNotice: true, regularCount: 1, teamlessCount: 0, addCount: 1, firstEmail: { kind: 'reminders_off' } })).text).toBe(NOTICE[lang].off);
+      // Regular players and a substitute: one step, both parts, the sub's buttons.
+      st = await show({ needsRegularNotice: true, regularCount: 2, teamlessCount: 0, addCount: 3, needsEmailChoice: true, emailCount: 1, firstEmail: { kind: 'none_scheduled' } });
+      expect(st.subPart).toBe('flex');
+      expect(await page.evaluate(() => [document.getElementById('add_notice_ok').style.display, document.getElementById('add_emails_send').style.display])).toEqual(['none', '']);
+      if (SHOTS) await page.screenshot({ path: `${SHOTS}/notice_combined_${lang}.png` });
+      expect(await page.locator('#add_emails_dialog').innerText()).not.toMatch(FORBIDDEN);
+      expect(errors).toEqual([]);
+      await close();
+    }, 180000);
+  }
 });

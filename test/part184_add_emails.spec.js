@@ -98,7 +98,7 @@ describe('The first add or import that would email someone: the admin is asked f
     expect(await contactsOf(lg)).toHaveLength(1);
     expect(await subCalls(lg)).toEqual([{ player_id: r.json.contact.player_id, sent: 1, cancelled: 0 }]);
     expect(toSubs().map(m => m.to)).toEqual([`${tag}.sub1@subs.example`]);
-    expect(await getAddEmails(env.DB, lg.id)).toEqual({ mode: 'on', held: [] });
+    expect(await getAddEmails(env.DB, lg.id)).toEqual({ mode: 'on', held: [], regularNotice: false });
     // The next one: no question, sent.
     const again = await a.post('/league/contacts', sub(tag, 1));
     expect(again.status).toBe(200);
@@ -114,7 +114,7 @@ describe('The first add or import that would email someone: the admin is asked f
     await pass(T0 + 30 * 60000);
     expect(await subCalls(lg)).toEqual([]);
     expect(toSubs()).toEqual([]);
-    expect(await getAddEmails(env.DB, lg.id)).toEqual({ mode: 'on', held: [r.json.contact.player_id] });
+    expect(await getAddEmails(env.DB, lg.id)).toEqual({ mode: 'on', held: [r.json.contact.player_id], regularNotice: false });
     // The choice was for that add: the next substitute is emailed, without a question.
     const next = await a.post('/league/contacts', sub(tag, 1));
     expect(next.status).toBe(200);
@@ -199,9 +199,9 @@ describe('The setting, from the Settings page', () => {
     expect(r.status).toBe(200);
     await pass(T0 + 15 * 60000);
     expect(toSubs()).toEqual([]);
-    expect(await getAddEmails(env.DB, lg.id)).toEqual({ mode: 'off', held: [r.json.contact.player_id] });
+    expect(await getAddEmails(env.DB, lg.id)).toEqual({ mode: 'off', held: [r.json.contact.player_id], regularNotice: false });
     expect((await a.post('/league/settings/add-emails', { enabled: true })).json).toEqual({ ok: true, enabled: true });
-    expect(await getAddEmails(env.DB, lg.id)).toEqual({ mode: 'on', held: [] });
+    expect(await getAddEmails(env.DB, lg.id)).toEqual({ mode: 'on', held: [], regularNotice: false });
     await pass(T0 + 30 * 60000);
     expect(toSubs().map(m => m.to)).toEqual([`${tag}.sub1@subs.example`]);
     // And a new one is emailed when added.
@@ -233,13 +233,13 @@ describe('Inviting by hand the substitutes added without emailing', () => {
     const r = await a.post('/league/events/invite-subs', { event_id: ev.id, team: 'Bulls', need: 'skater' });
     expect(r.json).toMatchObject({ ok: true });
     expect(new Set(toSubs().map(m => m.to)).size).toBe(3);
-    expect((await getAddEmails(env.DB, lg.id))).toEqual({ mode: 'off', held: [] });
+    expect((await getAddEmails(env.DB, lg.id))).toEqual({ mode: 'off', held: [], regularNotice: false });
   });
 });
 
 describe('SMBHL', () => {
   it('has no such setting and no such list: its sub pool is read as before', async () => {
     expect(await one('SELECT 1 AS x FROM settings WHERE key = ?', addEmailsKey('smbhl'))).toBe(null);
-    expect(await getAddEmails(env.DB, 'smbhl')).toEqual({ mode: null, held: [] });
+    expect(await getAddEmails(env.DB, 'smbhl')).toEqual({ mode: null, held: [], regularNotice: false });
   });
 });
