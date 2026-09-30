@@ -170,7 +170,7 @@ describe('Server-side language persistence: resolveServerLang + translated <titl
 
       const notFoundRes = await SELF.fetch('http://example.com/league/events/detail?e=nonexistent', { headers: { cookie: withLang('en') } });
       expect(notFoundRes.status).toBe(404);
-      expect(extractTitle(await notFoundRes.text())).toBe(`Event not found | ${league.name}`);
+      expect(extractTitle(await notFoundRes.text())).toBe(`Game not found | ${league.name}`);
     });
   });
 

@@ -13,6 +13,7 @@
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, nlDocument, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
 import { ERROR_I18N } from './error_i18n.js';
+import { nextQuery } from './next_path.js';
 
 /* ---------- password hashing ---------- */
 //
@@ -550,7 +551,11 @@ export async function handleRequestPasswordReset(req, env, sendMailFunc = null) 
   if (user) {
     const { token } = await generatePasswordResetToken(env, user.id);
     const publicUrl = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
-    const resetLink = `${publicUrl}/reset-password?token=${encodeURIComponent(token)}`;
+    // body.next: the page asked for before signing in. It rides inside the
+    // emailed link, so it survives the link being opened in another browser
+    // or app than the one that asked for it. nextQuery keeps only a league
+    // page of this site (src/next_path.js), nothing else.
+    const resetLink = `${publicUrl}/reset-password?token=${encodeURIComponent(token)}${nextQuery(body.next, '&')}`;
     if (typeof sendMailFunc === 'function') {
       try {
         const languageMode = await resolveAccountEmailLanguageMode(env, user.id);

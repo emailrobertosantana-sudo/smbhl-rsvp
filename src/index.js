@@ -5,6 +5,7 @@ import { hmac, same } from './crypto_utils.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { ERROR_I18N } from './error_i18n.js';
 import { pluralText, PLURAL_TEXT_JS } from './plural.js';
+import { safeNextPath, loginUrlFor, nextQuery, nextForScript } from './next_path.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
@@ -1453,7 +1454,10 @@ const I18N_LOGIN = {
   }
 };
 
-function renderLoginPage(req) {
+// next: the page the visitor asked for before being sent here (already
+// through safeNextPath). Signing in lands there, and "forgot password"
+// carries it on.
+function renderLoginPage(req, next = null) {
   const lang = resolveServerLang(req);
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
@@ -1474,7 +1478,7 @@ function renderLoginPage(req) {
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="li_submit" data-i18n="submit" onclick="submitLogin()">Se connecter</button>
   <p class="su-center"><span data-i18n="noAccount">Pas de compte?</span> <a href="/signup" data-i18n="signup">Créer une ligue</a></p>
-  <p class="su-center"><a href="/forgot-password" data-i18n="forgot">Mot de passe oublié?</a></p>
+  <p class="su-center"><a href="/forgot-password${nextQuery(next)}" data-i18n="forgot">Mot de passe oublié?</a></p>
 </div>
 <script>
 ${nlAuthScript(I18N_LOGIN)}
@@ -1503,7 +1507,7 @@ async function submitLogin() {
       btn.disabled = false;
       return;
     }
-    window.location.href = '/dashboard';
+    window.location.href = ${nextForScript(next)} || '/dashboard';
   } catch (e) {
     showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
@@ -1536,7 +1540,7 @@ const I18N_FORGOT = {
   }
 };
 
-function renderForgotPasswordPage(req) {
+function renderForgotPasswordPage(req, next = null) {
   const lang = resolveServerLang(req);
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
@@ -1553,7 +1557,7 @@ function renderForgotPasswordPage(req) {
 </main>
 <div class="su-bottom" id="submitBtns">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="fp_submit" data-i18n="submit" onclick="submitForgot()">Envoyer</button>
-  <p class="su-center"><a href="/login" data-i18n="back">Retour à la connexion</a></p>
+  <p class="su-center"><a href="/login${nextQuery(next)}" data-i18n="back">Retour à la connexion</a></p>
 </div>
 <script>
 ${nlAuthScript(I18N_FORGOT)}
@@ -1568,7 +1572,7 @@ async function submitForgot() {
     var res = await fetch('/auth/request-password-reset', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: email })
+      body: JSON.stringify({ email: email, next: ${nextForScript(next)} })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {
@@ -1592,7 +1596,7 @@ async function submitForgot() {
 // opaque to this page -- it's just forwarded verbatim to POST
 // /auth/reset-password, which does the real verification (never
 // decoded or trusted client-side here).
-function renderResetPasswordPage(token, req) {
+function renderResetPasswordPage(token, req, next = null) {
   const lang = resolveServerLang(req);
   const I18N_RESET = {
     fr: { title: 'Nouveau mot de passe', lblPassword: 'Nouveau mot de passe', pwHelp: '8 caractères minimum.', submit: 'Réinitialiser' },
@@ -1632,7 +1636,7 @@ async function submitReset() {
       btn.disabled = false;
       return;
     }
-    window.location.href = '/dashboard';
+    window.location.href = ${nextForScript(next)} || '/dashboard';
   } catch (e) {
     showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
@@ -2047,7 +2051,7 @@ async function handleDashboardPage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
   if (!session) {
-    return Response.redirect(url.origin + '/login', 302);
+    return Response.redirect(loginUrlFor(url), 302);
   }
 
   const leagueRow = await env.DB.prepare(
@@ -2719,7 +2723,7 @@ function buildOnboardingI18n() {
 async function handleOnboardingSeasonPage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
-  if (!session) return Response.redirect(url.origin + '/login', 302);
+  if (!session) return Response.redirect(loginUrlFor(url), 302);
 
   const leagueRow = await env.DB.prepare(
     `SELECT l.* FROM leagues l JOIN league_admins la ON la.league_id = l.id
@@ -5023,7 +5027,7 @@ function renderLeagueBroadcastEmail(leagueRow, subject, message) {
 async function handleLeagueCommsPage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
-  if (!session) return Response.redirect(url.origin + '/login', 302);
+  if (!session) return Response.redirect(loginUrlFor(url), 302);
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
   const access = await checkLeagueAccess(req, env, leagueId);
@@ -5644,7 +5648,7 @@ async function handleLeagueEventNoShow(req, env, url) {
 async function handleLeagueFinancesPage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
-  if (!session) return Response.redirect(url.origin + '/login', 302);
+  if (!session) return Response.redirect(loginUrlFor(url), 302);
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
   const access = await checkLeagueAccess(req, env, leagueId);
@@ -5910,7 +5914,7 @@ load(null);
 async function handleLeagueSettingsPage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
-  if (!session) return Response.redirect(url.origin + '/login', 302);
+  if (!session) return Response.redirect(loginUrlFor(url), 302);
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
@@ -7567,7 +7571,7 @@ async function importReminderGames(env, leagueRow) {
 async function handleLeagueRosterPage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
-  if (!session) return Response.redirect(url.origin + '/login', 302);
+  if (!session) return Response.redirect(loginUrlFor(url), 302);
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
@@ -8640,7 +8644,7 @@ async function submitContact() {
 async function handleLeagueSchedulePage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
-  if (!session) return Response.redirect(url.origin + '/login', 302);
+  if (!session) return Response.redirect(loginUrlFor(url), 302);
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
@@ -9941,7 +9945,7 @@ async function confirmDeleteEvent(eventId) {
 async function handleLeagueEventDetailPage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
-  if (!session) return Response.redirect(url.origin + '/login', 302);
+  if (!session) return Response.redirect(loginUrlFor(url), 302);
 
   const leagueId = await resolveSessionLeagueId(req, env, url);
   if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
@@ -9972,16 +9976,23 @@ async function handleLeagueEventDetailPage(req, env, url) {
 
   if (!ev) {
     const I18N_404 = {
-      fr: { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter', notFound: 'Match introuvable', backToSchedule: 'Horaire' },
-      en: { navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out', notFound: 'Event not found', backToSchedule: 'Schedule' }
+      fr: { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navSettings: 'Paramètres', logout: 'Se déconnecter', notFound: 'Match introuvable', backToSchedule: 'Horaire',
+        notFoundBody: "Ce match n'existe plus, ou le lien n'est pas valide.", notFoundHome: "Aller à l'accueil de la ligue", notFoundSchedule: "Voir l'horaire" },
+      en: { navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out', notFound: 'Game not found', backToSchedule: 'Schedule',
+        notFoundBody: 'This game no longer exists, or the link is not valid.', notFoundHome: 'Go to the league home', notFoundSchedule: 'See the schedule' }
     };
     const bodyHtml404 = `${dashStyles()}${header}
 <main class="dash-main">
   <p class="nl-help"><a href="/league/schedule" data-i18n="backToSchedule">&lsaquo; Horaire</a></p>
   <h1 data-i18n="notFound">Match introuvable</h1>
+  <p class="nl-help" id="ev_not_found" data-i18n="notFoundBody">Ce match n'existe plus, ou le lien n'est pas valide.</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:var(--space-3)">
+    <a class="nl-btn nl-btn--primary" href="/dashboard" data-i18n="notFoundHome">Aller à l'accueil de la ligue</a>
+    <a class="nl-btn nl-btn--secondary" href="/league/schedule" data-i18n="notFoundSchedule">Voir l'horaire</a>
+  </div>
 </main>
 ${tabbar}`;
-    return new Response(nlDocument({ titles: { fr: `Match introuvable | ${leagueRow.name}`, en: `Event not found | ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml404 + `<script>${nlAuthScript(I18N_404)}</script>`, lang }), {
+    return new Response(nlDocument({ titles: { fr: `Match introuvable | ${leagueRow.name}`, en: `Game not found | ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml404 + `<script>${nlAuthScript(I18N_404)}</script>`, lang }), {
       status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
     });
   }
@@ -13281,6 +13292,14 @@ async function alertAdminShortGame(env, ev, shortages) {
   return queued;
 }
 
+// The admin's link to a game's page, for every email that has one (short
+// of players, waitlist, uneven games, late drop-out). The page needs a
+// session: opened without one it goes to the login page and comes back
+// here after signing in (src/next_path.js).
+function leagueGamePageLink(env, ev) {
+  return `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
+}
+
 function shortGameLine(sh, lang) {
   const g = sh.need === 'goalie';
   const t = sh.team ? (lang === 'fr' ? `${sh.team} : ` : `${sh.team}: `) : '';
@@ -13298,7 +13317,7 @@ function renderShortGameAdminAlert(env, leagueRow, ev, shortages) {
   const barColor = leagueFillColor(leagueRow.color || '#b3122e');
   const whenFr = formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false);
   const whenEn = formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false);
-  const link = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
+  const link = leagueGamePageLink(env, ev);
   const closeFr = "Il n'y a plus aucun remplaçant à appeler. Les joueurs n'ont pas été prévenus.";
   const closeEn = 'There is no sub left to call. Players have not been told.';
   const block = (badge, title, when, lines, close, btn) => `
@@ -19645,7 +19664,7 @@ function renderNightWaitlistAdminAlert(env, leagueRow, ev, contact, alone = fals
   const barColor = leagueFillColor(leagueRow.color || '#b3122e');
   const whenFr = formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false);
   const whenEn = formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false);
-  const link = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
+  const link = leagueGamePageLink(env, ev);
   const block = (badge, title, when, line, btn) => `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}${badge}</td></tr></table>
     <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(title)}</h1>
@@ -19766,7 +19785,7 @@ function renderThinGameAdminAlert(env, leagueRow, ev, thin) {
   const barColor = leagueFillColor(leagueRow.color || '#b3122e');
   const whenFr = formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false);
   const whenEn = formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false);
-  const link = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
+  const link = leagueGamePageLink(env, ev);
   const label = (g, lang) => g.venue || formatEventTime(g.start_time, lang);
   const lines = lang => thin.flatMap(t => [
     `${label(ev, lang)}${lang === 'fr' ? ' : ' : ': '}${shortGameLine({ team: null, need: t.need, have: t.have, min: t.min, basis: 'confirmed' }, lang)}`,
@@ -20393,7 +20412,7 @@ function renderLateReversalForLeague(env, leagueRow, ev, contact, opts = {}) {
   const languageMode = leagueRow.language_mode || 'both';
   const dayLabelFr = reminderDayLabel(ev.date, 'fr');
   const dayLabelEn = reminderDayLabel(ev.date, 'en');
-  const dashboardLink = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
+  const dashboardLink = leagueGamePageLink(env, ev);
   return renderLateReversalAdminAlert({
     leagueName: leagueRow.name, leagueColor: leagueRow.color,
     playerName: contact.name, team: opts.team !== undefined ? (opts.team || '') : (contact.preferred_team || ''), dayLabelFr, dayLabelEn, ev, dashboardLink, languageMode,
@@ -30172,12 +30191,18 @@ async function handleFetch(req, env, ctx) {
       // Signup/login/dashboard pages — pure UI on top of the routes above.
       if ((url.pathname === '/signup' || url.pathname === '/signup/') && req.method === 'GET')
         return await renderSignupPage(req, env, url);
-      if ((url.pathname === '/login' || url.pathname === '/login/') && req.method === 'GET')
-        return new Response(renderLoginPage(req), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      if ((url.pathname === '/login' || url.pathname === '/login/') && req.method === 'GET') {
+        // The page asked for before signing in (src/next_path.js). Someone
+        // already signed in goes straight to it; with no such page the
+        // login page answers exactly as it always has.
+        const next = safeNextPath(url.searchParams.get('next'));
+        if (next && await checkUserSession(req, env)) return Response.redirect(url.origin + next, 302);
+        return new Response(renderLoginPage(req, next), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      }
       if ((url.pathname === '/forgot-password' || url.pathname === '/forgot-password/') && req.method === 'GET')
-        return new Response(renderForgotPasswordPage(req), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+        return new Response(renderForgotPasswordPage(req, safeNextPath(url.searchParams.get('next'))), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/reset-password' || url.pathname === '/reset-password/') && req.method === 'GET')
-        return new Response(renderResetPasswordPage(url.searchParams.get('token'), req), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+        return new Response(renderResetPasswordPage(url.searchParams.get('token'), req, safeNextPath(url.searchParams.get('next'))), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/dashboard' || url.pathname === '/dashboard/') && req.method === 'GET')
         return await handleDashboardPage(req, env, url);
       // Live-testing task (batch 5), Part 6: continuation of onboarding
