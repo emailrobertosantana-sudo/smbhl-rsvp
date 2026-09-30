@@ -402,3 +402,44 @@ describe('Import, with reminders on (D6)', () => {
     await close();
   }, 120000);
 });
+
+describe('Finances', () => {
+  // Six tabs now (Finances added): at phone width the tab bar and the page
+  // fit, in both languages, and pricing saves from the page itself.
+  for (const lang of ['fr', 'en']) {
+    it(`at 390 px (${lang}): no sideways scroll, every tab and its label inside the screen; the pricing form saves`, async () => {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      await context.addCookies(league.session.cookie.split('; ').map(c => { const i = c.indexOf('='); return { name: c.slice(0, i), value: c.slice(i + 1), url: h.baseUrl + '/' }; }));
+      await context.addInitScript(l => { try { localStorage.setItem('smbhl_admin_lang', l); } catch (e) {} }, lang);
+      const page = await context.newPage();
+      const errors = [];
+      page.on('pageerror', e => errors.push(e.message));
+      await page.route('**/*', r => (r.request().url().startsWith(h.baseUrl) ? r.continue() : r.abort()));
+      await page.goto(h.baseUrl + '/league/finances', { waitUntil: 'load' });
+      await page.waitForSelector('#fin-tiles .fin-tile');
+      const m = await page.evaluate(() => {
+        const tabs = [...document.querySelectorAll('.nl-tabbar a')].map(a => {
+          const r = a.getBoundingClientRect(); const span = a.querySelector('span');
+          return { left: r.left, right: r.right, label: span.textContent, clipped: span.scrollWidth > span.clientWidth + 1 };
+        });
+        return { scrollW: document.documentElement.scrollWidth, tabs };
+      });
+      expect(m.scrollW).toBeLessThanOrEqual(390);
+      expect(m.tabs.length).toBe(6);
+      for (const t of m.tabs) {
+        expect(t.left, t.label).toBeGreaterThanOrEqual(0);
+        expect(t.right, t.label).toBeLessThanOrEqual(390);
+        expect(t.clipped, t.label).toBe(false);
+      }
+      await page.check('input[name="fin-mode"][value="per_game"]');
+      expect(await page.isVisible('#fin-price-player')).toBe(false); // season fee only in the season mode
+      await page.fill('#fin-game-player', '12');
+      await page.click('#fin-save-pricing');
+      await page.waitForFunction(() => document.getElementById('fin-pricing-msg').textContent.length > 0);
+      const row = await h.db.prepare(`SELECT pricing_mode, price_sub_player FROM season_pricing WHERE league_id = ?`).bind(league.league.id).first();
+      expect(row).toEqual({ pricing_mode: 'per_game', price_sub_player: 12 });
+      expect(errors).toEqual([]);
+      await context.close();
+    }, 120000);
+  }
+});

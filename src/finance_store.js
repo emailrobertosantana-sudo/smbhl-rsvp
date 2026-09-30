@@ -40,6 +40,24 @@ export async function saveSeasonPricing(db, leagueId, season, { pricePlayer, pri
   ).bind(leagueId, season, pricePlayer, priceGoalie, priceSubPlayer, priceSubGoalie, etransferPhone, now).run();
 }
 
+// A league season's prices and pricing mode (the league product's
+// Finances page, migrate-055): 'season' -- regulars pay the season fee,
+// subs per game; 'per_game' -- everyone per game (the per-game prices are
+// price_sub_player / price_sub_goalie either way).
+export async function saveLeagueSeasonPricing(db, leagueId, season, { mode, pricePlayer, priceGoalie, pricePerGamePlayer, pricePerGameGoalie }, now = new Date().toISOString()) {
+  await db.prepare(
+    `INSERT INTO season_pricing (league_id, season, pricing_mode, price_player, price_goalie, price_sub_player, price_sub_goalie, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT DO UPDATE SET
+       pricing_mode = excluded.pricing_mode,
+       price_player = excluded.price_player,
+       price_goalie = excluded.price_goalie,
+       price_sub_player = excluded.price_sub_player,
+       price_sub_goalie = excluded.price_sub_goalie,
+       updated_at = excluded.updated_at`
+  ).bind(leagueId, season, mode, pricePlayer, priceGoalie, pricePerGamePlayer, pricePerGameGoalie, now).run();
+}
+
 // The regular and sub player prices only (SMBHL's season hub): a new row
 // gets 0 for the goalie prices; an existing row keeps its goalie prices
 // and e-transfer phone.

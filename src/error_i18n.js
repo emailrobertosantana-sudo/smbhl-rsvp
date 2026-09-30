@@ -135,6 +135,12 @@ export const ERROR_I18N = {
   HEADCOUNT_MIN_GOALIES_TOO_HIGH: { fr: "Le minimum de gardiens ne peut pas dépasser le maximum de joueurs.", en: "Minimum goalies can't be more than the maximum player count." },
   HEADCOUNT_MAX_GOALIES_INVALID: { fr: 'Le maximum de gardiens doit être zéro ou plus.', en: 'Maximum goalies must be zero or more.' },
   HEADCOUNT_MAX_GOALIES_TOO_LOW: { fr: 'Le maximum de gardiens doit être au moins égal au minimum.', en: 'The maximum goalies must be at least the minimum.' },
+  // League finance.
+  FINANCE_BAD_AMOUNT: { fr: 'Les montants doivent être des nombres, 0 ou plus.', en: 'Amounts must be numbers, 0 or more.' },
+  FINANCE_BAD_MODE: { fr: 'Mode de tarification inconnu.', en: 'Unknown pricing mode.' },
+  NO_SHOW_NOT_STARTED: { fr: "Le match n'a pas encore commencé.", en: 'The game has not started yet.' },
+  NO_SHOW_HAS_STATS: { fr: "Des statistiques ont été entrées pour ce joueur à ce match : retire-les d'abord.", en: 'Stats were entered for this player in this game: remove them first.' },
+  NO_SHOW_NOT_IN: { fr: "Seul un joueur inscrit au match peut être marqué comme absent.", en: 'Only a player marked in for the game can be marked as not having shown.' },
   ROSTER_LIMITS_REQUIRED: { fr: 'Un nombre minimum et maximum de joueurs est requis ensemble.', en: 'A minimum and maximum player count are required together.' },
   ROSTER_MAX_TOO_LOW: { fr: 'Le maximum doit être au moins égal au minimum.', en: 'The maximum must be at least the minimum.' },
   MIN_GOALIES_INVALID: { fr: 'Le minimum de gardiens doit être zéro ou plus.', en: 'Minimum goalies must be zero or more.' },

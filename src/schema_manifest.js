@@ -1,7 +1,7 @@
 // GENERATED FILE -- do not hand-edit.
 // Produced by scripts/generate_schema_manifest.js from
 // test/support/base_schema_v1.sql +
-// all migrate-*.sql files (54 files parsed, as of this
+// all migrate-*.sql files (55 files parsed, as of this
 // generation). Re-run that script after adding a new migration, then
 // run the full test suite -- test/schema_manifest.spec.js fails loudly
 // if this file and the real migrated schema disagree.
@@ -11,7 +11,7 @@
 // this list against a real database's actual PRAGMA table_info output.
 // This is the single source of truth both share.
 //
-// 28 tables, 257 columns tracked.
+// 28 tables, 259 columns tracked.
 export const SCHEMA_MANIFEST = {
   "availability": [
     "answered_at",
@@ -248,6 +248,7 @@ export const SCHEMA_MANIFEST = {
     "event_id",
     "guest_name",
     "league_id",
+    "no_show",
     "player_id",
     "role",
     "status",
@@ -272,6 +273,7 @@ export const SCHEMA_MANIFEST = {
     "price_player",
     "price_sub_goalie",
     "price_sub_player",
+    "pricing_mode",
     "season",
     "updated_at"
   ],

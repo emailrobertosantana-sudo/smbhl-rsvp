@@ -70,7 +70,8 @@ import {
   SMBHL_SHORTFALL_MIN_SKATERS
 } from './season_config.js';
 import { checkSchemaOnce, checkSchemaForPass, formatSchemaDriftMessage } from './schema_guard.js';
-import { getSeasonPricing, listPricingSeasons, saveSeasonPricing, getPlayerDues, listSeasonDues, savePlayerDues, listSeasonCosts, saveSeasonCost, deleteSeasonCost } from './finance_store.js';
+import { getSeasonPricing, listPricingSeasons, saveSeasonPricing, saveLeagueSeasonPricing, getPlayerDues, listSeasonDues, savePlayerDues, listSeasonCosts, saveSeasonCost, deleteSeasonCost } from './finance_store.js';
+import { basePriceFor, settleDues, financeSummary, costSummary as financeCostSummary, PRICING_MODES, COST_CATEGORIES } from './finance_rules.js';
 import { gamesOverlap, overlappingGames, concurrencyClusters, byStart, gameInterval } from './league_nights.js';
 
 /* SMBHL attendance
@@ -1936,6 +1937,8 @@ const DASH_ICON_SETTINGS = '<svg viewBox="0 0 20 20" fill="none" stroke="current
 // Live-testing task (batch 3), Part 2: Comms nav entry -- available to
 // every league (no capability-flag gate, per the task's own explicit
 // instruction), so it's a permanent 5th nav item, not conditional.
+// A coin: the Finances tab.
+const DASH_ICON_FINANCES = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="7"/><path d="M12.5 7.5c-.5-.9-1.4-1.3-2.5-1.3-1.5 0-2.5.8-2.5 1.9 0 2.7 5.2 1.4 5.2 4 0 1.1-1.1 1.9-2.7 1.9-1.2 0-2.2-.5-2.7-1.4M10 5v1.2M10 13.8V15"/></svg>';
 const DASH_ICON_COMMS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5.5a1.5 1.5 0 0 1 1.5-1.5h11a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H9l-4 3v-3H4.5A1.5 1.5 0 0 1 3 12.5z"/></svg>';
 
 // Admin desktop/phone chrome (design system Part 3): nl-header with the
@@ -1948,13 +1951,14 @@ const DASH_ICON_COMMS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentCol
 // Live-testing task, Part 1: added a 4th nav entry (settings) -- the
 // per-key French fallback label lookup used to be a nested ternary
 // (fine for 3 keys, unreadable for 4+), switched to a plain map.
-const DASH_NAV_LABEL_FR = { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navComms: 'Comms', navSettings: 'Paramètres' };
+const DASH_NAV_LABEL_FR = { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Paramètres' };
 function dashChrome(leagueName, active) {
   const nav = [
     { key: 'home', href: '/dashboard', icon: DASH_ICON_HOME, i18n: 'navHome' },
     { key: 'roster', href: '/league/roster', icon: DASH_ICON_PLAYERS, i18n: 'navRoster' },
     { key: 'schedule', href: '/league/schedule', icon: DASH_ICON_SCHEDULE, i18n: 'navSchedule' },
     { key: 'comms', href: '/league/comms', icon: DASH_ICON_COMMS, i18n: 'navComms' },
+    { key: 'finances', href: '/league/finances', icon: DASH_ICON_FINANCES, i18n: 'navFinances' },
     { key: 'settings', href: '/league/settings', icon: DASH_ICON_SETTINGS, i18n: 'navSettings' }
   ];
   const header = `<header class="nl-header">
@@ -5421,6 +5425,477 @@ async function drainNow() {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
+
+/* ---------- League finance (the league product's Finances page) ----------
+ * Pricing per season, per-player dues, costs -- all of it the league's
+ * own rows (finance_store.js, scoped by league), behind the session and
+ * league access. Nothing here reads data.json or SMBHL's rules for who is
+ * a sub: a contact's role says it (roster = regular; anything else = sub).
+ *
+ * GAMES PLAYED COME FROM D1: a game of the season that has started (not
+ * cancelled), with the player marked in for it -- the default charge, no
+ * admin work -- or with player stats entered for them (attendance
+ * confirmed, marked in or not); minus the admin's "didn't show" mark on
+ * the game page (rsvp.no_show), which wins over both. One league event is
+ * one game, so games played is a count -- no games-per-night multiplier.
+ *
+ * The rules (src/finance_rules.js) are SMBHL's: a regular pays the season
+ * fee, a sub games x the per-game price -- or, in a 'per_game' season,
+ * everyone games x the per-game price; a custom due replaces it; paid
+ * beyond the due is a credit; exempt / paid / partial / unpaid.
+ */
+
+// Every game of the season that has started (not cancelled), and who
+// played each: player_id -> [event ids].
+async function leagueGamesPlayed(env, leagueId, season, cfg) {
+  const games = ((await env.DB.prepare(
+    `SELECT * FROM events WHERE league_id = ? AND season = ? AND state != 'cancelled'`
+  ).bind(leagueId, season).all()).results || []).filter(g => eventHasStarted(g));
+  const played = new Map();
+  if (!games.length) return { played, started: games.length };
+  const ids = games.map(g => g.id);
+  const byId = new Map(games.map(g => [g.id, g]));
+  const marks = ids.map(() => '?').join(',');
+  const rows = (await env.DB.prepare(
+    `SELECT event_id, player_id, status, team, no_show FROM rsvp WHERE league_id = ? AND event_id IN (${marks}) AND player_id IS NOT NULL`
+  ).bind(leagueId, ...ids).all()).results || [];
+  const stats = (await env.DB.prepare(
+    `SELECT event_id, player_id FROM player_game_stats WHERE league_id = ? AND event_id IN (${marks})`
+  ).bind(leagueId, ...ids).all()).results || [];
+  const noShow = new Set(rows.filter(r => r.no_show === 1).map(r => `${r.event_id}|${r.player_id}`));
+  const add = (eventId, playerId) => {
+    if (noShow.has(`${eventId}|${playerId}`)) return;
+    if (!played.has(playerId)) played.set(playerId, new Set());
+    played.get(playerId).add(eventId);
+  };
+  for (const r of rows) if (rowCountsAsIn(byId.get(r.event_id), r, cfg)) add(r.event_id, r.player_id);
+  for (const s of stats) add(s.event_id, s.player_id);
+  return { played, started: games.length };
+}
+
+// The seasons this league has: its games' and its priced ones, newest first.
+async function leagueFinanceSeasons(env, leagueId) {
+  const fromGames = (await getLeagueSeasonsList(env, leagueId, null)).map(s => s.season);
+  const seen = new Set(fromGames);
+  const priced = (await listPricingSeasons(env.DB, leagueId)).filter(s => !seen.has(s));
+  return [...fromGames, ...priced];
+}
+
+async function computeLeagueFinance(env, leagueId, seasonParam) {
+  const seasons = await leagueFinanceSeasons(env, leagueId);
+  const season = seasonParam || seasons[0] || null;
+  if (!season) return { season: null, seasons, pricing: null, players: [], costs: [], summary: financeSummary([], []), costSummary: financeCostSummary([]), startedGames: 0 };
+  const cfg = await getLeagueSeasonConfig(env, leagueId, season);
+  const row = await getSeasonPricing(env.DB, leagueId, season);
+  const pricing = {
+    configured: !!row,
+    mode: (row && row.pricing_mode) || 'season',
+    price_player: row ? Number(row.price_player) : 0,
+    price_goalie: row ? Number(row.price_goalie) : 0,
+    price_game_player: row ? Number(row.price_sub_player) : 0,
+    price_game_goalie: row ? Number(row.price_sub_goalie) : 0
+  };
+  const rulesPricing = { price_player: pricing.price_player, price_goalie: pricing.price_goalie, price_sub_player: pricing.price_game_player, price_sub_goalie: pricing.price_game_goalie };
+  const { played, started } = await leagueGamesPlayed(env, leagueId, season, cfg);
+  const dues = new Map((await listSeasonDues(env.DB, leagueId, season)).map(d => [d.player_id, d]));
+  const contacts = (await env.DB.prepare(
+    `SELECT player_id, name, role, is_goalie, preferred_team, COALESCE(is_active, 1) AS is_active FROM contacts WHERE league_id = ?`
+  ).bind(leagueId).all()).results || [];
+  const players = [];
+  for (const c of contacts) {
+    const isSub = c.role !== 'roster';
+    const games = played.has(c.player_id) ? played.get(c.player_id).size : 0;
+    const due = dues.get(c.player_id);
+    // Listed: anyone who played or has a dues row; in a season-fee season,
+    // every active regular too (they owe the fee before playing).
+    const owesFee = pricing.mode === 'season' && !isSub && c.is_active === 1;
+    if (!games && !due && !owesFee) continue;
+    const basePrice = basePriceFor({ isSub, isGoalie: c.is_goalie === 1, gamesPlayed: games, pricing: rulesPricing, mode: pricing.mode });
+    const s = settleDues({ basePrice, customDue: due ? due.custom_due : null, amountPaid: due ? due.amount_paid : 0 });
+    players.push({
+      player_id: c.player_id, name: c.name, is_sub: isSub, is_goalie: c.is_goalie === 1, is_active: c.is_active === 1,
+      team: c.preferred_team || null, games_played: games, base_price: basePrice,
+      custom_due: s.customDue, total_due: s.totalDue, amount_paid: s.amountPaid, outstanding: s.outstanding, credit: s.credit,
+      status: s.status, notes: (due && due.notes) || ''
+    });
+  }
+  players.sort((a, b) => (a.is_sub - b.is_sub) || String(a.name).localeCompare(String(b.name)));
+  const costs = await listSeasonCosts(env.DB, leagueId, season);
+  return { season, seasons, pricing, players, costs, summary: financeSummary(players, costs), costSummary: financeCostSummary(costs), startedGames: started };
+}
+
+// Session + league access (+ CSRF for writes); never SMBHL (its own page is /admin/finances).
+async function leagueFinanceAccess(req, env, url, { write = false } = {}) {
+  const session = await checkUserSession(req, env);
+  if (!session) return { res: leagueAccessResponse('unauthenticated') };
+  if (write && !(await checkCsrfToken(req, env, session))) {
+    return { res: Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 }) };
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return { res: Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 }) };
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return { res: leagueAccessResponse(access) };
+  if (leagueId === SMBHL_LEAGUE_ID) return { res: Response.json({ ok: false, error: 'SMBHL finances are on /admin/finances.', errorKey: 'ROUTE_BLOCKED_EVENTS' }, { status: 403 }) };
+  return { leagueId, session };
+}
+
+// A money amount from a form: a finite number, 0 or more, cents kept.
+function financeAmount(v, { allowNull = false } = {}) {
+  if (allowNull && (v === null || v === undefined || v === '')) return { ok: true, value: null };
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return { ok: false };
+  return { ok: true, value: Math.round(n * 100) / 100 };
+}
+const financeBad = (error, errorKey = 'FINANCE_BAD_AMOUNT') => Response.json({ ok: false, error, errorKey }, { status: 400 });
+
+async function handleLeagueFinancesData(req, env, url) {
+  const a = await leagueFinanceAccess(req, env, url);
+  if (a.res) return a.res;
+  const data = await computeLeagueFinance(env, a.leagueId, String(url.searchParams.get('season') || '').trim() || null);
+  return Response.json({ ok: true, ...data });
+}
+
+async function handleLeagueFinancesPricing(req, env, url) {
+  const a = await leagueFinanceAccess(req, env, url, { write: true });
+  if (a.res) return a.res;
+  const b = await req.json().catch(() => ({}));
+  const season = String(b.season || '').trim();
+  if (!season) return financeBad('season is required.', 'SEASON_NAME_REQUIRED');
+  const mode = String(b.mode || 'season');
+  if (!PRICING_MODES.includes(mode)) return financeBad('mode must be season or per_game.', 'FINANCE_BAD_MODE');
+  const nums = {};
+  for (const [k, field] of [['pricePlayer', 'price_player'], ['priceGoalie', 'price_goalie'], ['pricePerGamePlayer', 'price_game_player'], ['pricePerGameGoalie', 'price_game_goalie']]) {
+    const n = financeAmount(b[field] ?? 0);
+    if (!n.ok) return financeBad(`${field} must be a number, 0 or more.`);
+    nums[k] = n.value;
+  }
+  await saveLeagueSeasonPricing(env.DB, a.leagueId, season, { mode, ...nums });
+  return Response.json({ ok: true, season });
+}
+
+async function handleLeagueFinancesPlayer(req, env, url) {
+  const a = await leagueFinanceAccess(req, env, url, { write: true });
+  if (a.res) return a.res;
+  const b = await req.json().catch(() => ({}));
+  const season = String(b.season || '').trim();
+  const playerId = String(b.player_id || '').trim();
+  if (!season || !playerId) return financeBad('season and player_id are required.', 'ADMIN_RSVP_FIELDS_REQUIRED');
+  const inLeague = await env.DB.prepare('SELECT 1 FROM contacts WHERE player_id = ? AND league_id = ?').bind(playerId, a.leagueId).first();
+  if (!inLeague) return Response.json({ ok: false, error: 'Player not found.', errorKey: 'PLAYER_NOT_FOUND' }, { status: 404 });
+  const custom = financeAmount(b.custom_due, { allowNull: true });
+  const paid = financeAmount(b.amount_paid ?? 0);
+  if (!custom.ok || !paid.ok) return financeBad('Amounts must be numbers, 0 or more.');
+  const notes = String(b.notes || '').trim().slice(0, 500) || null;
+  await savePlayerDues(env.DB, a.leagueId, season, playerId, { customDue: custom.value, amountPaid: paid.value, notes });
+  return Response.json({ ok: true, season, player_id: playerId });
+}
+
+async function handleLeagueFinancesCost(req, env, url) {
+  const a = await leagueFinanceAccess(req, env, url, { write: true });
+  if (a.res) return a.res;
+  const b = await req.json().catch(() => ({}));
+  if (url.pathname.endsWith('/delete')) {
+    const id = String(b.id || '').trim();
+    if (!id) return financeBad('id is required.', 'ADMIN_RSVP_FIELDS_REQUIRED');
+    await deleteSeasonCost(env.DB, a.leagueId, id);
+    return Response.json({ ok: true, id });
+  }
+  const season = String(b.season || '').trim();
+  const description = String(b.description || '').trim().slice(0, 200);
+  const amount = financeAmount(b.amount);
+  if (!season || !description) return financeBad('season and description are required.', 'ADMIN_RSVP_FIELDS_REQUIRED');
+  if (!amount.ok) return financeBad('amount must be a number, 0 or more.');
+  const category = COST_CATEGORIES.includes(String(b.category)) ? String(b.category) : 'other';
+  const id = b.id ? String(b.id).trim() : `cost_${crypto.randomUUID()}`;
+  await saveSeasonCost(env.DB, a.leagueId, { id, season, category, description, amount: amount.value });
+  return Response.json({ ok: true, id, season });
+}
+
+// The admin's "didn't show" on the game page: a player marked in for a
+// game that has started, who did not play it, is not charged for it (and
+// the mark can be taken back).
+async function handleLeagueEventNoShow(req, env, url) {
+  const a = await leagueFinanceAccess(req, env, url, { write: true });
+  if (a.res) return a.res;
+  const b = await req.json().catch(() => ({}));
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(String(b.event_id || ''), a.leagueId).first();
+  if (!ev) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  if (!eventHasStarted(ev)) return Response.json({ ok: false, error: 'The game has not started yet.', errorKey: 'NO_SHOW_NOT_STARTED' }, { status: 409 });
+  const row = await env.DB.prepare(`SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?`).bind(ev.id, String(b.player_id || '')).first();
+  if (!row || row.status !== 'in') return Response.json({ ok: false, error: 'Only a player marked in can be marked as not having shown.', errorKey: 'NO_SHOW_NOT_IN' }, { status: 409 });
+  // Stats entered for this player in this game confirm they played.
+  if (b.no_show && await env.DB.prepare('SELECT 1 FROM player_game_stats WHERE event_id = ? AND player_id = ?').bind(ev.id, String(b.player_id)).first()) {
+    return Response.json({ ok: false, error: 'Stats were entered for this player in this game: remove them first.', errorKey: 'NO_SHOW_HAS_STATS' }, { status: 409 });
+  }
+  await env.DB.prepare('UPDATE rsvp SET no_show = ? WHERE event_id = ? AND player_id = ?').bind(b.no_show ? 1 : 0, ev.id, String(b.player_id)).run();
+  return Response.json({ ok: true, event_id: ev.id, player_id: String(b.player_id), no_show: !!b.no_show });
+}
+
+async function handleLeagueFinancesPage(req, env, url) {
+  const lang = resolveServerLang(req);
+  const session = await checkUserSession(req, env);
+  if (!session) return Response.redirect(url.origin + '/login', 302);
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.redirect(url.origin + '/dashboard', 302);
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok' || leagueId === SMBHL_LEAGUE_ID) return Response.redirect(url.origin + '/dashboard', 302);
+  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
+  const { header, tabbar } = dashChrome(leagueRow.name, 'finances');
+
+  const I18N_FIN = {
+    fr: {
+      navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Paramètres', logout: 'Se déconnecter',
+      title: 'Finances', lblSeason: 'Saison', noSeason: "Aucune saison pour l'instant : crée des matchs dans l'horaire, puis reviens ici.",
+      pricingTitle: 'Tarifs de la saison',
+      modeSeason: 'Frais de saison pour les réguliers, par match pour les remplaçants',
+      modePerGame: 'Par match pour tout le monde',
+      lblPricePlayer: 'Frais de saison — joueur', lblPriceGoalie: 'Frais de saison — gardien',
+      lblGamePlayer: 'Par match — joueur', lblGameGoalie: 'Par match — gardien',
+      btnSavePricing: 'Enregistrer les tarifs', saved: 'Enregistré.',
+      noPricing: "Aucun tarif pour cette saison : tout le monde doit 0 $ jusqu'à ce que tu en fixes.",
+      gamesHelp: "Matchs joués : les matchs commencés où le joueur était inscrit, et ceux où des statistiques ont été entrées pour lui — moins ceux marqués « N'est pas venu » sur la page du match.",
+      sumDue: 'Dû', sumPaid: 'Payé', sumOutstanding: 'À recevoir', sumCredit: 'Crédits à rendre', sumCosts: 'Dépenses', sumNet: 'Solde (payé − dépenses)',
+      playersTitle: 'Joueurs', colPlayer: 'Joueur', colRole: 'Rôle', colGames: 'Matchs', colDue: 'Dû', colPaid: 'Payé', colStatus: 'Statut',
+      roleRegular: 'Régulier', roleSub: 'Remplaçant', roleGoalie: 'gardien', inactive: 'inactif',
+      stPaid: 'Payé', stPartial: 'Partiel', stUnpaid: 'Non payé', stExempt: 'Exempté', creditOf: 'Crédit de',
+      btnEdit: 'Modifier', btnSave: 'Enregistrer', btnCancel: 'Annuler',
+      lblCustomDue: 'Montant dû (vide : selon les tarifs)', lblAmountPaid: 'Montant payé', lblNotes: 'Notes',
+      noPlayers: 'Personne ne doit rien pour cette saison pour le moment.',
+      costsTitle: 'Dépenses', lblCategory: 'Catégorie', lblDescription: 'Description', lblAmount: 'Montant', btnAddCost: 'Ajouter', btnDelete: 'Supprimer',
+      catRental: 'Location de glace ou de terrain', catEquipment: 'Équipement', catTechnology: 'Technologie', catOther: 'Autre',
+      noCosts: 'Aucune dépense pour cette saison.', confirmDeleteCost: 'Supprimer cette dépense?',
+      manualNote: 'Les paiements se notent à la main (virement, comptant) : aucun paiement en ligne.'
+    },
+    en: {
+      navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Settings', logout: 'Log out',
+      title: 'Finances', lblSeason: 'Season', noSeason: 'No season yet: create games on the schedule, then come back here.',
+      pricingTitle: 'Season pricing',
+      modeSeason: 'Season fee for regulars, per game for subs',
+      modePerGame: 'Per game for everyone',
+      lblPricePlayer: 'Season fee — player', lblPriceGoalie: 'Season fee — goalie',
+      lblGamePlayer: 'Per game — player', lblGameGoalie: 'Per game — goalie',
+      btnSavePricing: 'Save pricing', saved: 'Saved.',
+      noPricing: 'No pricing for this season: everyone owes $0 until you set it.',
+      gamesHelp: "Games played: games that have started where the player was marked in, and those with stats entered for them — minus the ones marked “Didn't show” on the game page.",
+      sumDue: 'Due', sumPaid: 'Paid', sumOutstanding: 'Outstanding', sumCredit: 'Credits owed back', sumCosts: 'Costs', sumNet: 'Balance (paid − costs)',
+      playersTitle: 'Players', colPlayer: 'Player', colRole: 'Role', colGames: 'Games', colDue: 'Due', colPaid: 'Paid', colStatus: 'Status',
+      roleRegular: 'Regular', roleSub: 'Sub', roleGoalie: 'goalie', inactive: 'inactive',
+      stPaid: 'Paid', stPartial: 'Partial', stUnpaid: 'Unpaid', stExempt: 'Exempt', creditOf: 'Credit of',
+      btnEdit: 'Edit', btnSave: 'Save', btnCancel: 'Cancel',
+      lblCustomDue: 'Amount due (empty: from the pricing)', lblAmountPaid: 'Amount paid', lblNotes: 'Notes',
+      noPlayers: 'Nobody owes anything for this season yet.',
+      costsTitle: 'Costs', lblCategory: 'Category', lblDescription: 'Description', lblAmount: 'Amount', btnAddCost: 'Add', btnDelete: 'Delete',
+      catRental: 'Ice or field rental', catEquipment: 'Equipment', catTechnology: 'Technology', catOther: 'Other',
+      noCosts: 'No costs for this season.', confirmDeleteCost: 'Delete this cost?',
+      manualNote: 'Payments are recorded by hand (e-transfer, cash): no online payment.'
+    }
+  };
+  const t = I18N_FIN[lang] || I18N_FIN.fr;
+  const L = k => `data-i18n="${k}">${esc(t[k])}`;
+
+  const bodyHtml = `${dashStyles()}${header}
+<style>
+  .fin-row { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: flex-end; }
+  .fin-row .nl-field { flex: 1 1 180px; margin: 0; }
+  .fin-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); }
+  .fin-tile { padding: var(--space-4); }
+  .fin-tile .stat { display: block; font: 700 24px/30px var(--font-display); font-stretch: 118%; }
+  .fin-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .fin-table th { text-align: left; font-weight: 600; color: var(--ink-muted); padding: 8px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .fin-table td { padding: 10px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .fin-table td.num, .fin-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .fin-edit { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3); padding: var(--space-3) 0; }
+  .fin-radio { display: flex; flex-direction: column; gap: 8px; margin: var(--space-2) 0 var(--space-3); }
+  .fin-radio label { display: flex; gap: 8px; align-items: center; min-height: 32px; }
+</style>
+<main class="dash-main" id="fin-main">
+  <div class="dash-top">
+    <h1 ${L('title')}</h1>
+    <div class="nl-field" style="margin:0;min-width:200px">
+      <label class="nl-label" for="fin-season" ${L('lblSeason')}</label>
+      <select class="nl-select" id="fin-season"></select>
+    </div>
+  </div>
+  <p class="nl-help" id="fin-noseason" style="display:none" ${L('noSeason')}</p>
+
+  <section class="nl-card nl-card--pad-lg" id="fin-pricing">
+    <div class="h3" ${L('pricingTitle')}</div>
+    <p class="nl-help" id="fin-nopricing" style="display:none" ${L('noPricing')}</p>
+    <div class="fin-radio" role="radiogroup">
+      <label><input type="radio" name="fin-mode" value="season" checked> <span ${L('modeSeason')}</span></label>
+      <label><input type="radio" name="fin-mode" value="per_game"> <span ${L('modePerGame')}</span></label>
+    </div>
+    <div class="fin-row">
+      <div class="nl-field" data-mode-only="season"><label class="nl-label" for="fin-price-player" ${L('lblPricePlayer')}</label><input class="nl-input" id="fin-price-player" type="number" min="0" step="0.01" inputmode="decimal"></div>
+      <div class="nl-field" data-mode-only="season"><label class="nl-label" for="fin-price-goalie" ${L('lblPriceGoalie')}</label><input class="nl-input" id="fin-price-goalie" type="number" min="0" step="0.01" inputmode="decimal"></div>
+      <div class="nl-field"><label class="nl-label" for="fin-game-player" ${L('lblGamePlayer')}</label><input class="nl-input" id="fin-game-player" type="number" min="0" step="0.01" inputmode="decimal"></div>
+      <div class="nl-field"><label class="nl-label" for="fin-game-goalie" ${L('lblGameGoalie')}</label><input class="nl-input" id="fin-game-goalie" type="number" min="0" step="0.01" inputmode="decimal"></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="fin-save-pricing" ${L('btnSavePricing')}</button>
+      <span class="nl-help" id="fin-pricing-msg" role="status"></span>
+    </div>
+    <p class="nl-help" style="margin-top:12px" ${L('gamesHelp')}</p>
+  </section>
+
+  <div class="fin-tiles" id="fin-tiles"></div>
+
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" ${L('playersTitle')}</div>
+    <p class="nl-help" ${L('manualNote')}</p>
+    <div id="fin-players" style="overflow-x:auto;margin-top:8px"></div>
+  </section>
+
+  <section class="nl-card nl-card--pad-lg">
+    <div class="h3" ${L('costsTitle')}</div>
+    <div id="fin-costs" style="margin-top:8px"></div>
+    <div class="fin-row" style="margin-top:12px">
+      <div class="nl-field"><label class="nl-label" for="fin-cost-cat" ${L('lblCategory')}</label><select class="nl-select" id="fin-cost-cat"></select></div>
+      <div class="nl-field"><label class="nl-label" for="fin-cost-desc" ${L('lblDescription')}</label><input class="nl-input" id="fin-cost-desc" type="text" maxlength="200"></div>
+      <div class="nl-field"><label class="nl-label" for="fin-cost-amount" ${L('lblAmount')}</label><input class="nl-input" id="fin-cost-amount" type="number" min="0" step="0.01" inputmode="decimal"></div>
+      <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="fin-add-cost" ${L('btnAddCost')}</button>
+    </div>
+    <p class="nl-help" id="fin-cost-msg" role="status"></p>
+  </section>
+
+  <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
+</main>
+${tabbar}`;
+
+  const script = `
+${nlAuthScript(I18N_FIN)}
+${FINANCE_PAGE_JS}
+`;
+  return new Response(nlDocument({ title: `Finances — ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
+// The Finances page's browser code: one String.raw literal (never a
+// function's toString -- the bundler would add __name() calls), with no
+// backslash, backtick or dollar-brace inside.
+const FINANCE_PAGE_JS = String.raw`
+var fin = { data: null, editing: null };
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function money(n) {
+  var lang = window.__currentLang === 'en' ? 'en-CA' : 'fr-CA';
+  return new Intl.NumberFormat(lang, { style: 'currency', currency: 'CAD' }).format(Number(n || 0));
+}
+async function doLogout() { await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }); window.location.href = '/login'; }
+async function post(path, body) {
+  var res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()), body: JSON.stringify(body) });
+  var data = await res.json().catch(function() { return {}; });
+  if (!res.ok || !data.ok) throw new Error(window.__errorText(data.errorKey, data.error));
+  return data;
+}
+function currentSeason() { var s = document.getElementById('fin-season'); return s.value || (fin.data && fin.data.season) || ''; }
+function mode() { var r = document.querySelector('input[name="fin-mode"]:checked'); return r ? r.value : 'season'; }
+function showModeFields() {
+  document.querySelectorAll('[data-mode-only="season"]').forEach(function(el) { el.style.display = mode() === 'season' ? '' : 'none'; });
+}
+function render() {
+  var d = window.__pageDict();
+  var data = fin.data;
+  var sel = document.getElementById('fin-season');
+  sel.innerHTML = (data.seasons || []).map(function(s) { return '<option value="' + esc(s) + '"' + (s === data.season ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('');
+  var none = !data.season;
+  document.getElementById('fin-noseason').style.display = none ? '' : 'none';
+  ['fin-pricing', 'fin-tiles'].forEach(function(id) { document.getElementById(id).style.display = none ? 'none' : ''; });
+  if (none) return;
+  var p = data.pricing;
+  document.getElementById('fin-nopricing').style.display = p.configured ? 'none' : '';
+  document.querySelectorAll('input[name="fin-mode"]').forEach(function(r) { r.checked = r.value === p.mode; });
+  document.getElementById('fin-price-player').value = p.price_player;
+  document.getElementById('fin-price-goalie').value = p.price_goalie;
+  document.getElementById('fin-game-player').value = p.price_game_player;
+  document.getElementById('fin-game-goalie').value = p.price_game_goalie;
+  showModeFields();
+  var s = data.summary;
+  var tiles = [['sumDue', s.totalDue], ['sumPaid', s.totalPaid], ['sumOutstanding', s.totalOutstanding], ['sumCredit', s.totalCredit], ['sumCosts', s.totalCosts], ['sumNet', s.netBalance]];
+  document.getElementById('fin-tiles').innerHTML = tiles.map(function(x) {
+    return '<div class="nl-card fin-tile" data-tile="' + x[0] + '"><span class="stat">' + money(x[1]) + '</span><span class="nl-help">' + esc(d[x[0]]) + '</span></div>';
+  }).join('');
+  var st = { paid: d.stPaid, partial: d.stPartial, unpaid: d.stUnpaid, exempt: d.stExempt };
+  var tone = { paid: 'in', exempt: 'in', partial: 'pending', unpaid: 'out' };
+  var rows = (data.players || []).map(function(pl) {
+    var role = (pl.is_sub ? d.roleSub : d.roleRegular) + (pl.is_goalie ? ' · ' + d.roleGoalie : '') + (pl.is_active ? '' : ' · ' + d.inactive);
+    var status = '<span class="nl-badge nl-badge--' + tone[pl.status] + '">' + esc(st[pl.status]) + '</span>' + (pl.credit > 0 ? '<div class="nl-help">' + esc(d.creditOf) + ' ' + money(pl.credit) + '</div>' : '');
+    var main = '<tr data-player="' + esc(pl.player_id) + '"><td>' + esc(pl.name) + (pl.notes ? '<div class="nl-help">' + esc(pl.notes) + '</div>' : '') + '</td><td>' + esc(role) + '</td><td class="num">' + pl.games_played + '</td><td class="num">' + money(pl.total_due) + '</td><td class="num">' + money(pl.amount_paid) + '</td><td>' + status + '</td><td><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-edit="' + esc(pl.player_id) + '">' + esc(d.btnEdit) + '</button></td></tr>';
+    if (fin.editing !== pl.player_id) return main;
+    return main + '<tr data-edit-row="' + esc(pl.player_id) + '"><td colspan="7"><div class="fin-edit">' +
+      '<div class="nl-field"><label class="nl-label" for="ed-due">' + esc(d.lblCustomDue) + '</label><input class="nl-input" id="ed-due" type="number" min="0" step="0.01" value="' + (pl.custom_due == null ? '' : pl.custom_due) + '" placeholder="' + pl.base_price + '"></div>' +
+      '<div class="nl-field"><label class="nl-label" for="ed-paid">' + esc(d.lblAmountPaid) + '</label><input class="nl-input" id="ed-paid" type="number" min="0" step="0.01" value="' + pl.amount_paid + '"></div>' +
+      '<div class="nl-field"><label class="nl-label" for="ed-notes">' + esc(d.lblNotes) + '</label><input class="nl-input" id="ed-notes" type="text" maxlength="500" value="' + esc(pl.notes) + '"></div>' +
+      '</div><div style="display:flex;gap:8px;align-items:center"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-save="' + esc(pl.player_id) + '">' + esc(d.btnSave) + '</button><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-cancel="1">' + esc(d.btnCancel) + '</button><span class="nl-help" id="ed-msg" role="status"></span></div></td></tr>';
+  }).join('');
+  document.getElementById('fin-players').innerHTML = rows
+    ? '<table class="fin-table"><thead><tr><th>' + esc(d.colPlayer) + '</th><th>' + esc(d.colRole) + '</th><th class="num">' + esc(d.colGames) + '</th><th class="num">' + esc(d.colDue) + '</th><th class="num">' + esc(d.colPaid) + '</th><th>' + esc(d.colStatus) + '</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
+    : '<p class="nl-help">' + esc(d.noPlayers) + '</p>';
+  var cats = { rental: d.catRental, equipment: d.catEquipment, technology: d.catTechnology, other: d.catOther };
+  var catSel = document.getElementById('fin-cost-cat');
+  var keep = catSel.value;
+  catSel.innerHTML = Object.keys(cats).map(function(k) { return '<option value="' + k + '">' + esc(cats[k]) + '</option>'; }).join('');
+  if (keep) catSel.value = keep;
+  document.getElementById('fin-costs').innerHTML = (data.costs || []).length
+    ? '<table class="fin-table"><tbody>' + data.costs.map(function(c) {
+        return '<tr data-cost="' + esc(c.id) + '"><td>' + esc(cats[c.category] || c.category) + '</td><td>' + esc(c.description) + '</td><td class="num">' + money(c.amount) + '</td><td><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-del-cost="' + esc(c.id) + '">' + esc(d.btnDelete) + '</button></td></tr>';
+      }).join('') + '</tbody></table>'
+    : '<p class="nl-help">' + esc(d.noCosts) + '</p>';
+}
+async function load(season) {
+  var res = await fetch('/league/finances/data' + (season ? '?season=' + encodeURIComponent(season) : ''), { credentials: 'same-origin' });
+  var data = await res.json().catch(function() { return {}; });
+  if (!res.ok || !data.ok) return;
+  fin.data = data;
+  render();
+}
+document.getElementById('fin-season').addEventListener('change', function(e) { fin.editing = null; load(e.target.value); });
+document.querySelectorAll('input[name="fin-mode"]').forEach(function(r) { r.addEventListener('change', showModeFields); });
+document.getElementById('fin-save-pricing').addEventListener('click', async function() {
+  var msg = document.getElementById('fin-pricing-msg');
+  msg.textContent = '';
+  try {
+    await post('/league/finances/pricing', { season: currentSeason(), mode: mode(),
+      price_player: document.getElementById('fin-price-player').value || 0, price_goalie: document.getElementById('fin-price-goalie').value || 0,
+      price_game_player: document.getElementById('fin-game-player').value || 0, price_game_goalie: document.getElementById('fin-game-goalie').value || 0 });
+    await load(currentSeason());
+    document.getElementById('fin-pricing-msg').textContent = window.__pageDict().saved;
+  } catch (e) { msg.textContent = e.message; }
+});
+document.getElementById('fin-players').addEventListener('click', async function(e) {
+  var t = e.target;
+  if (t.dataset.edit) { fin.editing = t.dataset.edit; render(); return; }
+  if (t.dataset.cancel) { fin.editing = null; render(); return; }
+  if (t.dataset.save) {
+    var msg = document.getElementById('ed-msg');
+    try {
+      await post('/league/finances/player', { season: currentSeason(), player_id: t.dataset.save,
+        custom_due: document.getElementById('ed-due').value, amount_paid: document.getElementById('ed-paid').value || 0, notes: document.getElementById('ed-notes').value });
+      fin.editing = null;
+      await load(currentSeason());
+    } catch (err) { if (msg) msg.textContent = err.message; }
+  }
+});
+document.getElementById('fin-add-cost').addEventListener('click', async function() {
+  var msg = document.getElementById('fin-cost-msg');
+  msg.textContent = '';
+  try {
+    await post('/league/finances/cost', { season: currentSeason(), category: document.getElementById('fin-cost-cat').value,
+      description: document.getElementById('fin-cost-desc').value, amount: document.getElementById('fin-cost-amount').value });
+    document.getElementById('fin-cost-desc').value = '';
+    document.getElementById('fin-cost-amount').value = '';
+    await load(currentSeason());
+  } catch (e) { msg.textContent = e.message; }
+});
+document.getElementById('fin-costs').addEventListener('click', async function(e) {
+  var id = e.target.dataset.delCost;
+  if (!id || !confirm(window.__pageDict().confirmDeleteCost)) return;
+  try { await post('/league/finances/cost/delete', { id: id }); await load(currentSeason()); }
+  catch (err) { document.getElementById('fin-cost-msg').textContent = err.message; }
+});
+window.addEventListener('nl_lang_changed', function() { if (fin.data) render(); });
+load(null);
+`;
 
 async function handleLeagueSettingsPage(req, env, url) {
   const lang = resolveServerLang(req);
@@ -9588,6 +10063,7 @@ ${tabbar}`;
       inviteGoalie: 'Inviter un gardien', inviteSkater: 'Inviter des joueurs',
       noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.',
       statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu', statusElsewhere: "Joue l'autre match", statusWaitlist: "Liste d'attente",
+      noShowBtn: "N'est pas venu", noShowBadge: "N'est pas venu", noShowUndo: 'A joué', subsInGameTitle: 'Remplaçants à ce match',
       setGameOut: 'Pas ce match',
       nightScopeHelp: "Il y a d'autres matchs ce soir-là. IN et OUT valent pour toute la soirée du joueur, comme sa propre réponse. « Pas ce match » le retire de ce match seulement.",
       setIn: 'IN', setOut: 'OUT',
@@ -9671,6 +10147,7 @@ ${tabbar}`;
       inviteGoalie: 'Invite a goalie', inviteSkater: 'Invite players',
       noPlayersOnTeam: 'No players assigned to this team.',
       statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply', statusElsewhere: 'In the other game', statusWaitlist: 'Waitlist',
+      noShowBtn: "Didn't show", noShowBadge: "Didn't show", noShowUndo: 'Played', subsInGameTitle: 'Subs in this game',
       setGameOut: 'Not this game',
       nightScopeHelp: "There are other games that night. IN and OUT cover the player's whole night, like their own answer. \u201cNot this game\u201d takes them out of this game only.",
       setIn: 'IN', setOut: 'OUT',
@@ -9727,6 +10204,14 @@ ${tabbar}`;
   // Nights (D1): with other games that night, IN/OUT are for the player's
   // night (as their own answer is); "Not this game" is this game only.
   const multiNight = (ev.league_id && ev.league_id !== SMBHL_LEAGUE_ID) && (await nightGamesOf(env, ev)).length > 1;
+  // League finance: once the game has started, a player marked in who did
+  // not play is marked "didn't show" here -- not charged for it (and it can
+  // be taken back). Shown on every list of the game, subs included.
+  const statsEntered = new Set(gameStarted ? ((await env.DB.prepare('SELECT player_id FROM player_game_stats WHERE event_id = ?').bind(ev.id).all()).results || []).map(r => r.player_id) : []);
+  const noShowCtl = p => (!gameStarted || p.status !== 'in' || (statsEntered.has(p.player_id) && !p.no_show)) ? ''
+    : p.no_show
+      ? `<span class="nl-badge nl-badge--out" data-no-show="${esc(p.player_id)}"><span data-i18n="noShowBadge">N'est pas venu</span></span><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="noShowUndo" onclick="setNoShow('${esc(p.player_id)}',false,this)">A joué</button>`
+      : `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="noShowBtn" data-no-show-btn="${esc(p.player_id)}" onclick="setNoShow('${esc(p.player_id)}',true,this)">N'est pas venu</button>`;
   const gameOutBtn = p => multiNight ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setGameOut" data-game-out="${esc(p.player_id)}" onclick="setPlayerStatus('${esc(p.player_id)}','out',this,'game')">Pas ce match</button>` : '';
   const nightScopeHelpHtml = multiNight ? `<p class="nl-help" data-i18n="nightScopeHelp" style="grid-column:1/-1">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).nightScopeHelp)}</p>` : '';
   const statusBadgeFor = p => (p.status === 'out' && p.status_by === 'night' ? STATUS_BADGE.elsewhere
@@ -9747,6 +10232,8 @@ ${tabbar}`;
   }
 
   const teamCards = [];
+  // Everyone listed on a team or pool card (the subs card lists the rest).
+  const shownOnCards = new Set();
   for (let i = 0; i < teamNames.length && !isWeeklyDrawPreDraw; i++) {
     const team = teamNames[i];
     // Part 2 (fixed-teams scheduling task): skip a team not in this
@@ -9773,7 +10260,7 @@ ${tabbar}`;
     // here must come from THIS event's own rsvp row, not the contact.
     const rosterRows = isHeadcount
       ? (await env.DB.prepare(
-          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status, r.status_by AS status_by
+          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status, r.status_by AS status_by, COALESCE(r.no_show, 0) AS no_show
              FROM contacts c
              LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
             WHERE c.league_id = ? AND c.role = 'roster' AND c.is_active = 1
@@ -9781,20 +10268,21 @@ ${tabbar}`;
         ).bind(ev.id, leagueId).all()).results || []
       : isWeeklyDraw
       ? (await env.DB.prepare(
-          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, r.status AS status, r.status_by AS status_by
+          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, r.status AS status, r.status_by AS status_by, COALESCE(r.no_show, 0) AS no_show
              FROM contacts c
              JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
             WHERE c.league_id = ? AND r.team = ? AND c.is_active = 1
             ORDER BY c.name`
         ).bind(ev.id, leagueId, team).all()).results || []
       : (await env.DB.prepare(
-          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status, r.status_by AS status_by
+          `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status, r.status_by AS status_by, COALESCE(r.no_show, 0) AS no_show
              FROM contacts c
              LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
             WHERE c.league_id = ? AND c.preferred_team = ? AND c.is_active = 1
             ORDER BY c.name`
         ).bind(ev.id, leagueId, team).all()).results || [];
     const pendingCount = rosterRows.filter(p => p.status === 'pending').length;
+    for (const p of rosterRows) shownOnCards.add(p.player_id);
 
     const inviteButtons = [];
     if (openGoalies > 0) inviteButtons.push(`<button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="inviteGoalie" onclick="inviteSubs('${esc(team)}','goalie',this)">Inviter un gardien</button>`);
@@ -9806,7 +10294,7 @@ ${tabbar}`;
           <div style="display:flex;align-items:center;gap:8px;">
             ${statusBadgeFor(p)}
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
-            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>${gameOutBtn(p)}
+            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>${gameOutBtn(p)}${noShowCtl(p)}
           </div>
         </div>`).join('')
       : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
@@ -9864,12 +10352,13 @@ ${tabbar}`;
     // setPlayerStatus-wired list those other cases already have can
     // render here too -- one pool, not per-team lists, per the task.
     const poolPlayerRows = (await env.DB.prepare(
-      `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status, r.status_by AS status_by
+      `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, COALESCE(r.status, 'pending') AS status, r.status_by AS status_by, COALESCE(r.no_show, 0) AS no_show
          FROM contacts c
          LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
         WHERE c.league_id = ? AND c.role = 'roster' AND c.is_active = 1
         ORDER BY c.name`
     ).bind(ev.id, leagueId).all()).results || [];
+    for (const p of poolPlayerRows) shownOnCards.add(p.player_id);
     const poolCounts = { in: 0, out: 0, pending: 0 };
     for (const p of poolPlayerRows) poolCounts[p.status] = (poolCounts[p.status] || 0) + 1;
     const pool = await weeklyDrawPoolStatus(env, ev, cfg, poolCounts.in);
@@ -9885,7 +10374,7 @@ ${tabbar}`;
           <div style="display:flex;align-items:center;gap:8px;">
             ${statusBadgeFor(p)}
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setIn" onclick="setPlayerStatus('${esc(p.player_id)}','in',this)">IN</button>
-            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>${gameOutBtn(p)}
+            <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setOut" onclick="setPlayerStatus('${esc(p.player_id)}','out',this)">OUT</button>${gameOutBtn(p)}${noShowCtl(p)}
           </div>
         </div>`).join('')
       : `<p class="nl-help" data-i18n="noPlayersOnTeam">Aucun joueur assigné à cette équipe.</p>`;
@@ -9921,6 +10410,29 @@ ${tabbar}`;
   // assignment yet", not "no rsvp row"; only status='in' rows can even
   // reach that state, since writeLeagueRsvpStatus only sets team=null
   // for weekly_draw in the first place).
+  // League finance: the subs marked in for this game who are on no card
+  // above (a fixed team's list is its own players, a no-teams list its
+  // regulars) -- so a sub's "didn't show" can be marked once the game has
+  // started. Only when there is someone to list.
+  let subsCardHtml = '';
+  if (leagueId !== SMBHL_LEAGUE_ID) {
+    const subRows = ((await env.DB.prepare(
+      `SELECT c.player_id, c.name, c.is_goalie, c.is_backup_goalie, r.status AS status, r.status_by AS status_by, r.team AS team, COALESCE(r.no_show, 0) AS no_show
+         FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+        WHERE r.event_id = ? AND c.league_id = ? AND c.role != 'roster' AND r.status = 'in'
+        ORDER BY c.name`
+    ).bind(ev.id, leagueId).all()).results || []).filter(p => !shownOnCards.has(p.player_id));
+    if (subRows.length) {
+      subsCardHtml = `
+    <section class="nl-card nl-card--pad-lg" id="ev_subs_card">
+      <h2 data-i18n="subsInGameTitle">Remplaçants à ce match</h2>
+      <div class="ev-ppl">${subRows.map(p => `<div class="ev-p" data-sub-row="${esc(p.player_id)}">
+          <span>${esc(p.name)}${eventRowGoalieBadge(p)}${p.team && p.team !== HEADCOUNT_TEAM_NAME ? ` <span class="nl-help">· ${esc(p.team)}</span>` : ''}</span>
+          <div style="display:flex;align-items:center;gap:8px;">${statusBadgeFor(p)}${noShowCtl(p)}</div>
+        </div>`).join('')}</div>
+    </section>`;
+    }
+  }
   let unassignedHtml = '';
   // Item 1 (event-page layout polish task): this card is only ever
   // useful once at least one player has confirmed for this event --
@@ -10088,6 +10600,7 @@ ${tabbar}`;
     </section>`
     : (ev.is_playoff && playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600;grid-column:1/-1"') : '') + nightScopeHelpHtml + (poolCardHtml || teamCards.join(''))}</div>
   ${unassignedHtml}
+  ${subsCardHtml}
   <!-- Item 5: before the game an admin works the RSVP list (players, then
        who is confirmed but not yet on a team); the result and player stats
        are for after it, so they come last. -->
@@ -10478,6 +10991,24 @@ async function inviteSubs(team, need, btn) {
   }
   msg.style.display = 'block';
   btn.disabled = false;
+}
+// League finance: "didn't show" (or back to played) for a player marked in
+// for a game that has started -- not charged for it.
+async function setNoShow(playerId, noShow, btn) {
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/events/no-show', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, player_id: playerId, no_show: noShow })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { alert(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
+    window.location.reload();
+  } catch (e) {
+    alert(window.__errorText('NETWORK_ERROR'));
+    btn.disabled = false;
+  }
 }
 async function setPlayerStatus(playerId, status, btn, scope) {
   btn.disabled = true;
@@ -22374,37 +22905,17 @@ async function handleFinancesData(req, env, url) {
   }
 
   // 7. Calculate dues for each player
+  // The rules (src/finance_rules.js, shared with the league product's
+  // finance page): the season fee for a regular, games x the per-game
+  // price for a sub; a custom due replaces it; paid beyond the due is a
+  // credit (paid the 170 season fee, then became a sub owing 10 games x
+  // 5 = 50: never shown as 0); exempt / paid / partial / unpaid.
   const players = playerEntries.map(p => {
     const dues = duesMap.get(p.player_id) || {};
     const gamesPlayed = p.games_played != null ? p.games_played : 0;
-
-    let basePrice = 0;
-    if (!p.is_sub) {
-      basePrice = p.is_goalie ? Number(pricing.price_goalie) : Number(pricing.price_player);
-    } else {
-      basePrice = p.is_goalie
-        ? (Number(gamesPlayed || 0) * Number(pricing.price_sub_goalie))
-        : (Number(gamesPlayed || 0) * Number(pricing.price_sub_player));
-    }
-
-    const customDue = (dues.custom_due !== null && dues.custom_due !== undefined && dues.custom_due !== '')
-      ? Number(dues.custom_due) : null;
-    const totalDue = customDue !== null ? Math.max(0, customDue) : basePrice;
-    const amountPaid = Number(dues.amount_paid || 0);
-    const outstanding = totalDue - amountPaid;
-    // Paid more than is due (e.g. paid the 170 season fee, then became a
-    // sub owing 10 games x 5 = 50): a credit, reported as such -- never shown as 0.
-    const credit = Math.max(0, amountPaid - totalDue);
+    const basePrice = basePriceFor({ isSub: p.is_sub, isGoalie: p.is_goalie, gamesPlayed, pricing });
+    const { customDue, totalDue, amountPaid, outstanding, credit, status } = settleDues({ basePrice, customDue: dues.custom_due, amountPaid: dues.amount_paid });
     const notes = dues.notes || '';
-
-    let status = 'unpaid';
-    if (totalDue === 0) {
-      status = 'exempt';
-    } else if (amountPaid >= totalDue) {
-      status = 'paid';
-    } else if (amountPaid > 0) {
-      status = 'partial';
-    }
 
     return {
       player_id: p.player_id,
@@ -22439,31 +22950,10 @@ async function handleFinancesData(req, env, url) {
   });
 
   const costRows = await listSeasonCosts(env.DB, SMBHL_LEAGUE_ID, season);
-
-  const costSummary = {
-    rental: costRows.filter(c => c.category === 'rental').reduce((sum, c) => sum + Number(c.amount || 0), 0),
-    equipment: costRows.filter(c => c.category === 'equipment').reduce((sum, c) => sum + Number(c.amount || 0), 0),
-    technology: costRows.filter(c => c.category === 'technology').reduce((sum, c) => sum + Number(c.amount || 0), 0),
-    other: costRows.filter(c => c.category === 'other').reduce((sum, c) => sum + Number(c.amount || 0), 0),
-    totalCosts: costRows.reduce((sum, c) => sum + Number(c.amount || 0), 0)
-  };
-
-  const totalDue = players.reduce((sum, p) => sum + p.total_due, 0);
-  const totalPaid = players.reduce((sum, p) => sum + p.amount_paid, 0);
-
-  const summary = {
-    totalDue,
-    totalPaid,
-    totalOutstanding: players.reduce((sum, p) => sum + Math.max(0, p.outstanding), 0),
-    // Owed back to players (credits), kept separate so it can't hide inside totalOutstanding.
-    totalCredit: players.reduce((sum, p) => sum + (p.credit || 0), 0),
-    totalCosts: costSummary.totalCosts,
-    netBalance: totalPaid - costSummary.totalCosts,
-    netProjected: totalDue - costSummary.totalCosts,
-    countPaid: players.filter(p => p.status === 'paid' || p.status === 'exempt').length,
-    countUnpaid: players.filter(p => p.status === 'unpaid' || p.status === 'partial').length,
-    countTotal: players.length
-  };
+  const costSummary = financeCostSummary(costRows);
+  // Credits (owed back to players) kept separate so they can't hide
+  // inside totalOutstanding.
+  const summary = financeSummary(players, costRows);
 
   return Response.json({
     season,
@@ -29627,6 +30117,20 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueSettingsPage(req, env, url);
       // Live-testing task (batch 3), Part 2: Comms view -- every
       // league, no capability-flag gate.
+      // League finance: the Finances page and its routes (session + league
+      // access; never SMBHL, whose page is /admin/finances).
+      if ((url.pathname === '/league/finances' || url.pathname === '/league/finances/') && req.method === 'GET')
+        return await handleLeagueFinancesPage(req, env, url);
+      if (url.pathname === '/league/finances/data' && req.method === 'GET')
+        return await handleLeagueFinancesData(req, env, url);
+      if (url.pathname === '/league/finances/pricing' && req.method === 'POST')
+        return await handleLeagueFinancesPricing(req, env, url);
+      if (url.pathname === '/league/finances/player' && req.method === 'POST')
+        return await handleLeagueFinancesPlayer(req, env, url);
+      if ((url.pathname === '/league/finances/cost' || url.pathname === '/league/finances/cost/delete') && req.method === 'POST')
+        return await handleLeagueFinancesCost(req, env, url);
+      if (url.pathname === '/league/events/no-show' && req.method === 'POST')
+        return await handleLeagueEventNoShow(req, env, url);
       if ((url.pathname === '/league/comms' || url.pathname === '/league/comms/') && req.method === 'GET')
         return await handleLeagueCommsPage(req, env, url);
       if (url.pathname === '/league/comms/data' && req.method === 'GET')

@@ -109,6 +109,7 @@ beforeAll(async () => {
     ['league event detail', `/league/events/detail?e=${q(leagueEventId)}`, 'session'],
     ['league settings', '/league/settings', 'session'],
     ['league comms', '/league/comms', 'session'],
+    ['league finances', '/league/finances', 'session'],
     ['super admin', '/super-admin/leagues', 'admin'],
     ['admin board', '/admin/board', 'admin'],
     ['admin subs', '/admin/subs', 'admin'],
