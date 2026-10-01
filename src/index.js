@@ -12460,6 +12460,13 @@ We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}
         : '';
       const waitFr = generic ? "Si toutes les places sont prises, tu restes sur la liste d'attente." : "Si la place est déjà prise, tu restes sur la liste d'attente pour les autres équipes.";
       const waitEn = generic ? 'If every spot is taken, you stay on the waitlist.' : 'If the spot is taken you stay on the waitlist for the other teams.';
+      // The way off the list: SMBHL calls them substituts; Notre Ligue says
+      // remplaçants (a league event has a league_id other than SMBHL's).
+      const leagueEvent = !!ev.league_id && ev.league_id !== SMBHL_LEAGUE_ID;
+      const offFr = leagueEvent
+        ? 'Tu ne veux plus être sur la liste des remplaçants ? Réponds à ce courriel.'
+        : 'Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.';
+      const offEn = leagueEvent ? 'Want off the subs list? Just reply to this email.' : 'Want off the sub list? Just reply to this email.';
 
       const textFr =
 `${who.fr} cherche ${g ? 'un gardien' : 'un joueur'} ${w.fr}.${teamNoteFr ? '\n' + teamNoteFr : ''}
@@ -12468,7 +12475,7 @@ Disponible ?   OUI : ${payload.yes}
                NON : ${payload.no}
 
 ${waitFr}
-Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.`;
+${offFr}`;
       const textEn =
 `${who.en} needs ${g ? 'a goalie' : 'a skater'} ${w.en}.${teamNoteEn ? '\n' + teamNoteEn : ''}
 
@@ -12476,7 +12483,7 @@ Available?   YES: ${payload.yes}
              NO:  ${payload.no}
 
 ${waitEn}
-Want off the sub list? Just reply to this email.`;
+${offEn}`;
 
       const htmlFr = `<p style="font-size:16px; margin:0 0 16px;">
           <b>${esc(who.fr)}</b> cherche ${g ? 'un gardien' : 'un joueur'} <b>${esc(w.fr)}</b>.
@@ -12491,7 +12498,7 @@ Want off the sub list? Just reply to this email.`;
           ${esc(waitFr)}
         </p>
         <p style="font-size:12px; color:#94a3b8; margin:0 0 16px;">
-          Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.
+          ${esc(offFr)}
         </p>`;
       const htmlEn = `<p style="font-size:15px; margin:0 0 16px; color:#334155;">
           <b>${esc(who.en)}</b> needs ${g ? 'a goalie' : 'a skater'} <b>${esc(w.en)}</b>.
@@ -12506,7 +12513,7 @@ Want off the sub list? Just reply to this email.`;
           ${esc(waitEn)}
         </p>
         <p style="font-size:12px; color:#94a3b8; margin:0;">
-          Want off the sub list? Just reply to this email.
+          ${esc(offEn)}
         </p>`;
 
       // Live-testing task (batch 3), Part 1: languageMode determines

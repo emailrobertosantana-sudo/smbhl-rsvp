@@ -142,16 +142,14 @@ describe('Every link in every league email', () => {
       }
     }
     expect(problems).toEqual([]);
-    // French voice, in every email of the season: "tu", and "remplaçant".
-    // One sentence is left out: the sub call's closing line comes from the
-    // cron's shared template ("la liste de substituts"), whose exact text
-    // the golden recordings pin for SMBHL and for the leagues.
+    // French voice, in every email of the season: "tu", and "remplaçant"
+    // (the sub call's closing line included: Notre Ligue's says
+    // « liste des remplaçants »).
     const FORMAL_FR = /(^|[^a-zà-ÿ])(vous|votre|vos|veuillez)(?![a-zà-ÿ])|substituts?(?![a-zà-ÿ])/i;
-    const SHARED_LINE = 'Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.';
     const voice = [];
     for (const m of mail.sent) {
       for (const part of [m.subject, m.text, m.html.replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' ')]) {
-        const shown = part.split(SHARED_LINE).join(' ');
+        const shown = part;
         const hit = FORMAL_FR.exec(shown);
         if (hit) voice.push(`"${m.subject}": ${shown.slice(Math.max(0, hit.index - 50), hit.index + 60).replace(/\s+/g, ' ')}`);
       }

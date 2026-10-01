@@ -249,6 +249,9 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
       const leagueSlug = await getOrCreateLeagueSlug(env, leagueRow);
       leagueBranding = {
         name: leagueRow.name,
+        // No tagline: SMBHL's ("Sunday Morning Ball Hockey League") is not
+        // this league's (season_config.js keeps an empty one empty).
+        tagline: '',
         fromEmail: `${leagueRow.name} <${leagueSlug}@mail.notreligue.ca>`,
         replyToEmail: leagueRow.admin_email || 'bonjour@notreligue.ca',
         siteUrl: env.PUBLIC_URL || DEFAULT_SEASON_CONFIG.league.siteUrl,
