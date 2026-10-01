@@ -168,3 +168,6 @@ dist
 contacts.csv
 contacts.sql
 contacts-demo.sql
+
+# The copy audit: local working notes, not part of the repo
+copy-audit/
