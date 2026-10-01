@@ -11,6 +11,7 @@ import { chooseMailProvider, parseAddress } from './mail_provider.js';
 import { contactDisplayName, rosterNameMap } from './contact_name.js';
 import { passCached } from './pass_cache.js';
 import { getSubCallHours, saveSubCallHours, subCallWindowText, SUB_CALL_HOURS_CHOICES } from './sub_call_window.js';
+import { PAYMENT_REMINDER_KIND, getPaymentInfo, savePaymentInfo, hasPaymentInfo, normalizePhone, formatPhone, paymentReminderLines, cleanNote, PAYMENT_PANEL_JS } from './payment_reminders.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
@@ -5587,6 +5588,194 @@ async function handleLeagueFinancesData(req, env, url) {
   return Response.json({ ok: true, ...data });
 }
 
+// ---- payment reminders (src/payment_reminders.js), SMBHL and leagues ----
+
+// The players of one season who owe money, from the finance page's own
+// calculation (SMBHL: handleFinancesData; a league: computeLeagueFinance),
+// never a second one. owing: a balance above zero and an email address;
+// noEmail: a balance above zero and no address. last_reminded: the latest
+// payment reminder queued or sent to that player (outbox rows, not
+// cancelled, not failed).
+async function paymentBalances(env, leagueId, seasonParam) {
+  let season, players;
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    const u = new URL('https://internal.invalid/admin/finances/data');
+    if (seasonParam) u.searchParams.set('s', seasonParam);
+    const d = await (await handleFinancesData(new Request(u), env, u)).json();
+    season = d.season; players = d.players || [];
+  } else {
+    const d = await computeLeagueFinance(env, leagueId, seasonParam || null);
+    season = d.season; players = d.players || [];
+  }
+  const contacts = new Map(((await env.DB.prepare(
+    'SELECT player_id, name, email FROM contacts WHERE COALESCE(league_id, ?) = ?'
+  ).bind(SMBHL_LEAGUE_ID, leagueId).all()).results || []).map(c => [c.player_id, c]));
+  const last = new Map(((await env.DB.prepare(
+    `SELECT player_id, MAX(COALESCE(sent_at, created_at)) AS at FROM outbox
+      WHERE kind = ? AND league_id = ? AND cancelled = 0 AND failed_at IS NULL AND player_id IS NOT NULL
+      GROUP BY player_id`
+  ).bind(PAYMENT_REMINDER_KIND, leagueId).all()).results || []).map(r => [r.player_id, r.at]));
+  const owing = [], noEmail = [];
+  for (const p of players) {
+    const balance = Math.round(Number(p.outstanding || 0) * 100) / 100;
+    if (!(balance > 0)) continue;
+    const c = contacts.get(p.player_id);
+    const row = { player_id: p.player_id, name: (c && c.name) || p.name || '', balance, last_reminded: last.get(p.player_id) || null };
+    if (c && c.email) owing.push({ ...row, email: c.email }); else noEmail.push(row);
+  }
+  return { season, owing, noEmail };
+}
+
+// What can still go out today on this environment: the hard cap
+// (MAIL_HARD_DAILY_CAP, demo) or the daily cap (MAIL_DAILY_CAP), less
+// what was sent today. null: no cap configured.
+async function paymentReminderBudget(env) {
+  const cap = hardDailyCapFromEnv(env) || dailyCapFromEnv(env);
+  if (!cap) return null;
+  const { sent } = await readDailyCount(env.DB);
+  return Math.max(0, cap - sent);
+}
+
+// One player's reminder. SMBHL: French then English, as its other emails.
+// A league: its language setting, its colors, replies to its admin.
+async function renderPaymentReminder(env, leagueId, { name, balance, note, info, season }) {
+  const firstName = String(name || '').trim().split(/\s+/)[0] || '';
+  const fr = paymentReminderLines('fr', { firstName, note, amount: formatMoneyFr(balance), info });
+  const en = paymentReminderLines('en', { firstName, note, amount: formatMoneyEn(balance), info });
+  // The amount's line is the one after the greeting and the note.
+  const amountAt = note ? 2 : 1;
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    const subject = 'SMBHL : solde à payer / Balance owing';
+    const block = (lines, muted) => lines.map((l, i) => `<p style="font-size:${muted ? 14 : 15}px;color:${muted ? '#64748b' : '#1e293b'};line-height:1.5;margin:0 0 10px;white-space:pre-line;${i === amountAt ? 'font-weight:700;' : ''}">${esc(l)}</p>`).join('');
+    const html = emailWrap(subject, `${block(fr, false)}<hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0;">${block(en, true)}`);
+    return { mail: { subject, text: `${fr.join('\n')}\n\n---\n\n${en.join('\n')}`, html }, identity: null };
+  }
+  const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
+  const leagueName = (leagueRow && leagueRow.name) || '';
+  const mode = (leagueRow && leagueRow.language_mode) || 'both';
+  const toHtml = lines => lines.map((l, i) => `<p style="margin:0 0 14px;font-size:16px;line-height:25px;white-space:pre-line;${i === amountAt ? 'font-weight:700;' : ''}">${esc(l)}</p>`).join('');
+  const assembled = assembleBilingualEmail(mode, {
+    fr: { subject: `${leagueName} : solde à payer`, text: fr.join('\n'), html: toHtml(fr) },
+    en: { subject: `${leagueName}: balance owing`, text: en.join('\n'), html: toHtml(en) }
+  });
+  const html = nlEmailWrap({
+    brandName: leagueName, barColor: leagueFillColor((leagueRow && leagueRow.color) || '#b3122e'), bodyHtml: assembled.html,
+    footerHtml: nlSentByFooter(mode, { forName: esc(leagueName), fr: 'Propulsé par Notre Ligue', en: 'Powered by Notre Ligue' })
+  });
+  const cfg = await getLeagueSeasonConfig(env, leagueId, season);
+  return { mail: { subject: assembled.subject, text: assembled.text, html }, identity: cfg.league };
+}
+
+const paymentErr = (status, errorKey, error, extra = {}) => ({ status, body: { ok: false, errorKey, error, ...extra } });
+
+// The panel's list: { ok, season, info, hasInfo, owing, noEmail, left }.
+async function paymentReminderList(env, leagueId, season) {
+  const info = await getPaymentInfo(env.DB, leagueId);
+  const b = await paymentBalances(env, leagueId, season);
+  const strip = ({ email, ...rest }) => rest;
+  return {
+    ok: true, season: b.season, info: { email: info.email, phone: formatPhone(info.phone) }, hasInfo: hasPaymentInfo(info),
+    owing: b.owing.map(strip), noEmail: b.noEmail, left: await paymentReminderBudget(env)
+  };
+}
+
+// The preview: the exact email for one player, nothing queued or sent.
+// The same answer shape as the Comms preview (src/email_preview.js), so
+// the same modal shows it.
+async function paymentReminderPreview(env, leagueId, body) {
+  const info = await getPaymentInfo(env.DB, leagueId);
+  if (!hasPaymentInfo(info)) return { ok: false, status: 409, error: { fr: "Ajoute d'abord ton courriel ou ton cellulaire pour virement Interac dans les Paramètres.", en: 'Add your e-Transfer email or mobile number in Settings first.' } };
+  const note = cleanNote(body.note);
+  if (note === null) return { ok: false, status: 400, error: { fr: 'La note dépasse 500 caractères.', en: 'The note is over 500 characters.' } };
+  const b = await paymentBalances(env, leagueId, body.season);
+  const wanted = String(body.player_id || '');
+  const p = wanted ? b.owing.find(x => x.player_id === wanted) : b.owing[0];
+  if (!p) return { ok: false, status: 404, error: { fr: 'Ce joueur ne doit rien pour cette saison.', en: "This player doesn't owe anything this season." } };
+  const { mail } = await renderPaymentReminder(env, leagueId, { name: p.name, balance: p.balance, note, info, season: b.season });
+  return {
+    ok: true, kind: PAYMENT_REMINDER_KIND, label: { fr: 'Rappel de paiement', en: 'Payment reminder' },
+    subject: mail.subject, html: mail.html, text: mail.text, to: p.email, recipientCount: 1,
+    source: { fr: `Saison : ${b.season}`, en: `Season: ${b.season}` }, notes: []
+  };
+}
+
+// The send: only this league's players, each balance checked again now,
+// nothing at all if today's budget cannot take them all.
+async function sendPaymentReminders(env, leagueId, body) {
+  const info = await getPaymentInfo(env.DB, leagueId);
+  if (!hasPaymentInfo(info)) return paymentErr(409, 'PAYMENT_INFO_MISSING', 'Add your e-Transfer email or mobile number in Settings first.');
+  const note = cleanNote(body.note);
+  if (note === null) return paymentErr(400, 'PAYMENT_NOTE_TOO_LONG', 'The note is over 500 characters.');
+  const ids = [...new Set((Array.isArray(body.player_ids) ? body.player_ids : []).map(x => String(x == null ? '' : x)).filter(Boolean))];
+  if (!ids.length || ids.length > 500) return paymentErr(400, 'PAYMENT_NO_PLAYERS', 'Choose at least one player.');
+  const known = new Map(((await env.DB.prepare(
+    `SELECT player_id, name FROM contacts WHERE COALESCE(league_id, ?) = ? AND player_id IN (${ids.map(() => '?').join(',')})`
+  ).bind(SMBHL_LEAGUE_ID, leagueId, ...ids).all()).results || []).map(r => [r.player_id, r.name]));
+  if (ids.some(id => !known.has(id))) return paymentErr(400, 'PAYMENT_PLAYER_NOT_IN_LEAGUE', 'A selected player is not in this league.');
+  const b = await paymentBalances(env, leagueId, body.season);
+  const owing = new Map(b.owing.map(p => [p.player_id, p]));
+  const send = ids.map(id => owing.get(id)).filter(Boolean);
+  const skipped = ids.filter(id => !owing.has(id)).map(id => known.get(id) || '');
+  const left = await paymentReminderBudget(env);
+  if (left !== null && send.length > left) return paymentErr(409, 'PAYMENT_OVER_BUDGET', `This would send ${send.length} emails, but only ${left} can go out today.`, { n: send.length, left });
+  if (send.length) {
+    const eventId = `payments:${leagueId}:${b.season}`;
+    const stamp = Date.now();
+    for (const p of send) {
+      const { mail, identity } = await renderPaymentReminder(env, leagueId, { name: p.name, balance: p.balance, note, info, season: b.season });
+      await enqueuePrerenderedMail(env, {
+        kind: PAYMENT_REMINDER_KIND, leagueId, eventId, playerId: p.player_id,
+        dedupKey: `${PAYMENT_REMINDER_KIND}:${leagueId}:${p.player_id}:${stamp}`, to: p.email, mail, identity, quietHours: true
+      });
+    }
+    await drain(env, MAIL_SENDS_PER_INVOCATION, eventId);
+  }
+  return { status: 200, body: { ok: true, sent: send.length, skipped } };
+}
+
+// The e-Transfer email and mobile number, from either settings form.
+async function savePaymentInfoFromBody(env, leagueId, body) {
+  const emailIn = String(body.email == null ? '' : body.email).trim();
+  let email = '';
+  if (emailIn) {
+    const check = sanitizeAndValidateEmail(emailIn);
+    if (!check.valid) return paymentErr(400, 'PAYMENT_EMAIL_INVALID', 'Enter a valid email address.');
+    email = check.email;
+  }
+  const phone = normalizePhone(body.phone);
+  if (phone === null) return paymentErr(400, 'PAYMENT_PHONE_INVALID', 'Enter a 10-digit number, for example 514-555-1234.');
+  await savePaymentInfo(env.DB, leagueId, { email, phone });
+  return { status: 200, body: { ok: true, email, phone: formatPhone(phone) } };
+}
+
+// The league product's routes: session, the league's own admins (and CSRF
+// for anything that sends or saves).
+async function handleLeaguePaymentReminders(req, env, url, action) {
+  const write = action === 'send' || action === 'settings';
+  const a = await leagueFinanceAccess(req, env, url, { write });
+  if (a.res) return a.res;
+  if (action === 'list') return Response.json(await paymentReminderList(env, a.leagueId, String(url.searchParams.get('season') || '').trim() || null));
+  const body = await req.json().catch(() => ({}));
+  if (action === 'preview') {
+    const r = await paymentReminderPreview(env, a.leagueId, body);
+    return Response.json(r, { status: r.ok ? 200 : r.status });
+  }
+  const r = action === 'send' ? await sendPaymentReminders(env, a.leagueId, body) : await savePaymentInfoFromBody(env, a.leagueId, body);
+  return Response.json(r.body, { status: r.status });
+}
+
+// SMBHL's (behind the admin key, /admin/finances/*).
+async function handleSmbhlPaymentReminders(req, env, url, action) {
+  if (action === 'list') return Response.json(await paymentReminderList(env, SMBHL_LEAGUE_ID, String(url.searchParams.get('s') || url.searchParams.get('season') || '').trim() || null));
+  const body = await req.json().catch(() => ({}));
+  if (action === 'preview') {
+    const r = await paymentReminderPreview(env, SMBHL_LEAGUE_ID, body);
+    return Response.json(r, { status: r.ok ? 200 : r.status });
+  }
+  const r = action === 'send' ? await sendPaymentReminders(env, SMBHL_LEAGUE_ID, body) : await savePaymentInfoFromBody(env, SMBHL_LEAGUE_ID, body);
+  return Response.json(r.body, { status: r.status });
+}
+
 async function handleLeagueFinancesPricing(req, env, url) {
   const a = await leagueFinanceAccess(req, env, url, { write: true });
   if (a.res) return a.res;
@@ -5725,7 +5914,7 @@ async function handleLeagueFinancesPage(req, env, url) {
   const t = I18N_FIN[lang] || I18N_FIN.fr;
   const L = k => `data-i18n="${k}">${esc(t[k])}`;
 
-  const bodyHtml = `${dashStyles()}${header}
+  const bodyHtml = `${dashStyles()}${header}${EMAIL_PREVIEW_ASSETS}
 <style>
   .fin-row { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: flex-end; }
   .fin-row .nl-field { flex: 1 1 180px; margin: 0; }
@@ -5749,6 +5938,7 @@ async function handleLeagueFinancesPage(req, env, url) {
     </div>
   </div>
   <p class="nl-help" id="fin-noseason" style="display:none" ${L('noSeason')}</p>
+  <div id="pay-root" style="margin-bottom:var(--space-3)"></div>
 
   <section class="nl-card nl-card--pad-lg" id="fin-pricing">
     <div class="h3" ${L('pricingTitle')}</div>
@@ -5794,9 +5984,13 @@ async function handleLeagueFinancesPage(req, env, url) {
 </main>
 ${tabbar}`;
 
+  // Payment reminders (src/payment_reminders.js): the panel at the top.
+  const payCfg = { list: '/league/finances/reminders', send: '/league/finances/reminders/send', preview: '/league/finances/reminders/preview', seasonParam: 'season', seasonSelect: 'fin-season', btnCls: 'nl-btn nl-btn--secondary nl-btn--sm', primaryCls: 'nl-btn nl-btn--primary nl-btn--sm', cardCls: 'nl-card nl-card--pad-lg' };
   const script = `
 ${nlAuthScript(I18N_FIN)}
 ${FINANCE_PAGE_JS}
+window.__payCfg = ${JSON.stringify(payCfg)};
+${PAYMENT_PANEL_JS}
 `;
   return new Response(nlDocument({ title: `Finances | ${leagueRow.name}`, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
@@ -5947,6 +6141,7 @@ async function handleLeagueSettingsPage(req, env, url) {
   // league turned it off.
   const addEmailsOn = (await getAddEmails(env.DB, leagueId)).mode !== 'off';
   const subCallHours = await getSubCallHours(env.DB, leagueId);
+  const paymentInfo = await getPaymentInfo(env.DB, leagueId);
   const advancedCadence = leagueRow && (await usesAdvancedReminders(env, leagueId)) ? await getEmailSettings(env.DB, leagueId) : null;
   const cadVal = v => (v === null || v === undefined ? '' : esc(String(v)));
   const leagueSlug = await getOrCreateLeagueSlug(env, leagueRow);
@@ -6046,6 +6241,8 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée. Ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
       lblColor: 'Couleur de la ligue', save: 'Enregistrer', saved: 'Enregistré!',
       addEmailsLabel: "Envoyer un courriel aux joueurs lorsqu'ils sont ajoutés",
+      payTitle: 'Rappels de paiement', payEmailLabel: 'Courriel pour virement Interac', payPhoneLabel: 'Cellulaire pour virement Interac',
+      payHelp: 'Affiché dans les rappels de paiement. Laisse vide pour masquer.',
       subCallsLabel: 'Commencer à appeler les remplaçants',
       subCallsDesc: "Combien de temps avant un match on peut appeler les remplaçants quand il manque de joueurs.",
       subCallsOpt24: '24 heures avant', subCallsOpt48: '48 heures avant', subCallsOpt72: '72 heures avant', subCallsOpt96: '4 jours avant', subCallsOpt168: '7 jours avant', subCallsOpt192: '8 jours avant',
@@ -6204,6 +6401,8 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed. That guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
       lblColor: 'League colour', save: 'Save', saved: 'Saved!',
       addEmailsLabel: 'Email players when they are added',
+      payTitle: 'Payment reminders', payEmailLabel: 'e-Transfer email', payPhoneLabel: 'e-Transfer mobile number',
+      payHelp: 'Shown in payment reminders. Leave empty to hide.',
       subCallsLabel: 'Start calling subs',
       subCallsDesc: 'How long before a game subs can be called when it is short of players.',
       subCallsOpt24: '24 hours before', subCallsOpt48: '48 hours before', subCallsOpt72: '72 hours before', subCallsOpt96: '4 days before', subCallsOpt168: '7 days before', subCallsOpt192: '8 days before',
@@ -6894,6 +7093,17 @@ async function handleLeagueSettingsPage(req, env, url) {
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="auto_draw_hours_save" data-i18n="save" onclick="submitAutoDrawHours()">Enregistrer</button></div>
   </section>` : ''}
+  <section class="nl-card nl-card--pad-lg" id="section-payment">
+    <div class="h3" data-i18n="payTitle">Rappels de paiement</div>
+    <p class="nl-help" data-i18n="payHelp">Affiché dans les rappels de paiement. Laisse vide pour masquer.</p>
+    <div id="payErr" class="nl-error" style="display:none"></div>
+    <div id="payOk" class="nl-ok" style="display:none"></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 16px;margin-top:8px">
+      <div class="nl-field"><label class="nl-label" for="pay_email" data-i18n="payEmailLabel">Courriel pour virement Interac</label><input class="nl-input" id="pay_email" type="email" autocomplete="email" maxlength="254" value="${esc(paymentInfo.email)}"></div>
+      <div class="nl-field"><label class="nl-label" for="pay_phone" data-i18n="payPhoneLabel">Cellulaire pour virement Interac</label><input class="nl-input" id="pay_phone" type="tel" autocomplete="tel" maxlength="20" placeholder="514-555-1234" value="${esc(formatPhone(paymentInfo.phone))}"></div>
+    </div>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="pay_save" data-i18n="save" onclick="savePaymentInfo()">Enregistrer</button></div>
+  </section>
   <section class="nl-card nl-card--pad-lg" id="section-admins">
     <div class="h3" data-i18n="coAdmins">Co-administrateurs</div>
     <div class="nl-list" style="margin:12px 0">
@@ -7370,6 +7580,22 @@ async function submitLanguageMode() {
     if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
     ok.textContent = window.__pageDict().saved; ok.style.display = 'block'; btn.disabled = false;
   } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
+// Payment reminders: the e-Transfer email and mobile number.
+async function savePaymentInfo() {
+  var err = document.getElementById('payErr'); var ok = document.getElementById('payOk'); var btn = document.getElementById('pay_save');
+  err.style.display = 'none'; ok.style.display = 'none'; btn.disabled = true;
+  try {
+    var res = await fetch('/league/settings/payment', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ email: document.getElementById('pay_email').value, phone: document.getElementById('pay_phone').value })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; }
+    else { document.getElementById('pay_email').value = data.email; document.getElementById('pay_phone').value = data.phone; ok.textContent = window.__pageDict().saved; ok.style.display = 'block'; }
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; }
+  btn.disabled = false;
 }
 // "Start calling subs": saved as soon as it is chosen.
 async function saveSubCallHours(sel) {
@@ -24458,6 +24684,16 @@ async function handleFinancesCostDelete(req, env) {
 
 async function financesPage(env = null, isAuthed = false) {
   const logoTooltip = env ? await getStandingsTooltip(env) : '';
+  // Payment reminders (src/payment_reminders.js): SMBHL's e-Transfer details.
+  const payInfo = env && isAuthed ? await getPaymentInfo(env.DB, SMBHL_LEAGUE_ID) : { email: '', phone: '' };
+  const payCfg = {
+    list: '/admin/finances/reminders', send: '/admin/finances/reminders/send', preview: '/admin/finances/reminders/preview',
+    seasonParam: 's', seasonSelect: 'seasonSelect', btnCls: 'mini', primaryCls: 'btn in', cardCls: 'card',
+    T: {
+      fr: { noInfo: "Ajoutez d'abord votre courriel ou votre cellulaire pour virement Interac dans les Paramètres de paiement.", error: 'Une erreur est survenue. Réessayez.' },
+      en: { noInfo: 'Add your e-Transfer email or mobile number in Payment settings first.' }
+    }
+  };
   const showStatsTabs = await currentSeasonTracksStats(env);
   return page({ fr: 'Cotisations et Finances', en: 'Dues & Finances' }, `
   <style>
@@ -24508,6 +24744,28 @@ async function financesPage(env = null, isAuthed = false) {
         <button class="mini" id="btnExportCsv" data-i18n="btnExportCsv">📥 Exporter CSV</button>
         <span id="toastMsg" style="display:none; color:var(--green); font-weight:700; font-size:13px;" data-i18n="toastSaved">✅ Enregistré</span>
       </div>
+    </div>
+
+    <div id="pay-root" style="margin-bottom:14px;"></div>
+
+    <!-- Payment settings (payment reminders) -->
+    <div class="card" style="margin-bottom:14px;" id="paySettings">
+      <h2 style="margin:0 0 4px;" data-i18n="paySettingsTitle">Paramètres de paiement</h2>
+      <p style="margin:0 0 8px; font-size:13px; color:var(--soft);" data-i18n="payHelp">Affiché dans les rappels de paiement. Laissez vide pour masquer.</p>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end;">
+        <div>
+          <label for="pay_email" style="font-size:12px; font-weight:600; color:var(--soft); display:block; margin-bottom:3px;" data-i18n="payEmailLabel">Courriel pour virement Interac</label>
+          <input type="email" id="pay_email" maxlength="254" class="tbl-inp" style="width:100%;" value="${esc(payInfo.email)}">
+        </div>
+        <div>
+          <label for="pay_phone" style="font-size:12px; font-weight:600; color:var(--soft); display:block; margin-bottom:3px;" data-i18n="payPhoneLabel">Cellulaire pour virement Interac</label>
+          <input type="tel" id="pay_phone" maxlength="20" placeholder="514-555-1234" class="tbl-inp" style="width:100%;" value="${esc(formatPhone(payInfo.phone))}">
+        </div>
+        <div>
+          <button class="btn in" id="btnSavePay" style="font-size:15px; padding:8px 10px; margin:0; width:100%;" data-i18n="btnSavePricing">ENREGISTRER</button>
+        </div>
+      </div>
+      <div id="payMsg" role="status" style="margin-top:6px; font-size:13px; font-weight:600;"></div>
     </div>
 
     <!-- Pricing Configuration Card -->
@@ -24698,6 +24956,8 @@ async function financesPage(env = null, isAuthed = false) {
       lblSubPlayer: 'Substitut joueur ($/match)',
       lblSubGoalie: 'Substitut gardien ($/match)',
       lblEtransferPhone: 'Téléphone Virement Interac',
+      paySettingsTitle: 'Paramètres de paiement', payEmailLabel: 'Courriel pour virement Interac', payPhoneLabel: 'Cellulaire pour virement Interac',
+      payHelp: 'Affiché dans les rappels de paiement. Laissez vide pour masquer.', paySaved: 'Enregistré ✅',
       btnSavePricing: 'ENREGISTRER',
       kpiDueTitle: 'Total Attendu',
       kpiDueSub: "sur l'ensemble des joueurs",
@@ -24792,6 +25052,8 @@ async function financesPage(env = null, isAuthed = false) {
       lblSubPlayer: 'Sub Player ($/game)',
       lblSubGoalie: 'Sub Goalie ($/game)',
       lblEtransferPhone: 'Interac e-Transfer Phone',
+      paySettingsTitle: 'Payment settings', payEmailLabel: 'e-Transfer email', payPhoneLabel: 'e-Transfer mobile number',
+      payHelp: 'Shown in payment reminders. Leave empty to hide.', paySaved: 'Saved ✅',
       btnSavePricing: 'SAVE PRICING',
       kpiDueTitle: 'Total Billed',
       kpiDueSub: 'across all players',
@@ -25171,6 +25433,16 @@ async function financesPage(env = null, isAuthed = false) {
     if (s && s.trim()) load(s.trim());
   });
 
+  // Payment settings: the e-Transfer email and mobile number.
+  $('btnSavePay').addEventListener('click', async () => {
+    const msg = $('payMsg');
+    msg.textContent = ''; msg.style.color = '';
+    const r = await fetch('/admin/finances/payment-settings', { method: 'POST', headers: { 'x-admin': K, 'content-type': 'application/json' }, body: JSON.stringify({ email: $('pay_email').value, phone: $('pay_phone').value }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) { $('pay_email').value = d.email; $('pay_phone').value = d.phone; msg.textContent = t('paySaved'); msg.style.color = 'var(--green)'; }
+    else { msg.textContent = (window.__errorText && d.errorKey) ? window.__errorText(d.errorKey, d.error) : (d.error || 'Erreur / Error'); msg.style.color = '#b91c1c'; }
+  });
+
   $('btnSavePricing').addEventListener('click', async () => {
     const season = currentData.season;
     const body = {
@@ -25325,6 +25597,9 @@ async function financesPage(env = null, isAuthed = false) {
     load();
   }
   </script>
+  ${EMAIL_PREVIEW_ASSETS}
+  <script>window.__payCfg = ${JSON.stringify(payCfg)};</script>
+  <script>${PAYMENT_PANEL_JS}</script>
   `, logoTooltip);
 }
 
@@ -31586,6 +31861,14 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueFinancesPage(req, env, url);
       if (url.pathname === '/league/finances/data' && req.method === 'GET')
         return await handleLeagueFinancesData(req, env, url);
+      if (url.pathname === '/league/finances/reminders' && req.method === 'GET')
+        return await handleLeaguePaymentReminders(req, env, url, 'list');
+      if (url.pathname === '/league/finances/reminders/preview' && req.method === 'POST')
+        return await handleLeaguePaymentReminders(req, env, url, 'preview');
+      if (url.pathname === '/league/finances/reminders/send' && req.method === 'POST')
+        return await handleLeaguePaymentReminders(req, env, url, 'send');
+      if (url.pathname === '/league/settings/payment' && req.method === 'POST')
+        return await handleLeaguePaymentReminders(req, env, url, 'settings');
       if (url.pathname === '/league/finances/pricing' && req.method === 'POST')
         return await handleLeagueFinancesPricing(req, env, url);
       if (url.pathname === '/league/finances/player' && req.method === 'POST')
@@ -32100,6 +32383,14 @@ async function handleFetch(req, env, ctx) {
         if (auth !== 'ok') return adminAuthResponse(auth);
         if (url.pathname === '/admin/finances/data' && req.method === 'GET')
           return await handleFinancesData(req, env, url);
+        if (url.pathname === '/admin/finances/reminders' && req.method === 'GET')
+          return await handleSmbhlPaymentReminders(req, env, url, 'list');
+        if (url.pathname === '/admin/finances/reminders/preview' && req.method === 'POST')
+          return await handleSmbhlPaymentReminders(req, env, url, 'preview');
+        if (url.pathname === '/admin/finances/reminders/send' && req.method === 'POST')
+          return await handleSmbhlPaymentReminders(req, env, url, 'send');
+        if (url.pathname === '/admin/finances/payment-settings' && req.method === 'POST')
+          return await handleSmbhlPaymentReminders(req, env, url, 'settings');
         if (url.pathname === '/admin/finances/pricing' && req.method === 'POST')
           return await handleFinancesPricingSave(req, env);
         if (url.pathname === '/admin/finances/player' && req.method === 'POST')
@@ -32278,6 +32569,7 @@ export {
   // Item 6: dual-role players.
   dualGoalieChecks, syncDualRoles, dualGoalieAlert, dualGoalieAction, dualGoalieOptions, callSubs,
   cancelPendingMailForContact, dualRoleLines, renderPollEmail, deadMan,
+  paymentBalances, renderPaymentReminder, sendPaymentReminders, paymentReminderPreview,
   // The hard daily cap (part163) on a direct send.
   sendMail,
   // Nights (part165): the waitlist skips a sub in an overlapping game.
