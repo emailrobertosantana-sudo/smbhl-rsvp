@@ -18,7 +18,7 @@ import { PAYMENT_REMINDER_KIND, getPaymentInfo, savePaymentInfo, hasPaymentInfo,
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
-import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime, formatPageDate, formatPageDateTime, PAGE_DATE_JS } from './date_format.js';
+import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime, formatPageDate, formatPageDateTime, PAGE_DATE_JS, endSentence } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart, eventHasStarted } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
@@ -14104,12 +14104,12 @@ function renderShortGameAdminAlert(env, leagueRow, ev, shortages) {
   const linesEn = shortages.map(sh => shortGameLine(sh, 'en'));
   const fr = {
     subject: `Manque de joueurs · ${whenFr}`,
-    text: `Manque de joueurs · ${whenFr}. ${linesFr.join(' ')} ${closeFr} ${link}`,
+    text: `Manque de joueurs\n\n${whenFr}\n${linesFr.join('\n')}\n${closeFr}\n\nVoir le match : ${link}`,
     html: block('Action requise', 'Manque de joueurs', whenFr, linesFr, closeFr, 'Voir le match')
   };
   const en = {
     subject: `Short of players · ${whenEn}`,
-    text: `Short of players · ${whenEn}. ${linesEn.join(' ')} ${closeEn} ${link}`,
+    text: `Short of players\n\n${whenEn}\n${linesEn.join('\n')}\n${closeEn}\n\nView the game: ${link}`,
     html: block('Action needed', 'Short of players', whenEn, linesEn, closeEn, 'View the game')
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
@@ -14993,25 +14993,32 @@ function eventWhenLine(ev) {
 // One short email in the league's own form: SMBHL's stacked French then
 // English; a Notre Ligue league's language setting and design system.
 // fr/en: { subject, lines: [...] }.
+// fr / en: { subject, lines, heading?, link? { url, label } }: the heading
+// above the lines, the link as a button (its address on its own line in
+// the text part), never a raw address in the HTML.
 async function renderDualMail(env, ev, cfg, fr, en) {
   const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
   const league = getLeagueConfig(cfg);
   const toHtml = lines => lines.map(l => (l ? `<p style="font-size:15px; margin:0 0 12px;">${esc(l)}</p>` : '')).join('');
+  const toText = p => `${p.heading ? `${p.heading}\n\n` : ''}${p.lines.join('\n')}${p.link ? `\n${p.link.url}` : ''}`;
+  const heading = p => (p.heading ? `<h1 style="margin:0 0 12px;font:700 22px/28px Archivo,Arial,Helvetica,sans-serif;color:#16181d;">${esc(p.heading)}</h1>` : '');
   if (leagueId === SMBHL_LEAGUE_ID) {
     const siteHost = String(league.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
     const subject = `${fr.subject} / ${en.subject}`;
+    const btn = p => (p.link ? `<div style="margin:0 0 12px;">${emailBtn(p.link.url, p.link.label, '#17457f', '#ffffff')}</div>` : '');
     return {
       mail: {
         subject,
-        text: `${fr.lines.join('\n')}\n\n---\n\n${en.lines.join('\n')}\n\n---\n${league.name} · ${siteHost}`,
-        html: emailWrap(subject, `${toHtml(fr.lines)}<hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">${toHtml(en.lines)}`, league)
+        text: `${toText(fr)}\n\n---\n\n${toText(en)}\n\n---\n${league.name} · ${siteHost}`,
+        html: emailWrap(subject, `${heading(fr)}${toHtml(fr.lines)}${btn(fr)}<hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">${heading(en)}${toHtml(en.lines)}${btn(en)}`, league)
       },
       identity: { fromEmail: league.fromEmail, replyToEmail: league.replyToEmail }
     };
   }
+  const btn = p => (p.link ? nlEmailButton(p.link.url, p.link.label, leagueFillColor(league.color || '#b3122e')) : '');
   const assembled = assembleBilingualEmail(league.languageMode || 'both', {
-    fr: { subject: fr.subject, text: fr.lines.join('\n'), html: toHtml(fr.lines) },
-    en: { subject: en.subject, text: en.lines.join('\n'), html: toHtml(en.lines) }
+    fr: { subject: fr.subject, text: toText(fr), html: `${heading(fr)}${toHtml(fr.lines)}${btn(fr)}` },
+    en: { subject: en.subject, text: toText(en), html: `${heading(en)}${toHtml(en.lines)}${btn(en)}` }
   });
   return {
     mail: { subject: assembled.subject, text: assembled.text, html: nlLegalEmailWrap({ languageMode: league.languageMode || 'both', brandName: league.name, barColor: leagueFillColor(league.color || '#b3122e'), bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) },
@@ -15160,8 +15167,8 @@ async function dualGoalieAlert(env, ev) {
   const base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
   const link = isSmbhl ? `${base}/admin/board?e=${encodeURIComponent(ev.id)}` : `${base}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
   const list = lang => players.map(p => `- ${p.name} (${isSmbhl && lang === 'fr' ? tFR(p.team) : p.team})`);
-  const fr = { subject: `Gardien manquant : ${shortFr}`, lines: [`${shortFr} : pas de gardien ${w.fr}. ${why.fr}`, '', `Ces joueurs jouent aux deux positions et jouent ${dualDay(ev, 'fr', false)} :`, ...list('fr'), '', `Sur la page du match, tu peux leur demander ou les mettre dans les buts : ${link}`] };
-  const en = { subject: `Missing goalie: ${short.join(', ')}`, lines: [`${short.join(', ')}: no goalie ${w.en}. ${why.en}`, '', `These players play both positions and are playing ${dualDay(ev, 'en', false)}:`, ...list('en'), '', `On the game page, you can ask them or put them in goal: ${link}`] };
+  const fr = { subject: `Gardien manquant : ${shortFr}`, heading: `Gardien manquant : ${shortFr}`, lines: [`${shortFr} : pas de gardien ${w.fr}. ${why.fr}`, '', `Ces joueurs jouent aux deux positions et jouent ${dualDay(ev, 'fr', false)} :`, ...list('fr'), '', 'Sur la page du match, tu peux leur demander ou les mettre dans les buts.'], link: { url: link, label: 'Voir le match' } };
+  const en = { subject: `Missing goalie: ${short.join(', ')}`, heading: `Missing goalie: ${short.join(', ')}`, lines: [`${short.join(', ')}: no goalie ${w.en}. ${why.en}`, '', `These players play both positions and are playing ${dualDay(ev, 'en', false)}:`, ...list('en'), '', 'On the game page, you can ask them or put them in goal.'], link: { url: link, label: 'View the game' } };
   const { mail, identity } = await renderDualMail(env, ev, cfg, fr, en);
   const admins = isSmbhl ? [{ email: env.ADMIN_EMAIL || ADMIN_EMAIL }] : await leagueAdminEmails(env, leagueId);
   for (const a of admins) {
@@ -21322,12 +21329,12 @@ function renderNightWaitlistAdminAlert(env, leagueRow, ev, contact, alone = fals
   const lineEn = `${alone ? 'The game is full' : 'The games at that time are full'}. ${contact.name} said yes and is waiting for a spot: they get the first one that opens. No one was placed past your maximum.`;
   const fr = {
     subject: `Liste d'attente · ${whenFr}`,
-    text: `Liste d'attente · ${whenFr}. ${lineFr} ${link}`,
+    text: `${alone ? 'Match complet' : 'Matchs complets'}\n\n${whenFr}\n${lineFr}\n\nVoir le match : ${link}`,
     html: block("Liste d'attente", alone ? 'Match complet' : 'Matchs complets', whenFr, lineFr, 'Voir le match')
   };
   const en = {
     subject: `Waitlist · ${whenEn}`,
-    text: `Waitlist · ${whenEn}. ${lineEn} ${link}`,
+    text: `${alone ? 'Game full' : 'Games full'}\n\n${whenEn}\n${lineEn}\n\nView the game: ${link}`,
     html: block('Waitlist', alone ? 'Game full' : 'Games full', whenEn, lineEn, 'View the game')
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
@@ -21451,12 +21458,12 @@ function renderThinGameAdminAlert(env, leagueRow, ev, thin) {
     ${nlEmailButton(link, btn, barColor)}`;
   const fr = {
     subject: `Matchs à la même heure déséquilibrés · ${whenFr}`,
-    text: `Matchs à la même heure déséquilibrés · ${whenFr}. ${lines('fr').join(' ')} ${closeFr} ${link}`,
+    text: `Un match manque de joueurs\n\n${whenFr}\n${lines('fr').join('\n')}\n${closeFr}\n\nVoir le match : ${link}`,
     html: block('Action requise', 'Un match manque de joueurs', whenFr, lines('fr'), closeFr, 'Voir le match')
   };
   const en = {
     subject: `Games at the same time are uneven · ${whenEn}`,
-    text: `Games at the same time are uneven · ${whenEn}. ${lines('en').join(' ')} ${closeEn} ${link}`,
+    text: `A game is short of players\n\n${whenEn}\n${lines('en').join('\n')}\n${closeEn}\n\nView the game: ${link}`,
     html: block('Action needed', 'A game is short of players', whenEn, lines('en'), closeEn, 'View the game')
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
@@ -21659,31 +21666,32 @@ async function renderNightMovedForContact(env, leagueRow, games, contact, team, 
   const toContent = lang => {
     const dayLabel = reminderDayLabel(ev.date, lang);
     const venues = [...new Set(games.map(g => g.venue).filter(Boolean))];
-    const when = `${formatEventDate(ev.date, lang, 'short')} · ${listJoin(games.map(g => formatEventTime(g.start_time, lang)), lang)}${venues.length ? ' · ' + venues.join(' / ') : ''}`;
+    // Inside a sentence: the French weekday in lowercase (date_format.js).
+    const when = `${formatEventDate(ev.date, lang, 'short', false)} · ${listJoin(games.map(g => formatEventTime(g.start_time, lang)), lang)}${venues.length ? ' · ' + venues.join(' / ') : ''}`;
     const plural = games.length > 1;
     const d = answer === 'none' ? (lang === 'fr' ? {
       subject: `${firstName}, pas de match pour ${team} ${dayLabel || 'ce jour-là'}`,
       headline: 'Pas de match pour ton équipe',
-      body: `${team} ne joue plus ${formatEventDate(ev.date, lang, 'short')}. Pas besoin de te présenter.`,
+      body: `${endSentence(`${team} ne joue plus le ${formatEventDate(ev.date, lang, 'long', false)}`)} Pas besoin de te présenter.`,
       answer: '',
       poweredBy: 'Propulsé par Notre Ligue'
     } : {
       subject: `${firstName}, no game for ${team} ${dayLabel || 'that day'}`,
       headline: 'No game for your team',
-      body: `${team} is no longer playing on ${formatEventDate(ev.date, lang, 'short')}. No need to come.`,
+      body: `${endSentence(`${team} is no longer playing on ${formatEventDate(ev.date, lang, 'short')}`)} No need to come.`,
       answer: '',
       poweredBy: 'Powered by Notre Ligue'
     }) : lang === 'fr' ? {
       subject: `${firstName}, nouvel horaire pour ${dayLabel || 'ton match'}`,
       headline: 'Ton horaire a changé',
-      body: team ? `${team} joue maintenant : ${when}.` : `${plural ? 'Tes matchs sont' : 'Ton match est'} maintenant : ${when}.`,
+      body: endSentence(team ? `${team} joue maintenant : ${when}` : `${plural ? 'Tes matchs sont' : 'Ton match est'} maintenant : ${when}`),
       answer: answer === 'in' ? 'Ta réponse suit : tu joues toujours. Rien à faire.' : 'On attend encore ta réponse.',
       btn: answer === 'in' ? 'Voir mes matchs' : 'Répondre',
       poweredBy: 'Propulsé par Notre Ligue'
     } : {
       subject: `${firstName}, new schedule for ${dayLabel || 'your game'}`,
       headline: 'Your schedule changed',
-      body: team ? `${team} now plays: ${when}.` : `${plural ? 'Your games are' : 'Your game is'} now: ${when}.`,
+      body: endSentence(team ? `${team} now plays: ${when}` : `${plural ? 'Your games are' : 'Your game is'} now: ${when}`),
       answer: answer === 'in' ? "Your answer carries over: you're still playing. Nothing to do." : 'We still need your answer.',
       btn: answer === 'in' ? 'See my games' : 'Answer',
       poweredBy: 'Powered by Notre Ligue'
@@ -22042,7 +22050,7 @@ function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, tea
     : { fr: pluralText('{n|# heure|# heures}', { n: h }, 'fr'), en: pluralText('{n|# hour|# hours}', { n: h }, 'en'), frShort: `${h} h`, enShort: `${h} h` };
   const fr = {
     subject: `${team ? `${team}: ` : ''}${playerName} vient de se désister · ${left.frShort} avant le match`,
-    text: `${playerName}${team ? ` (${team})` : ''} vient de se désister, ${left.fr} avant le match (${dFr}).${subsInvited ? " L'invitation aux remplaçants a été lancée automatiquement." : ''} ${dashboardLink}`,
+    text: `${playerName} ne joue plus\n\n${playerName}${team ? ` (${team})` : ''} vient de se désister, ${left.fr} avant le match (${dFr}).${subsInvited ? " L'invitation aux remplaçants a été lancée automatiquement." : ''}\n\nVoir le match : ${dashboardLink}`,
     html: `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Désistement tardif</td></tr></table>
     <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(playerName)} ne joue plus</h1>
@@ -22051,7 +22059,7 @@ function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, tea
   };
   const en = {
     subject: `${team ? `${team}: ` : ''}${playerName} just dropped out, ${left.enShort} before the game`,
-    text: `${playerName}${team ? ` (${team})` : ''} just dropped out, ${left.en} before the game (${dEn}).${subsInvited ? ' Subs invited automatically.' : ''} ${dashboardLink}`,
+    text: `${playerName} is no longer playing\n\n${playerName}${team ? ` (${team})` : ''} just dropped out, ${left.en} before the game (${dEn}).${subsInvited ? ' Subs invited automatically.' : ''}\n\nView the game: ${dashboardLink}`,
     html: `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Late reversal</td></tr></table>
     <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(playerName)} is no longer playing</h1>
@@ -22138,12 +22146,12 @@ function renderLeagueGameCancelledEmail(leagueRow, ev, contact) {
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${esc(line)}</p>`;
   const fr = {
     subject: `Match annulé · ${whenFr}`,
-    text: `Bonjour ${firstName}, ${lineFr}`,
+    text: `Match annulé\n\nBonjour ${firstName},\n${lineFr}`,
     html: block('Annulé', `Bonjour ${firstName},`, 'Match annulé', lineFr)
   };
   const en = {
     subject: `Game cancelled · ${whenEn}`,
-    text: `Hi ${firstName}, ${lineEn}`,
+    text: `Game cancelled\n\nHi ${firstName},\n${lineEn}`,
     html: block('Cancelled', `Hi ${firstName},`, 'Game cancelled', lineEn)
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });

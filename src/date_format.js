@@ -92,6 +92,14 @@ export function formatEventTime(timeHHMM, lang = 'fr') {
   return min === 0 ? `${h24} h` : `${h24} h ${String(min).padStart(2, '0')}`;
 }
 
+// A sentence that ends on a date: the period is added only when the text
+// does not already end with one (« ne joue plus le vendredi 10 avr. »,
+// never « avr.. »).
+export function endSentence(text) {
+  const s = String(text == null ? '' : text);
+  return s.endsWith('.') ? s : `${s}.`;
+}
+
 // Combines date + time with the design system's own " · " separator
 // (every preview file joins them this way -- "Dim 28 sept · 9 h").
 export function formatEventDateTime(dateISO, timeHHMM, lang = 'fr', style = 'short', capitalizeFirst = true) {

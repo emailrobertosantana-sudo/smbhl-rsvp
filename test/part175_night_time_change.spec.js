@@ -134,6 +134,10 @@ describe('A team left with no game that night', () => {
     expect(m.text).toContain('No need to come.');
     expect(m.text).toContain('Blue ne joue plus ');
     expect(m.text).toContain('Pas besoin de te présenter.');
+    // Batch 7 item 1 (N1): « le » and the weekday in lowercase, one period
+    // after the abbreviated month (« …avr. Pas besoin… », never « avr.. »).
+    expect(m.text).toMatch(/Blue ne joue plus le (lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) \d+ \S+ Pas besoin de te présenter\./);
+    expect(m.text).not.toContain('..');
   });
 
   it('put back in a game within the 10 minutes: one email, the new schedule, not "no game"', async () => {
