@@ -19,7 +19,9 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
-import { dualGoalieChecks, dualGoalieAction, acceptAvailability, callSubs, teamState } from '../src/index.js';
+import { dualGoalieChecks, dualGoalieAction, acceptAvailability, callSubs, teamState, dualRoleLines } from '../src/index.js';
+import { formatEventDate } from '../src/date_format.js';
+import { createSessionCookie } from '../src/auth.js';
 import { getSeasonConfigForEvent } from '../src/season_config.js';
 import { getLeagueSeasonConfig } from '../src/leagues.js';
 
@@ -126,7 +128,7 @@ for (const [name, P] of Object.entries(PRODUCTS)) {
       expect(subjectOf(toDual[0])).toMatch(/comme joueur/);
       const toGoalie = mails.filter(m => m.player_id === P.p('GR'));
       expect(toGoalie).toHaveLength(1);
-      expect(subjectOf(toGoalie[0])).toMatch(/Tu es dans les buts/);
+      expect(subjectOf(toGoalie[0])).toMatch(/tu es dans les buts/);
     });
 
     it('a goalie sub accepted first: the first confirmed goalie wins, the dual-role player stays a skater', async () => {
@@ -269,5 +271,77 @@ describe('6a: Joueur / Gardien / Les deux', () => {
     const page = await (await SELF.fetch('http://example.com/admin/people', { headers: { 'x-admin': 'p195-admin' } })).text();
     expect(page).toContain('playBoth: "Les deux"');
     expect(page).toContain('data-play-role');
+  });
+});
+
+// Batch 2, item 1: the dual-role copy names the game's day, never "ce soir"
+// or "tonight" (these emails can go out days ahead; SMBHL plays Sunday
+// mornings). Every email the tests above queued, both products, and the
+// panels, in French and English.
+describe('the dual-role copy names the day, never "tonight"', () => {
+  const NIGHT = /ce soir|tonight|cette nuit/i;
+  const isoOf = ev => ev.id.match(/\d{4}-\d{2}-\d{2}/)[0];
+  const dayOf = (ev, lang) => formatEventDate(isoOf(ev), lang, 'long', false);
+
+  it('every dual-role email and admin alert, French and English', async () => {
+    const mails = await rows("SELECT o.kind, o.league_id, o.event_id, o.payload FROM outbox o WHERE o.kind IN ('dual_role', 'dual_goalie_alert')");
+    const subjects = { smbhl: [], lg195: [] };
+    for (const m of mails) {
+      const p = JSON.parse(m.payload).prerendered;
+      const ev = await one('SELECT id FROM events WHERE id = ?', m.event_id);
+      for (const part of [p.subject, p.text, p.html]) expect(part).not.toMatch(NIGHT);
+      expect(p.text.toLowerCase()).toContain(dayOf(ev, 'fr').toLowerCase());
+      // SMBHL is bilingual; the Notre Ligue league here is French only.
+      if (m.league_id === 'smbhl') expect(p.text).toContain(formatEventDate(isoOf(ev), 'en', 'long'));
+      subjects[m.league_id].push(p.subject);
+    }
+    for (const league of ['smbhl', 'lg195']) {
+      const all = subjects[league].join('\n');
+      // to_goalie and goalie_back, to_skater, ask, the admin alert.
+      expect(all).toMatch(/^\S+ \d+ \S+ : tu es dans les buts/m);
+      expect(all).toMatch(/^\S+ \d+ \S+ : tu joues comme joueur/m);
+      expect(all).toMatch(/cherche un gardien/);
+      expect(all).toMatch(/Gardien manquant/);
+    }
+    expect(subjects.smbhl.join('\n')).toMatch(/[A-Z]\w+ [A-Z][a-z]+ \d+: you're in goal/);
+    expect(subjects.smbhl.join('\n')).toMatch(/[A-Z]\w+ [A-Z][a-z]+ \d+: you play as a skater/);
+  });
+
+  it('the role line in the game-day and placement emails', async () => {
+    const ev = { id: 'smbhl:2099-11-29', date: 'Sunday November 29 2099' };
+    expect(dualRoleLines({ dualRole: 'goalie' }, ev)).toEqual({ fr: '🥅 Dimanche 29 nov : tu es dans les buts.', en: "🥅 Sunday Nov 29: you're in goal." });
+    expect(dualRoleLines({ dualRole: 'skater' }, ev)).toEqual({ fr: '🏒 Dimanche 29 nov : tu joues comme joueur.', en: '🏒 Sunday Nov 29: you play as a skater.' });
+    expect(dualRoleLines({}, ev)).toBeNull();
+  });
+
+  const shortBlue = async P => {
+    const ev = await game(P, 40);
+    await rsvp(P, ev, 'GR', 'Red', 'in'); await rsvp(P, ev, 'DR', 'Red', 'in'); await rsvp(P, ev, 'SR', 'Red', 'in');
+    await rsvp(P, ev, 'GB', 'Blue', 'out'); await rsvp(P, ev, 'SB', 'Blue', 'in');
+    return ev;
+  };
+
+  it('the SMBHL board panel: the day comes with the data, in both languages', async () => {
+    env.ADMIN_KEY = 'p195-admin';
+    const ev = await shortBlue(PRODUCTS.SMBHL);
+    const d = await (await SELF.fetch(`http://example.com/admin/board/data?e=${encodeURIComponent(ev.id)}`, { headers: { 'x-admin': 'p195-admin' } })).json();
+    expect(d.dualGoalies.players.length).toBeGreaterThan(0);
+    expect(d.dualGoalies.when).toEqual({ fr: dayOf(ev, 'fr'), en: dayOf(ev, 'en') });
+    const page = await (await SELF.fetch('http://example.com/admin/board', { headers: { 'x-admin': 'p195-admin' } })).text();
+    expect(page).toContain("dualDesc: 'Pas de gardien pour {teams}. Ces joueurs jouent aux deux positions et jouent {when} :'");
+    expect(page).toContain("dualDesc: 'No goalie for {teams}. These players play both positions and are playing {when}:'");
+    expect(page).not.toMatch(NIGHT);
+  });
+
+  it('the Notre Ligue game page panel, French and English', async () => {
+    const P = PRODUCTS['Notre Ligue'];
+    const ev = await shortBlue(P);
+    env.AUTH_SECRET = env.AUTH_SECRET || 'p195-auth';
+    const cookie = (await createSessionCookie(env, 'u195', 0)).split(';')[0];
+    const html = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(ev.id)}`, { headers: { cookie } })).text();
+    expect(html).toContain('data-dual-team="Blue"');
+    expect(html).toContain(`Ces joueurs jouent aux deux positions et jouent ${dayOf(ev, 'fr')} avec une autre équipe :`);
+    expect(html).toContain(`These players play both positions and are playing ${dayOf(ev, 'en')} with another team:`);
+    expect(html).not.toMatch(NIGHT);
   });
 });

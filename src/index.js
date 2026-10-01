@@ -10392,13 +10392,13 @@ ${tabbar}`;
       backToSchedule: 'Horaire', short: 'Manque', complete: 'Complet', minReached: 'Minimum atteint',
       confirmed: 'confirmés', openSpots: 'places libres', noReply: 'sans réponse',
       inviteGoalie: 'Inviter un gardien', inviteSkater: 'Inviter des joueurs',
-      dualTitle: 'Gardiens possibles', dualDesc: 'Ces joueurs jouent aux deux positions et jouent ce soir avec une autre équipe :',
+      dualTitle: 'Gardiens possibles', dualDesc: `Ces joueurs jouent aux deux positions et jouent ${dualDay(ev, 'fr', false)} avec une autre équipe :`,
       dualAsk: 'Lui demander', dualSwitch: 'Mettre dans les buts', dualAsked: 'Demande envoyée.', dualSwitched: 'Fait : dans les buts pour cette équipe.',
       noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.',
       statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu', statusElsewhere: "Joue l'autre match", statusWaitlist: "Liste d'attente",
       noShowBtn: "N'est pas venu", noShowBadge: "N'est pas venu", noShowUndo: 'A joué', subsInGameTitle: 'Remplaçants à ce match',
       setGameOut: 'Pas ce match',
-      nightScopeHelp: "Il y a d'autres matchs ce soir-là. IN et OUT valent pour toute la soirée du joueur, comme sa propre réponse. « Pas ce match » le retire de ce match seulement.",
+      nightScopeHelp: "Il y a d'autres matchs ce jour-là. IN et OUT valent pour tous ses matchs de ce jour, comme sa propre réponse. « Pas ce match » le retire de ce match seulement.",
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Envoyer un rappel maintenant',
       remindersEnabledLabel: 'Rappels automatiques pour ce match',
@@ -10478,13 +10478,13 @@ ${tabbar}`;
       backToSchedule: 'Schedule', short: 'Short', complete: 'Full', minReached: 'Minimum reached',
       confirmed: 'confirmed', openSpots: 'open spots', noReply: 'no reply',
       inviteGoalie: 'Invite a goalie', inviteSkater: 'Invite players',
-      dualTitle: 'Possible goalies', dualDesc: 'These players play both positions and are playing tonight with another team:',
+      dualTitle: 'Possible goalies', dualDesc: `These players play both positions and are playing ${dualDay(ev, 'en', false)} with another team:`,
       dualAsk: 'Ask', dualSwitch: 'Put in goal', dualAsked: 'Request sent.', dualSwitched: 'Done: in goal for this team.',
       noPlayersOnTeam: 'No players assigned to this team.',
       statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply', statusElsewhere: 'In the other game', statusWaitlist: 'Waitlist',
       noShowBtn: "Didn't show", noShowBadge: "Didn't show", noShowUndo: 'Played', subsInGameTitle: 'Subs in this game',
       setGameOut: 'Not this game',
-      nightScopeHelp: "There are other games that night. IN and OUT cover the player's whole night, like their own answer. \u201cNot this game\u201d takes them out of this game only.",
+      nightScopeHelp: "There are other games that day. IN and OUT cover all of the player's games that day, like their own answer. \u201cNot this game\u201d takes them out of this game only.",
       setIn: 'IN', setOut: 'OUT',
       remindNow: 'Send a reminder now',
       remindersEnabledLabel: 'Automated reminders for this game',
@@ -10666,7 +10666,7 @@ ${tabbar}`;
       ${inviteButtons.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${inviteButtons.join('')}</div>` : ''}
       ${dualOpts.short.includes(team) && dualOpts.players.length ? `<div class="ev-dual" data-dual-team="${esc(team)}" style="border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:8px;">
         <div class="nl-label" data-i18n="dualTitle">Gardiens possibles</div>
-        <p class="nl-help" style="margin:0" data-i18n="dualDesc">Ces joueurs jouent aux deux positions et jouent ce soir avec une autre équipe :</p>
+        <p class="nl-help" style="margin:0" data-i18n="dualDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).dualDesc)}</p>
         ${dualOpts.players.map(p => `<div class="ev-p"><span>${esc(p.name)} <span class="nl-help">(${esc(p.team)})</span></span><div style="display:flex;gap:6px;"><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="dualAsk" onclick="dualGoalie('${esc(p.player_id)}','${esc(team)}','ask',this)">Lui demander</button><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="dualSwitch" onclick="dualGoalie('${esc(p.player_id)}','${esc(team)}','switch',this)">Mettre dans les buts</button></div></div>`).join('')}
       </div>` : ''}
       <p class="inviteMsg nl-help" style="display:none;"></p>
@@ -12076,11 +12076,25 @@ function renderInviteEmail({
 // or "Drop-in, no fixed teams") -- nothing in the email may talk about
 // being placed on a team.
 // Item 6f: a dual-role player's role for the night, in both languages.
-function dualRoleLines(payload) {
-  const r = payload && payload.dualRole;
-  if (r === 'goalie') return { fr: '🥅 Ce soir, tu joues dans les buts.', en: "🥅 Tonight you're in goal." };
-  if (r === 'skater') return { fr: '🏒 Ce soir, tu joues comme joueur.', en: '🏒 Tonight you play as a skater.' };
+// The game's day for the dual-role copy: « Dimanche 15 nov » / "Sunday
+// Nov 15" (cap) or « dimanche 15 nov » mid-sentence. Never "tonight":
+// these can go out days ahead, and SMBHL plays Sunday mornings.
+function dualDay(ev, lang, cap = true) {
+  const iso = (String((ev && ev.date) || '').match(/^\d{4}-\d{2}-\d{2}/) || String((ev && ev.id) || '').match(/\d{4}-\d{2}-\d{2}/) || [''])[0];
+  return iso ? formatEventDate(iso, lang, 'long', cap) : '';
+}
+function dualRoleText(role, ev) {
+  const fr = dualDay(ev, 'fr'), en = dualDay(ev, 'en');
+  if (role === 'goalie') return { fr: `${fr} : tu es dans les buts.`, en: `${en}: you're in goal.` };
+  if (role === 'skater') return { fr: `${fr} : tu joues comme joueur.`, en: `${en}: you play as a skater.` };
   return null;
+}
+function dualRoleLines(payload, ev) {
+  const r = payload && payload.dualRole;
+  const l = dualRoleText(r, ev);
+  if (!l) return null;
+  const icon = r === 'goalie' ? '🥅' : '🏒';
+  return { fr: `${icon} ${l.fr}`, en: `${icon} ${l.en}` };
 }
 
 function body(kind, { ev, name, team, link, payload, leagueCfg = null, teamless = false }) {
@@ -12256,7 +12270,7 @@ NO  (Out): ${payload.no}${sign}`;
 
 Rappel : tu es confirmé(e) avec ${frTeam} pour demain, ${w.fr}!
 Reminder: you are confirmed with ${enTeam} for tomorrow, ${w.en}!
-${dualRoleLines(payload) ? `${dualRoleLines(payload).fr}\n${dualRoleLines(payload).en}\n` : ''}${shirtText}${subFeeText}${matchInfo ? matchInfo + (matchInfoEn !== matchInfo ? matchInfoEn : '') + '\n' : ''}${msgsText}
+${dualRoleLines(payload, ev) ? `${dualRoleLines(payload, ev).fr}\n${dualRoleLines(payload, ev).en}\n` : ''}${shirtText}${subFeeText}${matchInfo ? matchInfo + (matchInfoEn !== matchInfo ? matchInfoEn : '') + '\n' : ''}${msgsText}
 📋 Voir l'alignement de l'équipe : ${teamUrl}
 📋 View team lineup: ${teamUrl}
 ${webUrl ? `Fiche d'équipe : ${webUrl}\nTeam page: ${webUrl}\n` : ''}
@@ -12267,8 +12281,8 @@ Je ne peux pas jouer / I can't play : ${noUrl}${sign}`;
         subj,
         `<p style="font-size:16px; margin:0 0 4px; font-weight:700;">Salut <b>${esc(name)}</b> / Hi <b>${esc(name)}</b>,</p>
         <p style="font-size:16px; margin:0 0 3px; font-weight:600; color:#0f172a;">Rappel : tu es confirmé(e) avec <b>${esc(frTeam)}</b> pour demain, <b>${esc(w.fr)}</b>!</p>
-        <p style="font-size:14px; margin:0 0 16px; color:#475569;">Reminder: you are confirmed with <b>${esc(enTeam)}</b> for tomorrow, <b>${esc(w.en)}</b>!</p>${dualRoleLines(payload) ? `
-        <p style="font-size:15px; margin:0 0 16px; font-weight:700;">${esc(dualRoleLines(payload).fr)}<br><span style="color:#475569; font-size:13px; font-weight:400;">${esc(dualRoleLines(payload).en)}</span></p>` : ''}
+        <p style="font-size:14px; margin:0 0 16px; color:#475569;">Reminder: you are confirmed with <b>${esc(enTeam)}</b> for tomorrow, <b>${esc(w.en)}</b>!</p>${dualRoleLines(payload, ev) ? `
+        <p style="font-size:15px; margin:0 0 16px; font-weight:700;">${esc(dualRoleLines(payload, ev).fr)}<br><span style="color:#475569; font-size:13px; font-weight:400;">${esc(dualRoleLines(payload, ev).en)}</span></p>` : ''}
         ${shirtHtml}${subFeeHtml}
         ${matchInfo ? `<div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:10px 14px; margin:0 0 16px; font-size:14px; white-space:pre-line;">${esc(matchInfo.trim())}${matchInfoEn !== matchInfo ? `<div style="color:#64748b; margin-top:8px;">${esc(matchInfoEn.trim())}</div>` : ''}</div>` : ''}
         ${msgsHtml}
@@ -12452,24 +12466,24 @@ Not right? Change it: ${link}${sign}`;
 `Salut ${name},
 
 Tu es inscrit avec ${tFR(team)} ${w.fr}.
-${dualRoleLines(payload) ? dualRoleLines(payload).fr + '\n' : ''}${cavFr}
+${dualRoleLines(payload, ev) ? dualRoleLines(payload, ev).fr + '\n' : ''}${cavFr}
 Tes détails : ${link}
 
 ---
 
 You're signed up with ${team} ${w.en}.
-${dualRoleLines(payload) ? dualRoleLines(payload).en + '\n' : ''}${cavEn}
+${dualRoleLines(payload, ev) ? dualRoleLines(payload, ev).en + '\n' : ''}${cavEn}
 Your details: ${link}${sign}`;
       const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
-        <p style="font-size:15px; margin:0 0 10px;">Tu es inscrit avec <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>.</p>${dualRoleLines(payload) ? `
-        <p style="font-size:15px; margin:0 0 10px; font-weight:700;">${esc(dualRoleLines(payload).fr)}</p>` : ''}
+        <p style="font-size:15px; margin:0 0 10px;">Tu es inscrit avec <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>.</p>${dualRoleLines(payload, ev) ? `
+        <p style="font-size:15px; margin:0 0 10px; font-weight:700;">${esc(dualRoleLines(payload, ev).fr)}</p>` : ''}
         <p style="font-size:14px; margin:0 0 16px; color:#64748b;">${esc(cavFr)}</p>
         <p style="margin:0 0 20px;">${emailBtn(link, 'Voir mes détails', '#17457f', '#ffffff')}</p>
         <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 10px; color:#334155;">You're signed up with <b>${esc(team)}</b> <b>${esc(w.en)}</b>.</p>${dualRoleLines(payload) ? `
-        <p style="font-size:15px; margin:0 0 10px; font-weight:700; color:#334155;">${esc(dualRoleLines(payload).en)}</p>` : ''}
+        <p style="font-size:15px; margin:0 0 10px; color:#334155;">You're signed up with <b>${esc(team)}</b> <b>${esc(w.en)}</b>.</p>${dualRoleLines(payload, ev) ? `
+        <p style="font-size:15px; margin:0 0 10px; font-weight:700; color:#334155;">${esc(dualRoleLines(payload, ev).en)}</p>` : ''}
         <p style="font-size:14px; margin:0 0 16px; color:#64748b;">${esc(cavEn)}</p>
         <p style="margin:0 0 20px;">${emailBtn(link, 'See my details', '#17457f', '#ffffff')}</p>`
       );
@@ -14596,11 +14610,13 @@ async function hasDualPlayers(env, leagueId) {
 }
 
 // The game's when line, mid-sentence: « dimanche 10 h 30 (lieu : X) ».
+// SMBHL's date column is a label; the event ID carries the ISO date.
 function eventWhenLine(ev) {
-  return /^\d{4}-\d{2}-\d{2}/.test(String(ev.date || ''))
+  const iso = (String(ev.date || '').match(/^\d{4}-\d{2}-\d{2}/) || String(ev.id || '').match(/\d{4}-\d{2}-\d{2}/) || [''])[0];
+  return iso
     ? {
-        fr: `${formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false)}${ev.venue ? ` (lieu : ${ev.venue})` : ''}`,
-        en: `${formatEventDateTime(ev.date, ev.start_time, 'en', 'long')}${ev.venue ? ` (venue: ${ev.venue})` : ''}`
+        fr: `${formatEventDateTime(iso, ev.start_time, 'fr', 'long', false)}${ev.venue ? ` (lieu : ${ev.venue})` : ''}`,
+        en: `${formatEventDateTime(iso, ev.start_time, 'en', 'long')}${ev.venue ? ` (venue: ${ev.venue})` : ''}`
       }
     : whenLine(ev);
 }
@@ -14646,20 +14662,21 @@ async function sendDualMail(env, ev, cfg, kind, playerId, team, otherId = null) 
   const isSmbhl = leagueId === SMBHL_LEAGUE_ID;
   const first = (c.name || '').split(' ')[0] || c.name || '';
   const w = eventWhenLine(ev);
+  const day = { fr: dualDay(ev, 'fr'), en: dualDay(ev, 'en') };
   const t = realTeam(team);
   const tFr = t ? (isSmbhl ? tFR(t) : t) : null;
   const other = otherId ? await getContact(env.DB, otherId) : null;
   const otherName = other ? other.name : '';
   let fr, en;
   if (kind === 'to_goalie') {
-    fr = { subject: 'Ce soir, tu joues dans les buts', lines: [`Salut ${first},`, '', `${t ? `${tFr} n'a pas de gardien` : "Il n'y a pas de gardien"} ${w.fr}. Comme tu peux jouer aux deux positions, tu joues dans les buts.`, "Tu n'as rien à faire. Si ça ne te convient pas, réponds à ce courriel."] };
-    en = { subject: "Tonight you're in goal", lines: [`Hi ${first},`, '', `${t ? `${t} has no goalie` : 'There is no goalie'} ${w.en}. Since you play both positions, you're in goal.`, "Nothing to do. If that doesn't work for you, reply to this email."] };
+    fr = { subject: `${day.fr} : tu es dans les buts`, lines: [`Salut ${first},`, '', `${t ? `${tFr} n'a pas de gardien` : "Il n'y a pas de gardien"} ${w.fr}. Comme tu joues aux deux positions, tu es dans les buts.`, "Tu n'as rien à faire. Si ça ne te convient pas, réponds à ce courriel."] };
+    en = { subject: `${day.en}: you're in goal`, lines: [`Hi ${first},`, '', `${t ? `${t} has no goalie` : 'There is no goalie'} ${w.en}. Since you play both positions, you're in goal.`, "Nothing to do. If that doesn't work for you, reply to this email."] };
   } else if (kind === 'to_skater') {
-    fr = { subject: 'Ce soir, tu joues comme joueur', lines: [`Salut ${first},`, '', `${t ? `Le gardien de ${tFr}` : 'Le gardien'} sera là ${w.fr} : il reprend sa place dans les buts, et tu joues comme joueur.`] };
-    en = { subject: 'Tonight you play as a skater', lines: [`Hi ${first},`, '', `${t ? `${t}'s goalie` : 'The goalie'} will be there ${w.en}: they take the net back, and you play as a skater.`] };
+    fr = { subject: `${day.fr} : tu joues comme joueur`, lines: [`Salut ${first},`, '', `${t ? `Le gardien de ${tFr}` : 'Le gardien'} sera là ${w.fr} : il reprend sa place dans les buts, et tu joues comme joueur.`] };
+    en = { subject: `${day.en}: you play as a skater`, lines: [`Hi ${first},`, '', `${t ? `${t}'s goalie` : 'The goalie'} will be there ${w.en}: they take the net back, and you play as a skater.`] };
   } else if (kind === 'goalie_back') {
-    fr = { subject: 'Tu es dans les buts ce soir', lines: [`Salut ${first},`, '', `Merci d'avoir confirmé. Tu es dans les buts${t ? ` pour ${tFr}` : ''} ${w.fr}.${otherName ? ` ${otherName} reprend sa place de joueur.` : ''}`] };
-    en = { subject: "You're in goal tonight", lines: [`Hi ${first},`, '', `Thanks for confirming. You're in goal${t ? ` for ${t}` : ''} ${w.en}.${otherName ? ` ${otherName} goes back to playing as a skater.` : ''}`] };
+    fr = { subject: `${day.fr} : tu es dans les buts`, lines: [`Salut ${first},`, '', `Merci d'avoir confirmé. Tu es dans les buts${t ? ` pour ${tFr}` : ''} ${w.fr}.${otherName ? ` ${otherName} reprend sa place de joueur.` : ''}`] };
+    en = { subject: `${day.en}: you're in goal`, lines: [`Hi ${first},`, '', `Thanks for confirming. You're in goal${t ? ` for ${t}` : ''} ${w.en}.${otherName ? ` ${otherName} goes back to playing as a skater.` : ''}`] };
   } else if (kind === 'ask') {
     fr = { subject: `${tFr} cherche un gardien`, lines: [`Salut ${first},`, '', `${tFr} n'a pas de gardien ${w.fr}. Comme tu peux jouer aux deux positions, l'organisateur te demande si tu peux jouer dans les buts pour cette équipe.`, 'Réponds à ce courriel pour dire oui ou non.'] };
     en = { subject: `${t} needs a goalie`, lines: [`Hi ${first},`, '', `${t} has no goalie ${w.en}. Since you play both positions, the organizer is asking whether you can play in goal for that team.`, 'Reply to this email to say yes or no.'] };
@@ -14774,8 +14791,8 @@ async function dualGoalieAlert(env, ev) {
   const base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
   const link = isSmbhl ? `${base}/admin/board?e=${encodeURIComponent(ev.id)}` : `${base}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
   const list = lang => players.map(p => `- ${p.name} (${isSmbhl && lang === 'fr' ? tFR(p.team) : p.team})`);
-  const fr = { subject: `Gardien manquant : ${shortFr}`, lines: [`${shortFr} : pas de gardien ${w.fr}. ${why.fr}`, '', 'Ces joueurs jouent aux deux positions et jouent ce soir :', ...list('fr'), '', `Sur la page du match, tu peux leur demander ou les mettre dans les buts : ${link}`] };
-  const en = { subject: `Missing goalie: ${short.join(', ')}`, lines: [`${short.join(', ')}: no goalie ${w.en}. ${why.en}`, '', 'These players play both positions and are playing tonight:', ...list('en'), '', `On the game page, you can ask them or put them in goal: ${link}`] };
+  const fr = { subject: `Gardien manquant : ${shortFr}`, lines: [`${shortFr} : pas de gardien ${w.fr}. ${why.fr}`, '', `Ces joueurs jouent aux deux positions et jouent ${dualDay(ev, 'fr', false)} :`, ...list('fr'), '', `Sur la page du match, tu peux leur demander ou les mettre dans les buts : ${link}`] };
+  const en = { subject: `Missing goalie: ${short.join(', ')}`, lines: [`${short.join(', ')}: no goalie ${w.en}. ${why.en}`, '', `These players play both positions and are playing ${dualDay(ev, 'en', false)}:`, ...list('en'), '', `On the game page, you can ask them or put them in goal: ${link}`] };
   const { mail, identity } = await renderDualMail(env, ev, cfg, fr, en);
   const admins = isSmbhl ? [{ email: env.ADMIN_EMAIL || ADMIN_EMAIL }] : await leagueAdminEmails(env, leagueId);
   for (const a of admins) {
@@ -16455,7 +16472,7 @@ const I18N_BOARD = {
     errEnterKey: 'Entre la clé',
     errKeyRejected: 'Clé refusée',
     noOpenGame: 'Aucun match ouvert.',
-    dualTitle: 'Gardiens possibles', dualDesc: 'Pas de gardien pour {teams}. Ces joueurs jouent aux deux positions et jouent ce soir :',
+    dualTitle: 'Gardiens possibles', dualDesc: 'Pas de gardien pour {teams}. Ces joueurs jouent aux deux positions et jouent {when} :',
     dualAsk: 'Lui demander', dualSwitch: 'Dans les buts pour {team}', dualAsked: 'Demande envoyée.',
     printSheets: 'Imprimer feuilles de match ↗',
     weekLabel: 'Semaine',
@@ -16506,7 +16523,7 @@ const I18N_BOARD = {
     errEnterKey: 'Enter key',
     errKeyRejected: 'Key rejected',
     noOpenGame: 'No open game.',
-    dualTitle: 'Possible goalies', dualDesc: 'No goalie for {teams}. These players play both positions and are playing tonight:',
+    dualTitle: 'Possible goalies', dualDesc: 'No goalie for {teams}. These players play both positions and are playing {when}:',
     dualAsk: 'Ask', dualSwitch: 'In goal for {team}', dualAsked: 'Request sent.',
     printSheets: 'Print Game Sheets ↗',
     weekLabel: 'Week',
@@ -16804,7 +16821,7 @@ function renderBoardUI() {
   if (dg && dg.short && dg.short.length && dg.players && dg.players.length) {
     h += '<div class="card" id="dualGoalies" style="margin-top:14px;border:2px solid #b45309">' +
       '<b>' + esc(t('dualTitle')) + '</b>' +
-      '<p class="state" style="margin:4px 0 8px">' + esc(t('dualDesc').replace('{teams}', dg.short.join(', '))) + '</p>' +
+      '<p class="state" style="margin:4px 0 8px">' + esc(t('dualDesc').replace('{teams}', dg.short.join(', ')).replace('{when}', (dg.when || {})[currentLang === 'en' ? 'en' : 'fr'] || '')) + '</p>' +
       dg.short.map(team => dg.players.map(p =>
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--rule);flex-wrap:wrap">' +
           '<span>' + esc(p.name) + ' <span class="by">(' + esc(p.team) + ')</span></span>' +
@@ -17360,6 +17377,7 @@ async function boardData(env, url = null) {
   const planned_absences = await getPlannedAbsencesForSeason(env.DB, ev.season);
   // Item 6c: dual-role regulars who could play goal for a team short one.
   const dualGoalies = (await hasDualPlayers(env, ev.league_id || SMBHL_LEAGUE_ID)) ? await dualGoalieOptions(env, ev, cfg) : { short: [], players: [] };
+  if (dualGoalies.players.length) dualGoalies.when = { fr: dualDay(ev, 'fr', false), en: dualDay(ev, 'en', false) };
   return Response.json({ event: ev, events, teams, waitlist, planned_absences, balance, dualGoalies });
 }
 
@@ -21588,7 +21606,7 @@ function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, d
 // assembler as renderLeagueReminderEmail above -- see its own comment.
 function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang, games = null, role = null }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
-  const roleLine = l => (role === 'goalie' ? (l === 'fr' ? 'Ce soir, tu joues dans les buts.' : "Tonight you're in goal.") : role === 'skater' ? (l === 'fr' ? 'Ce soir, tu joues comme joueur.' : 'Tonight you play as a skater.') : '');
+  const roleLine = l => { const r = dualRoleText(role, ev); return r ? r[l] : ''; };
   const toContent = l => {
     const d = leagueReminderDict(l, { firstName, dayLabel: dayLabelFor(dayLabel, l), ev, team, games });
     const rl = roleLine(l);
@@ -32217,7 +32235,7 @@ export {
   body,
   // Item 6: dual-role players.
   dualGoalieChecks, syncDualRoles, dualGoalieAlert, dualGoalieAction, dualGoalieOptions, callSubs,
-  cancelPendingMailForContact,
+  cancelPendingMailForContact, dualRoleLines,
   // The hard daily cap (part163) on a direct send.
   sendMail,
   // Nights (part165): the waitlist skips a sub in an overlapping game.
