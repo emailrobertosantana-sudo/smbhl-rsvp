@@ -18378,6 +18378,9 @@ async function peoplePage(env = null, isAuthed = false) {
       <div id="msg" style="font-size:13px; font-weight:600;"></div>
     </div>
 
+    <!-- Item 8b: contacts with no name of their own -->
+    <div id="unnamed-notice" role="status" style="display:none; background:#fffbeb; border:1px solid #fde68a; border-radius:4px; padding:10px 14px; margin-bottom:16px; font-size:14px;"></div>
+
     <!-- Stat cards -->
     <div class="stat-grid">
       <div class="stat-card">
@@ -18618,6 +18621,7 @@ const I18N_CONTACTS = {
     btnToGoalie: "GARDIEN",
     btnToSkater: "JOUEUR",
     playSkater: "Joueur", playGoalie: "Gardien", playBoth: "Les deux", playRoleTitle: "Position",
+    unnamedNotice: "Contacts sans nom : {list}. Ajoutez leur nom pour qu'il apparaisse dans les listes et les courriels.",
     archivePromptTitle: "Archiver {name} ?\\n\\nIndiquez le motif en tapant un chiffre (1 à 4) :\\n1 - Pause de saison (Season off)\\n2 - Blessure (Injury)\\n3 - Retraite (Retired)\\n4 - Autre / Inactif",
     restoreConfirm: "Réactiver {name} dans le pool de substituts ?\\n\\n(Le joueur débutera comme substitut et ne sera pas assigné d'office à une équipe).",
     purgeConfirm: "Supprimer DEFINITIVEMENT {name} de la base de données ?\\n\\nAttention : toutes ses coordonnées seront effacées.",
@@ -18699,6 +18703,7 @@ const I18N_CONTACTS = {
     btnToGoalie: "GOALIE",
     btnToSkater: "SKATER",
     playSkater: "Skater", playGoalie: "Goalie", playBoth: "Both", playRoleTitle: "Position",
+    unnamedNotice: "Contacts with no name: {list}. Add their name so it shows in lists and emails.",
     archivePromptTitle: "Archive {name}?\\n\\nEnter the reason by typing a number (1 to 4):\\n1 - Season off\\n2 - Injury\\n3 - Retired\\n4 - Other / Inactive",
     restoreConfirm: "Reactivate {name} in the sub pool?\\n\\n(The player will start as a sub and will not be automatically assigned to a team).",
     purgeConfirm: "PERMANENTLY delete {name} from the database?\\n\\nWarning: all contact information will be erased.",
@@ -18809,6 +18814,11 @@ function renderContacts(d) {
   $('sub-skater-desc').textContent = countText('subSkatersAvail', skaterList.length);
   $('sub-goalie-desc').textContent = countText('subGoaliesAvail', goalieList.length);
   $('lbl-archive-count').textContent = countText('archivedDesc', archiveList.length);
+
+  // Item 8b: contacts with no name of their own, named here for the admin.
+  const unnamed = d.unnamed || [];
+  $('unnamed-notice').style.display = unnamed.length ? '' : 'none';
+  $('unnamed-notice').textContent = unnamed.length ? '⚠️ ' + t('unnamedNotice').replace('{list}', unnamed.map(p => p.name).join(', ')) : '';
 
   // Item 6a: what a player plays, one choice of three. "Les deux" is a
   // player who can also play goalie (is_backup_goalie), as before.
@@ -19257,6 +19267,18 @@ async function ensureContactsArchiveColumns(db) {
   try { await db.prepare("UPDATE contacts SET email = 'rsantana@live.ca' WHERE player_id = 'P0217' AND email != 'rsantana@live.ca'").run(); } catch (_) {}
 }
 
+// Item 8a: a permanently deleted contact gets no more mail. Every pending
+// outbox row addressed to them is cancelled (reason "contact deleted");
+// sent rows stay as the record. Archiving does not call this. Any product:
+// the row's player_id is the contact's key.
+async function cancelPendingMailForContact(env, playerId) {
+  const r = await env.DB.prepare(
+    `UPDATE outbox SET cancelled = 1, error = 'contact deleted'
+      WHERE player_id = ? AND sent_at IS NULL AND cancelled = 0 AND failed_at IS NULL`
+  ).bind(playerId).run();
+  return r.meta?.changes || 0;
+}
+
 async function peopleData(env) {
   await ensureContactsArchiveColumns(env.DB);
   let d = null;
@@ -19433,14 +19455,20 @@ async function peopleData(env) {
 
   // Anyone still without a name gets the readable label, never a blank
   // or the key (src/contact_name.js).
+  // Item 8b: active contacts with no name of their own are listed for the
+  // page's notice (no email to anyone), so the admin can fill them in.
   const rosterNames = rosterNameMap(d.players);
+  const unnamed = [];
   for (const p of [...rosterPeople, ...subPeople, ...archivedPeople]) {
-    if (!String(p.name || '').trim()) p.name = contactDisplayName({ contact: contactMap.get(p.player_id) || null, roster: rosterNames, id: p.player_id });
+    if (String(p.name || '').trim()) continue;
+    p.name = contactDisplayName({ contact: contactMap.get(p.player_id) || null, roster: rosterNames, id: p.player_id });
+    if (p.role !== 'archived') unnamed.push({ player_id: p.player_id, name: p.name });
   }
 
   return Response.json({
     people: [...rosterPeople, ...subPeople, ...archivedPeople],
     archived: archivedPeople,
+    unnamed,
     current_season: currentSeason,
     teams: teamNames,
     counts: {
@@ -19713,7 +19741,8 @@ async function peopleAction(req, env) {
   if (b.action === 'purge' || b.action === 'delete_permanent') {
     const r = await env.DB.prepare('DELETE FROM contacts WHERE player_id=?').bind(id).run();
     if (!r.meta.changes) return new Response('not found', { status: 404 });
-    return Response.json({ ok: true, deleted: true });
+    const cancelled = await cancelPendingMailForContact(env, id);
+    return Response.json({ ok: true, deleted: true, cancelled_mail: cancelled });
   }
 
   if (b.action === 'new') {
@@ -32188,6 +32217,7 @@ export {
   body,
   // Item 6: dual-role players.
   dualGoalieChecks, syncDualRoles, dualGoalieAlert, dualGoalieAction, dualGoalieOptions, callSubs,
+  cancelPendingMailForContact,
   // The hard daily cap (part163) on a direct send.
   sendMail,
   // Nights (part165): the waitlist skips a sub in an overlapping game.
