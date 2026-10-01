@@ -381,7 +381,9 @@ export function leagueFillColor(originalHex) {
 
 /* ---------- transactional emails (design system Part 5) ----------
  * A small, self-contained implementation of guidelines/30-emails.md's
- * build rules: 560px content table, role="presentation", inline
+ * build rules: a content table 560px at most (width 100%, max-width
+ * 560px, so it fits a phone; Outlook on Windows ignores max-width and
+ * gets a fixed 560px table in a conditional comment), role="presentation", inline
  * styles only, no flexbox/grid/background-images, Archivo/Arial/
  * Helvetica with font-stretch:118% on the headline, a 6px color bar +
  * white header row (the color appears twice only: the bar and the
@@ -498,8 +500,9 @@ export function nlEmailWrap({ brandName, barColor = '#16181d', bodyHtml, footerH
 <html lang="fr">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"></head>
 <body style="margin:0;padding:24px 0;background:#f4f4f2;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
-<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="width:560px;background:#ffffff;border-radius:6px;border:1px solid #e3e3e0;font-family:Archivo,Arial,Helvetica,sans-serif;color:#16181d;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:0 12px;">
+<!--[if mso]><table role="presentation" width="560" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:560px;background:#ffffff;border-radius:6px;border:1px solid #e3e3e0;font-family:Archivo,Arial,Helvetica,sans-serif;color:#16181d;">
   <tr><td style="background:${nlEmailEsc(barColor)};height:6px;line-height:6px;font-size:0;border-radius:6px 6px 0 0;">&nbsp;</td></tr>
   <tr><td style="padding:18px 28px;border-bottom:1px solid #e3e3e0;">
     <span style="font:800 18px/24px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${nlEmailEsc(brandName)}</span>
@@ -511,6 +514,7 @@ export function nlEmailWrap({ brandName, barColor = '#16181d', bodyHtml, footerH
     ${footerHtml}
   </td></tr>
 </table>
+<!--[if mso]></td></tr></table><![endif]-->
 </td></tr></table>
 </body></html>`;
 }
