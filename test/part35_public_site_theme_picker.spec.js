@@ -101,14 +101,14 @@ describe('Part 2 (live-testing task): public site theme picker', () => {
     });
 
     const areneHtml = await (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.id)}`)).text();
-    expect(areneHtml).toContain('Sam 4 avr');
+    expect(areneHtml).toContain('samedi 4 avr.');
     expect(areneHtml).toContain('Theme Test Arena');
     expect(areneHtml).toContain('Falcons');
     expect(areneHtml).toContain('Otters');
 
     await setTheme(cookie, csrfToken, 'clean');
     const cleanHtml = await (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.id)}`)).text();
-    expect(cleanHtml).toContain('Sam 4 avr');
+    expect(cleanHtml).toContain('samedi 4 avr.');
     expect(cleanHtml).toContain('Theme Test Arena');
     expect(cleanHtml).toContain('Falcons');
     expect(cleanHtml).toContain('Otters');

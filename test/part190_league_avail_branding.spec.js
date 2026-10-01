@@ -45,7 +45,7 @@ describe('/avail for a Notre Ligue game', () => {
     expect(res.status).toBe(200);
     expect(titleOf(html)).toBe('À confirmer | Ligue du mercredi');
     expect(html).toContain('Ligue du mercredi');
-    expect(html).toContain('Samedi 7 mars · 19 h 30');
+    expect(html).toContain('samedi 7 mars 2099 · 19 h 30');
     expect(html).toContain('Lieu : Aréna Saint-Michel');
     expect(html).toContain('Propulsé par Notre Ligue');
     expect(seen(html)).not.toMatch(SMBHL_WORDS);
