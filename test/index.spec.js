@@ -495,7 +495,7 @@ describe("SMBHL Worker", () => {
 			payload
 		});
 
-		expect(res.subject).toContain("À demain pour le match !");
+		expect(res.subject).toContain("À demain pour le match!");
 		expect(res.subject).toContain("See you at the gym tomorrow!");
 
 		// French text
@@ -503,7 +503,7 @@ describe("SMBHL Worker", () => {
 		expect(res.text).toContain("tu es confirmé(e) avec Rouge pour demain");
 		expect(res.text).toContain("Voir l'alignement de l'équipe : https://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Red&t=abc123token");
 		expect(res.text).toContain("Fiche d'équipe : https://smbhl.com/#/team/Fall%202026/Red");
-		expect(res.text).toContain("Tu ne peux plus venir ? Mets ton statut à jour ici.");
+		expect(res.text).toContain("Tu ne peux plus venir? Mets ton statut à jour ici.");
 		expect(res.text).toContain("Je ne peux pas jouer / I can't play : https://rsvp.smbhl.com/rsvp?e=2026-09-20&p=P0001&t=xyz789&v=out");
 
 		// English text
@@ -518,7 +518,7 @@ describe("SMBHL Worker", () => {
 		expect(res.html).toContain("View team lineup");
 		expect(res.html).toContain("https://rsvp.smbhl.com/team-rsvp?s=Fall%202026&amp;team=Red&amp;t=abc123token");
 		expect(res.html).toContain("https://smbhl.com/#/team/Fall%202026/Red");
-		expect(res.html).toContain("Tu ne peux plus venir ? Mets ton statut à jour ici.");
+		expect(res.html).toContain("Tu ne peux plus venir? Mets ton statut à jour ici.");
 		expect(res.html).toContain("Can't make it? Update your status here.");
 		expect(res.html).toContain("Je ne peux pas jouer / I can&#39;t play");
 		expect(res.html).toContain("https://rsvp.smbhl.com/rsvp?e=2026-09-20&amp;p=P0001&amp;t=xyz789&amp;v=out");
@@ -534,7 +534,7 @@ describe("SMBHL Worker", () => {
 			payload: {}
 		});
 
-		expect(res.subject).toContain("À demain pour le match !");
+		expect(res.subject).toContain("À demain pour le match!");
 		expect(res.text).toContain("Salut Sam");
 		expect(res.text).toContain("ton équipe");
 		expect(res.text).toContain("your team");
@@ -586,7 +586,7 @@ describe("SMBHL Worker", () => {
 			expect(result.sent).toBe(1);
 			expect(sent.length).toBe(1);
 			expect(sent[0].to[0]).toBe('pending@smbhl.com');
-			expect(sent[0].subject).toContain('À demain pour le match !');
+			expect(sent[0].subject).toContain('À demain pour le match!');
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

@@ -1166,7 +1166,7 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
           <input type="hidden" name="exp" value="${esc(String(reviewToken.exp))}">
           <input type="file" id="addSheetInput" name="sheets" multiple accept="image/*" style="display:none" onchange="this.form.submit()">
           <button type="button" class="btn-step" id="btnAddMissingSheets" data-missing="${esc(missingTeams.join(', '))}" style="width:auto; padding:6px 14px; font-size:13px; font-weight:600; cursor:pointer; background:#f8fafc; border-color:var(--rule-dark); color:var(--ink);" onclick="document.getElementById('addSheetInput').click()">
-            + Ajouter feuille(s) manquante(s) (${esc(missingTeams.join(', '))}) 📸
+            + Ajouter ${missingTeams.length > 1 ? 'les feuilles manquantes' : 'la feuille manquante'} (${esc(missingTeams.join(', '))}) 📸
           </button>
         </form>
       ` : ''}
@@ -1195,7 +1195,7 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
 
         ${g.home_sheet_score && g.away_sheet_score && (g.home_sheet_score.home !== g.away_sheet_score.home || g.home_sheet_score.away !== g.away_sheet_score.away) ? `
           <div class="game-conflict-box" data-home="${esc(g.home_team)}" data-away="${esc(g.away_team)}" data-hhome="${g.home_sheet_score.home}" data-haway="${g.home_sheet_score.away}" data-ahome="${g.away_sheet_score.home}" data-aaway="${g.away_sheet_score.away}" style="background:#fee2e2; border-left:4px solid var(--danger); border-radius:4px; padding:8px 14px; margin:10px 16px 0; font-size:13px; color:#991b1b; font-weight:600;">
-            <div class="conflict-title">⚠️ Conflit de pointage entre les 2 feuilles : Feuille ${g.home_team} = ${g.home_sheet_score.home}-${g.home_sheet_score.away} vs Feuille ${g.away_team} = ${g.away_sheet_score.home}-${g.away_sheet_score.away} !</div>
+            <div class="conflict-title">⚠️ Conflit de pointage entre les 2 feuilles : Feuille ${g.home_team} = ${g.home_sheet_score.home}-${g.home_sheet_score.away} vs Feuille ${g.away_team} = ${g.away_sheet_score.home}-${g.away_sheet_score.away}!</div>
             <div class="conflict-sub" style="font-weight:normal; font-size:12px; margin-top:2px; color:#7f1d1d;">
               Vérifiez les totaux de buts individuels ci-dessous et ajustez les cases de score pour fixer le résultat officiel.
             </div>
@@ -1442,7 +1442,7 @@ const I18N_REVIEW_PAGE = {
     gallerySub: "Cliquez pour agrandir",
     sheetNumber: n => "Feuille #" + n + " ↗",
     trackerTitle: n => "Feuilles reçues (" + n + "/${teamNames.length}) :",
-    addMissingSheets: teams => "+ Ajouter feuille(s) manquante(s) (" + teams + ") 📸",
+    addMissingSheets: teams => "+ Ajouter " + (String(teams).split(', ').length > 1 ? "les feuilles manquantes" : "la feuille manquante") + " (" + teams + ") 📸",
     gamesSectionTitle: n => "📋 Matchs de la semaine (" + n + ")",
     homeLabel: "Domicile",
     awayLabel: "Visiteur",
@@ -1487,23 +1487,23 @@ const I18N_REVIEW_PAGE = {
       team + " (Match #" + gameNum + "): Buts des joueurs (" + sum + ") ≠ Pointage (" + score + ")",
     warnGaMismatch: (team, goalieName, ga, opponentTeam, oppScore) =>
       "Gardien " + team + " (" + goalieName + "): GA (" + ga + ") ≠ Buts " + opponentTeam + " (" + oppScore + ")",
-    warnCardTitle: n => "⚠️ Attention : " + n + " incohérence(s) détectée(s)",
+    warnCardTitle: n => "⚠️ Attention : " + n + (n > 1 ? " incohérences détectées" : " incohérence détectée"),
     okCardTitle: "✅ Toutes les fiches concordent parfaitement!",
     okCardSub: "Tous les buts individuels correspondent aux pointages finaux et aux fiches des gardiens.",
     statusDiscrepancies: n => "⚠️ Des écarts subsistent (" + n + ")",
     statusBalanced: "✅ Équilibré et prêt pour publication",
     alertCannotPublish: "Impossible de publier :\\n\\nVeuillez corriger les écarts de pointage et renseigner les noms complets (prénom et nom) pour tous les nouveaux joueurs avant de publier.",
     confirmPublish: "Confirmer et mettre à jour le site SMBHL en direct ?\\n\\nNote : Toutes les photos de feuilles de match seront immédiatement supprimées du serveur.",
-    alertPublishSuccess: "Bravo ! Les statistiques sont maintenant en direct sur smbhl.com et les photos temporaires ont été supprimées.",
+    alertPublishSuccess: "Bravo! Les statistiques sont maintenant en direct sur smbhl.com et les photos temporaires ont été supprimées.",
     backupEmailDeferred: "Le courriel de sauvegarde n'est PAS encore parti : la limite d'envois quotidienne est atteinte. Il est en file d'attente et partira le {date}.",
     backupEmailFailed: "Le courriel de sauvegarde n'a PAS pu être envoyé : {error}",
     alertError: err => "Erreur: " + err,
     alertNetError: err => "Erreur réseau: " + err,
-    confirmDiscard: "Voulez-vous vraiment rejeter et supprimer ces feuilles et photos ?",
+    confirmDiscard: "Voulez-vous vraiment rejeter et supprimer ces feuilles et photos?",
     alertDiscardSuccess: "Session rejetée et photos supprimées.",
     btnReprocess: "⚡ Réanalyser avec l'IA 🤖",
     btnReprocessing: "🤖 Analyse en cours par Gemini...",
-    reprocessSuccess: "Analyse terminée avec succès ! La page va se recharger.",
+    reprocessSuccess: "Analyse terminée avec succès! La page va se recharger.",
     unparsedAlertTitle: "⚠️ Photos reçues mais non assignées aux équipes",
     unparsedAlertDesc: "Cliquez sur le bouton <b>⚡ Réanalyser avec l'IA 🤖</b> ci-dessous pour extraire automatiquement les statistiques et alignements."
   },
@@ -1517,7 +1517,7 @@ const I18N_REVIEW_PAGE = {
     gallerySub: "Click to enlarge",
     sheetNumber: n => "Sheet #" + n + " ↗",
     trackerTitle: n => "Sheets received (" + n + "/${teamNames.length}):",
-    addMissingSheets: teams => "+ Add missing sheet(s) (" + teams + ") 📸",
+    addMissingSheets: teams => "+ Add missing " + (String(teams).split(', ').length > 1 ? "sheets" : "sheet") + " (" + teams + ") 📸",
     gamesSectionTitle: n => "📋 Weekly Games (" + n + ")",
     homeLabel: "Home",
     awayLabel: "Away",
@@ -1562,7 +1562,7 @@ const I18N_REVIEW_PAGE = {
       team + " (Game #" + gameNum + "): Player goals (" + sum + ") ≠ Score (" + score + ")",
     warnGaMismatch: (team, goalieName, ga, opponentTeam, oppScore) =>
       "Goalie " + team + " (" + goalieName + "): GA (" + ga + ") ≠ Goals " + opponentTeam + " (" + oppScore + ")",
-    warnCardTitle: n => "⚠️ Warning: " + n + " discrepancy(ies) detected",
+    warnCardTitle: n => "⚠️ Warning: " + n + (n === 1 ? " discrepancy detected" : " discrepancies detected"),
     okCardTitle: "✅ All sheets match perfectly!",
     okCardSub: "All individual goals match final scores and goalie sheets.",
     statusDiscrepancies: n => "⚠️ Discrepancies remain (" + n + ")",
@@ -2313,7 +2313,7 @@ export function renderReviewIndex(reviews = [], backups = [], showStatsTabs = tr
   <div class="card">
     <h2 id="manualTitle" data-i18n="manualTitle">✍️ Saisie manuelle (sans photo)</h2>
     <p id="manualDesc" data-i18n="manualDesc" style="color:var(--ink-soft); margin-bottom:16px;">
-      Aucune photo de feuille ? Créez une révision vierge pour une semaine et entrez les résultats à la main.
+      Aucune photo de feuille? Créez une révision vierge pour une semaine et entrez les résultats à la main.
     </p>
     <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
       <label for="manualWeekInput" id="manualWeekLabel" data-i18n="manualWeekLabel">Semaine :</label>
@@ -2407,10 +2407,10 @@ const I18N_REVIEW_INDEX = {
     uploadDesc: "Prenez en photo les 4 feuilles de match et téléversez-les ici, ou envoyez-les directement par courriel à <b>scores@smbhl.com</b>.",
     fileLabelDefault: "Cliquez pour sélectionner ou prendre les photos des feuilles",
     fileFormatNote: "JPEG, PNG, WebP acceptés",
-    fileCountSelected: count => count + " photo(s) sélectionnée(s)",
+    fileCountSelected: count => count + (count > 1 ? " photos sélectionnées" : " photo sélectionnée"),
     btnUpload: "Analyser les feuilles avec l'IA ⚡",
     manualTitle: "✍️ Saisie manuelle (sans photo)",
-    manualDesc: "Aucune photo de feuille ? Créez une révision vierge pour une semaine et entrez les résultats à la main.",
+    manualDesc: "Aucune photo de feuille? Créez une révision vierge pour une semaine et entrez les résultats à la main.",
     manualWeekLabel: "Semaine :",
     btnManualStart: "Démarrer une saisie manuelle ✍️",
     btnManualStarting: "Création en cours…",
@@ -2445,7 +2445,7 @@ const I18N_REVIEW_INDEX = {
     uploadDesc: "Take photos of all 4 scoresheets and upload them here, or email them directly to <b>scores@smbhl.com</b>.",
     fileLabelDefault: "Click to select or take photos of the scoresheets",
     fileFormatNote: "JPEG, PNG, WebP accepted",
-    fileCountSelected: count => count + " photo(s) selected",
+    fileCountSelected: count => count + (count === 1 ? " photo selected" : " photos selected"),
     btnUpload: "Analyze Sheets with AI ⚡",
     manualTitle: "✍️ Manual Entry (no photo)",
     manualDesc: "No scoresheet photo? Create a blank review for a week and type in the results by hand.",
@@ -2807,7 +2807,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
 
     const subject = `[${notifyLeagueCfg.name}] ${hasWarnings ? '⚠️ Validation requise' : '✅ Prêt à publier'} : Feuilles Semaine ${week} (${receivedTeams.length}/${teamNames.length} reçues)`;
     const text = `${adminHello(env, 'fr')}\n\n` +
-      `${imageAttachments.length} nouvelle(s) feuille(s) de match ont été reçues pour la semaine ${week}.\n` +
+      `${imageAttachments.length} ${imageAttachments.length > 1 ? 'nouvelles feuilles de match ont été reçues' : 'nouvelle feuille de match a été reçue'} pour la semaine ${week}.\n` +
       `État : ${receivedTeams.length}/${teamNames.length} feuilles reçues (${receivedTeams.join(', ') || 'aucune'}).${missingTeams.length > 0 ? ` (Manque : ${missingTeams.join(', ')})` : ''}\n\n` +
       `${hasWarnings ? '⚠️ Des écarts de pointage ou des feuilles manquantes nécessitent votre validation.' : `✅ Toutes les statistiques et les ${teamNames.length} feuilles concordent parfaitement!`}\n\n` +
       `Cliquez sur le lien suivant pour vérifier et publier en direct sur le site :\n` +
@@ -2836,7 +2836,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
       <td style="padding:22px 20px;">
         <p style="font-size:16px; margin:0 0 14px;">Bonjour${adminName(env) ? ` <b>${escHtml(adminName(env))}</b>` : ''},</p>
         <p style="font-size:15px; margin:0 0 14px;">
-          <b>${escH(imageAttachments.length)}</b> nouvelle(s) feuille(s) de match ont été reçues pour la <b>semaine ${escH(week)}</b>.
+          <b>${escH(imageAttachments.length)}</b> ${imageAttachments.length > 1 ? 'nouvelles feuilles de match ont été reçues' : 'nouvelle feuille de match a été reçue'} pour la <b>semaine ${escH(week)}</b>.
         </p>
         <div style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px 14px; margin:0 0 18px; font-size:14px;">
           <b>État :</b> ${escH(receivedTeams.length)}/${escH(teamNames.length)} feuilles reçues (${escH(receivedTeams.join(', ') || 'aucune')}).

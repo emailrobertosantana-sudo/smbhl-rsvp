@@ -190,10 +190,13 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
         const league = await createLeague(cookie, csrfToken, { name: `Reset ${mode} League`, teamNames: ['A', 'B'], tracksStats: true });
         if (mode !== 'both') await setLanguageMode(cookie, csrfToken, mode);
 
+        // Item 5n: the reset follows the page it is asked from, whatever
+        // the league's mode: here a page in the league's own language, or
+        // no language at all for 'both'.
         const { sentMails } = await withMailMock(() =>
           SELF.fetch('http://example.com/auth/request-password-reset', {
             method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ email: `langmode.reset.${mode}@example.com` })
+            body: JSON.stringify({ email: `langmode.reset.${mode}@example.com`, ...(mode === 'both' ? {} : { lang: mode }) })
           })
         );
         expect(sentMails.length).toBe(1);
@@ -211,13 +214,13 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
       });
     }
 
-    // B9's one rule: no league -> the language the account signed up in.
-    it('password reset for an account with NO league follows the language it signed up in', async () => {
-      const { userId } = await signup('langmode.reset.noleague@example.com', '203.0.176.099', 'en');
+    // Item 5n: the page's language, whatever the account signed up in.
+    it('password reset asked from an English page is English only, even for an account that signed up in French', async () => {
+      const { userId } = await signup('langmode.reset.noleague@example.com', '203.0.176.099', 'fr');
       const { sentMails } = await withMailMock(() =>
         SELF.fetch('http://example.com/auth/request-password-reset', {
           method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ email: 'langmode.reset.noleague@example.com' })
+          body: JSON.stringify({ email: 'langmode.reset.noleague@example.com', lang: 'en' })
         })
       );
       expect(sentMails.length).toBe(1);

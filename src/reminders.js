@@ -29,6 +29,7 @@ import { eventStart, localParts, SMBHL_LEAGUE_ID } from './league_ids.js';
 import { getSeasonConfigForEvent, getTeamNames } from './season_config.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation } from './mail_queue.js';
 import { hasCapability } from './super_admin.js';
+import { pluralText } from './plural.js';
 
 // ---------------------------------------------------------------------
 // Host: the helpers index.js owns and these functions call.
@@ -49,7 +50,7 @@ export async function buildSummaryText(env, ev) {
   const lines = [];
   for (const team of cfgTeams) {
     const st = await teamState(env.DB, ev.id, team, cfg);
-    lines.push(`${team}: ${st.skaters} joueurs, ${st.goalies} gardien(s)` +
+    lines.push(`${team}: ${pluralText('{n|# joueur|# joueurs}', { n: st.skaters }, 'fr')}, ${pluralText('{n|# gardien|# gardiens}', { n: st.goalies }, 'fr')}` +
       (st.short ? '   <-- SHORT' : ''));
   }
   const wait = (await env.DB.prepare(

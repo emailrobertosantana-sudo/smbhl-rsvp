@@ -6,9 +6,10 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window this test was written for
 import { admin, must, rows, local, DAY } from './support/league_season.js';
 
-beforeAll(async () => { env.AUTH_SECRET = 'p168'; env.RSVP_SECRET = 'p168r'; env.RESEND_API_KEY = 'p168'; env.MAIL_DAILY_CAP = ''; await applyRealSchema(env); });
+beforeAll(async () => { env.AUTH_SECRET = 'p168'; env.RSVP_SECRET = 'p168r'; env.RESEND_API_KEY = 'p168'; env.MAIL_DAILY_CAP = ''; await applyRealSchema(env); await wideSubCallWindow(env); });
 
 describe('Games at the same time share the players who haven\'t answered', () => {
   it('3 waiting players, max 2 a game, min 2: the first game counts 2 of them and is fine; the second counts 1 and calls a sub', async () => {

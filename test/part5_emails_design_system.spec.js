@@ -64,12 +64,10 @@ describe('Part 5: verification/password-reset/co-admin-invite emails (design sys
     expect(mail.html).toContain('role="presentation"');
     expect(mail.html).toContain('width:560px');
     expect(mail.html).toContain('font-stretch:118%');
-    // Live-testing task (Part 1): verification email now sends in only
-    // the language the signup was completed in -- no lang was passed
-    // here, so it defaults to French, matching every other lang
-    // fallback in this app.
+    // Item 5n: the verification email follows the page's language; no
+    // lang was passed here, so it carries both.
     expect(mail.html).toContain('Confirmer mon courriel');
-    expect(mail.html).not.toContain('Confirm my email');
+    expect(mail.html).toContain('Confirm my email');
   });
 
   it("the password-reset email also uses the real design system, no 'SMBHL Ligue'", async () => {

@@ -3565,19 +3565,19 @@ export function buildInviteEmail(leagueName, inviteLink, leagueColor = '#b3122e'
   const barColor = leagueFillColor(leagueColor || '#b3122e');
   const fr = {
     subject: `Invitation à co-administrer ${leagueName}`,
-    text: `Tu as été invité(e) à devenir co-administrateur(-trice) de la ligue ${leagueName}. Clique sur ce lien pour accepter :
+    text: `On t'invite à coadministrer ${leagueName}. Clique sur ce lien pour accepter :
 ${inviteLink}
 
 Ce lien expire dans 48 heures. Si tu ne connais pas cette ligue, ignore ce courriel.`,
     html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Invitation à co-administrer</h1>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Tu as été invité(e) à devenir co-administrateur(-trice) de <b>${nlEmailWrapEsc(leagueName)}</b>.</p>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">On t'invite à coadministrer <b>${nlEmailWrapEsc(leagueName)}</b>.</p>
     ${nlEmailButton(inviteLink, 'Accepter l’invitation', barColor)}
     <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 48 heures. Si tu ne connais pas cette ligue, ignore ce courriel.</p>`
   };
   const en = {
     subject: `Invitation to co-admin ${leagueName}`,
-    text: `You've been invited to become a co-admin of the ${leagueName} league. Click this link to accept:
+    text: `You've been invited to become a co-admin of ${leagueName}. Click this link to accept:
 ${inviteLink}
 
 This link expires in 48 hours. If you don't recognize this league, you can ignore this email.`,

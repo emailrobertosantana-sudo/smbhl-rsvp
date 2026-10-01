@@ -330,13 +330,13 @@ export async function verifyEmailToken(env, token) {
 function buildVerificationEmail(verificationLink, lang = 'fr') {
   const fr = {
     subject: 'Confirme ton courriel',
-    text: `Bienvenue ! Confirme ton courriel en cliquant sur ce lien :
+    text: `Bienvenue! Confirme ton courriel en cliquant sur ce lien :
 ${verificationLink}
 
 Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.`,
     html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Confirme ton courriel</h1>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Bienvenue ! Clique sur le bouton ci-dessous pour activer ton compte.</p>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">Bienvenue! Clique sur le bouton ci-dessous pour activer ton compte.</p>
     ${nlEmailButton(verificationLink, 'Confirmer mon courriel')}
     <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 24 heures. Si tu n'as pas créé de compte, ignore ce courriel.</p>`
   };
@@ -437,23 +437,15 @@ async function verifyPasswordResetToken(env, token) {
   return { ok: true, userId };
 }
 
-// ONE RULE for every account email (verification, its resend, password
-// reset): the league the account administers decides once there is one;
-// before that, the language the account signed up in (users.signup_lang);
-// neither known -> both languages. An account with no league used to get
-// French only, and the verification resend ignored the league.
-async function resolveAccountEmailLanguageMode(env, userId) {
-  try {
-    const row = await env.DB.prepare(
-      `SELECT l.language_mode FROM league_admins la JOIN leagues l ON l.id = la.league_id
-        WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
-    ).bind(userId).first();
-    if (row && row.language_mode) return row.language_mode;
-    const u = await env.DB.prepare('SELECT signup_lang FROM users WHERE id = ?').bind(userId).first();
-    return (u && (u.signup_lang === 'fr' || u.signup_lang === 'en')) ? u.signup_lang : 'both';
-  } catch (_) {
-    return 'both';
-  }
+// ONE RULE for every account email a person asks for from a page (the
+// sign-up verification, its resend, the password reset): it is written in
+// the language of that page, which the page sends as body.lang (its own
+// FR/EN choice, never the browser's Accept-Language). Both languages only
+// when the request does not say. It used to follow the league the account
+// runs, then the sign-up language: a reset asked from a French page could
+// arrive in both languages.
+export function pageLanguage(body) {
+  return body && (body.lang === 'fr' || body.lang === 'en') ? body.lang : 'both';
 }
 
 // Design system Part 5: same rebuild as buildVerificationEmail above
@@ -461,7 +453,7 @@ async function resolveAccountEmailLanguageMode(env, userId) {
 // send) -- see that function's own comment for why this is safe to
 // touch (exclusively the new account system, never SMBHL). languageMode
 // added in the live-testing task (batch 3), Part 1 -- see
-// resolveAccountEmailLanguageMode's own comment above for how the
+// pageLanguage's own comment above for how the
 // caller resolves it.
 function buildPasswordResetEmail(resetLink, languageMode = 'both') {
   const fr = {
@@ -558,7 +550,7 @@ export async function handleRequestPasswordReset(req, env, sendMailFunc = null) 
     const resetLink = `${publicUrl}/reset-password?token=${encodeURIComponent(token)}${nextQuery(body.next, '&')}`;
     if (typeof sendMailFunc === 'function') {
       try {
-        const languageMode = await resolveAccountEmailLanguageMode(env, user.id);
+        const languageMode = pageLanguage(body);
         const { subject, text, html } = buildPasswordResetEmail(resetLink, languageMode);
         await sendMailFunc(env, email, subject, text, html);
       } catch (err) {
@@ -779,7 +771,7 @@ export async function handleSignup(req, env, sendMailFunc = null) {
        VALUES (?, ?, ?, ?, NULL, ?, 0, ?)`
     ).bind(userId, email, passwordHash, now, now, lang).run();
 
-    const { token, exp, verificationLink } = await sendVerificationEmail(env, sendMailFunc, email, userId, lang);
+    const { token, exp, verificationLink } = await sendVerificationEmail(env, sendMailFunc, email, userId, pageLanguage(body));
 
     return new Response(JSON.stringify({
       ok: true,
@@ -996,6 +988,7 @@ export async function handleResendVerification(req, env, sendMailFunc = null) {
     return Response.json({ ok: true, alreadyVerified: true });
   }
 
-  await sendVerificationEmail(env, sendMailFunc, user.email, session.userId, await resolveAccountEmailLanguageMode(env, session.userId));
+  const body = await req.json().catch(() => ({}));
+  await sendVerificationEmail(env, sendMailFunc, user.email, session.userId, pageLanguage(body));
   return Response.json({ ok: true, alreadyVerified: false });
 }

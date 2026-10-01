@@ -2878,7 +2878,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
         updateChecklist();
         alert(currentLang === 'en'
           ? ("✨ Balanced rosters generated successfully! Parity: " + res.parityScore + "%")
-          : ("✨ Alignements équilibrés générés avec succès ! Parité : " + res.parityScore + "%"));
+          : ("✨ Alignements équilibrés générés avec succès! Parité : " + res.parityScore + "%"));
       }
     } catch (e) {
       alert((currentLang === 'en' ? "Error during draft: " : "Erreur lors du repêchage : ") + e.message);
@@ -3028,9 +3028,9 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
       if (res.ok) {
         const successMsg = currentLang === 'en'
           ? ("🎉 Success! The season " + esc(seasonName) + " is now active on smbhl.com and rsvp.smbhl.com!")
-          : ("🎉 Succès ! La saison " + esc(seasonName) + " est maintenant active sur smbhl.com et rsvp.smbhl.com !");
+          : ("🎉 Succès! La saison " + esc(seasonName) + " est maintenant active sur smbhl.com et rsvp.smbhl.com!");
         if ($('launch-result-msg')) $('launch-result-msg').innerHTML = "<span style='color:var(--green);'>" + successMsg + "</span>";
-        alert(currentLang === 'en' ? "Season launched successfully!" : "Saison lancée avec succès !");
+        alert(currentLang === 'en' ? "Season launched successfully!" : "Saison lancée avec succès!");
       }
     } catch (e) {
       const errPrefix = currentLang === 'en' ? "Error: " : "Erreur : ";

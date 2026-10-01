@@ -39,9 +39,9 @@ describe('Cancelling a game tells the players who would come', () => {
     const m = mail.sent.find(x => x.to === 'red.in@example.com');
     expect(m.subject).toMatch(/^Match annulé · .+ \/ Game cancelled · /);
     expect(m.text).toContain('Bonjour Red, Le match du ');
-    expect(m.text).toContain(' au Aréna Nord est annulé. Pas besoin de te présenter.');
+    expect(m.text).toContain(' est annulé (lieu : Aréna Nord). Pas besoin de te présenter.');
     expect(m.text).toContain('Hi Red, The game on ');
-    expect(m.text).toContain(' at Aréna Nord is cancelled. No need to come.');
+    expect(m.text).toContain(' is cancelled (venue: Aréna Nord). No need to come.');
     // Once only, even if cancel is pressed again.
     mail.sent.length = 0;
     await a.post('/league/events/cancel', { event_id: evId });

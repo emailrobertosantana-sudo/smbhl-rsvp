@@ -54,7 +54,7 @@ describe('Part 1 (live-testing task): verification email sends in one language o
     expect(sent[0].html).not.toContain('Confirme ton courriel');
   });
 
-  it('omitting lang defaults to French, matching every other lang fallback in this app', async () => {
+  it('omitting lang: both languages (the page did not say which)', async () => {
     const { fn, sent } = mockSendMail();
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
@@ -63,10 +63,10 @@ describe('Part 1 (live-testing task): verification email sends in one language o
     });
     const res = await handleSignup(req, env, fn);
     expect(res.status).toBe(200);
-    expect(sent[0].subject).toBe('Confirme ton courriel');
+    expect(sent[0].subject).toBe('Confirme ton courriel / Confirm your email');
   });
 
-  it('an invalid lang value falls back to French rather than erroring', async () => {
+  it('an invalid lang value gives both languages rather than erroring', async () => {
     const { fn, sent } = mockSendMail();
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
@@ -75,10 +75,10 @@ describe('Part 1 (live-testing task): verification email sends in one language o
     });
     const res = await handleSignup(req, env, fn);
     expect(res.status).toBe(200);
-    expect(sent[0].subject).toBe('Confirme ton courriel');
+    expect(sent[0].subject).toBe('Confirme ton courriel / Confirm your email');
   });
 
-  it('the chosen signup language is persisted, and a resend uses that same language later', async () => {
+  it('a resend follows the language of the page it is asked from', async () => {
     const { fn: signupFn } = mockSendMail();
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
@@ -96,7 +96,8 @@ describe('Part 1 (live-testing task): verification email sends in one language o
     const { fn: resendFn, sent: resendSent } = mockSendMail();
     const resendReq = new Request('http://example.com/auth/resend-verification', {
       method: 'POST',
-      headers: { cookie: cookieHeader, 'x-csrf-token': csrfToken }
+      headers: { cookie: cookieHeader, 'x-csrf-token': csrfToken, 'content-type': 'application/json' },
+      body: JSON.stringify({ lang: 'en' })
     });
     const resendRes = await handleResendVerification(resendReq, env, resendFn);
     expect(resendRes.status).toBe(200);

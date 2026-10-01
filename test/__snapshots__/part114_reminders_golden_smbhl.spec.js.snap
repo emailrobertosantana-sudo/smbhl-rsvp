@@ -4003,7 +4003,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         "kind": "summary",
         "league_id": "smbhl",
         "next_attempt_at": null,
-        "payload": "{"text":"Semaine 6 : dimanche 15 novembre\\n\\nRed: 2 joueurs, 1 gardien(s)   <-- SHORT\\nBlue: 1 joueurs, 1 gardien(s)   <-- SHORT\\nWhite: 0 joueurs, 0 gardien(s)   <-- SHORT\\nBlack: 0 joueurs, 0 gardien(s)   <-- SHORT\\n\\nListe d'attente: Sub 3 (J)"}",
+        "payload": "{"text":"Semaine 6 : dimanche 15 novembre\\n\\nRed: 2 joueurs, 1 gardien   <-- SHORT\\nBlue: 1 joueur, 1 gardien   <-- SHORT\\nWhite: 0 joueur, 0 gardien   <-- SHORT\\nBlack: 0 joueur, 0 gardien   <-- SHORT\\n\\nListe d'attente: Sub 3 (J)"}",
         "player_id": null,
         "send_after": "2026-11-15T01:05:00.000Z",
         "sent_at": "2026-11-15T01:05:00.000Z",
@@ -4727,7 +4727,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-10T23:05:00Z",
       "log": [
-        "cron: invite smbhl:2026-11-15 | shortfall smbhl:2026-11-15: 14 sub call(s) queued | outbox due=41 sent=39 failed=2 | ALERT: 1 email(s) failed permanently in the last 24 hours",
+        "cron: invite smbhl:2026-11-15 | shortfall smbhl:2026-11-15: 14 sub call(s) queued | outbox due=41 sent=39 failed=2 | ALERT: 1 email failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -4763,212 +4763,212 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "7de64e0a6fb1f13e",
+          "h": "441b5e392caab966",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0026@example.com",
         },
         {
-          "h": "2cc0180139941c32",
+          "h": "ec923fabcba0909d",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0027@example.com",
         },
         {
-          "h": "d2def4f140e69a0b",
+          "h": "16a50c4738f07966",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0028@example.com",
         },
         {
-          "h": "94cc579ac7cd857b",
+          "h": "2e23d40e63e175a8",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0029@example.com",
         },
         {
-          "h": "81b709512d818bae",
+          "h": "c47c4361c907c932",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0030@example.com",
         },
         {
-          "h": "b7b85de0fc7c496a",
+          "h": "52719cedc08dfada",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0031@example.com",
         },
         {
-          "h": "bad73b3f27591b86",
+          "h": "7c11e159d329f18d",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0032@example.com",
         },
         {
-          "h": "f0ab339d03cf8e7a",
+          "h": "727e12ab610e7852",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0033@example.com",
         },
         {
-          "h": "2c510013d7f9dd3d",
+          "h": "56922a53bbea535f",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0010@example.com",
         },
         {
-          "h": "5bcb992eba4e9fa4",
+          "h": "fa406ee3d9b71101",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0011@example.com",
         },
         {
-          "h": "63e68cf198b4b9b0",
+          "h": "96f54f1064855fd5",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "bounce-r0012@example.com",
         },
         {
-          "h": "be37871bc0e45a75",
+          "h": "b96ef86584bedae6",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0013@example.com",
         },
         {
-          "h": "22a6175c9833f7f2",
+          "h": "091bd61640e9f4e1",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0014@example.com",
         },
         {
-          "h": "a2ebe7dab1bfdcca",
+          "h": "43d9dfec76602dc3",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0015@example.com",
         },
         {
-          "h": "180e8f506570bb5c",
+          "h": "fda1ef4df8663c1a",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0016@example.com",
         },
         {
-          "h": "17c081cff0fdc847",
+          "h": "89733ddef1492dc9",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0017@example.com",
         },
         {
-          "h": "08027baf27ffebef",
+          "h": "4ff3828718a245c5",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0018@example.com",
         },
         {
-          "h": "13477f824413adcc",
+          "h": "f2197294cf502773",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0001@example.com",
         },
         {
-          "h": "376a687003e8b65e",
+          "h": "b05aca26d56952b0",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0002@example.com",
         },
         {
-          "h": "e9368da942c7ca42",
+          "h": "7b6cef2b598b47ff",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "bca357e0da3dfaad",
+          "h": "c7da40a0abb9053a",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0004@example.com",
         },
         {
-          "h": "0c21cac39d0621ea",
+          "h": "cc3fd808b5cfb67d",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0005@example.com",
         },
         {
-          "h": "0521c9c1d19ec12d",
+          "h": "f7cd9c36105b2f35",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0006@example.com",
         },
         {
-          "h": "150aac4d4b9bef62",
+          "h": "5d0b1a9f620efc5e",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0007@example.com",
         },
         {
-          "h": "94c8fd2a9ab33d8b",
+          "h": "08dce69fad0436d3",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0008@example.com",
         },
         {
-          "h": "8a9e8429f0a0dfc2",
+          "h": "9c8d2ff7242d3077",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0009@example.com",
         },
         {
-          "h": "11eedaa2dfe80f73",
+          "h": "e6af888a32b40862",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0019@example.com",
         },
         {
-          "h": "340c9aa0ac37680d",
+          "h": "76b118e7584839b2",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0020@example.com",
         },
         {
-          "h": "b9b3a88f13f5541d",
+          "h": "bfbfce8920d2350f",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0021@example.com",
         },
         {
-          "h": "5bd01ff99bd1585e",
+          "h": "57c290ed0f4f4ed2",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0022@example.com",
         },
         {
-          "h": "6251fabc7ec6daac",
+          "h": "e56cb9e07d6851c5",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0023@example.com",
         },
         {
-          "h": "9f2b38c029b137ed",
+          "h": "be77dc8020cf469f",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0024@example.com",
         },
         {
-          "h": "b1fc9086ca5f8483",
+          "h": "abefcc10a2a6a4e3",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "r0025@example.com",
         },
         {
-          "h": "6cc6301aefc681f6",
+          "h": "9d026a5f114d7f77",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "s0001@example.com",
         },
         {
-          "h": "2c7c94ba8c2847e3",
+          "h": "bdb3510d9ff3bd77",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0012@example.com",
         },
         {
-          "h": "0761375a5b9fd395",
+          "h": "648e6dc4dd5766b6",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0009@example.com",
         },
         {
-          "h": "8f04a43fe546bf23",
+          "h": "33f8e8539fadc2a7",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0006@example.com",
         },
         {
-          "h": "c26d984de8b824d7",
+          "h": "785f59040d8bdc38",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0003@example.com",
         },
         {
-          "h": "49bcfa7607424617",
+          "h": "69234310393064aa",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0004@example.com",
         },
         {
-          "h": "39ac78db36db91a0",
+          "h": "17b0d71ec3f41262",
           "subject": "SMBHL cherche un gardien / SMBHL needs a goalie",
           "to": "sg001@example.com",
         },
         {
-          "h": "f3a3e4e3f7ba2e02",
+          "h": "bb4b05f8e6d4708b",
           "subject": "SMBHL cherche un gardien / SMBHL needs a goalie",
           "to": "sg002@example.com",
         },
         {
-          "h": "a58172fb3417c365",
+          "h": "e625366f0e3f996c",
           "subject": "SMBHL : le système a manqué quelque chose",
           "to": "admin@smbhl.test",
         },
@@ -4977,7 +4977,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-12T19:05:00Z",
       "log": [
-        "cron: outbox due=8 sent=7 failed=1 | ALERT: 1 message(s) stuck in the outbox over an hour",
+        "cron: outbox due=8 sent=7 failed=1 | ALERT: 1 message stuck in the outbox over an hour",
       ],
       "outbox": [
         {
@@ -5008,47 +5008,47 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "e9368da942c7ca42",
+          "h": "7b6cef2b598b47ff",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "1d1970163d6e6de9",
+          "h": "500c491f6931c0e5",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0008@example.com",
         },
         {
-          "h": "24f19f7e187be5a6",
+          "h": "df2f67c55b91050d",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0001@example.com",
         },
         {
-          "h": "90df66e81c4ddd9c",
+          "h": "7ea056815b7f20f0",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0005@example.com",
         },
         {
-          "h": "85f6338d52361222",
+          "h": "07c36823bc6621e6",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0010@example.com",
         },
         {
-          "h": "4072139a813f1d67",
+          "h": "9b3d04b196dc68d0",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0002@example.com",
         },
         {
-          "h": "262b404932c15649",
+          "h": "1be3a798ddd030db",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0011@example.com",
         },
         {
-          "h": "ac7b62384a7e0718",
+          "h": "2174d275680958a7",
           "subject": "SMBHL cherche un joueur / SMBHL needs a skater",
           "to": "s0007@example.com",
         },
         {
-          "h": "2b0dfd3a8aaaaf68",
+          "h": "862b36ad68c130fd",
           "subject": "SMBHL : le système a manqué quelque chose",
           "to": "admin@smbhl.test",
         },
@@ -5057,7 +5057,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-12T20:05:00Z",
       "log": [
-        "cron: r72 smbhl:2026-11-15 | outbox due=27 sent=24 failed=3 | ALERT: 1 message(s) stuck in the outbox over an hour; 1 email(s) failed permanently in the last 24 hours",
+        "cron: r72 smbhl:2026-11-15 | outbox due=27 sent=24 failed=3 | ALERT: 1 message stuck in the outbox over an hour; 1 email failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5103,138 +5103,138 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "e9368da942c7ca42",
+          "h": "7b6cef2b598b47ff",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "37e15a437ceba3e6",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "f10135478965260f",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0026@example.com",
         },
         {
-          "h": "0dfd91391f773fd2",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "34fdf8c3c848aea4",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0027@example.com",
         },
         {
-          "h": "7b8c17a2a3a623da",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "f1540c96e71edfba",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0028@example.com",
         },
         {
-          "h": "46649961f10d3950",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "05b3225df14d8d50",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0029@example.com",
         },
         {
-          "h": "d71f7eb0b5dcdbab",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "86081dc9bfe9d8a7",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0030@example.com",
         },
         {
-          "h": "13e621af60f5470b",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "03c73ee70bfa652a",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0031@example.com",
         },
         {
-          "h": "65f408e79c09aa11",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "65e9b4bd2ad83d01",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0032@example.com",
         },
         {
-          "h": "80b0e767f3123c92",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "c5e3047040cab76f",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0033@example.com",
         },
         {
-          "h": "970d4d37ad773fd4",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "d5b8395dcebbc5dc",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "bounce-r0012@example.com",
         },
         {
-          "h": "674aa396ffe1c910",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "1fe6653548615c56",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0014@example.com",
         },
         {
-          "h": "6fd665b23b8025db",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "ed3ccded2751d0c8",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0015@example.com",
         },
         {
-          "h": "c59b80a5fec3296d",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "ff79b554cdb7afff",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0016@example.com",
         },
         {
-          "h": "0a076d4fc28530f5",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "b335c538af4a9a92",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0017@example.com",
         },
         {
-          "h": "8b65d88d8eb62147",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "7b0fc6c75d2cafb6",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0018@example.com",
         },
         {
-          "h": "5abb7f5b8b17f9a8",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "573c12dc9414de9b",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "7450eac08963abd9",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "2ce2fa420b3c4c73",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0006@example.com",
         },
         {
-          "h": "6528241ed77a3fab",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "d6dbe92f07958f3a",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0007@example.com",
         },
         {
-          "h": "7d5cb590e316bb5b",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "fa8e81fd198f716c",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0008@example.com",
         },
         {
-          "h": "9fad09676d154cd5",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "5a03c07a798c8aa9",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0009@example.com",
         },
         {
-          "h": "6ec3c056a22bb7f1",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "74153b63bcbc4293",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0019@example.com",
         },
         {
-          "h": "95ff5e95aaa68160",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "a2777e9c18ebf73e",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0020@example.com",
         },
         {
-          "h": "b27b945b6d84cde3",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "97782fca9d1c5ef9",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0021@example.com",
         },
         {
-          "h": "6290336f85641866",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "07dad9c1ef397285",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0022@example.com",
         },
         {
-          "h": "43ab088b60246c4d",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "933df971b87218ba",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0023@example.com",
         },
         {
-          "h": "a89adfe8a7b9457e",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "886f9473c25df5f9",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0024@example.com",
         },
         {
-          "h": "ceae93ce381ff384",
-          "subject": "Rappel : tu joues dimanche 15 novembre ? / Playing this week?",
+          "h": "1a65234bff8b26a2",
+          "subject": "Rappel : tu joues dimanche 15 novembre? / Playing this week?",
           "to": "r0025@example.com",
         },
       ],
@@ -5242,7 +5242,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-13T14:35:00Z",
       "log": [
-        "cron: r49 smbhl:2026-11-15 | outbox due=27 sent=24 failed=3 | ALERT: 1 message(s) stuck in the outbox over an hour; 2 email(s) failed permanently in the last 24 hours",
+        "cron: r49 smbhl:2026-11-15 | outbox due=27 sent=24 failed=3 | ALERT: 1 message stuck in the outbox over an hour; 2 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5288,142 +5288,142 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "e9368da942c7ca42",
+          "h": "7b6cef2b598b47ff",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "ef552b7aceb3fc15",
+          "h": "2468d28c7a422023",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0026@example.com",
         },
         {
-          "h": "13a9731800fe7f20",
+          "h": "78e8455544f39494",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0027@example.com",
         },
         {
-          "h": "e3a274b0b72566b4",
+          "h": "2608e9b036753c84",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0028@example.com",
         },
         {
-          "h": "5cdb6407419b6de4",
+          "h": "40c3100573300d22",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0029@example.com",
         },
         {
-          "h": "ccd5ea457624acf2",
+          "h": "686a0902479a8537",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0030@example.com",
         },
         {
-          "h": "1cf29e65058a585f",
+          "h": "9795bfc46a8d8293",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0031@example.com",
         },
         {
-          "h": "accadea90c16e18c",
+          "h": "6457c56746cf5fb7",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0032@example.com",
         },
         {
-          "h": "8bbe73528bd172ee",
+          "h": "8d73823c9221088c",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0033@example.com",
         },
         {
-          "h": "cf621de4c8899570",
+          "h": "818b7c08fab35ca5",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "bounce-r0012@example.com",
         },
         {
-          "h": "4826f19bb0fec3c9",
+          "h": "2b394d53340ffacd",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0014@example.com",
         },
         {
-          "h": "c08b30c75d6d523f",
+          "h": "31079a8584c0d1cd",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0015@example.com",
         },
         {
-          "h": "98a574aa614aaf98",
+          "h": "531d477435545471",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0016@example.com",
         },
         {
-          "h": "6234879af1394b90",
+          "h": "01a8993d97079668",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0017@example.com",
         },
         {
-          "h": "272644a49063a64f",
+          "h": "83b9ba77942b5820",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0018@example.com",
         },
         {
-          "h": "577d6afa0c70abc1",
+          "h": "9784e830bc05a1aa",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "eb461c7eadadc279",
+          "h": "b4182267235d6ff1",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0006@example.com",
         },
         {
-          "h": "e80597d581c15188",
+          "h": "92e55c2bfd8bc10d",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0007@example.com",
         },
         {
-          "h": "6e6daf12a3068330",
+          "h": "5232850aab3d9149",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0008@example.com",
         },
         {
-          "h": "f8e68ab832b064d8",
+          "h": "9a2d40b3e5cc9920",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0009@example.com",
         },
         {
-          "h": "60d745187ea2414c",
+          "h": "d5142e26f7132066",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0019@example.com",
         },
         {
-          "h": "806c52e9bd7775f7",
+          "h": "d7f55c8bb1cc7eef",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0020@example.com",
         },
         {
-          "h": "a779421bacbe4629",
+          "h": "ddd37fd457fa021a",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0021@example.com",
         },
         {
-          "h": "9329f59ccd19f65c",
+          "h": "964380a3c5f06cb1",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0022@example.com",
         },
         {
-          "h": "d3d258427ea8d10e",
+          "h": "001f5cbb22779179",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0023@example.com",
         },
         {
-          "h": "ec4182ed694b04fa",
+          "h": "aae4602e69841a92",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0024@example.com",
         },
         {
-          "h": "8abe63073be2edb0",
+          "h": "01849f00b6afec29",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "r0025@example.com",
         },
         {
-          "h": "b13dcdd2b48e3b0c",
+          "h": "86426f1166d4b9d8",
           "subject": "SMBHL : le système a manqué quelque chose",
           "to": "admin@smbhl.test",
         },
@@ -5432,7 +5432,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-13T15:35:00Z",
       "log": [
-        "cron: short48 smbhl:2026-11-15 | outbox due=6 sent=5 failed=1 | ALERT: 2 message(s) stuck in the outbox over an hour; 2 email(s) failed permanently in the last 24 hours",
+        "cron: short48 smbhl:2026-11-15 | outbox due=6 sent=5 failed=1 | ALERT: 2 messages stuck in the outbox over an hour; 2 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5483,37 +5483,37 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "577d6afa0c70abc1",
+          "h": "9784e830bc05a1aa",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "581cb0d85d088b68",
+          "h": "94e8f039d9f28a0d",
           "subject": "Rouge est incomplète (2 joueurs) / Red is short",
           "to": "r0001@example.com",
         },
         {
-          "h": "4410de08ec25faf8",
+          "h": "eb07a56cd3288e0c",
           "subject": "Rouge est incomplète (2 joueurs) / Red is short",
           "to": "r0002@example.com",
         },
         {
-          "h": "9a5be338cd530f72",
+          "h": "0712299f80f0b241",
           "subject": "Rouge est incomplète (2 joueurs) / Red is short",
           "to": "r0004@example.com",
         },
         {
-          "h": "a79f367631661cc1",
-          "subject": "Bleu est incomplète (1 joueurs) / Blue is short",
+          "h": "9e2b68ce84bda2d6",
+          "subject": "Bleu est incomplète (1 joueur) / Blue is short",
           "to": "r0010@example.com",
         },
         {
-          "h": "b95ab887f123403a",
-          "subject": "Bleu est incomplète (1 joueurs) / Blue is short",
+          "h": "9a1f06e94d7174b6",
+          "subject": "Bleu est incomplète (1 joueur) / Blue is short",
           "to": "r0011@example.com",
         },
         {
-          "h": "87a5053a0cfee37f",
+          "h": "aea46c7ba53ddf6f",
           "subject": "SMBHL : le système a manqué quelque chose",
           "to": "admin@smbhl.test",
         },
@@ -5522,7 +5522,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-13T19:05:00Z",
       "log": [
-        "cron: friday_board smbhl:2026-11-15 | outbox due=10 sent=7 failed=3 | ALERT: 1 message(s) stuck in the outbox over an hour; 3 email(s) failed permanently in the last 24 hours",
+        "cron: friday_board smbhl:2026-11-15 | outbox due=10 sent=7 failed=3 | ALERT: 1 message stuck in the outbox over an hour; 3 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5578,57 +5578,57 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "e9368da942c7ca42",
+          "h": "7b6cef2b598b47ff",
           "subject": "Présence : dimanche 15 novembre / RSVP: Sunday November 15 2026",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "577d6afa0c70abc1",
+          "h": "9784e830bc05a1aa",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "5219821a462aa649",
+          "h": "e9cdb149f4831a82",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "r0001@example.com",
         },
         {
-          "h": "c24ea6be8fc487ea",
+          "h": "ed804a78663f3cec",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "r0002@example.com",
         },
         {
-          "h": "48cae6bd9dd662bd",
+          "h": "2411423d68b23153",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "d96a4edc5842958b",
+          "h": "b06b6aaaf35eb23e",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "r0004@example.com",
         },
         {
-          "h": "3adf70def99ad50a",
+          "h": "8d62b01cc22ea7a4",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "r0006@example.com",
         },
         {
-          "h": "1d6e106d29400f5c",
+          "h": "0acd5c960a7a4895",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "r0007@example.com",
         },
         {
-          "h": "da6950d986b85f67",
+          "h": "50b65e104c833bd9",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "r0008@example.com",
         },
         {
-          "h": "7978eee03f38c970",
+          "h": "72f088742454c445",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "r0009@example.com",
         },
         {
-          "h": "de4c0918a8182cd9",
+          "h": "04118cfc6d6f54de",
           "subject": "SMBHL : le système a manqué quelque chose",
           "to": "admin@smbhl.test",
         },
@@ -5637,7 +5637,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-14T03:35:00Z",
       "log": [
-        "cron: pool36 smbhl:2026-11-15 | outbox due=15 sent=8 failed=2 | ALERT: 2 message(s) stuck in the outbox over an hour; 2 email(s) failed permanently in the last 24 hours",
+        "cron: pool36 smbhl:2026-11-15 | outbox due=15 sent=8 failed=2 | ALERT: 2 messages stuck in the outbox over an hour; 2 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5698,52 +5698,52 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "577d6afa0c70abc1",
+          "h": "9784e830bc05a1aa",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "48cae6bd9dd662bd",
+          "h": "2411423d68b23153",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "39a46b7ce08a6331",
+          "h": "9fd93d6b6b5f4664",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0012@example.com",
         },
         {
-          "h": "276e2847856aff16",
+          "h": "6cd34c04e3af4800",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0009@example.com",
         },
         {
-          "h": "3696099b636ec86b",
+          "h": "67ccd598dc915bb9",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0006@example.com",
         },
         {
-          "h": "b1936912a6320cde",
+          "h": "440ed5f21ec3a135",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0004@example.com",
         },
         {
-          "h": "9418e823d67cbf58",
+          "h": "79c86ef3da384774",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0008@example.com",
         },
         {
-          "h": "abedf4f36be7ffb2",
+          "h": "332ddc76731fdefc",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0001@example.com",
         },
         {
-          "h": "a7116e9506eb2414",
+          "h": "1e7bb3210ca1cc14",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0005@example.com",
         },
         {
-          "h": "9cf4547d6d35be30",
+          "h": "6c054e2ed7268e2e",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0010@example.com",
         },
@@ -5752,7 +5752,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-14T04:30:00Z",
       "log": [
-        "cron: outbox due=1 sent=0 failed=0 | ALERT: 1 message(s) stuck in the outbox over an hour; 2 email(s) failed permanently in the last 24 hours",
+        "cron: outbox due=1 sent=0 failed=0 | ALERT: 1 message stuck in the outbox over an hour; 2 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5816,7 +5816,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-14T12:05:00Z",
       "log": [
-        "cron: outbox due=2 sent=0 failed=2 | ALERT: 3 email(s) failed permanently in the last 24 hours",
+        "cron: outbox due=2 sent=0 failed=2 | ALERT: 3 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5872,12 +5872,12 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "577d6afa0c70abc1",
+          "h": "9784e830bc05a1aa",
           "subject": "Il reste 2 jours pour répondre / 2 days left to RSVP",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "48cae6bd9dd662bd",
+          "h": "2411423d68b23153",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "flaky-r0003@example.com",
         },
@@ -5886,7 +5886,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-14T23:05:00Z",
       "log": [
-        "cron: r24 smbhl:2026-11-15 | gameday24 smbhl:2026-11-15 | outbox due=45 sent=40 failed=5 | ALERT: 1 message(s) stuck in the outbox over an hour; 3 email(s) failed permanently in the last 24 hours",
+        "cron: r24 smbhl:2026-11-15 | gameday24 smbhl:2026-11-15 | outbox due=45 sent=40 failed=5 | ALERT: 1 message stuck in the outbox over an hour; 3 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5967,228 +5967,228 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "48cae6bd9dd662bd",
+          "h": "2411423d68b23153",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "aff579966e35ed7d",
+          "h": "66df399c73e9ee73",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0026@example.com",
         },
         {
-          "h": "a32c2c9eb044f584",
+          "h": "b8227e682488769f",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0027@example.com",
         },
         {
-          "h": "daf782611774824d",
+          "h": "0805072bb184d383",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0028@example.com",
         },
         {
-          "h": "c7b3779b662bac2b",
+          "h": "94b1309ab82d1c7c",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0029@example.com",
         },
         {
-          "h": "6bed7eb53d4c1ffd",
+          "h": "81a940a29a0a5d12",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0030@example.com",
         },
         {
-          "h": "17ff72f4a08fa835",
+          "h": "504f1ef8cf4a22a3",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0031@example.com",
         },
         {
-          "h": "d049261ee9ff96d4",
+          "h": "a214ef86189f362a",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0032@example.com",
         },
         {
-          "h": "57e47d8c160cefc8",
+          "h": "bc6068c609b3f6b8",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0033@example.com",
         },
         {
-          "h": "f11d6458da237cd7",
+          "h": "b7d9a394f000bb7b",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "bounce-r0012@example.com",
         },
         {
-          "h": "f4dd012722d976a6",
+          "h": "594f7a5641c6bba0",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0014@example.com",
         },
         {
-          "h": "6f892087bdb48bce",
+          "h": "e5d91c579e8460c9",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0015@example.com",
         },
         {
-          "h": "1b88542d38bbfb58",
+          "h": "6109d870f3fb3735",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0016@example.com",
         },
         {
-          "h": "aa529ef17022c056",
+          "h": "ed428b521a0dfb0e",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0017@example.com",
         },
         {
-          "h": "388731db19dd93e5",
+          "h": "9222953146ead180",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0018@example.com",
         },
         {
-          "h": "80473c04dc942b7b",
+          "h": "77eff0a640f1255f",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "8e71a52c70fd05fd",
+          "h": "545296752d638337",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0006@example.com",
         },
         {
-          "h": "495b1663bf4f5434",
+          "h": "5b998731eaf23e7a",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0007@example.com",
         },
         {
-          "h": "8c97291a2132c6c2",
+          "h": "011680154954a9c3",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0008@example.com",
         },
         {
-          "h": "9289c433e1b47970",
+          "h": "08223a02f4758fec",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0009@example.com",
         },
         {
-          "h": "63af4c64aaf61163",
+          "h": "5d98808b82b84ddd",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0019@example.com",
         },
         {
-          "h": "62e7f95441e289ce",
+          "h": "6b38776f6deb6a62",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0020@example.com",
         },
         {
-          "h": "35f88327f234a028",
+          "h": "10fb101a421863a7",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0021@example.com",
         },
         {
-          "h": "ced96fbabd428fdb",
+          "h": "4cd09c4f05b328b0",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0022@example.com",
         },
         {
-          "h": "56c1fdf79c117eb5",
+          "h": "5851010e6fa053c2",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0023@example.com",
         },
         {
-          "h": "474dd55f7edbc437",
+          "h": "8ac1b136da31f42b",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0024@example.com",
         },
         {
-          "h": "4a69c11042bc59b7",
+          "h": "329db62c3877cb4d",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "r0025@example.com",
         },
         {
-          "h": "20a2d72ccc3b0038",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "d4c49c70924b4bf0",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0001@example.com",
         },
         {
-          "h": "1d279dc482ab236c",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "44b48ec36a213ced",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0002@example.com",
         },
         {
-          "h": "2d7f4a772a34ed5b",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "b3c45bc8069d1b87",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "a9940fc829c0e378",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "9728fb5a9fe7904b",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0004@example.com",
         },
         {
-          "h": "76305780aeb9104a",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "8e052cf61043d261",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0006@example.com",
         },
         {
-          "h": "57ac39a7965dd0ed",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "3f61fdf726b94de2",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0007@example.com",
         },
         {
-          "h": "538e158f156409d8",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "604c55a7a31649f0",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0008@example.com",
         },
         {
-          "h": "be4312a99b4d4d89",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "92f7761d1369035c",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0009@example.com",
         },
         {
-          "h": "f4c610ebe33cb6f9",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "aabc56f9ec5063ba",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0010@example.com",
         },
         {
-          "h": "47045ea682ec752f",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "435dd4589d524a78",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0011@example.com",
         },
         {
-          "h": "e3b5a5608e37697e",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "3babd4963e246547",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "bounce-r0012@example.com",
         },
         {
-          "h": "1a22a5e0113207a9",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "e715e0a0c8f55569",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0014@example.com",
         },
         {
-          "h": "177d52119d820fa5",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "148a98e5eebb4c9e",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0015@example.com",
         },
         {
-          "h": "4b722f319fc14a59",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "2ab05fb83b353b56",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0016@example.com",
         },
         {
-          "h": "7fa751cb4f51aa2e",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "a51a15a9d4e15b44",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0017@example.com",
         },
         {
-          "h": "34d0f5f22ceaefc3",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "e63f5f99361809c0",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0018@example.com",
         },
         {
-          "h": "ad5391d3897478dd",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "30f344139c334ba3",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0019@example.com",
         },
         {
-          "h": "55ba39af9eec31d9",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "a91c4cc65324a4bc",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0020@example.com",
         },
       ],
@@ -6196,7 +6196,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T01:05:00Z",
       "log": [
-        "cron: summary smbhl:2026-11-15 | outbox due=21 sent=19 failed=2 | ALERT: 3 message(s) stuck in the outbox over an hour; 3 email(s) failed permanently in the last 24 hours",
+        "cron: summary smbhl:2026-11-15 | outbox due=21 sent=19 failed=2 | ALERT: 3 messages stuck in the outbox over an hour; 3 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -6272,112 +6272,112 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "80473c04dc942b7b",
+          "h": "77eff0a640f1255f",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "2d7f4a772a34ed5b",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "b3c45bc8069d1b87",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "25d57743200fe6ba",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "3aa797a5bb9337b0",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0021@example.com",
         },
         {
-          "h": "5b4afc8bc615cc11",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "54dbfafcf04020de",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0022@example.com",
         },
         {
-          "h": "582fe80d86159b96",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "2953896c4c159436",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0023@example.com",
         },
         {
-          "h": "20bf1bb8173ed350",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "8cad81833b80b019",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0024@example.com",
         },
         {
-          "h": "75703f175cf35435",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "66b616b78ce4e5c4",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0025@example.com",
         },
         {
-          "h": "4cd13488f208aa8c",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "83fdbfe6397d4615",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0026@example.com",
         },
         {
-          "h": "2dbb1e91cdb0fd83",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "d460fbdd444ab23b",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0027@example.com",
         },
         {
-          "h": "77e1115bd3e79190",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "5a69e1b7d5a7115d",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0028@example.com",
         },
         {
-          "h": "d3dd0169d4ef8d86",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "0d8ad91f5f5581ce",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0029@example.com",
         },
         {
-          "h": "63bfa060ed248959",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "45f2bea33c4656ce",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0030@example.com",
         },
         {
-          "h": "8d3d2524244587b6",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "a2a20d9c882d1c38",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0031@example.com",
         },
         {
-          "h": "b98ac1cdd0148257",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "38e80b6bc852a572",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0032@example.com",
         },
         {
-          "h": "57daba862ce6f16f",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "e5843d185e8a5f85",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "r0033@example.com",
         },
         {
-          "h": "96b458d5a6edbd50",
+          "h": "0ebe1a9c4049777a",
           "subject": "Sommaire semaine 6",
           "to": "admin@smbhl.test",
         },
         {
-          "h": "6a8a03c566993245",
+          "h": "0ac1872c1a10e9f1",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0002@example.com",
         },
         {
-          "h": "b76d7ccbf52e2d5a",
+          "h": "f8a73c61fcb94f07",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0011@example.com",
         },
         {
-          "h": "2305f171ab84e9d6",
+          "h": "396bec0ec1a95d5b",
           "subject": "SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)",
           "to": "s0007@example.com",
         },
         {
-          "h": "baec4c78dd16c446",
+          "h": "134f6af85096bf2a",
           "subject": "SMBHL cherche un gardien (rappel) / SMBHL needs a goalie (reminder)",
           "to": "sg001@example.com",
         },
         {
-          "h": "5b3431da3f3be655",
+          "h": "28769521e28eb8ed",
           "subject": "SMBHL cherche un gardien (rappel) / SMBHL needs a goalie (reminder)",
           "to": "sg002@example.com",
         },
         {
-          "h": "00f349b5117c409e",
+          "h": "918bd6bca615fe2b",
           "subject": "SMBHL : le système a manqué quelque chose",
           "to": "admin@smbhl.test",
         },
@@ -6386,7 +6386,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T13:35:00Z",
       "log": [
-        "cron: gameday_morning smbhl:2026-11-15 | outbox due=11 sent=7 failed=4 | ALERT: 2 message(s) stuck in the outbox over an hour; 4 email(s) failed permanently in the last 24 hours",
+        "cron: gameday_morning smbhl:2026-11-15 | outbox due=11 sent=7 failed=4 | ALERT: 2 messages stuck in the outbox over an hour; 4 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -6472,62 +6472,62 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "48cae6bd9dd662bd",
+          "h": "2411423d68b23153",
           "subject": "Notes d'équipe : Rouge / Team board update: Red",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "80473c04dc942b7b",
+          "h": "77eff0a640f1255f",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "2d7f4a772a34ed5b",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "b3c45bc8069d1b87",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "fbb1bc8ac9c9599c",
+          "h": "7b3a9d88096e8915",
           "subject": "Notes de dernière minute : Bleu / Last-minute team update: Blue",
           "to": "r0010@example.com",
         },
         {
-          "h": "b115757199d93b7d",
+          "h": "ea5ada188ccadd08",
           "subject": "Notes de dernière minute : Bleu / Last-minute team update: Blue",
           "to": "r0011@example.com",
         },
         {
-          "h": "9f297c37aa1c9156",
+          "h": "829bde7a88cb4f6a",
           "subject": "Notes de dernière minute : Bleu / Last-minute team update: Blue",
           "to": "bounce-r0012@example.com",
         },
         {
-          "h": "5762caaf01b1ccf7",
+          "h": "3a3f5a66de405721",
           "subject": "Notes de dernière minute : Bleu / Last-minute team update: Blue",
           "to": "r0014@example.com",
         },
         {
-          "h": "70087cda5b94a429",
+          "h": "b8958174328b7236",
           "subject": "Notes de dernière minute : Bleu / Last-minute team update: Blue",
           "to": "r0015@example.com",
         },
         {
-          "h": "9306c1c33495f695",
+          "h": "03106ee564c1bacf",
           "subject": "Notes de dernière minute : Bleu / Last-minute team update: Blue",
           "to": "r0016@example.com",
         },
         {
-          "h": "26c3db5d7fa9b99f",
+          "h": "67d465e31379e3d7",
           "subject": "Notes de dernière minute : Bleu / Last-minute team update: Blue",
           "to": "r0017@example.com",
         },
         {
-          "h": "9b80e96506730b3c",
+          "h": "45b7de402eb2a8dc",
           "subject": "Notes de dernière minute : Bleu / Last-minute team update: Blue",
           "to": "r0018@example.com",
         },
         {
-          "h": "410de83c0023bea1",
+          "h": "9120691b5f2a3082",
           "subject": "SMBHL : le système a manqué quelque chose",
           "to": "admin@smbhl.test",
         },
@@ -6536,7 +6536,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T18:05:00Z",
       "log": [
-        "cron: lock smbhl:2026-11-15 | created smbhl:2026-11-22 week 7 (33 players) | outbox due=3 sent=1 failed=2 | ALERT: 2 message(s) stuck in the outbox over an hour; 4 email(s) failed permanently in the last 24 hours",
+        "cron: lock smbhl:2026-11-15 | created smbhl:2026-11-22 week 7 (33 players) | outbox due=3 sent=1 failed=2 | ALERT: 2 messages stuck in the outbox over an hour; 4 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -6622,13 +6622,13 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "80473c04dc942b7b",
+          "h": "77eff0a640f1255f",
           "subject": "Dernier rappel pour demain / Last call for tomorrow",
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "2d7f4a772a34ed5b",
-          "subject": "À demain pour le match ! / See you at the gym tomorrow!",
+          "h": "b3c45bc8069d1b87",
+          "subject": "À demain pour le match! / See you at the gym tomorrow!",
           "to": "flaky-r0003@example.com",
         },
         {
@@ -6641,7 +6641,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T19:00:00Z",
       "log": [
-        "cron: outbox due=0 sent=0 failed=0 | ALERT: 2 message(s) stuck in the outbox over an hour; 4 email(s) failed permanently in the last 24 hours",
+        "cron: outbox due=0 sent=0 failed=0 | ALERT: 2 messages stuck in the outbox over an hour; 4 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {

@@ -24,6 +24,8 @@ beforeAll(async () => {
   await env.SHEETS_KV.put('data_json', JSON.stringify({ current_season: 'Fall 2026', seasons: [{ name: 'Fall 2026', standings: [], fixtures: [] }], players: [] }));
   await env.DB.prepare(`INSERT INTO users (id, email, password_hash, created_at) VALUES ('u191', 'owner@example.com', 'x', '2026-10-01T00:00:00Z')`).run();
   await env.DB.prepare(`INSERT INTO leagues (id, name, team_count, team_names, created_by, created_at, slug, team_structure, language_mode) VALUES ('lg191', 'Ligue du mercredi', 2, '["Loutres","Ours"]', 'u191', '2026-10-01T00:00:00Z', 'ligue-du-mercredi', 'fixed', 'both')`).run();
+  // The league's own quiet hours off too: the test sends at any hour.
+  await env.DB.prepare(`INSERT INTO settings (key, value) VALUES ('email_cadence_settings:lg191', '{"quiet_hours_enabled":false}')`).run();
   await env.DB.prepare(`INSERT INTO events (id, season, week, date, venue, state, start_time, league_id) VALUES ('lg191:2099-03-07', 'S1', 1, '2099-03-07', 'Aréna', 'open', '19:30', 'lg191')`).run();
   await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, role, is_sub, is_goalie, token_salt, league_id) VALUES ('lg191:S1', 'Sam Remplaçant', 'sam@example.com', 'sub_skater', 1, 0, 's', 'lg191')`).run();
   await env.DB.prepare(`INSERT INTO events (id, season, week, date, venue, state, start_time, league_id) VALUES ('2099-09-27', 'Fall 2026', 3, 'Sunday September 27 2099', 'Letendre', 'open', '10:30', 'smbhl')`).run();
@@ -43,7 +45,7 @@ describe('the sub call closing line and footer', () => {
   it('Notre Ligue: « liste des remplaçants », "subs list", no tagline', async () => {
     const m = await deliver('lg191:2099-03-07', 'lg191:S1', 'lg191');
     for (const body of [m.text, visibleText(m.html)]) {
-      expect(body).toContain('Tu ne veux plus être sur la liste des remplaçants ? Réponds à ce courriel.');
+      expect(body).toContain('Tu ne veux plus être sur la liste des remplaçants? Réponds à ce courriel.');
       expect(body).toContain('Want off the subs list? Just reply to this email.');
       expect(body).not.toMatch(/substitut|Sunday Morning|Ball Hockey League/i);
     }
@@ -53,7 +55,7 @@ describe('the sub call closing line and footer', () => {
   it('SMBHL: « liste de substituts », "sub list" and its tagline, unchanged', async () => {
     const m = await deliver('2099-09-27', 'P1911', 'smbhl');
     for (const body of [m.text, visibleText(m.html)]) {
-      expect(body).toContain('Tu ne veux plus être sur la liste de substituts ? Réponds à ce courriel.');
+      expect(body).toContain('Tu ne veux plus être sur la liste de substituts? Réponds à ce courriel.');
       expect(body).toContain('Want off the sub list? Just reply to this email.');
     }
     expect(visibleText(m.html)).toContain('SMBHL · Sunday Morning Ball Hockey League ·');

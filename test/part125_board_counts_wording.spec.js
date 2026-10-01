@@ -35,7 +35,7 @@ describe('Subs board: confirmed vs not answered yet', () => {
 
   it('the board page carries the new wording in both languages, and its script parses', async () => {
     const html = await (await SELF.fetch('http://example.com/admin/subs', { headers: { 'x-admin': ADMIN_KEY } })).text();
-    for (const s of ["neededForFull: 'manquant(s) pour une équipe complète'", "neededForFull: 'short of a full team'", "confirmedLabel: 'Confirmés'", "confirmedLabel: 'Confirmed'", "noAnswerLabel: 'Sans réponse'", "noAnswerLabel: 'No answer yet'"]) {
+    for (const s of ["neededForFull: 'manquant{s} pour une équipe complète'", "neededForFull: 'short of a full team'", "confirmedLabel: 'Confirmés'", "confirmedLabel: 'Confirmed'", "noAnswerLabel: 'Sans réponse'", "noAnswerLabel: 'No answer yet'"]) {
       expect(html).toContain(s);
     }
     assertNoSyntaxError(extractInlineScripts(html), 'subs board');

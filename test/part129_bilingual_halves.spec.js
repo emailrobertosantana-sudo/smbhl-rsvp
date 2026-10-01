@@ -165,7 +165,7 @@ describe('B7: the goalie-cancel alert\'s HTML carries its English half', () => {
     env.RSVP_SECRET = 'p129';
     const m = await renderGoalieCancelEmail(env, ev, { name: 'Sean Pichette' }, 'Red', 'self', 'in');
     expect(m.subject).toBe('Alerte Gardien : Sean Pichette absent pour Rouge (dimanche 28 septembre) / Goalie Cancelled: Sean Pichette, Red (Sunday September 28 2026)');
-    expect(m.html).toContain('Sunday 10:30 at Collège Laval');
+    expect(m.html).toContain('Sunday 10:30 AM (venue: Collège Laval)');
     expect(m.html).toContain('The goalie himself (direct email link / web)');
     expect(m.html).toContain('Manage and call subs');
     expect(m.html).toContain('Team lineup');
@@ -212,10 +212,10 @@ describe('B9: account emails follow one rule', () => {
     expect(sent[0].html).toContain('Envoyé par Notre Ligue · Sent by Notre Ligue');
   });
 
-  it('no league: the language the account signed up in', async () => {
-    await signup('p129.en@example.com', '203.0.129.2', 'en');
+  it('asked from an English page: English only, whatever the account signed up in', async () => {
+    await signup('p129.en@example.com', '203.0.129.2', 'fr');
     sent.length = 0;
-    await reset('p129.en@example.com');
+    await SELF.fetch('http://example.com/auth/request-password-reset', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.129.9' }, body: JSON.stringify({ email: 'p129.en@example.com', lang: 'en' }) });
     expect(sent[0].html).toContain('Reset your password');
     expect(sent[0].html).not.toContain('Réinitialise');
   });
