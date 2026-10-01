@@ -58,6 +58,8 @@ const KIND_LABEL = {
 const ENABLED_COLUMN = { reminder_72h: 'reminder_72h_enabled', reminder_24h: 'reminder_24h_enabled', logistics_12h: 'reminder_12h_enabled' };
 
 export function productOf(env) { return env.LEAGUE_PRODUCT === 'true' ? 'leagues' : 'smbhl'; }
+// The operator alerts name the environment that raised them.
+export function productName(env) { return productOf(env) === 'leagues' ? 'Notre Ligue' : 'SMBHL'; }
 const gameLabel = ev => `${ev.date || ''}${ev.start_time ? ' ' + ev.start_time : ''}`.trim();
 const nowIso = now => now.toISOString();
 
@@ -421,7 +423,7 @@ export async function notifyAlerts(env, host, alerts, now = new Date()) {
   if (pendingOps.length) {
     const lines = pendingOps.map(a => `- [${leagueName(names, a.scope)}] ${a.fr}`).join('\n');
     const linesEn = pendingOps.map(a => `- [${leagueName(names, a.scope)}] ${a.en}`).join('\n');
-    const title = `Notre Ligue : ${pendingOps.length} ${pendingOps.length > 1 ? 'alertes' : 'alerte'} / ${pendingOps.length === 1 ? 'alert' : 'alerts'}`;
+    const title = `${productName(env)} : ${pendingOps.length} ${pendingOps.length > 1 ? 'alertes' : 'alerte'} / ${pendingOps.length === 1 ? 'alert' : 'alerts'}`;
     const body = `${lines}\n\n---\n\n${linesEn}\n\n${host.publicUrl || ''}/health/status`;
     // The channel that does not go through Resend first.
     const hooked = await postWebhook(env, title, body);
@@ -481,7 +483,7 @@ export async function checkCronOnRequest(env, host, now = new Date()) {
   const last = await getJson(env.DB, key);
   if (last && now.getTime() - Date.parse(last) < 3600000) return status;
   await putJson(env.DB, key, nowIso(now));
-  const title = `Notre Ligue : cron ${status.product} arrêté / stopped`;
+  const title = `${productName(env)} : cron ${status.product} arrêté / stopped`;
   const text = `Le cron ne roule plus : dernier passage réussi il y a ${status.age_minutes} min.\n\nThe cron has stopped: last successful pass ${status.age_minutes} min ago.`;
   await postWebhook(env, title, text);
   try { await host.sendMail(env, host.opsEmail, title, text); } catch (e) { console.error(`[health] stale-cron email failed: ${e.message}`); }

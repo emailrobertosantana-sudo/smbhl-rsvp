@@ -110,7 +110,7 @@ describe('The player\'s own page: the night, and one game dropped', () => {
     expect(html).toContain('Bears – Otters');
     expect(html).toContain('Bears – Wolves');
     let d = dictOf(html);
-    expect([d.fr.nightNoteTeams, d.en.nightNoteTeams]).toEqual(['Ta réponse vaut pour la soirée : pour chaque match de ton équipe.', "Your answer is for the night: each of your team's games."]);
+    expect([d.fr.nightNoteTeams, d.en.nightNoteTeams]).toEqual(['Ta réponse vaut pour la journée : pour chaque match de ton équipe.', "Your answer is for the day: each of your team's games."]);
     expect([d.fr.nightNoteFollow, d.en.nightNoteFollow]).toEqual(['Les matchs qui se suivent, tu les joues tous.', 'Games that follow each other, you play them all.']);
     expect(html).toContain('data-i18n="nightNoteTeams"');
     expect(html).toContain('data-i18n="nightNoteFollow"');
@@ -144,8 +144,8 @@ describe('The player\'s own page: the night, and one game dropped', () => {
     expect(html).toContain('data-game-state="other"');
     expect(dictOf(html).en.nightNoteConcurrent).toBe('Some games are at the same time: we spread players evenly across them.');
     expect(dictOf(html).fr.nightNoteConcurrent).toBe('Des matchs se jouent en même temps : on répartit les joueurs également entre eux.');
-    expect(dictOf(html).fr.nightNotePool).toBe('Ta réponse vaut pour la soirée : tu es disponible, et on te place dans les matchs où il y a de la place.');
-    expect(dictOf(html).en.nightNotePool).toBe("Your answer is for the night: you're available, and we place you in the games that have room.");
+    expect(dictOf(html).fr.nightNotePool).toBe('Ta réponse vaut pour la journée : tu es disponible, et on te place dans les matchs où il y a de la place.');
+    expect(dictOf(html).en.nightNotePool).toBe("Your answer is for the day: you're available, and we place you in the games that have room.");
     const r = await gameAnswer(p, A, B, 'in');
     expect(r.status).toBe(409);
     expect((await r.json()).errorKey).toBe('RSVP_OVERLAPPING_GAME');
@@ -181,7 +181,7 @@ describe('The 12h email\'s "can\'t make it" drops the whole night', () => {
     const html = await page(p, A, '&v=out&src=logistics12h');
     expect(html).toContain('data-i18n="confirmAnswerOutNight"');
     const d = dictOf(html);
-    expect([d.fr.confirmAnswerOutNight, d.en.confirmAnswerOutNight]).toEqual(['Tu vas répondre : je ne peux pas, pour toute la soirée.', "You're about to answer: can't make it, for the whole night."]);
+    expect([d.fr.confirmAnswerOutNight, d.en.confirmAnswerOutNight]).toEqual(['Tu vas répondre : je ne peux pas, pour toute la journée.', "You're about to answer: can't make it, for the whole day."]);
     const post = await SELF.fetch(`http://example.com/league/rsvp/confirm?${await p.qs(A)}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'status=out&src=logistics12h', redirect: 'manual' });
     expect(post.status).toBe(303);
     expect([await statusOf(A, p), await statusOf(B, p)]).toEqual(['out', 'out']);

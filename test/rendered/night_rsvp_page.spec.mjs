@@ -39,7 +39,7 @@ describe('The night page, in a browser', () => {
     await page.goto(url, { waitUntil: 'load' });
     await page.click('#btn-lang-fr'); // the browser's own language would pick English
     expect(await page.$$eval('.rv-games li', lis => lis.length)).toBe(2);
-    expect(await page.innerText('.rv-meta')).toContain('Ta réponse vaut pour la soirée : pour chaque match de ton équipe.');
+    expect(await page.innerText('.rv-meta')).toContain('Ta réponse vaut pour la journée : pour chaque match de ton équipe.');
     await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click('.rv-answers [data-v="in"]')]);
     expect([await status(ids.A), await status(ids.B)]).toEqual(['in', 'in']);
     expect(await page.$$eval('#rv_games [data-gv="out"]', b => b.length)).toBe(2);

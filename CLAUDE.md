@@ -13,9 +13,13 @@ SMBHL (rsvp.smbhl.com) and Notre Ligue (rsvp.notreligue.ca) run from this one co
 - Do not wait for me between steps listed here. Stop only on the stop conditions written in the item.
 - Report: a table of item, status and commit, then only decisions needed and anything that differs from the plan.
 
+## Migrations
+
+A migration must keep the old code working on the new schema, and the new code working on the old schema. In the 054 incident, the migration reached production before the code that used it, and finance saves failed. Production code is deployed in the same sitting as any migration.
+
 ## Standing rules
 
-Never deploy production, never push, never write to the production database or KV, never change DNS or Cloudflare settings. Never print secrets, tokens or full email addresses. Never touch copy-audit/ or the design system files. No em dashes in code comments, commit messages, copy or the report. No migration in this batch.
+Never deploy production, never push, never write to the production database or KV, never change DNS or Cloudflare settings. Never print secrets, tokens or full email addresses. Never touch copy-audit/ or the design system files. No em dashes in code comments, commit messages, copy or the report. No migration unless the batch explicitly allows one, and then only under the rules for migrations above.
 
 ## One codebase
 
@@ -24,10 +28,6 @@ SMBHL and Notre Ligue share their code. No forks: build a feature once, for both
 ## Production
 
 The agent never deploys production. Roberto does. The agent may deploy the demo (`npm run deploy:demo`) when a batch says so.
-
-## Migrations
-
-A migration must keep the old code working on the new schema, and the new code working on the old schema. In the 054 incident, the migration reached production before the code that used it, and finance saves failed. Production code is deployed in the same sitting as any migration.
 
 ## French copy
 

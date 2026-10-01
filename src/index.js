@@ -12,7 +12,7 @@ import { contactDisplayName, rosterNameMap } from './contact_name.js';
 import { passCached } from './pass_cache.js';
 import { getSubCallHours, saveSubCallHours, subCallWindowText, SUB_CALL_HOURS_CHOICES } from './sub_call_window.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
-import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix } from './health.js';
+import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart, eventHasStarted } from './league_ids.js';
@@ -298,8 +298,8 @@ function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = 
   const titles = title && typeof title === 'object' ? title : null;
   const titleFr = titles ? titles.fr : title;
   // "Page | League", for SMBHL and for a league.
-  // titles.brand: a league-product page that has no league to name (an
-  // invitation link that is not valid) says "Notre Ligue", not SMBHL.
+  // titles.brand: a page that has no league to name (an invitation link
+  // that is not valid) names the environment: SMBHL or Notre Ligue.
   const brand = (titles && titles.brand) || league.name;
   const titleSep = ' | ';
   return `<!DOCTYPE html><html lang="fr-CA"><head>
@@ -3155,7 +3155,7 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
   const result = await verifyInviteToken(env, token);
 
   if (!result.ok) {
-    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: 'Notre Ligue' }, `
+    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: productName(env) }, `
       <h1>Invitation invalide ou expirée<span class="en">Invalid or expired invitation</span></h1>
       <p class="state">Demande à l'administrateur de la ligue de t'envoyer une nouvelle invitation.<span class="en" style="display:block;">Ask the league admin to send you a new invitation.</span></p>
     `), { status: result.error === 'expired' ? 410 : 400, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
@@ -3163,7 +3163,7 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
 
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(result.leagueId).first();
   if (!leagueRow) {
-    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: 'Notre Ligue' }, `
+    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: productName(env) }, `
       <h1>Cette ligue n'existe plus<span class="en">This league no longer exists</span></h1>
     `), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
@@ -21307,14 +21307,14 @@ async function renderNightMovedForContact(env, leagueRow, games, contact, team, 
       headline: 'Ton horaire a changé',
       body: team ? `${team} joue maintenant : ${when}.` : `${plural ? 'Tes matchs sont' : 'Ton match est'} maintenant : ${when}.`,
       answer: answer === 'in' ? 'Ta réponse suit : tu joues toujours. Rien à faire.' : 'On attend encore ta réponse.',
-      btn: answer === 'in' ? 'Voir ma soirée' : 'Répondre',
+      btn: answer === 'in' ? 'Voir ma journée' : 'Répondre',
       poweredBy: 'Propulsé par Notre Ligue'
     } : {
       subject: `${firstName}, new schedule for ${dayLabel || 'your game'}`,
       headline: 'Your schedule changed',
       body: team ? `${team} now plays: ${when}.` : `${plural ? 'Your games are' : 'Your game is'} now: ${when}.`,
       answer: answer === 'in' ? "Your answer carries over: you're still playing. Nothing to do." : 'We still need your answer.',
-      btn: answer === 'in' ? 'See my night' : 'Answer',
+      btn: answer === 'in' ? 'See my day' : 'Answer',
       poweredBy: 'Powered by Notre Ligue'
     };
     return {
@@ -22484,8 +22484,8 @@ async function leagueRsvpGet(req, env, url) {
         nightWaitBody: "Le match est complet. Dès qu'une place se libère, elle est à toi et on t'envoie un courriel."
       } : {}),
       ...(multi ? {
-        nightNoteTeams: 'Ta réponse vaut pour la soirée : pour chaque match de ton équipe.',
-        nightNotePool: 'Ta réponse vaut pour la soirée : tu es disponible, et on te place dans les matchs où il y a de la place.',
+        nightNoteTeams: 'Ta réponse vaut pour la journée : pour chaque match de ton équipe.',
+        nightNotePool: 'Ta réponse vaut pour la journée : tu es disponible, et on te place dans les matchs où il y a de la place.',
         nightNoteConcurrent: 'Des matchs se jouent en même temps : on répartit les joueurs également entre eux.',
         nightNoteFollow: 'Les matchs qui se suivent, tu les joues tous.',
         nightDoneInBody: `On se voit ${dayLabel || 'ce jour-là'}. Tes matchs :`,
@@ -22495,7 +22495,7 @@ async function leagueRsvpGet(req, env, url) {
         errFull: 'Ce match est complet.',
         gamePending: 'Pas encore de réponse', gameClosed: "Ce match n'accepte plus de réponses.",
         gameBtnOut: 'Je ne peux pas pour ce match', gameBtnIn: 'Finalement, je joue ce match',
-        confirmAnswerOutNight: 'Tu vas répondre : je ne peux pas, pour toute la soirée.'
+        confirmAnswerOutNight: 'Tu vas répondre : je ne peux pas, pour toute la journée.'
       } : {})
     } : {
       question: `${firstName}, are you playing${dayLabel ? ' ' + dayLabel.toLowerCase() : ''}?`,
@@ -22525,8 +22525,8 @@ async function leagueRsvpGet(req, env, url) {
         nightWaitBody: "The game is full. As soon as a spot opens, it's yours and we'll email you."
       } : {}),
       ...(multi ? {
-        nightNoteTeams: "Your answer is for the night: each of your team's games.",
-        nightNotePool: "Your answer is for the night: you're available, and we place you in the games that have room.",
+        nightNoteTeams: "Your answer is for the day: each of your team's games.",
+        nightNotePool: "Your answer is for the day: you're available, and we place you in the games that have room.",
         nightNoteConcurrent: 'Some games are at the same time: we spread players evenly across them.',
         nightNoteFollow: 'Games that follow each other, you play them all.',
         nightDoneInBody: `See you ${dayLabel || 'then'}. Your games:`,
@@ -22536,7 +22536,7 @@ async function leagueRsvpGet(req, env, url) {
         errFull: 'This game is full.',
         gamePending: 'No answer yet', gameClosed: 'This game is no longer taking answers.',
         gameBtnOut: "I can't make this game", gameBtnIn: 'I can make this game after all',
-        confirmAnswerOutNight: "You're about to answer: can't make it, for the whole night."
+        confirmAnswerOutNight: "You're about to answer: can't make it, for the whole day."
       } : {})
     };
   }
