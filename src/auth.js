@@ -12,6 +12,7 @@
 
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, nlDocument, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
+import { nlLegalEmailWrap } from './legal.js';
 import { ERROR_I18N } from './error_i18n.js';
 import { nextQuery } from './next_path.js';
 
@@ -353,7 +354,7 @@ This link expires in 24 hours. If you didn't create an account, you can ignore t
     <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>`
   };
   const assembled = assembleBilingualEmail(lang, { fr, en });
-  const html = nlEmailWrap({
+  const html = nlLegalEmailWrap({ languageMode: lang,
     brandName: 'Notre Ligue',
     barColor: '#16181d',
     bodyHtml: assembled.html,
@@ -481,7 +482,7 @@ This link expires in 1 hour. If you didn't request this, you can ignore this ema
     <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 1 hour. If you didn't request this, you can ignore this email: your current password stays unchanged.</p>`
   };
   const assembled = assembleBilingualEmail(languageMode, { fr, en });
-  const html = nlEmailWrap({
+  const html = nlLegalEmailWrap({ languageMode: languageMode,
     brandName: 'Notre Ligue',
     barColor: '#16181d',
     bodyHtml: assembled.html,

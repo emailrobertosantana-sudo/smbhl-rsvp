@@ -25,6 +25,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, ma
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie, generateRoundRobinRounds } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
+import { nlLegalEmailWrap } from './legal.js';
 import { hasCapability } from './super_admin.js';
 import { applyReminderWindowSkipRule } from './reminder_scheduling.js';
 import { usesAdvancedReminders, getEmailSettings, emailSettingsKey } from './reminders.js';
@@ -3589,7 +3590,7 @@ This link expires in 48 hours. If you don't recognize this league, you can ignor
   };
   const assembled = assembleBilingualEmail(languageMode, { fr, en });
   const footerHtml = nlSentByFooter(languageMode, { forName: nlEmailWrapEsc(leagueName) });
-  const html = nlEmailWrap({ brandName: leagueName, barColor, bodyHtml: assembled.html, footerHtml });
+  const html = nlLegalEmailWrap({ languageMode: languageMode, brandName: leagueName, barColor, bodyHtml: assembled.html, footerHtml });
   return { subject: assembled.subject, text: assembled.text, html };
 }
 function nlEmailWrapEsc(s) {

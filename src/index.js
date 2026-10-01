@@ -11,6 +11,7 @@ import { chooseMailProvider, parseAddress } from './mail_provider.js';
 import { contactDisplayName, rosterNameMap } from './contact_name.js';
 import { passCached } from './pass_cache.js';
 import { getSubCallHours, saveSubCallHours, subCallWindowText, SUB_CALL_HOURS_CHOICES } from './sub_call_window.js';
+import { legalRoute, nlLegalEmailWrap, legalLinksPageHtml, legalLinksEmailHtml, LEGAL_I18N } from './legal.js';
 import { PAYMENT_REMINDER_KIND, getPaymentInfo, savePaymentInfo, hasPaymentInfo, normalizePhone, formatPhone, paymentReminderLines, cleanNote, PAYMENT_PANEL_JS } from './payment_reminders.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
@@ -507,7 +508,7 @@ const I18N_HOME = {
     s2Title: 'Ajoute tes joueurs', s2Body: "Un nom et un numéro de cellulaire ou un courriel. Importe une liste si tu en as une.",
     s3Title: 'On s\'occupe du reste', s3Body: 'Invitations, rappels, remplaçants. Tu reçois une alerte seulement si quelque chose coince.',
     finalTitle: 'Ta prochaine saison commence ici.',
-    footerBrand: 'Notre Ligue · Fait au Québec', footerLinks: 'Confidentialité · Conditions · <a href="mailto:bonjour@notreligue.ca">Contact</a>',
+    footerBrand: 'Notre Ligue · Fait au Québec', footerLinks: '<a href="/confidentialite">Confidentialité</a> · <a href="/conditions">Conditions</a> · <a href="mailto:bonjour@notreligue.ca">Contact</a>',
     mockLeagueName: 'Ligue du dimanche matin', mockDayTime: 'Dimanche · 9 h',
     mockQuestion: 'Marc, tu joues dimanche?', mockBtnIn: '✓ Je joue', mockBtnOut: 'Je ne peux pas',
     mockShort: 'Manque 2', mockSubsInvited: '3 remplaçants invités'
@@ -527,7 +528,7 @@ const I18N_HOME = {
     s2Title: 'Add your players', s2Body: "A name and a cell number or email. Import a list if you have one.",
     s3Title: 'We handle the rest', s3Body: "Invites, reminders, subs. You get an alert only if something's stuck.",
     finalTitle: 'Your next season starts here.',
-    footerBrand: 'Notre Ligue · Made in Quebec', footerLinks: 'Privacy · Terms · <a href="mailto:bonjour@notreligue.ca">Contact</a>',
+    footerBrand: 'Notre Ligue · Made in Quebec', footerLinks: '<a href="/confidentialite#en">Privacy</a> · <a href="/conditions#en">Terms</a> · <a href="mailto:bonjour@notreligue.ca">Contact</a>',
     mockLeagueName: 'Sunday morning league', mockDayTime: 'Sunday · 9 am',
     mockQuestion: 'Marc, are you playing Sunday?', mockBtnIn: "✓ I'm in", mockBtnOut: "Can't make it",
     mockShort: 'Short 2', mockSubsInvited: '3 subs invited'
@@ -646,7 +647,7 @@ function renderMarketingHomepage(req) {
 </div></section>
 <footer class="home-footer"><div class="home-in">
   <span data-i18n="footerBrand">Notre Ligue · Fait au Québec</span>
-  <span data-i18n="footerLinks">Confidentialité · Conditions · <a href="mailto:bonjour@notreligue.ca">Contact</a></span>
+  <span data-i18n="footerLinks"><a href="/confidentialite">Confidentialité</a> · <a href="/conditions">Conditions</a> · <a href="mailto:bonjour@notreligue.ca">Contact</a></span>
 </div></footer>
 <script>
 ${nlAuthScript(I18N_HOME)}
@@ -1036,7 +1037,11 @@ ${PLURAL_TEXT_JS}
   applyLanguage(lang);
 })();`;
 }
-function signupLangScript() { return nlAuthScript(I18N_SIGNUP); }
+function signupLangScript() { return nlAuthScript({ fr: { ...I18N_SIGNUP.fr, ...LEGAL_I18N.fr }, en: { ...I18N_SIGNUP.en, ...LEGAL_I18N.en } }); }
+// The legal links (src/legal.js) under every sign-up step.
+function signupFooter() {
+  return `<p class="nl-help" style="text-align:center;margin:var(--space-5) 0 var(--space-4);font-size:13px">${legalLinksPageHtml('fr')}</p>`;
+}
 
 function renderSignupStep1(langParam) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
@@ -1066,6 +1071,7 @@ function renderSignupStep1(langParam) {
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="continueBtn" onclick="submitStep1()">Continuer</button>
   <p class="su-center"><span data-i18n="alreadySignedUp">Déjà inscrit?</span> <a href="/login" data-i18n="login">Se connecter</a></p>
 </div>
+${signupFooter()}
 <script>
 ${signupLangScript()}
 function togglePw() {
@@ -1159,6 +1165,7 @@ function renderSignupStep2(langParam) {
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="continueBtn" onclick="submitStep2()">Continuer</button>
   <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="window.__navWithLang('/signup?step=1')">Retour</button>
 </div>
+${signupFooter()}
 <script>
 ${signupLangScript()}
 function showError(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
@@ -1272,6 +1279,7 @@ function renderSignupStep3(langParam) {
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="createLeague" onclick="submitStep3()">Créer la ligue</button>
   <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="window.__navWithLang('/signup?step=2')">Retour</button>
 </div>
+${signupFooter()}
 <script>
 ${signupLangScript()}
 var leagueDraft = null;
@@ -1370,6 +1378,7 @@ function renderSignupDone(league, langParam) {
        real next action. -->
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="startMySeason" onclick="location.href='/dashboard'">Créer ma saison</button>
 </div>
+${signupFooter()}
 <script>
 ${signupLangScript()}
 function copyLink() {
@@ -4084,11 +4093,11 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   function buildDict(lang) {
     const base = lang === 'fr' ? {
       nextGame: 'Prochain match', teams: 'Équipes', upcoming: 'Prochains matchs',
-      noEvents: "Aucun match à venir pour l'instant.", poweredBy: 'Propulsé par Notre Ligue',
+      noEvents: "Aucun match à venir pour l'instant.", poweredBy: 'Propulsé par Notre Ligue', ...LEGAL_I18N.fr,
       navHome: 'Accueil', navSchedule: 'Horaire', vsWord: 'contre'
     } : {
       nextGame: 'Next game', teams: 'Teams', upcoming: 'Upcoming events',
-      noEvents: 'No upcoming events yet.', poweredBy: 'Powered by Notre Ligue',
+      noEvents: 'No upcoming events yet.', poweredBy: 'Powered by Notre Ligue', ...LEGAL_I18N.en,
       navHome: 'Home', navSchedule: 'Schedule', vsWord: 'vs'
     };
     if (statsTracked) {
@@ -4487,6 +4496,8 @@ ${PUBLIC_THEME_SHARED_CSS}
   <section id="history" class="pb-view">${historyHtml}</section>
 </main>
 <a class="pb-foot" href="https://notreligue.ca" data-i18n="poweredBy">${esc(t.poweredBy)}</a>
+<style>.nl .pb-legal { text-align: center; margin: calc(-1 * var(--space-4)) 0 0; padding: 0 var(--space-4) var(--space-5); font-size: 12px; } .nl .pb-legal a.pb-foot { display: inline; padding: 0; }</style>
+<p class="pb-legal">${legalLinksPageHtml(lang, 'pb-foot')}</p>
 <script>
 var PB_I18N = ${JSON.stringify(I18N_PUBLIC)};
 var PB_FORCED_LANG = ${JSON.stringify(forcedLang)};
@@ -5030,7 +5041,7 @@ function renderLeagueBroadcastEmail(leagueRow, subject, message) {
     bothSubject: subject
   });
   const text = `${message}\n\n---\n${footerAssembled.text}`;
-  const html = nlEmailWrap({
+  const html = nlLegalEmailWrap({ languageMode: languageMode,
     brandName: leagueRow.name, barColor,
     bodyHtml: bodyHtmlCore + footerAssembled.html,
     footerHtml: 'Notre Ligue'
@@ -5658,7 +5669,7 @@ async function renderPaymentReminder(env, leagueId, { name, balance, note, info,
     fr: { subject: `${leagueName} : solde à payer`, text: fr.join('\n'), html: toHtml(fr) },
     en: { subject: `${leagueName}: balance owing`, text: en.join('\n'), html: toHtml(en) }
   });
-  const html = nlEmailWrap({
+  const html = nlLegalEmailWrap({ languageMode: mode,
     brandName: leagueName, barColor: leagueFillColor((leagueRow && leagueRow.color) || '#b3122e'), bodyHtml: assembled.html,
     footerHtml: nlSentByFooter(mode, { forName: esc(leagueName), fr: 'Propulsé par Notre Ligue', en: 'Powered by Notre Ligue' })
   });
@@ -12862,7 +12873,9 @@ ${offEn}`;
         htmlSeparator: '<hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">',
         textSeparator: '---'
       });
-      return { subject: assembled.subject, text: `${assembled.text}${sign}`, html: wrapEmail(assembled.subject, assembled.html) };
+      // A league's sub call ends with Notre Ligue's legal links (src/legal.js).
+      const legalHtml = leagueEvent ? `<p style="font-size:12px; color:#94a3b8; margin:16px 0 0;">${legalLinksEmailHtml(languageMode)}</p>` : '';
+      return { subject: assembled.subject, text: `${assembled.text}${sign}`, html: wrapEmail(assembled.subject, assembled.html + legalHtml) };
     }
 
     case 'team_short': {
@@ -13998,7 +14011,7 @@ function renderShortGameAdminAlert(env, leagueRow, ev, shortages) {
     html: block('Action needed', 'Short of players', whenEn, linesEn, closeEn, 'View the game')
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
-  return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
+  return { subject: assembled.subject, text: assembled.text, html: nlLegalEmailWrap({ languageMode: leagueRow.language_mode || 'both', brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
 }
 
 // ---- a pickup game's pool, before its draw (D2) ----
@@ -14899,7 +14912,7 @@ async function renderDualMail(env, ev, cfg, fr, en) {
     en: { subject: en.subject, text: en.lines.join('\n'), html: toHtml(en.lines) }
   });
   return {
-    mail: { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: league.name, barColor: leagueFillColor(league.color || '#b3122e'), bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) },
+    mail: { subject: assembled.subject, text: assembled.text, html: nlLegalEmailWrap({ languageMode: league.languageMode || 'both', brandName: league.name, barColor: leagueFillColor(league.color || '#b3122e'), bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) },
     identity: league
   };
 }
@@ -16285,6 +16298,8 @@ function leagueAvailDoc(L, titles, body) {
 </header>
 <main class="av-body">${blocks}</main>
 ${L.langs.map(l => `<a class="av-foot" data-lb="${l}" href="https://notreligue.ca"${both && l !== first ? ' hidden' : ''}>${esc(powered[l])}</a>`).join('')}
+<style>.nl .av-legal { text-align: center; margin: 0; padding: 0 var(--space-4) var(--space-4); font-size: 13px; } .nl .av-legal a.av-foot { display: inline; padding: 0; border-top: 0; }</style>
+${L.langs.map(l => `<p class="av-legal" data-lb="${l}"${both && l !== first ? ' hidden' : ''}>${legalLinksPageHtml(l, 'av-foot')}</p>`).join('')}
 ${both ? `<script>
 (function() {
   var titles = ${JSON.stringify({ fr: `${titles.fr} | ${name}`, en: `${titles.en} | ${name}` })};
@@ -21214,7 +21229,7 @@ function renderNightWaitlistAdminAlert(env, leagueRow, ev, contact, alone = fals
     html: block('Waitlist', alone ? 'Game full' : 'Games full', whenEn, lineEn, 'View the game')
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
-  return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
+  return { subject: assembled.subject, text: assembled.text, html: nlLegalEmailWrap({ languageMode: leagueRow.language_mode || 'both', brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
 }
 
 // A spot may have opened in `game` (someone in it went out): the players
@@ -21343,7 +21358,7 @@ function renderThinGameAdminAlert(env, leagueRow, ev, thin) {
     html: block('Action needed', 'A game is short of players', whenEn, lines('en'), closeEn, 'View the game')
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
-  return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
+  return { subject: assembled.subject, text: assembled.text, html: nlLegalEmailWrap({ languageMode: leagueRow.language_mode || 'both', brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
 }
 
 // ---- a changed matchup or time (D1) ----
@@ -21585,7 +21600,7 @@ async function renderNightMovedForContact(env, leagueRow, games, contact, team, 
   const fr = toContent('fr');
   const en = toContent('en');
   const assembled = assembleBilingualEmail(forcedLang || 'both', { fr, en });
-  const html = nlEmailWrap({
+  const html = nlLegalEmailWrap({ languageMode: forcedLang || 'both',
     brandName: leagueRow.name, barColor, bodyHtml: assembled.html,
     footerHtml: nlSentByFooter(forcedLang || 'both', { forName: esc(leagueRow.name), fr: fr.poweredBy, en: en.poweredBy })
   });
@@ -21850,7 +21865,7 @@ function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, d
   const fr = toContent('fr');
   const en = toContent('en');
   const assembled = assembleBilingualEmail(forcedLang || 'both', { fr, en });
-  const html = nlEmailWrap({
+  const html = nlLegalEmailWrap({ languageMode: forcedLang || 'both',
     brandName: leagueName, barColor, bodyHtml: assembled.html,
     footerHtml: nlSentByFooter(forcedLang || 'both', { forName: esc(leagueName), fr: fr.poweredBy, en: en.poweredBy })
   });
@@ -21889,7 +21904,7 @@ function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLab
   const fr = toContent('fr');
   const en = toContent('en');
   const assembled = assembleBilingualEmail(forcedLang || 'both', { fr, en });
-  const html = nlEmailWrap({
+  const html = nlLegalEmailWrap({ languageMode: forcedLang || 'both',
     brandName: leagueName, barColor, bodyHtml: assembled.html,
     footerHtml: nlSentByFooter(forcedLang || 'both', { forName: esc(leagueName), fr: fr.poweredBy, en: en.poweredBy })
   });
@@ -21942,7 +21957,7 @@ function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, tea
     ${nlEmailButton(dashboardLink, 'View the game', barColor)}`
   };
   const assembled = assembleBilingualEmail(languageMode, { fr, en });
-  const html = nlEmailWrap({ brandName: leagueName, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' });
+  const html = nlLegalEmailWrap({ languageMode: languageMode, brandName: leagueName, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' });
   return { subject: assembled.subject, text: assembled.text, html };
 }
 
@@ -22030,7 +22045,7 @@ function renderLeagueGameCancelledEmail(leagueRow, ev, contact) {
     html: block('Cancelled', `Hi ${firstName},`, 'Game cancelled', lineEn)
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
-  return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
+  return { subject: assembled.subject, text: assembled.text, html: nlLegalEmailWrap({ languageMode: leagueRow.language_mode || 'both', brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
 }
 
 async function leagueAdminEmails(env, leagueId) {
@@ -22726,7 +22741,7 @@ async function leagueRsvpGet(req, env, url) {
       confirmBtnOut: 'Confirmer : je ne peux pas',
       confirmHelp: "Tant que tu n'as pas appuyé sur le bouton, tu restes « sans réponse ».",
       change: 'Changer ma réponse',
-      poweredBy: 'Propulsé par Notre Ligue',
+      poweredBy: 'Propulsé par Notre Ligue', ...LEGAL_I18N.fr,
       errBadStatus: 'Réponse invalide. Réessaie.',
       errBadToken: 'Ce lien est invalide ou expiré.',
       errLocked: "Cet événement n'accepte plus de réponses.",
@@ -22767,7 +22782,7 @@ async function leagueRsvpGet(req, env, url) {
       confirmBtnOut: "Confirm: can't make it",
       confirmHelp: 'Until you press the button, you stay as "no reply".',
       change: 'Change my answer',
-      poweredBy: 'Powered by Notre Ligue',
+      poweredBy: 'Powered by Notre Ligue', ...LEGAL_I18N.en,
       errBadStatus: 'Invalid response. Please try again.',
       errBadToken: 'This link is invalid or expired.',
       errLocked: 'This event is no longer accepting responses.',
@@ -22923,6 +22938,8 @@ ${multi ? `  .rv-games { list-style: none; margin: 0; padding: 0; display: flex;
   ${formHtml}
 </main>
 <a class="rv-foot" href="https://notreligue.ca" data-i18n="poweredBy">${esc(t.poweredBy)}</a>
+<style>.nl .rv-legal { text-align: center; margin: 0; padding: 0 var(--space-4) var(--space-4); font-size: 13px; } .nl .rv-legal a.rv-foot { display: inline; padding: 0; border-top: 0; }</style>
+<p class="rv-legal">${legalLinksPageHtml(lang, 'rv-foot')}</p>
 <script>
 var RV_I18N = ${JSON.stringify(RSVP_I18N)};
 var RV_FORCED_LANG = ${JSON.stringify(forcedLang)};
@@ -31396,7 +31413,7 @@ function renderLeagueHealthAlert(env, leagueRow, alerts) {
     };
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr: content('fr'), en: content('en') });
-  return { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
+  return { subject: assembled.subject, text: assembled.text, html: nlLegalEmailWrap({ languageMode: leagueRow.language_mode || 'both', brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
 }
 
 // Every cron pass, both products: heartbeat in, the reminder pass, the
@@ -31822,6 +31839,8 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueEventDelete(req, env);
       if (url.pathname === '/league/season/publish' && req.method === 'POST')
         return await handleLeagueSeasonPublish(req, env);
+      // The legal pages (src/legal.js), on the Notre Ligue host only.
+      if (req.method === 'GET') { const legal = legalRoute(env, url); if (legal) return legal; }
       // Signup/login/dashboard pages — pure UI on top of the routes above.
       if ((url.pathname === '/signup' || url.pathname === '/signup/') && req.method === 'GET')
         return await renderSignupPage(req, env, url);

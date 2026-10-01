@@ -78,7 +78,8 @@ export const EVENT_KEYED_TABLES = [
 
 // settings rows whose KEY names this league or one of its events.
 function leagueSettingsKeys(leagueId, eventIds) {
-  return [`email_cadence_settings:${leagueId}`, `league_add_emails:${leagueId}`, `league_sub_calls:${leagueId}`, ...eventIds.map(id => `league_message:${id}`)];
+  return [`email_cadence_settings:${leagueId}`, `league_add_emails:${leagueId}`, `league_sub_calls:${leagueId}`, `payment_info:${leagueId}`,
+    ...eventIds.map(id => `league_message:${id}`), ...eventIds.map(id => `dual_goalie_alert:${id}`)];
 }
 
 export async function checkHardDeleteEligibility(env, leagueId) {
@@ -131,6 +132,12 @@ export async function performLeagueHardDelete(env, leagueId, leagueName, deleted
   const keys = leagueSettingsKeys(leagueId, eventIds);
   const keyRes = await env.DB.prepare(`DELETE FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).bind(...keys).run();
   rowsDeleted += keyRes.meta?.changes || 0;
+  // A dual-role player's role for a game: dual_role:<event>:<player>.
+  for (const id of eventIds) {
+    const prefix = `dual_role:${id}:`;
+    const r = await env.DB.prepare('DELETE FROM settings WHERE substr(key, 1, ?) = ?').bind(prefix.length, prefix).run();
+    rowsDeleted += r.meta?.changes || 0;
+  }
 
   for (const table of LEAGUE_SCOPED_TABLES) {
     const res = await env.DB.prepare(`DELETE FROM ${table} WHERE league_id = ?`).bind(leagueId).run();
