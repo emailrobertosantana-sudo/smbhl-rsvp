@@ -162,6 +162,17 @@ The outbox, retries, quiet hours, the daily caps and the health alerts are the s
 
 **Keep Resend's DNS records** (`resend._domainkey.mail.notreligue.ca`, `send.mail.notreligue.ca`) while any mail goes through Resend: SMBHL, production, and any environment on `"resend"`. `_dmarc.mail.notreligue.ca` is `p=reject`: without those records, every Resend message From `mail.notreligue.ca` would be rejected.
 
+**Where each environment stands (1 October 2026):** demo sends Notre Ligue mail through Cloudflare Email Sending; production stays on Resend (neither `MAIL_PROVIDER` nor the binding is set there). The live test passed: a password reset sent on demo from `bonjour@mail.notreligue.ca` arrived in 5 seconds with SPF pass, DKIM pass (domain `mail.notreligue.ca`) and DMARC pass.
+
+**Cloudflare dashboard settings (Email Sending):**
+
+- **Email preview: off** wherever real player mail flows. A preview keeps the message, and the RSVP links in it, for 7 days; those links let anyone who has them answer for the player. On demo, during a test, it can be on.
+- **Drop suppressed recipients: off.** Every message goes to one recipient, so dropping one would mean a send that nobody received but that counts as sent. With it off, a suppressed recipient comes back as a refusal, and the outbox marks that one row failed.
+
+### Account emails: the language of the page
+
+An account email a person asks for from a page (the sign-up verification, its resend, the password reset) is written in the language of that page: the page sends its own FR/EN choice as `lang` (never the browser's `Accept-Language`), and `pageLanguage()` in `src/auth.js` reads it. Both languages only when the request does not say. An email sent because of someone else, the co-admin invitation, follows the inviting league's language setting (both languages when the league is set to both). SMBHL has no account emails.
+
 ### KV Namespace Key Patterns (`SHEETS_KV`, both environments — same key names, separate data)
 
 | Key Pattern | Written By | Read By | Purpose / Content |
