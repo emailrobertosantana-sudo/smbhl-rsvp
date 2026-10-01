@@ -1436,7 +1436,7 @@ describe("SMBHL Worker", () => {
 		await env.DB.prepare("INSERT OR REPLACE INTO events (id, season, week, date, state) VALUES ('2026-10-04', 'Fall 2026', 1, '2026-10-04', 'open')").run();
 		await env.DB.prepare("INSERT OR REPLACE INTO contacts (player_id, name, email, is_sub, role, token_salt) VALUES ('P9977', 'Failed Delivery Sub', 'bad@example.com', 1, 'sub_skater', 'salt9977')").run();
 		await env.DB.prepare("DELETE FROM outbox WHERE event_id = '2026-10-04'").run();
-		await env.DB.prepare("INSERT INTO outbox (kind, event_id, player_id, team, dedup_key, payload, send_after, sent_at, cancelled, error, created_at) VALUES ('sub_call', '2026-10-04', 'P9977', 'Red', 'call:2026-10-04:skater:P9977', '{\"need\":\"skater\"}', '2026-10-01T00:00:00Z', NULL, 0, 'resend 422: validation_error', '2026-10-01T00:00:00Z')").run();
+		await env.DB.prepare("INSERT INTO outbox (kind, event_id, player_id, team, dedup_key, payload, send_after, sent_at, cancelled, error, created_at) VALUES ('sub_call', '2026-10-04', 'P9977', 'Red', 'call:2026-10-04:skater:P9977', '{\"need\":\"skater\"}', '2099-10-01T00:00:00Z', NULL, 0, 'resend 422: validation_error', '2026-10-01T00:00:00Z')").run();
 
 		const resp = await SELF.fetch("http://example.com/admin/subs/data?e=2026-10-04", {
 			headers: { "x-admin": env.ADMIN_KEY }
