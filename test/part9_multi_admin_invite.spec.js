@@ -217,4 +217,27 @@ describe('Part 9: multi-admin invite flow', () => {
     });
     expect(noCsrfRes.status).toBe(403);
   });
+
+  // Batch 5 (1f): an invitation that creates an account needs the terms
+  // accepted, as a sign-up does; the page has the same box.
+  it('a brand-new invited email: no account without the terms accepted', async () => {
+    const a = await signupAndCreateLeague('part9.inviter5@example.com', '203.0.113.487', 'Part 9 League Terms', ['A', 'B']);
+    const { sentMails } = await withMailMock(async () =>
+      SELF.fetch('http://example.com/league/admins/invite', {
+        method: 'POST',
+        headers: { cookie: a.cookie, 'content-type': 'application/json', 'x-csrf-token': a.csrfToken },
+        body: JSON.stringify({ email: 'part9.terms@example.com' })
+      })
+    );
+    const token = extractInviteToken(sentMails[0]);
+    const pageHtml = await (await SELF.fetch(`http://example.com/league/admins/accept?token=${encodeURIComponent(token)}`)).text();
+    expect(pageHtml).toContain('id="accept_terms"');
+    const refused = await SELF.fetch('http://example.com/league/admins/accept', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token, password: 'brand-new-admin-password' })
+    });
+    expect(refused.status).toBe(400);
+    expect((await refused.json()).errorKey).toBe('TERMS_NOT_ACCEPTED');
+    expect(await env.DB.prepare('SELECT 1 AS x FROM users WHERE email = ?').bind('part9.terms@example.com').first()).toBeNull();
+  });
 });

@@ -171,6 +171,7 @@ export async function performLeagueHardDelete(env, leagueId, leagueName, deleted
     if (!remaining) {
       const res = await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
       usersDeleted += res.meta?.changes || 0;
+      await env.DB.prepare('DELETE FROM settings WHERE key = ?').bind(`terms_acceptance:${userId}`).run();
     }
   }
 

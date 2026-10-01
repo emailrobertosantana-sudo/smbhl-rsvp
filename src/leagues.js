@@ -26,6 +26,7 @@ import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie, g
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
 import { nlLegalEmailWrap } from './legal.js';
+import { recordTermsAcceptance, acceptsTerms, TERMS_REFUSAL } from './terms.js';
 import { hasCapability } from './super_admin.js';
 import { applyReminderWindowSkipRule } from './reminder_scheduling.js';
 import { usesAdvancedReminders, getEmailSettings, emailSettingsKey } from './reminders.js';
@@ -3733,6 +3734,7 @@ export async function handleLeagueAdminAccept(req, env) {
   if (password.length < 8) {
     return Response.json({ ok: false, error: 'Password must be at least 8 characters.', errorKey: 'WEAK_PASSWORD' }, { status: 400 });
   }
+  if (!acceptsTerms(body)) return Response.json(TERMS_REFUSAL, { status: 400 });
 
   const userId = crypto.randomUUID();
   const passwordHash = await hashPassword(password);
@@ -3743,6 +3745,7 @@ export async function handleLeagueAdminAccept(req, env) {
   await env.DB.prepare(
     `INSERT INTO league_admins (user_id, league_id, role, created_at) VALUES (?, ?, 'admin', ?)`
   ).bind(userId, leagueId, now).run();
+  await recordTermsAcceptance(env.DB, userId);
 
   return new Response(JSON.stringify({ ok: true, leagueId, accountCreated: true }), {
     status: 200,

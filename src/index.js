@@ -12,6 +12,7 @@ import { contactDisplayName, rosterNameMap } from './contact_name.js';
 import { passCached } from './pass_cache.js';
 import { getSubCallHours, saveSubCallHours, subCallWindowText, SUB_CALL_HOURS_CHOICES } from './sub_call_window.js';
 import { legalRoute, nlLegalEmailWrap, legalLinksPageHtml, legalLinksEmailHtml, LEGAL_I18N } from './legal.js';
+import { TERMS_LABEL, getTermsAcceptance } from './terms.js';
 import { PAYMENT_REMINDER_KIND, getPaymentInfo, savePaymentInfo, hasPaymentInfo, normalizePhone, formatPhone, paymentReminderLines, cleanNote, PAYMENT_PANEL_JS } from './payment_reminders.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
@@ -21,7 +22,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation, claimOutboxRow, hardDailyCapFromEnv, hardCapError, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
-import { handleSignup, handleLogin, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
+import { handleSignup, handleLogin, handleAcceptTerms, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
@@ -695,7 +696,7 @@ const I18N_SIGNUP = {
     // Onboarding item 1: steps 1 and 2 come before the team structure is
     // chosen, and the real total depends on it (8 fixed, 6 pickup, 5 no
     // teams) -- so no total until it is known.
-    step1: 'Étape 1', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.',
+    step1: 'Étape 1', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.', termsAccept: TERMS_LABEL.fr,
     lblEmail: 'Courriel', lblPassword: 'Mot de passe', showPw: 'Afficher', hidePw: 'Cacher',
     pwHelp: '8 caractères minimum.', continueBtn: 'Continuer', alreadySignedUp: 'Déjà inscrit?', login: 'Se connecter',
     step2: 'Étape 2', title2: 'Parle-nous de ta ligue',
@@ -763,7 +764,7 @@ const I18N_SIGNUP = {
     already: 'Déjà inscrit?'
   },
   en: {
-    step1: 'Step 1', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.',
+    step1: 'Step 1', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.', termsAccept: TERMS_LABEL.en,
     lblEmail: 'Email', lblPassword: 'Password', showPw: 'Show', hidePw: 'Hide',
     pwHelp: '8 characters minimum.', continueBtn: 'Continue', alreadySignedUp: 'Already signed up?', login: 'Log in',
     step2: 'Step 2', title2: 'Tell us about your league',
@@ -1068,6 +1069,10 @@ function renderSignupStep1(langParam) {
     </div>
     <p class="nl-help" data-i18n="pwHelp">8 caractères minimum.</p>
   </div>
+  <label class="su-terms" style="display:flex;gap:10px;align-items:flex-start;font-size:15px;line-height:1.45;margin-top:var(--space-2)">
+    <input type="checkbox" id="su_terms" style="margin-top:3px;width:18px;height:18px;flex:none">
+    <span data-i18n="termsAccept">${TERMS_LABEL.fr}</span>
+  </label>
 </main>
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="continueBtn" onclick="submitStep1()">Continuer</button>
@@ -1091,13 +1096,14 @@ async function submitStep1() {
   var password = document.getElementById('su_password').value;
   if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) { showError(window.__errorText('INVALID_EMAIL')); return; }
   if (password.length < 8) { showError(window.__errorText('WEAK_PASSWORD')); return; }
+  if (!document.getElementById('su_terms').checked) { showError(window.__errorText('TERMS_NOT_ACCEPTED')); return; }
   var btn = document.getElementById('su_submit');
   btn.disabled = true;
   try {
     var res = await fetch('/auth/signup', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: email, password: password, lang: window.__currentLang })
+      body: JSON.stringify({ email: email, password: password, lang: window.__currentLang, accept_terms: true })
     });
     // A4 bug fix (signup/recovery task): a response body that isn't
     // valid JSON at all (e.g. something other than this Worker
@@ -1473,6 +1479,53 @@ const I18N_LOGIN = {
 // next: the page the visitor asked for before being sent here (already
 // through safeNextPath). Signing in lands there, and "forgot password"
 // carries it on.
+// The one-time acceptance screen (src/terms.js) for an account with none
+// on record, reached from sign-in. Accepted (or already on record): on to
+// the page asked for.
+const I18N_ACCEPT_TERMS = {
+  fr: { title: 'Avant de continuer', body: "Nous avons publié nos conditions d'utilisation et notre politique de confidentialité. Accepte-les pour continuer.", termsAccept: TERMS_LABEL.fr, continueBtn: 'Continuer', ...LEGAL_I18N.fr },
+  en: { title: 'Before you continue', body: 'We have published our terms of service and our privacy policy. Accept them to continue.', termsAccept: TERMS_LABEL.en, continueBtn: 'Continue', ...LEGAL_I18N.en }
+};
+async function renderAcceptTermsPage(req, env, url) {
+  const next = safeNextPath(url.searchParams.get('next')) || '/dashboard';
+  const session = await checkUserSession(req, env);
+  if (!session) return Response.redirect(url.origin + '/login' + nextQuery(next), 302);
+  if (await getTermsAcceptance(env.DB, session.userId)) return Response.redirect(url.origin + next, 302);
+  const lang = resolveServerLang(req);
+  const t = I18N_ACCEPT_TERMS[lang] || I18N_ACCEPT_TERMS.fr;
+  const bodyHtml = `${signupStyles()}${signupHeader()}
+<main class="su-body">
+  <h1 data-i18n="title">${esc(t.title)}</h1>
+  <p class="nl-help" data-i18n="body">${esc(t.body)}</p>
+  <div id="formErr" class="nl-error" style="display:none"></div>
+  <label style="display:flex;gap:10px;align-items:flex-start;font-size:15px;line-height:1.45;margin-top:var(--space-3)">
+    <input type="checkbox" id="at_terms" style="margin-top:3px;width:18px;height:18px;flex:none">
+    <span data-i18n="termsAccept">${t.termsAccept}</span>
+  </label>
+</main>
+<div class="su-bottom">
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="at_submit" data-i18n="continueBtn" onclick="submitAcceptTerms()">${esc(t.continueBtn)}</button>
+</div>
+${signupFooter()}
+<script>
+${nlAuthScript(I18N_ACCEPT_TERMS)}
+async function submitAcceptTerms() {
+  var err = document.getElementById('formErr'); err.style.display = 'none';
+  if (!document.getElementById('at_terms').checked) { err.textContent = window.__errorText('TERMS_NOT_ACCEPTED'); err.style.display = 'block'; return; }
+  var btn = document.getElementById('at_submit'); btn.disabled = true;
+  try {
+    var res = await fetch('/auth/accept-terms', { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()), body: JSON.stringify({ accept_terms: true }) });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    window.location.href = ${nextForScript(next)} || '/dashboard';
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
+</script>`;
+  return new Response(nlDocument({ titles: { fr: `${I18N_ACCEPT_TERMS.fr.title} | Notre Ligue`, en: `${I18N_ACCEPT_TERMS.en.title} | Notre Ligue` }, description: '', bodyHtml, lang }), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
 function renderLoginPage(req, next = null) {
   const lang = resolveServerLang(req);
   const bodyHtml = `${signupStyles()}${signupHeader()}
@@ -1523,7 +1576,8 @@ async function submitLogin() {
       btn.disabled = false;
       return;
     }
-    window.location.href = ${nextForScript(next)} || '/dashboard';
+    var dest = ${nextForScript(next)} || '/dashboard';
+    window.location.href = data.termsNeeded ? '/accept-terms?next=' + encodeURIComponent(dest) : dest;
   } catch (e) {
     showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
@@ -3268,6 +3322,10 @@ window.addEventListener('admin_lang_changed', function(e) {
           <span style="display:block;font-weight:600;margin-bottom:4px;" data-i18n data-fr="Mot de passe (8 caractères min.)" data-en="Password (min. 8 characters)">Mot de passe (8 caractères min.)</span>
           <input type="password" id="accept_password" required minlength="8" style="width:100%;font:inherit;padding:11px;border:1px solid var(--rule2);border-radius:3px;">
         </label>
+        <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:12px;">
+          <input type="checkbox" id="accept_terms" style="margin-top:3px;">
+          <span data-i18n data-fr="${esc(TERMS_LABEL.fr)}" data-en="${esc(TERMS_LABEL.en)}">${TERMS_LABEL.fr}</span>
+        </label>
         <div class="btns">
           <button type="button" class="btn" id="accept_submit" data-i18n data-fr="CRÉER MON COMPTE" data-en="CREATE MY ACCOUNT" onclick="submitAccept()">CRÉER MON COMPTE</button>
         </div>
@@ -3282,13 +3340,18 @@ window.addEventListener('admin_lang_changed', function(e) {
         el.style.display = 'block';
         return;
       }
+      if (!document.getElementById('accept_terms').checked) {
+        el.textContent = window.__errorText('TERMS_NOT_ACCEPTED');
+        el.style.display = 'block';
+        return;
+      }
       const btn = document.getElementById('accept_submit');
       btn.disabled = true;
       try {
         const res = await fetch('/league/admins/accept', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ token: ${JSON.stringify(token)}, password })
+          body: JSON.stringify({ token: ${JSON.stringify(token)}, password, accept_terms: true })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) {
@@ -31667,6 +31730,10 @@ async function handleFetch(req, env, ctx) {
       // this file, so a direct import back would be circular.
       if (url.pathname === '/auth/signup' && req.method === 'POST')
         return await handleSignup(req, env, sendMail);
+      if (url.pathname === '/auth/accept-terms' && req.method === 'POST')
+        return await handleAcceptTerms(req, env);
+      if ((url.pathname === '/accept-terms' || url.pathname === '/accept-terms/') && req.method === 'GET')
+        return await renderAcceptTermsPage(req, env, url);
       if (url.pathname === '/auth/login' && req.method === 'POST')
         return await handleLogin(req, env);
       if (url.pathname === '/auth/logout' && req.method === 'POST')

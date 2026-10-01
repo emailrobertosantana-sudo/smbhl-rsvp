@@ -13,6 +13,7 @@
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, nlDocument, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
 import { nlLegalEmailWrap } from './legal.js';
+import { recordTermsAcceptance, getTermsAcceptance, acceptsTerms, TERMS_REFUSAL } from './terms.js';
 import { ERROR_I18N } from './error_i18n.js';
 import { nextQuery } from './next_path.js';
 
@@ -749,6 +750,8 @@ export async function handleSignup(req, env, sendMailFunc = null) {
       console.warn(`[auth] signup rejected (weak password): ${redactEmailForLog(email)}`);
       return Response.json({ ok: false, error: 'Password must be at least 8 characters.', errorKey: 'WEAK_PASSWORD' }, { status: 400 });
     }
+    // The terms and the privacy policy (src/terms.js): no account without them.
+    if (!acceptsTerms(body)) return Response.json(TERMS_REFUSAL, { status: 400 });
 
     const ip = req.headers.get('cf-connecting-ip') || '127.0.0.1';
     const rateLimitStatus = await checkSignupRateLimit(env, ip);
@@ -771,6 +774,7 @@ export async function handleSignup(req, env, sendMailFunc = null) {
       `INSERT INTO users (id, email, password_hash, created_at, email_verified_at, last_login_at, session_epoch, signup_lang)
        VALUES (?, ?, ?, ?, NULL, ?, 0, ?)`
     ).bind(userId, email, passwordHash, now, now, lang).run();
+    await recordTermsAcceptance(env.DB, userId);
 
     const { token, exp, verificationLink } = await sendVerificationEmail(env, sendMailFunc, email, userId, pageLanguage(body));
 
@@ -821,7 +825,10 @@ export async function handleLogin(req, env) {
 
     await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(new Date().toISOString(), user.id).run();
 
-    return new Response(JSON.stringify({ ok: true, userId: user.id }), {
+    // An account with no acceptance on record is asked once, now
+    // (/accept-terms, src/terms.js), before it goes on.
+    const termsNeeded = !(await getTermsAcceptance(env.DB, user.id));
+    return new Response(JSON.stringify({ ok: true, userId: user.id, termsNeeded }), {
       status: 200,
       headers: await sessionResponseHeaders(env, user.id, user.session_epoch)
     });
@@ -831,6 +838,20 @@ export async function handleLogin(req, env) {
     console.error(`[auth] login failed unexpectedly: ${err.message}`);
     return Response.json({ ok: false, error: 'Login failed: ' + err.message, errorKey: 'LOGIN_FAILED' }, { status: 500 });
   }
+}
+
+// POST /auth/accept-terms { accept_terms: true }: the one-time acceptance
+// of an account that has none on record.
+export async function handleAcceptTerms(req, env) {
+  const session = await checkUserSession(req, env);
+  if (!session) return Response.json({ ok: false, error: 'Not signed in.', errorKey: 'UNAUTHENTICATED' }, { status: 401 });
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const body = await req.json().catch(() => ({}));
+  if (!acceptsTerms(body)) return Response.json(TERMS_REFUSAL, { status: 400 });
+  await recordTermsAcceptance(env.DB, session.userId);
+  return Response.json({ ok: true });
 }
 
 export async function handleLogout(req, env) {
