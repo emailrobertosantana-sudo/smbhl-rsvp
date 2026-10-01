@@ -85,7 +85,7 @@ describe('The pass cache', () => {
     const lg = await league('once');
     const { e, sql, kv } = countingEnv();
     await runCronPass(e);
-    expect(n(sql, /FROM leagues l JOIN users u ON u.id = l.created_by WHERE l.id = \?/)).toBe(1);
+    expect(n(sql, /FROM leagues l LEFT JOIN users u ON u.id = l.created_by WHERE l.id = \?/)).toBe(1);
     const flagReads = n(sql, /SELECT enabled FROM league_capability_flags WHERE league_id = \? AND flag_key = \?/);
     expect(flagReads).toBeGreaterThan(0);
     expect(flagReads).toBeLessThanOrEqual(2); // one per flag the pass asks about
