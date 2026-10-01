@@ -54,18 +54,18 @@ describe('SMBHL emails', () => {
 describe('Notre Ligue emails', () => {
   it('5d and 5h: the 72 h reminder gives the date once; the details are neutral', () => {
     const r = renderLeagueReminderEmail({ kind: 'reminder_72h', leagueName: 'Ligue du mercredi', firstName: 'Léa', dayLabel: { fr: 'dimanche 15 nov', en: 'Sunday Nov 15' }, ev: LEAGUE_EV, inLink: 'i', outLink: 'o', forcedLang: 'fr' });
-    expect(r.text).toContain("On n'a pas encore ta réponse pour ce match. Dim 15 nov · 19 h 30 · Aréna Saint-Michel.");
+    expect(r.text).toContain("On n'a pas encore ta réponse pour ce match. Dim 15 nov. · 19 h 30 · Aréna Saint-Michel.");
     expect(r.text.match(/15 nov/g).length).toBe(1);
     const d = renderLeagueLogisticsEmail({ leagueName: 'Ligue du mercredi', firstName: 'Léa', dayLabel: 'dimanche 15 nov', ev: LEAGUE_EV, team: 'Loutres', optOutLink: 'x', forcedLang: 'fr' });
-    expect(d.text).toContain('Ta présence est confirmée. Dim 15 nov · 19 h 30 · Aréna Saint-Michel · Équipe Loutres.');
+    expect(d.text).toContain('Ta présence est confirmée. Dim 15 nov. · 19 h 30 · Aréna Saint-Michel · Équipe Loutres.');
     expect(d.text + d.html).not.toMatch(/·e\b|\(e\)/);
   });
 
   it('5m and 5c: the sub call heading, then the date and the venue after a label', () => {
     const m = body('sub_call', { ev: LEAGUE_EV, name: 'Sam', team: null, leagueCfg, payload: { need: 'skater', yes: 'y', no: 'n' } });
-    expect(m.text).toContain('Ligue du mercredi cherche un joueur.\nDimanche 15 nov · 19 h 30 (lieu : Aréna Saint-Michel).');
+    expect(m.text).toContain('Ligue du mercredi cherche un joueur.\nDimanche 15 nov. · 19 h 30 (lieu : Aréna Saint-Michel).');
     expect(m.text).toContain('Ligue du mercredi needs a skater.\nSunday Nov 15 · 7:30 PM (venue: Aréna Saint-Michel).');
-    expect(m.html).toContain('cherche un joueur.<br><b>Dimanche 15 nov · 19 h 30 (lieu : Aréna Saint-Michel)</b>.');
+    expect(m.html).toContain('cherche un joueur.<br><b>Dimanche 15 nov. · 19 h 30 (lieu : Aréna Saint-Michel)</b>.');
   });
 
   it('5k and 5h: the late drop-out alert says the time actually left, neutrally', () => {

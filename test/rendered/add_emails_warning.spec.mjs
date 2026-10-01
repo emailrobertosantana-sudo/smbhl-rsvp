@@ -155,7 +155,7 @@ const NOTICE = {
     teamlessOne: "Ce joueur n'a pas d'équipe : il ne recevra aucun rappel tant que tu ne lui en donnes pas une.",
     teamless: "20 de ces joueurs n'ont pas d'équipe : ils ne recevront aucun rappel tant que tu ne leur en donnes pas une.",
     btnOne: 'Ajouter le joueur', btnMany: 'Ajouter les joueurs',
-    date: 'jeudi 15 oct · 19 h'
+    date: 'jeudi 15 oct. · 19 h'
   },
   en: {
     one: "Adding this player won't email them now. Their first email will be the reminder 72 hours before the next game (",

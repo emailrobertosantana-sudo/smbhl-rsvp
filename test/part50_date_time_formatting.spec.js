@@ -57,14 +57,14 @@ async function createLeague(cookie, csrfToken, body) {
 describe('Part 6 (live-testing task, batch 2): date/time formatting', () => {
   describe('date_format.js: matches the design system spec exactly', () => {
     it('formatEventDate short: "dim 28 sept" (FR) / "Sun Sep 28" (EN)', () => {
-      expect(formatEventDate('2026-09-27', 'fr', 'short')).toBe('Dim 27 sept');
-      expect(formatEventDate('2026-09-27', 'fr', 'short', false)).toBe('dim 27 sept');
+      expect(formatEventDate('2026-09-27', 'fr', 'short')).toBe('Dim 27 sept.');
+      expect(formatEventDate('2026-09-27', 'fr', 'short', false)).toBe('dim 27 sept.');
       expect(formatEventDate('2026-09-27', 'en', 'short')).toBe('Sun Sep 27');
     });
 
     it('formatEventDate long: full day name, still abbreviated month', () => {
-      expect(formatEventDate('2026-09-27', 'fr', 'long')).toBe('Dimanche 27 sept');
-      expect(formatEventDate('2026-09-27', 'fr', 'long', false)).toBe('dimanche 27 sept');
+      expect(formatEventDate('2026-09-27', 'fr', 'long')).toBe('Dimanche 27 sept.');
+      expect(formatEventDate('2026-09-27', 'fr', 'long', false)).toBe('dimanche 27 sept.');
       expect(formatEventDate('2026-09-27', 'en', 'long')).toBe('Sunday Sep 27');
     });
 
@@ -86,15 +86,15 @@ describe('Part 6 (live-testing task, batch 2): date/time formatting', () => {
     });
 
     it('formatEventDateTime joins with the design system\'s own middle dot', () => {
-      expect(formatEventDateTime('2026-09-27', '09:00', 'fr', 'short')).toBe('Dim 27 sept · 9 h');
+      expect(formatEventDateTime('2026-09-27', '09:00', 'fr', 'short')).toBe('Dim 27 sept. · 9 h');
       expect(formatEventDateTime('2026-09-27', '09:00', 'en', 'short')).toBe('Sun Sep 27 · 9 AM');
     });
 
     it('handles every day of the week and every month correctly (day-of-week math)', () => {
       // 2026-09-27 is a Sunday; spot-check a full week and a December date.
-      expect(formatEventDate('2026-09-28', 'fr', 'short')).toBe('Lun 28 sept');
-      expect(formatEventDate('2026-09-29', 'fr', 'short')).toBe('Mar 29 sept');
-      expect(formatEventDate('2026-12-25', 'fr', 'short')).toBe('Ven 25 déc');
+      expect(formatEventDate('2026-09-28', 'fr', 'short')).toBe('Lun 28 sept.');
+      expect(formatEventDate('2026-09-29', 'fr', 'short')).toBe('Mar 29 sept.');
+      expect(formatEventDate('2026-12-25', 'fr', 'short')).toBe('Ven 25 déc.');
       expect(formatEventDate('2026-12-25', 'en', 'short')).toBe('Fri Dec 25');
     });
   });
@@ -227,7 +227,8 @@ describe('page dates and times (French pages)', () => {
     expect(formatPageDate('2026-10-15', 'en')).toBe(formatEventDate('2026-10-15', 'en', 'short'));
   });
   it('emails unchanged', () => {
-    expect(formatEventDate('2026-10-15', 'fr', 'short')).toBe('Jeu 15 oct');
-    expect(formatEventDateTime('2026-10-15', '18:08', 'fr', 'long', false)).toBe('jeudi 15 oct · 18 h 08');
+    expect(formatEventDate('2026-10-15', 'fr', 'short')).toBe('Jeu 15 oct.');
+    expect(formatEventDate('2026-03-05', 'fr', 'short')).toBe('Jeu 5 mars');
+    expect(formatEventDateTime('2026-10-15', '18:08', 'fr', 'long', false)).toBe('jeudi 15 oct. · 18 h 08');
   });
 });

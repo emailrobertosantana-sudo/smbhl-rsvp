@@ -57,7 +57,9 @@ export function formatEventDate(dateISO, lang = 'fr', style = 'short', capitaliz
   if (!p) return '';
   const isEn = lang === 'en';
   const dayList = style === 'long' ? (isEn ? DAY_FULL_EN : DAY_FULL_FR) : (isEn ? DAY_ABBR_EN : DAY_ABBR_FR);
-  const month = (isEn ? MONTH_ABBR_EN : MONTH_ABBR_FR)[p.m - 1];
+  // French: an abbreviated month takes a period (« 15 nov. »); a month
+  // written in full does not (« 5 mars »).
+  const month = isEn ? MONTH_ABBR_EN[p.m - 1] : monthAbbrFrDot(p.m);
   let day = dayList[p.dow];
   if (capitalizeFirst || isEn) day = capitalize(day);
   return isEn ? `${day} ${month} ${p.d}` : `${day} ${p.d} ${month}`;

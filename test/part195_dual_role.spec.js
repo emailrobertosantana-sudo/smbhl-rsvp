@@ -309,8 +309,8 @@ describe('the dual-role copy names the day, never "tonight"', () => {
 
   it('the role line in the game-day and placement emails', async () => {
     const ev = { id: 'smbhl:2099-11-29', date: 'Sunday November 29 2099' };
-    expect(dualRoleLines({ dualRole: 'goalie' }, ev)).toEqual({ fr: '🥅 Dimanche 29 nov : tu es dans les buts.', en: "🥅 Sunday Nov 29: you're in goal." });
-    expect(dualRoleLines({ dualRole: 'skater' }, ev)).toEqual({ fr: '🏒 Dimanche 29 nov : tu joues comme joueur.', en: '🏒 Sunday Nov 29: you play as a skater.' });
+    expect(dualRoleLines({ dualRole: 'goalie' }, ev)).toEqual({ fr: '🥅 Dimanche 29 nov. : tu es dans les buts.', en: "🥅 Sunday Nov 29: you're in goal." });
+    expect(dualRoleLines({ dualRole: 'skater' }, ev)).toEqual({ fr: '🏒 Dimanche 29 nov. : tu joues comme joueur.', en: '🏒 Sunday Nov 29: you play as a skater.' });
     expect(dualRoleLines({}, ev)).toBeNull();
   });
 
