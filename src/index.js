@@ -2058,7 +2058,14 @@ async function handleDashboardPage(req, env, url) {
     return Response.redirect(loginUrlFor(url), 302);
   }
 
-  const leagueRow = await env.DB.prepare(
+  // The current league (resolveSessionLeagueId: an explicit league_id, the
+  // nl_league cookie, then the most recent), only if this admin runs it;
+  // otherwise the most recent, as before.
+  const currentId = await resolveSessionLeagueId(req, env, url);
+  const leagueRow = (currentId && await env.DB.prepare(
+    `SELECT l.* FROM leagues l JOIN league_admins la ON la.league_id = l.id
+      WHERE la.user_id = ? AND l.id = ?`
+  ).bind(session.userId, currentId).first()) || await env.DB.prepare(
     `SELECT l.* FROM leagues l JOIN league_admins la ON la.league_id = l.id
       WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
   ).bind(session.userId).first();
@@ -10174,6 +10181,27 @@ async function confirmDeleteEvent(eventId) {
 // read by resolveSessionLeagueId), so the page's own actions act on it. A
 // game of a league this admin does not run is answered exactly like a game
 // that does not exist: the page reveals nothing.
+// The dashboard link of a league's alert email names that league
+// (?league_id=). When this admin runs it, the dashboard shows it and it
+// becomes the current league, as for a game link. Otherwise the current
+// league is shown, as before.
+async function dashboardInAdminsLeague(req, env, url) {
+  const wanted = url.searchParams.get('league_id');
+  const session = wanted ? await checkUserSession(req, env) : null;
+  const runs = session && await env.DB.prepare(
+    'SELECT 1 FROM league_admins la JOIN leagues l ON l.id = la.league_id WHERE la.user_id = ? AND la.league_id = ? AND l.deactivated_at IS NULL'
+  ).bind(session.userId, wanted).first();
+  if (!runs) {
+    if (!wanted) return handleDashboardPage(req, env, url);
+    const plain = new URL(url); plain.searchParams.delete('league_id');
+    return handleDashboardPage(req, env, plain);
+  }
+  const res = await handleDashboardPage(req, env, url);
+  const out = new Response(res.body, res);
+  out.headers.append('set-cookie', `nl_league=${encodeURIComponent(wanted)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${url.protocol === 'https:' ? '; Secure' : ''}`);
+  return out;
+}
+
 async function gamePageInAdminsLeague(req, env, url) {
   const eventId = url.searchParams.get('e');
   const session = await checkUserSession(req, env);
@@ -31078,7 +31106,7 @@ function healthHost(env) {
 // league's language(s), and that the operator knows too.
 function renderLeagueHealthAlert(env, leagueRow, alerts) {
   const barColor = leagueFillColor(leagueRow.color || '#b3122e');
-  const link = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/dashboard`;
+  const link = `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/dashboard?league_id=${encodeURIComponent(leagueRow.id || '')}`;
   const content = lang => {
     const intro = lang === 'fr' ? 'Notre Ligue a détecté un problème dans ta ligue :' : 'Notre Ligue found a problem in your league:';
     const told = lang === 'fr' ? "L'équipe Notre Ligue a aussi été avertie." : 'The Notre Ligue team has been notified too.';
@@ -31535,7 +31563,7 @@ async function handleFetch(req, env, ctx) {
       if ((url.pathname === '/reset-password' || url.pathname === '/reset-password/') && req.method === 'GET')
         return new Response(renderResetPasswordPage(url.searchParams.get('token'), req, safeNextPath(url.searchParams.get('next'))), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
       if ((url.pathname === '/dashboard' || url.pathname === '/dashboard/') && req.method === 'GET')
-        return await handleDashboardPage(req, env, url);
+        return await dashboardInAdminsLeague(req, env, url);
       // Live-testing task (batch 5), Part 6: continuation of onboarding
       // right after a league's first season is created.
       if ((url.pathname === '/onboarding/season' || url.pathname === '/onboarding/season/') && req.method === 'GET')

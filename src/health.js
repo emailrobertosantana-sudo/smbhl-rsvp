@@ -444,8 +444,8 @@ export async function notifyAlerts(env, host, alerts, now = new Date()) {
     if (sentThisPass >= MAX_ADMIN_EMAILS_PER_PASS) break;
     const admins = await host.leagueAdminEmails(env, leagueId);
     if (!admins.length) { await markAll(list, 'admin_notified_at'); continue; } // the banner still shows it
-    const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
-    const mail = host.renderAdminAlert(leagueRow || { name: leagueId }, list);
+    const leagueRow = await env.DB.prepare('SELECT id, name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
+    const mail = host.renderAdminAlert(leagueRow || { id: leagueId, name: leagueId }, list);
     let told = false;
     for (const admin of admins) {
       if (sentThisPass >= MAX_ADMIN_EMAILS_PER_PASS || !(await takeEmailAllowance(env, now))) break;
