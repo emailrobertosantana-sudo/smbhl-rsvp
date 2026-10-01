@@ -31730,6 +31730,13 @@ export default {
   },
 
   async fetch(req, env, ctx) {
+    // www.notreligue.ca (a demo route, wrangler.jsonc): the same path on
+    // https://notreligue.ca, permanently.
+    const host = new URL(req.url).hostname;
+    if (host === 'www.notreligue.ca') {
+      const u = new URL(req.url);
+      return new Response(null, { status: 301, headers: { location: `https://notreligue.ca${u.pathname}${u.search}` } });
+    }
     const resp = await handleFetch(req, env, ctx);
     if (env.DEMO_ENV !== 'true') return resp;
     const headers = new Headers(resp.headers);

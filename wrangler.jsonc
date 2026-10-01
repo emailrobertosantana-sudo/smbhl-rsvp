@@ -104,6 +104,11 @@
         {
           "pattern": "notreligue.ca",
           "custom_domain": true
+        },
+        // Redirected to notreligue.ca in code (src/index.js fetch).
+        {
+          "pattern": "www.notreligue.ca",
+          "custom_domain": true
         }
       ]
     }
