@@ -92,6 +92,53 @@ export function formatEventTime(timeHHMM, lang = 'fr') {
   return min === 0 ? `${h24} h` : `${h24} h ${String(min).padStart(2, '0')}`;
 }
 
+// ---- in a sentence (batch 7 item 5) ----
+// The date and the time are joined with « à » / "at" (« dimanche 15 nov. à
+// 10 h 30 », "Sunday, Nov 15 at 10:30 AM"); the « · » separator stays for
+// headings, subjects and lists. The venue is a line of its own, « Lieu : X »
+// / "Venue: X", never in parentheses inside a sentence.
+// ISO date of an event: its date column, or the one in its id (SMBHL's date
+// column is a label, its id carries the ISO date).
+export function eventIso(ev) {
+  const m = /^\d{4}-\d{2}-\d{2}/.exec(String((ev && ev.date) || '')) || /\d{4}-\d{2}-\d{2}/.exec(String((ev && ev.id) || ''));
+  return m ? m[0] : '';
+}
+// « dimanche 15 nov. » / "Sunday, Nov 15"
+export function sentenceDate(dateISO, lang = 'fr') {
+  const p = dateParts(dateISO);
+  if (!p) return '';
+  return lang === 'en'
+    ? `${DAY_FULL_EN[p.dow]}, ${MONTH_ABBR_EN[p.m - 1]} ${p.d}`
+    : `${DAY_FULL_FR[p.dow]} ${p.d} ${monthAbbrFrDot(p.m)}`;
+}
+// « dimanche 15 nov. à 10 h 30 » / "Sunday, Nov 15 at 10:30 AM"; joiner
+// ', ' gives « dimanche 11 janv., 10 h 30 » (the sub call's own form).
+export function sentenceWhen(dateISO, timeHHMM, lang = 'fr', joiner = null) {
+  const d = sentenceDate(dateISO, lang);
+  const t = timeHHMM ? formatEventTime(timeHHMM, lang) : '';
+  if (!t) return d;
+  return `${d}${joiner != null ? joiner : (lang === 'en' ? ' at ' : ' à ')}${t}`;
+}
+// « Lieu : X » / "Venue: X", or '' without a venue.
+export function venueLine(venue, lang = 'fr') {
+  const v = String(venue || '').trim();
+  if (!v) return '';
+  return lang === 'en' ? `Venue: ${v}` : `Lieu : ${v}`;
+}
+
+// A delay before a game, in words: under an hour in minutes (« 40 minutes »),
+// under 48 hours in hours (« 5 heures »), otherwise in days (« 3 jours »),
+// each with its plural (« 1 heure », "1 hour").
+export function delayText(hours, lang = 'fr') {
+  const en = lang === 'en';
+  const unit = (n, fr1, frN, en1, enN) => `${n} ${n === 1 ? (en ? en1 : fr1) : (en ? enN : frN)}`;
+  const h = Math.max(0, Number(hours) || 0);
+  const min = Math.max(1, Math.round(h * 60));
+  if (min < 60) return unit(min, 'minute', 'minutes', 'minute', 'minutes');
+  if (h < 48) return unit(Math.max(1, Math.round(h)), 'heure', 'heures', 'hour', 'hours');
+  return unit(Math.round(h / 24), 'jour', 'jours', 'day', 'days');
+}
+
 // A sentence that ends on a date: the period is added only when the text
 // does not already end with one (« ne joue plus le vendredi 10 avr. »,
 // never « avr.. »).

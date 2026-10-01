@@ -168,7 +168,9 @@ describe('B7: the goalie-cancel alert\'s HTML carries its English half', () => {
     env.RSVP_SECRET = 'p129';
     const m = await renderGoalieCancelEmail(env, ev, { name: 'Sean Pichette' }, 'Red', 'self', 'in');
     expect(m.subject).toBe('Alerte Gardien : Sean Pichette absent pour Rouge (dimanche 28 septembre) / Goalie Cancelled: Sean Pichette, Red (Sunday September 28 2026)');
-    expect(m.html).toContain('Sunday 10:30 AM (venue: Collège Laval)');
+    // The game row's date comes from the event id (2026-09-28, a Monday; this
+    // fixture's date label says Sunday), the venue after « · » (a list row).
+    expect(m.html).toContain('Monday, Sep 28 at 10:30 AM · Collège Laval');
     expect(m.html).toContain('The goalie himself (direct email link / web)');
     expect(m.html).toContain('Manage and call subs');
     expect(m.html).toContain('Team lineup');

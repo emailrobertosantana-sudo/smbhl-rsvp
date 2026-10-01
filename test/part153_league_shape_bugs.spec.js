@@ -131,7 +131,9 @@ describe('4. The late-reversal alert says what happened', () => {
     expect(alerts).toHaveLength(1);
     expect(alerts[0].subject).toMatch(/^Red: Late Red3 vient de se désister/);
     expect(alerts[0].subject).not.toMatch(/^: /);
-    expect(alerts[0].text).not.toMatch(/Subs invited|invitation aux remplaçants/);
+    expect(alerts[0].text).not.toMatch(/invités automatiquement|invited automatically/);
+    // No sub in the league: the alert says none is left to call (batch 7 item 5g).
+    expect(alerts[0].text).toContain('Il ne reste aucun remplaçant à appeler.');
   }, 120000);
 
   it('pickup: names the DRAWN team for that game, never ": Name"', async () => {
@@ -144,7 +146,7 @@ describe('4. The late-reversal alert says what happened', () => {
     const drawn = await one(`SELECT r.team FROM rsvp r JOIN contacts c ON c.player_id = r.player_id WHERE c.email = 'pick.late4@example.com'`);
     expect(['Dark', 'Light']).toContain(drawn.team);
     expect(alerts[0].subject.startsWith(`${drawn.team}: Pick Late4`)).toBe(true);
-    expect(alerts[0].text).not.toMatch(/Subs invited|invitation aux remplaçants/);
+    expect(alerts[0].text).not.toMatch(/invités automatiquement|invited automatically/);
   }, 120000);
 });
 

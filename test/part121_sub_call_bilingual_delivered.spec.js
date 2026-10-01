@@ -41,9 +41,9 @@ async function deliver(payload, dedup) {
 describe('SMBHL sub call, as delivered to Resend', () => {
   it('subject is "FR / EN"; the text AND the HTML part carry the whole English half after the French', async () => {
     const m = await deliver({ need: 'skater' }, 'p121-call');
-    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a skater');
+    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a player');
     for (const [part, body] of [['text', m.text], ['html', visibleText(m.html)]]) {
-      const fr = body.indexOf('SMBHL cherche un joueur'), en = body.indexOf('SMBHL needs a skater');
+      const fr = body.indexOf('SMBHL cherche un joueur'), en = body.indexOf('SMBHL needs a player');
       expect(fr, `${part}: French`).toBeGreaterThanOrEqual(0);
       expect(en, `${part}: English after French`).toBeGreaterThan(fr);
       expect(body, `${part}: English team line`).toMatch(/The team isn.t decided yet: if you.re available, we place you on a team, and you get your final team before the game\./);
@@ -52,13 +52,13 @@ describe('SMBHL sub call, as delivered to Resend', () => {
       expect(body, `${part}: English opt-out line`).toContain('Want off the sub list? Just reply to this email.');
     }
     const html = visibleText(m.html);
-    expect(html).toContain('OUI : Je suis disponible');
-    expect(html).toContain('YES: Available');
+    expect(html).toContain('✅ Oui, je suis disponible');
+    expect(html).toContain('❌ No, not this time');
   });
 
   it('the reminder too: "(rappel) / (reminder)" and both languages', async () => {
     const m = await deliver({ need: 'skater', reminder: true }, 'p121-remind');
-    expect(m.subject).toBe('SMBHL cherche un joueur (rappel) / SMBHL needs a skater (reminder)');
-    expect(visibleText(m.html)).toContain('SMBHL needs a skater');
+    expect(m.subject).toBe('SMBHL cherche un joueur (rappel) / SMBHL needs a player (reminder)');
+    expect(visibleText(m.html)).toContain('SMBHL needs a player');
   });
 });

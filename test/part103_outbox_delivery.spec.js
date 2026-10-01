@@ -32,7 +32,10 @@ beforeEach(() => { useDaytimeClock(); });
 afterEach(() => { vi.useRealTimers(); });
 
 const ADMIN_KEY = 'test-part103-admin-key';
-const EVENT_ID = 'p103-2026-10-01';
+// The game is 30 hours out (beforeAll); its id carries that date, which is
+// what eventStart reads (a fixed '2026-10-01' made the game "today" on that
+// day, and every send was cancelled as too close to the game).
+const EVENT_ID = `p103-${new Date(Date.now() + 30 * 3600000).toISOString().slice(0, 10)}`;
 const TEAMS = ['Red', 'Blue', 'White', 'Black'];
 const SITE_DATA = {
   current_season: 'Fall 2026',

@@ -18,7 +18,7 @@ import { PAYMENT_REMINDER_KIND, getPaymentInfo, savePaymentInfo, hasPaymentInfo,
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
-import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime, formatPageDate, formatPageDateTime, PAGE_DATE_JS, endSentence } from './date_format.js';
+import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime, formatPageDate, formatPageDateTime, PAGE_DATE_JS, endSentence, eventIso, sentenceDate, sentenceWhen, venueLine, delayText } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart, eventHasStarted } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
@@ -8220,7 +8220,7 @@ async function handleLeagueRosterPage(req, env, url) {
       inactiveSectionTitle: 'Inactive players', reactivateBtn: 'Reactivate', deactivateBtn: 'Mark inactive',
       players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.',
       weeklyDrawNote: 'Teams are assigned per game, not here: see a game’s own page.',
-      goalieAxis: 'Position', axisPlayer: 'Skater', axisGoalie: 'Goalie', axisBoth: 'Both', playRoleLabel: 'Position',
+      goalieAxis: 'Position', axisPlayer: 'Player', axisGoalie: 'Goalie', axisBoth: 'Both', playRoleLabel: 'Position',
       colGoalie: 'Position',
       canAlsoGoalie: 'Can also play goalie',
       goalieBadge: 'G',
@@ -11867,7 +11867,7 @@ function formatFixtureText(matches, team, isGoalie, lang = 'fr') {
   const venues = [...new Set(matches.map(m => m.venue).filter(Boolean))];
   const header = venues.length === 1 ? `${venues[0]}\n` : '';
   const matchLines = matches.map(m => {
-    const venueSuffix = venues.length > 1 && m.venue ? ` (${m.venue})` : '';
+    const venueSuffix = venues.length > 1 && m.venue ? ` · ${m.venue}` : '';
     return en ? `${m.time} vs. ${m.opp}${venueSuffix}` : `${m.time} contre ${m.oppFR || m.opp}${venueSuffix}`;
   }).join('\n');
   const shirt = isGoalie
@@ -12162,73 +12162,25 @@ function dateFR(label) {
   return `${DAY_FR[m[1]]} ${m[3]} ${MONTH_FR2[m[2]]}`;
 }
 
-// The venue follows a label (« (lieu : X) »), right for any venue's name,
-// never "au X"; the time is written the way each language does (10 h 30,
-// 10:30 AM), the same formatter as Notre Ligue (date_format.js).
+// The game's when in a sentence: « dimanche 15 nov. à 10 h 30 » / "Sunday,
+// Nov 15 at 10:30 AM" (date_format.js), from the ISO date in its date or id;
+// the day name only when there is none. No venue: the caller puts it on a
+// line of its own (venueLine).
 function whenLine(ev) {
+  const iso = eventIso(ev);
+  if (iso) return { fr: sentenceWhen(iso, ev.start_time, 'fr'), en: sentenceWhen(iso, ev.start_time, 'en') };
   const d = dayNames(ev.date);
-  const tFr = ev.start_time ? ` ${formatEventTime(ev.start_time, 'fr')}` : '';
-  const tEn = ev.start_time ? ` ${formatEventTime(ev.start_time, 'en')}` : '';
-  return { fr: `${d.fr}${tFr}${ev.venue ? ` (lieu : ${ev.venue})` : ''}`,
-           en: `${d.en}${tEn}${ev.venue ? ` (venue: ${ev.venue})` : ''}` };
+  const tFr = ev.start_time ? ` à ${formatEventTime(ev.start_time, 'fr')}` : '';
+  const tEn = ev.start_time ? ` at ${formatEventTime(ev.start_time, 'en')}` : '';
+  return { fr: `${d.fr}${tFr}`, en: `${d.en}${tEn}` };
 }
 
+// The invite's when: « dimanche 15 nov. à 10 h 30 » / "Sunday, Nov 15 at
+// 10:30 AM" in its question, and the venue for a line of its own.
 function formatInviteDate(ev) {
-  if (!ev) return { fr: 'dimanche prochain', en: 'this Sunday' };
-
-  const MONTH_SHORT_FR = {
-    1: 'janv.', 2: 'févr.', 3: 'mars', 4: 'avr.', 5: 'mai', 6: 'juin',
-    7: 'juil.', 8: 'août', 9: 'sept.', 10: 'oct.', 11: 'nov.', 12: 'déc.',
-    January: 'janv.', February: 'févr.', March: 'mars', April: 'avr.',
-    May: 'mai', June: 'juin', July: 'juil.', August: 'août', September: 'sept.',
-    October: 'oct.', November: 'nov.', December: 'déc.'
-  };
-  const MONTH_SHORT_EN = {
-    1: 'Jan', 2: 'Feb', 3: 'March', 4: 'April', 5: 'May', 6: 'June',
-    7: 'July', 8: 'Aug', 9: 'Sept', 10: 'Oct', 11: 'Nov', 12: 'Dec',
-    January: 'Jan', February: 'Feb', March: 'March', April: 'April',
-    May: 'May', June: 'June', July: 'July', August: 'Aug', September: 'Sept',
-    October: 'Oct', November: 'Nov', December: 'Dec'
-  };
-  const DAY_SHORT_FR = {
-    Sunday: 'dimanche', Monday: 'lundi', Tuesday: 'mardi', Wednesday: 'mercredi',
-    Thursday: 'jeudi', Friday: 'vendredi', Saturday: 'samedi'
-  };
-  const DAY_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-  let frDate = '', enDate = '';
-  const mLabel = /^([A-Za-z]+)\s+([A-Za-z]+)\s+(\d{1,2})/.exec(String(ev.date || '').trim());
-  const mIso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ev.date || '').trim());
-
-  if (mLabel && DAY_SHORT_FR[mLabel[1]] && MONTH_SHORT_FR[mLabel[2]]) {
-    const dayFr = DAY_SHORT_FR[mLabel[1]];
-    const dayNum = mLabel[3];
-    const monthFr = MONTH_SHORT_FR[mLabel[2]];
-    const monthEn = MONTH_SHORT_EN[mLabel[2]] || mLabel[2];
-    frDate = `${dayFr} ${dayNum} ${monthFr}`;
-    enDate = `${mLabel[1]} ${monthEn} ${dayNum}`;
-  } else if (mIso) {
-    const d = new Date(`${mIso[1]}-${mIso[2]}-${mIso[3]}T12:00:00Z`);
-    const dayName = DAY_EN[d.getUTCDay()];
-    const dayNum = Number(mIso[3]);
-    const monthNum = Number(mIso[2]);
-    const dayFr = DAY_SHORT_FR[dayName] || 'dimanche';
-    frDate = `${dayFr} ${dayNum} ${MONTH_SHORT_FR[monthNum]}`;
-    enDate = `${dayName} ${MONTH_SHORT_EN[monthNum]} ${dayNum}`;
-  } else {
-    const w = whenLine(ev);
-    return { fr: w.fr, en: w.en };
-  }
-
-  const timeFr = ev.start_time ? `, ${formatEventTime(ev.start_time, 'fr')}` : '';
-  const timeEn = ev.start_time ? `, ${formatEventTime(ev.start_time, 'en')}` : '';
-  const venueFr = ev.venue ? ` (lieu : ${ev.venue})` : '';
-  const venueEn = ev.venue ? ` (venue: ${ev.venue})` : '';
-
-  return {
-    fr: `${frDate}${timeFr}${venueFr}`,
-    en: `${enDate}${timeEn}${venueEn}`
-  };
+  if (!ev) return { fr: 'dimanche prochain', en: 'this Sunday', venueFr: '', venueEn: '' };
+  const w = whenLine(ev);
+  return { fr: w.fr, en: w.en, venueFr: venueLine(ev.venue, 'fr'), venueEn: venueLine(ev.venue, 'en') };
 }
 
 export function emailWrap(title, contentHtml, leagueCfg = null) {
@@ -12368,7 +12320,9 @@ function renderInviteEmail({
     <p style="font-size:16px; margin:0 0 12px; font-weight:700; color:#0f172a;">Salut <b>${esc(name)}</b> / Hi <b>${esc(name)}</b>,</p>
     <div style="margin:0 0 16px;">
       <div style="font-size:15px; font-weight:600; color:#0f172a; margin-bottom:2px;">${esc(qFr)}</div>
-      <div style="font-size:14px; color:#475569;">${esc(qEn)}</div>
+      <div style="font-size:14px; color:#475569;">${esc(qEn)}</div>${when.venueFr ? `
+      <div style="font-size:14px; color:#0f172a; margin-top:6px;">${esc(when.venueFr)}</div>
+      <div style="font-size:13px; color:#475569;">${esc(when.venueEn)}</div>` : ''}
     </div>
     <div style="margin:0 0 10px;">
       ${emailBtn(yesUrl, 'Oui / Yes', '#17457f', '#ffffff')}
@@ -12397,6 +12351,7 @@ function renderInviteEmail({
     '',
     qFr,
     qEn,
+    ...(when.venueFr ? [when.venueFr, when.venueEn] : []),
     '',
     `Oui / Yes : ${yesUrl}`,
     `Non / No : ${noUrl}`
@@ -12448,7 +12403,7 @@ function dualDay(ev, lang, cap = true) {
 function dualRoleText(role, ev) {
   const fr = dualDay(ev, 'fr'), en = dualDay(ev, 'en');
   if (role === 'goalie') return { fr: `${fr} : tu es dans les buts.`, en: `${en}: you're in goal.` };
-  if (role === 'skater') return { fr: `${fr} : tu joues comme joueur.`, en: `${en}: you play as a skater.` };
+  if (role === 'skater') return { fr: `${fr} : tu es joueur, pas gardien.`, en: `${en}: you're a player, not the goalie.` };
   return null;
 }
 function dualRoleLines(payload, ev) {
@@ -12478,12 +12433,16 @@ function body(kind, { ev, name, team, link, payload, leagueCfg = null, teamless 
   // signal here) keeps SMBHL's own path completely untouched while
   // fixing every league-product email that flows through this shared
   // function at once.
-  const w = /^\d{4}-\d{2}-\d{2}/.test(String(ev.date || ''))
-    ? {
-        fr: `${formatEventDateTime(ev.date, ev.start_time, 'fr', 'long')}${ev.venue ? ` (lieu : ${ev.venue})` : ''}`,
-        en: `${formatEventDateTime(ev.date, ev.start_time, 'en', 'long')}${ev.venue ? ` (venue: ${ev.venue})` : ''}`
-      }
+  // In a sentence: « dimanche 15 nov. à 10 h 30 » / "Sunday, Nov 15 at
+  // 10:30 AM" (date_format.js); the venue is a line of its own, « Lieu : X »
+  // / "Venue: X", after the sentence that names the game.
+  const isoW = eventIso(ev);
+  const w = isoW
+    ? { fr: sentenceWhen(isoW, ev.start_time, 'fr'), en: sentenceWhen(isoW, ev.start_time, 'en') }
     : whenLine(ev);
+  const venueOf = l => venueLine(ev.venue, l);
+  const vt = l => (venueOf(l) ? `\n${venueOf(l)}` : '');
+  const vh = l => (venueOf(l) ? `<br>${esc(venueOf(l))}` : '');
   const sign = `\n\n---\n${league.name} · ${siteHost}`;
   const matchInfo = payload && payload.fixtureText ? payload.fixtureText : '';
   // The English half's own matchups (B1/B4); a payload from before it existed
@@ -12531,28 +12490,28 @@ function body(kind, { ev, name, team, link, payload, leagueCfg = null, teamless 
       const text =
 `Salut ${name},
 
-On n'a toujours pas ta réponse pour ${w.fr}.
+On n'a toujours pas ta réponse pour ${w.fr}.${vt('fr')}
 ${matchInfo}
 OUI (Présent) : ${payload.yes}
 NON (Absent)  : ${payload.no}
 
 ---
 
-We still do not have your answer for ${w.en}.
+We still do not have your answer for ${w.en}.${vt('en')}
 ${matchInfoEn}
 YES (In) : ${payload.yes}
 NO  (Out): ${payload.no}${sign}`;
 
       const html = wrapEmail(
         subj,
-        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>On n'a toujours pas ta réponse pour <b>${esc(w.fr)}</b>.</p>
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>On n'a toujours pas ta réponse pour <b>${esc(w.fr)}</b>.${vh('fr')}</p>
         ${matchInfo ? `<div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:10px 14px; margin:0 0 16px; font-size:14px; white-space:pre-line;">${esc(matchInfo.trim())}</div>` : ''}
         <div style="margin:0 0 20px;">
           ${emailBtn(payload.yes, '✅ OUI (Présent)', '#15803d', '#ffffff')}
           ${emailBtn(payload.no, '❌ NON (Absent)', '#f1f5f9', '#b91c1c', '1px solid #fca5a5')}
         </div>
         <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 14px; color:#334155;">Hi <b>${esc(name)}</b>,<br>We still do not have your answer for <b>${esc(w.en)}</b>.</p>
+        <p style="font-size:15px; margin:0 0 14px; color:#334155;">Hi <b>${esc(name)}</b>,<br>We still do not have your answer for <b>${esc(w.en)}</b>.${vh('en')}</p>
         ${fixtureBox(matchInfoEn)}
         <div style="margin:0 0 20px;">
           ${emailBtn(payload.yes, '✅ YES (In)', '#15803d', '#ffffff')}
@@ -12630,8 +12589,8 @@ NO  (Out): ${payload.no}${sign}`;
       const text =
 `Salut ${name} / Hi ${name},
 
-Rappel : ta présence est confirmée avec ${frTeam} pour demain, ${w.fr}!
-Reminder: you are confirmed with ${enTeam} for tomorrow, ${w.en}!
+Rappel : ta présence est confirmée avec ${frTeam} pour demain, ${w.fr}!${vt('fr')}
+Reminder: you are confirmed with ${enTeam} for tomorrow, ${w.en}!${vt('en')}
 ${dualRoleLines(payload, ev) ? `${dualRoleLines(payload, ev).fr}\n${dualRoleLines(payload, ev).en}\n` : ''}${shirtText}${subFeeText}${matchInfo ? matchInfo + (matchInfoEn !== matchInfo ? matchInfoEn : '') + '\n' : ''}${msgsText}
 📋 Voir l'alignement de l'équipe : ${teamUrl}
 📋 View team lineup: ${teamUrl}
@@ -12642,8 +12601,8 @@ Je ne peux pas jouer / I can't play : ${noUrl}${sign}`;
       const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 4px; font-weight:700;">Salut <b>${esc(name)}</b> / Hi <b>${esc(name)}</b>,</p>
-        <p style="font-size:16px; margin:0 0 3px; font-weight:600; color:#0f172a;">Rappel : ta présence est confirmée avec <b>${esc(frTeam)}</b> pour demain, <b>${esc(w.fr)}</b>!</p>
-        <p style="font-size:14px; margin:0 0 16px; color:#475569;">Reminder: you are confirmed with <b>${esc(enTeam)}</b> for tomorrow, <b>${esc(w.en)}</b>!</p>${dualRoleLines(payload, ev) ? `
+        <p style="font-size:16px; margin:0 0 3px; font-weight:600; color:#0f172a;">Rappel : ta présence est confirmée avec <b>${esc(frTeam)}</b> pour demain, <b>${esc(w.fr)}</b>!${vh('fr')}</p>
+        <p style="font-size:14px; margin:0 0 16px; color:#475569;">Reminder: you are confirmed with <b>${esc(enTeam)}</b> for tomorrow, <b>${esc(w.en)}</b>!${vh('en')}</p>${dualRoleLines(payload, ev) ? `
         <p style="font-size:15px; margin:0 0 16px; font-weight:700;">${esc(dualRoleLines(payload, ev).fr)}<br><span style="color:#475569; font-size:13px; font-weight:400;">${esc(dualRoleLines(payload, ev).en)}</span></p>` : ''}
         ${shirtHtml}${subFeeHtml}
         ${matchInfo ? `<div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:10px 14px; margin:0 0 16px; font-size:14px; white-space:pre-line;">${esc(matchInfo.trim())}${matchInfoEn !== matchInfo ? `<div style="color:#64748b; margin-top:8px;">${esc(matchInfoEn.trim())}</div>` : ''}</div>` : ''}
@@ -12686,7 +12645,7 @@ Je ne peux pas jouer / I can't play : ${noUrl}${sign}`;
       const text =
 `Salut ${name},
 
-Des coéquipiers ont laissé des notes sur le tableau de l'équipe ${frTeam} pour ${w.fr}!
+Des coéquipiers ont laissé des notes sur le tableau de l'équipe ${frTeam} pour ${w.fr}!${vt('fr')}
 ${matchInfo ? matchInfo + '\n' : ''}
 💬 Notes d'équipe :
 ${listText('fr')}
@@ -12697,7 +12656,7 @@ ${listText('fr')}
 
 Hi ${name},
 
-Teammates have posted notes on the ${enTeam} team board for ${w.en}!
+Teammates have posted notes on the ${enTeam} team board for ${w.en}!${vt('en')}
 ${matchInfoEn ? matchInfoEn + '\n' : ''}
 💬 Team board notes:
 ${listText('en')}
@@ -12706,14 +12665,14 @@ ${listText('en')}
 
       const html = wrapEmail(
         subj,
-        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>Des coéquipiers ont laissé des notes sur le tableau de l'équipe <b>${esc(frTeam)}</b> pour <b>${esc(w.fr)}</b>!</p>
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>Des coéquipiers ont laissé des notes sur le tableau de l'équipe <b>${esc(frTeam)}</b> pour <b>${esc(w.fr)}</b>!${vh('fr')}</p>
         ${fixtureBox(matchInfo)}
         ${listHtml('fr', `💬 Notes d'équipe (${frTeam})`)}
         <div style="margin:0 0 14px;">
           ${emailBtn(teamUrl, "📋 Voir l'alignement et répondre", '#17457f', '#ffffff')}
         </div>
         <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 14px; color:#334155;">Hi <b>${esc(name)}</b>,<br>Teammates have posted notes on the <b>${esc(enTeam)}</b> team board for <b>${esc(w.en)}</b>!</p>
+        <p style="font-size:15px; margin:0 0 14px; color:#334155;">Hi <b>${esc(name)}</b>,<br>Teammates have posted notes on the <b>${esc(enTeam)}</b> team board for <b>${esc(w.en)}</b>!${vh('en')}</p>
         ${fixtureBox(matchInfoEn)}
         ${listHtml('en', `💬 Team board (${enTeam})`)}
         <div style="margin:0 0 14px;">
@@ -12744,7 +12703,7 @@ ${listText('en')}
       const text =
 `Salut ${name},
 
-De nouveaux messages ont été publiés ce matin pour l'équipe ${frTeam} avant le match, ${w.fr} :
+De nouveaux messages ont été publiés ce matin pour l'équipe ${frTeam} avant le match de ${w.fr}.${vt('fr')}
 
 ⚡ Nouveaux messages :
 ${listText('fr')}
@@ -12756,7 +12715,7 @@ ${listText('fr')}
 
 Hi ${name},
 
-New messages were posted this morning for ${enTeam} before the game, ${w.en}:
+New messages were posted this morning for ${enTeam} before the game on ${w.en}.${vt('en')}
 
 ⚡ New messages:
 ${listText('en')}
@@ -12766,13 +12725,13 @@ See you at the gym soon!${sign}`;
 
       const html = wrapEmail(
         subj,
-        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>De nouveaux messages ont été publiés ce matin pour l'équipe <b>${esc(frTeam)}</b> avant le match, <b>${esc(w.fr)}</b> :</p>
+        `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,<br>De nouveaux messages ont été publiés ce matin pour l'équipe <b>${esc(frTeam)}</b> avant le match de <b>${esc(w.fr)}</b>.${vh('fr')}</p>
         ${listHtml('fr', `⚡ Dernières nouvelles (${frTeam})`)}
         <div style="margin:0 0 14px;">
           ${emailBtn(teamUrl, "📋 Voir le tableau d'équipe", '#17457f', '#ffffff')}
         </div>
         <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 14px; color:#334155;">Hi <b>${esc(name)}</b>,<br>New messages were posted this morning for <b>${esc(enTeam)}</b> before the game, <b>${esc(w.en)}</b>:</p>
+        <p style="font-size:15px; margin:0 0 14px; color:#334155;">Hi <b>${esc(name)}</b>,<br>New messages were posted this morning for <b>${esc(enTeam)}</b> before the game on <b>${esc(w.en)}</b>.${vh('en')}</p>
         ${listHtml('en', `⚡ Last-minute notes (${enTeam})`)}
         <div style="margin:0 0 14px;">
           ${emailBtn(teamUrl, '📋 View team board', '#17457f', '#ffffff')}
@@ -12788,25 +12747,25 @@ See you at the gym soon!${sign}`;
 `Salut ${name},
 
 ${payload.by === 'manager' ? 'L\u2019admin' : 'Un coéquipier'} t'a marqué ${
-  payload.status === 'in' ? 'PRÉSENT' : 'ABSENT'} pour ${w.fr}.
+  payload.status === 'in' ? 'PRÉSENT' : 'ABSENT'} pour ${w.fr}.${vt('fr')}
 Si ce n'est pas exact, corrige-le : ${link}
 
 ---
 
 ${payload.by === 'manager' ? 'The admin' : 'A teammate'} marked you ${
-  payload.status === 'in' ? 'IN' : 'OUT'} for ${w.en}.
+  payload.status === 'in' ? 'IN' : 'OUT'} for ${w.en}.${vt('en')}
 Not right? Change it: ${link}${sign}`;
 
       const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
-        <p style="font-size:15px; margin:0 0 14px;">${payload.by === 'manager' ? 'L\u2019admin' : 'Un coéquipier'} t'a marqué <b>${payload.status === 'in' ? 'PRÉSENT' : 'ABSENT'}</b> pour <b>${esc(w.fr)}</b>.</p>
+        <p style="font-size:15px; margin:0 0 14px;">${payload.by === 'manager' ? 'L\u2019admin' : 'Un coéquipier'} t'a marqué <b>${payload.status === 'in' ? 'PRÉSENT' : 'ABSENT'}</b> pour <b>${esc(w.fr)}</b>.${vh('fr')}</p>
         <p style="font-size:14px; margin:0 0 20px;">
           Si ce n'est pas exact, corrige-le :<br>
           ${emailBtn(link, '✏️ Corriger mon statut', '#17457f', '#ffffff')}
         </p>
         <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 14px; color:#334155;">${payload.by === 'manager' ? 'The admin' : 'A teammate'} marked you <b>${payload.status === 'in' ? 'IN' : 'OUT'}</b> for <b>${esc(w.en)}</b>.</p>
+        <p style="font-size:15px; margin:0 0 14px; color:#334155;">${payload.by === 'manager' ? 'The admin' : 'A teammate'} marked you <b>${payload.status === 'in' ? 'IN' : 'OUT'}</b> for <b>${esc(w.en)}</b>.${vh('en')}</p>
         <p style="font-size:14px; margin:0 0 20px; color:#334155;">
           Not right? Change it:<br>
           ${emailBtn(link, '✏️ Change my status', '#17457f', '#ffffff')}
@@ -12827,24 +12786,24 @@ Not right? Change it: ${link}${sign}`;
       const text =
 `Salut ${name},
 
-Tu es inscrit avec ${tFR(team)} ${w.fr}.
+Tu es inscrit avec ${tFR(team)} pour le match de ${w.fr}.${vt('fr')}
 ${dualRoleLines(payload, ev) ? dualRoleLines(payload, ev).fr + '\n' : ''}${cavFr}
 Tes détails : ${link}
 
 ---
 
-You're signed up with ${team} ${w.en}.
+You're signed up with ${team} for the game on ${w.en}.${vt('en')}
 ${dualRoleLines(payload, ev) ? dualRoleLines(payload, ev).en + '\n' : ''}${cavEn}
 Your details: ${link}${sign}`;
       const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
-        <p style="font-size:15px; margin:0 0 10px;">Tu es inscrit avec <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>.</p>${dualRoleLines(payload, ev) ? `
+        <p style="font-size:15px; margin:0 0 10px;">Tu es inscrit avec <b>${esc(tFR(team))}</b> pour le match de <b>${esc(w.fr)}</b>.${vh('fr')}</p>${dualRoleLines(payload, ev) ? `
         <p style="font-size:15px; margin:0 0 10px; font-weight:700;">${esc(dualRoleLines(payload, ev).fr)}</p>` : ''}
         <p style="font-size:14px; margin:0 0 16px; color:#64748b;">${esc(cavFr)}</p>
         <p style="margin:0 0 20px;">${emailBtn(link, 'Voir mes détails', '#17457f', '#ffffff')}</p>
         <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 10px; color:#334155;">You're signed up with <b>${esc(team)}</b> <b>${esc(w.en)}</b>.</p>${dualRoleLines(payload, ev) ? `
+        <p style="font-size:15px; margin:0 0 10px; color:#334155;">You're signed up with <b>${esc(team)}</b> for the game on <b>${esc(w.en)}</b>.${vh('en')}</p>${dualRoleLines(payload, ev) ? `
         <p style="font-size:15px; margin:0 0 10px; font-weight:700; color:#334155;">${esc(dualRoleLines(payload, ev).en)}</p>` : ''}
         <p style="font-size:14px; margin:0 0 16px; color:#64748b;">${esc(cavEn)}</p>
         <p style="margin:0 0 20px;">${emailBtn(link, 'See my details', '#17457f', '#ffffff')}</p>`
@@ -12857,18 +12816,18 @@ Your details: ${link}${sign}`;
       const text =
 `Salut ${name},
 
-Finalement on n'a plus besoin de toi avec ${tFR(team)} ${w.fr}. Désolé du dérangement.
+Finalement on n'a plus besoin de toi avec ${tFR(team)} pour le match de ${w.fr}. Désolé du dérangement.
 
 ---
 
-We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}`;
+We no longer need you with ${team} for the game on ${w.en}. Sorry for the back and forth.${sign}`;
 
       const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
-        <p style="font-size:15px; margin:0 0 16px;">Finalement on n'a plus besoin de toi avec <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>. Désolé du dérangement.</p>
+        <p style="font-size:15px; margin:0 0 16px;">Finalement on n'a plus besoin de toi avec <b>${esc(tFR(team))}</b> pour le match de <b>${esc(w.fr)}</b>. Désolé du dérangement.</p>
         <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 16px; color:#334155;">We no longer need you with <b>${esc(team)}</b> <b>${esc(w.en)}</b>. Sorry for the back and forth.</p>`
+        <p style="font-size:15px; margin:0 0 16px; color:#334155;">We no longer need you with <b>${esc(team)}</b> for the game on <b>${esc(w.en)}</b>. Sorry for the back and forth.</p>`
       );
 
       return { subject: subj, text, html };
@@ -12885,7 +12844,7 @@ We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}
       const who = { fr: generic ? league.name : tFR(team), en: generic ? league.name : team };
 
       const subjFr = `${who.fr} cherche ${g ? 'un gardien' : 'un joueur'}${again}`;
-      const subjEn = `${who.en} needs ${g ? 'a goalie' : 'a skater'}${payload.reminder ? ' (reminder)' : ''}`;
+      const subjEn = `${who.en} needs ${g ? 'a goalie' : 'a player'}${payload.reminder ? ' (reminder)' : ''}`;
       // A league with no teams has no team to decide: no team sentence at all.
       const teamNoteFr = generic && !teamless
         ? "L'équipe n'est pas encore décidée : si tu es disponible, on te place dans une équipe, et tu reçois ton équipe finale avant le match."
@@ -12903,31 +12862,38 @@ We no longer need you with ${team} ${w.en}. Sorry for the back and forth.${sign}
         : 'Tu ne veux plus être sur la liste de substituts? Réponds à ce courriel.';
       const offEn = leagueEvent ? 'Want off the subs list? Just reply to this email.' : 'Want off the sub list? Just reply to this email.';
 
+      // « SMBHL cherche un joueur pour dimanche 11 janv., 10 h 30. » /
+      // "SMBHL needs a player on Sunday, Jan 11, 10:30 AM.", the venue on
+      // its own line, then the team note, the two buttons and the rest.
+      const callWhen = { fr: isoW ? sentenceWhen(isoW, ev.start_time, 'fr', ', ') : w.fr, en: isoW ? sentenceWhen(isoW, ev.start_time, 'en', ', ') : w.en };
+      const btn = {
+        fr: { yes: '✅ Oui, je suis disponible', no: '❌ Non, pas cette fois' },
+        en: { yes: "✅ Yes, I'm available", no: '❌ No, not this time' }
+      };
       const textFr =
-`${who.fr} cherche ${g ? 'un gardien' : 'un joueur'}${leagueEvent ? `.\n${w.fr}` : ` ${w.fr}`}.${teamNoteFr ? '\n' + teamNoteFr : ''}
+`${who.fr} cherche ${g ? 'un gardien' : 'un joueur'} pour ${callWhen.fr}.${vt('fr')}${teamNoteFr ? '\n' + teamNoteFr : ''}
 
-Disponible?   OUI : ${payload.yes}
-               NON : ${payload.no}
+${btn.fr.yes} : ${payload.yes}
+${btn.fr.no} : ${payload.no}
 
 ${waitFr}
 ${offFr}`;
       const textEn =
-`${who.en} needs ${g ? 'a goalie' : 'a skater'}${leagueEvent ? `.\n${w.en}` : ` ${w.en}`}.${teamNoteEn ? '\n' + teamNoteEn : ''}
+`${who.en} needs ${g ? 'a goalie' : 'a player'} on ${callWhen.en}.${vt('en')}${teamNoteEn ? '\n' + teamNoteEn : ''}
 
-Available?   YES: ${payload.yes}
-             NO:  ${payload.no}
+${btn.en.yes}: ${payload.yes}
+${btn.en.no}: ${payload.no}
 
 ${waitEn}
 ${offEn}`;
 
       const htmlFr = `<p style="font-size:16px; margin:0 0 16px;">
-          <b>${esc(who.fr)}</b> cherche ${g ? 'un gardien' : 'un joueur'}${leagueEvent ? '.<br>' : ' '}<b>${esc(w.fr)}</b>.
+          <b>${esc(who.fr)}</b> cherche ${g ? 'un gardien' : 'un joueur'} pour <b>${esc(callWhen.fr)}</b>.${vh('fr')}
         </p>
         ${teamNoteFr ? `<p style="font-size:14px; margin:0 0 16px;">${esc(teamNoteFr)}</p>` : ''}
-        <p style="font-size:15px; font-weight:600; margin:0 0 10px;">Disponible?</p>
         <div style="margin:0 0 20px;">
-          ${emailBtn(payload.yes, '✅ OUI : Je suis disponible', '#15803d', '#ffffff')}
-          ${emailBtn(payload.no, 'NON', '#f1f5f9', '#475569', '1px solid #cbd5e1')}
+          ${emailBtn(payload.yes, btn.fr.yes, '#15803d', '#ffffff')}
+          ${emailBtn(payload.no, btn.fr.no, '#f1f5f9', '#475569', '1px solid #cbd5e1')}
         </div>
         <p style="font-size:13px; color:#64748b; margin:0 0 4px;">
           ${esc(waitFr)}
@@ -12936,13 +12902,12 @@ ${offEn}`;
           ${esc(offFr)}
         </p>`;
       const htmlEn = `<p style="font-size:15px; margin:0 0 16px; color:#334155;">
-          <b>${esc(who.en)}</b> needs ${g ? 'a goalie' : 'a skater'}${leagueEvent ? '.<br>' : ' '}<b>${esc(w.en)}</b>.
+          <b>${esc(who.en)}</b> needs ${g ? 'a goalie' : 'a player'} on <b>${esc(callWhen.en)}</b>.${vh('en')}
         </p>
         ${teamNoteEn ? `<p style="font-size:14px; margin:0 0 16px; color:#334155;">${esc(teamNoteEn)}</p>` : ''}
-        <p style="font-size:14px; font-weight:600; margin:0 0 10px; color:#334155;">Available?</p>
         <div style="margin:0 0 20px;">
-          ${emailBtn(payload.yes, '✅ YES: Available', '#15803d', '#ffffff')}
-          ${emailBtn(payload.no, 'NO', '#f1f5f9', '#475569', '1px solid #cbd5e1')}
+          ${emailBtn(payload.yes, btn.en.yes, '#15803d', '#ffffff')}
+          ${emailBtn(payload.no, btn.en.no, '#f1f5f9', '#475569', '1px solid #cbd5e1')}
         </div>
         <p style="font-size:13px; color:#64748b; margin:0 0 4px;">
           ${esc(waitEn)}
@@ -12977,26 +12942,26 @@ ${offEn}`;
 
     case 'team_short': {
       const g = payload.needGoalie, k = payload.needSkaters;
-      // Zero reads as "aucun" / "no", one as "un" / "1 skater", then the number.
+      // Zero reads as "aucun" / "no", one as "un" / "1 player", then the number.
       const n = Number(payload.skaters) || 0;
       const fr = g && k ? (n === 0 ? "n'a aucun gardien et aucun joueur confirmé" : `n'a aucun gardien et seulement ${pluralText('{n|un joueur confirmé|# joueurs confirmés}', { n }, 'fr')}`)
                : g      ? `n'a aucun gardien confirmé`
                :          (n === 0 ? "n'a aucun joueur confirmé" : n === 1 ? "n'a qu'un joueur confirmé" : `n'a que ${n} joueurs confirmés`);
-      const en = g && k ? (n === 0 ? 'has no goalie and no skaters confirmed' : `has no goalie and only ${pluralText('{n|# skater|# skaters}', { n }, 'en')} confirmed`)
+      const en = g && k ? (n === 0 ? 'has no goalie and no players confirmed' : `has no goalie and only ${pluralText('{n|# player|# players}', { n }, 'en')} confirmed`)
                : g      ? `has no goalie confirmed`
-               :          (n === 0 ? 'has no skaters confirmed' : `has only ${pluralText('{n|# skater|# skaters}', { n }, 'en')} confirmed`);
+               :          (n === 0 ? 'has no players confirmed' : `has only ${pluralText('{n|# player|# players}', { n }, 'en')} confirmed`);
       const subj = `${tFR(team)} est incomplète (${n === 0 ? 'aucun joueur' : pluralText('{n|# joueur|# joueurs}', { n }, 'fr')}) / ${team} is short`;
       const text =
 `Salut ${name},
 
-${tFR(team)} ${fr} pour ${w.fr}.
+${tFR(team)} ${fr} pour ${w.fr}.${vt('fr')}
 
 Regarde qui n'a pas répondu, ajoute un substitut ou un invité :
 ${payload.teamLink}
 
 ---
 
-${team} ${en} for ${w.en}.
+${team} ${en} for ${w.en}.${vt('en')}
 
 See who has not answered, add a sub or a guest:
 ${payload.teamLink}${sign}`;
@@ -13004,12 +12969,12 @@ ${payload.teamLink}${sign}`;
       const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
-        <p style="font-size:15px; margin:0 0 16px;"><b>${esc(tFR(team))}</b> ${esc(fr)} pour <b>${esc(w.fr)}</b>.</p>
+        <p style="font-size:15px; margin:0 0 16px;"><b>${esc(tFR(team))}</b> ${esc(fr)} pour <b>${esc(w.fr)}</b>.${vh('fr')}</p>
         <div style="margin:0 0 20px;">
           ${emailBtn(payload.teamLink, '📋 Voir l\'alignement et gérer les substituts', '#17457f', '#ffffff')}
         </div>
         <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 16px; color:#334155;"><b>${esc(team)}</b> ${esc(en)} for <b>${esc(w.en)}</b>.</p>
+        <p style="font-size:15px; margin:0 0 16px; color:#334155;"><b>${esc(team)}</b> ${esc(en)} for <b>${esc(w.en)}</b>.${vh('en')}</p>
         <div style="margin:0 0 20px;">
           ${emailBtn(payload.teamLink, '📋 View roster and manage subs', '#17457f', '#ffffff')}
         </div>`
@@ -14342,7 +14307,8 @@ async function firstEmailForNewRegulars(env, leagueId) {
       if (await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? AND kind = ?').bind(ev.id, st.kind).first()) continue;
       return {
         kind: 'reminder', hours: st.hours, soon: hoursUntil <= st.hours,
-        date: { fr: formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false), en: formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false) }
+        // Inside a sentence: « dimanche 15 nov. à 19 h » / "Sunday, Nov 15 at 7 PM".
+        date: { fr: sentenceWhen(eventIso(ev), ev.start_time, 'fr'), en: sentenceWhen(eventIso(ev), ev.start_time, 'en') }
       };
     }
   }
@@ -14978,16 +14944,11 @@ async function hasDualPlayers(env, leagueId) {
   ).bind(leagueId).first()));
 }
 
-// The game's when line, mid-sentence: « dimanche 10 h 30 (lieu : X) ».
+// The game's when, mid-sentence: « dimanche 15 nov. à 10 h 30 » (whenLine);
+// the venue goes on its own line (venueLine).
 // SMBHL's date column is a label; the event ID carries the ISO date.
 function eventWhenLine(ev) {
-  const iso = (String(ev.date || '').match(/^\d{4}-\d{2}-\d{2}/) || String(ev.id || '').match(/\d{4}-\d{2}-\d{2}/) || [''])[0];
-  return iso
-    ? {
-        fr: `${formatEventDateTime(iso, ev.start_time, 'fr', 'long', false)}${ev.venue ? ` (lieu : ${ev.venue})` : ''}`,
-        en: `${formatEventDateTime(iso, ev.start_time, 'en', 'long')}${ev.venue ? ` (venue: ${ev.venue})` : ''}`
-      }
-    : whenLine(ev);
+  return whenLine(ev);
 }
 
 // One short email in the league's own form: SMBHL's stacked French then
@@ -15043,22 +15004,26 @@ async function sendDualMail(env, ev, cfg, kind, playerId, team, otherId = null) 
   const tFr = t ? (isSmbhl ? tFR(t) : t) : null;
   const other = otherId ? await getContact(env.DB, otherId) : null;
   const otherName = other ? other.name : '';
+  // The venue, on its own line right after the sentence that names the game.
+  const venue = { fr: venueLine(ev.venue, 'fr'), en: venueLine(ev.venue, 'en') };
+  const withVenue = (p, l) => { if (venue[l]) p.lines.splice(3, 0, venue[l]); return p; };
   let fr, en;
   if (kind === 'to_goalie') {
-    fr = { subject: `${day.fr} : tu es dans les buts`, lines: [`Salut ${first},`, '', `${t ? `${tFr} n'a pas de gardien` : "Il n'y a pas de gardien"} ${w.fr}. Comme tu joues aux deux positions, tu es dans les buts.`, "Tu n'as rien à faire. Si ça ne te convient pas, réponds à ce courriel."] };
-    en = { subject: `${day.en}: you're in goal`, lines: [`Hi ${first},`, '', `${t ? `${t} has no goalie` : 'There is no goalie'} ${w.en}. Since you play both positions, you're in goal.`, "Nothing to do. If that doesn't work for you, reply to this email."] };
+    fr = { subject: `${day.fr} : tu es dans les buts`, lines: [`Salut ${first},`, '', `${t ? `${tFr} n'a pas de gardien` : "Il n'y a pas de gardien"} pour le match de ${w.fr}. Comme tu joues aux deux positions, tu es dans les buts.`, "Tu n'as rien à faire. Si ça ne te convient pas, réponds à ce courriel."] };
+    en = { subject: `${day.en}: you're in goal`, lines: [`Hi ${first},`, '', `${t ? `${t} has no goalie` : 'There is no goalie'} for the game on ${w.en}. Since you play both positions, you're in goal.`, "Nothing to do. If that doesn't work for you, reply to this email."] };
   } else if (kind === 'to_skater') {
-    fr = { subject: `${day.fr} : tu joues comme joueur`, lines: [`Salut ${first},`, '', `${t ? `Le gardien de ${tFr}` : 'Le gardien'} sera là ${w.fr} : il reprend sa place dans les buts, et tu joues comme joueur.`] };
-    en = { subject: `${day.en}: you play as a skater`, lines: [`Hi ${first},`, '', `${t ? `${t}'s goalie` : 'The goalie'} will be there ${w.en}: they take the net back, and you play as a skater.`] };
+    fr = { subject: `${day.fr} : tu reviens comme joueur`, lines: [`Salut ${first},`, '', `Petit changement : ${t ? `le gardien de ${tFr}` : 'le gardien'} sera là ${w.fr}. Il reprend sa place dans les buts, et tu reviens comme joueur. Rien à faire de ton côté.`] };
+    en = { subject: `${day.en}: you're back as a player`, lines: [`Hi ${first},`, '', `A quick change: ${t ? `${t}'s goalie` : 'the goalie'} will be there ${w.en}. They take the net back, and you're back as a player. Nothing to do on your end.`] };
   } else if (kind === 'goalie_back') {
-    fr = { subject: `${day.fr} : tu es dans les buts`, lines: [`Salut ${first},`, '', `Merci d'avoir confirmé. Tu es dans les buts${t ? ` pour ${tFr}` : ''} ${w.fr}.${otherName ? ` ${otherName} reprend sa place de joueur.` : ''}`] };
-    en = { subject: `${day.en}: you're in goal`, lines: [`Hi ${first},`, '', `Thanks for confirming. You're in goal${t ? ` for ${t}` : ''} ${w.en}.${otherName ? ` ${otherName} goes back to playing as a skater.` : ''}`] };
+    fr = { subject: `${day.fr} : tu es dans les buts`, lines: [`Salut ${first},`, '', `Merci d'avoir confirmé. Tu es dans les buts${t ? ` pour ${tFr}` : ''} au match de ${w.fr}.${otherName ? ` ${otherName} revient comme joueur.` : ''}`] };
+    en = { subject: `${day.en}: you're in goal`, lines: [`Hi ${first},`, '', `Thanks for confirming. You're in goal${t ? ` for ${t}` : ''} for the game on ${w.en}.${otherName ? ` ${otherName} is back as a player.` : ''}`] };
   } else if (kind === 'ask') {
-    fr = { subject: `${tFr} cherche un gardien`, lines: [`Salut ${first},`, '', `${tFr} n'a pas de gardien ${w.fr}. Comme tu peux jouer aux deux positions, l'organisateur te demande si tu peux jouer dans les buts pour cette équipe.`, 'Réponds à ce courriel pour dire oui ou non.'] };
-    en = { subject: `${t} needs a goalie`, lines: [`Hi ${first},`, '', `${t} has no goalie ${w.en}. Since you play both positions, the organizer is asking whether you can play in goal for that team.`, 'Reply to this email to say yes or no.'] };
+    fr = { subject: `${tFr} cherche un gardien`, lines: [`Salut ${first},`, '', `${tFr} n'a pas de gardien pour le match de ${w.fr}. Comme tu peux jouer aux deux positions, l'organisateur te demande si tu peux jouer dans les buts pour cette équipe.`, 'Réponds à ce courriel pour dire oui ou non.'] };
+    en = { subject: `${t} needs a goalie`, lines: [`Hi ${first},`, '', `${t} has no goalie for the game on ${w.en}. Since you play both positions, the organizer is asking whether you can play in goal for that team.`, 'Reply to this email to say yes or no.'] };
   } else {
     return false;
   }
+  withVenue(fr, 'fr'); withVenue(en, 'en');
   const { mail, identity } = await renderDualMail(env, ev, cfg, fr, en);
   // One pending email per player and game: a quick change of role replaces
   // the one not sent yet (enqueue's dedup), never adds a second.
@@ -15167,8 +15132,8 @@ async function dualGoalieAlert(env, ev) {
   const base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
   const link = isSmbhl ? `${base}/admin/board?e=${encodeURIComponent(ev.id)}` : `${base}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
   const list = lang => players.map(p => `- ${p.name} (${isSmbhl && lang === 'fr' ? tFR(p.team) : p.team})`);
-  const fr = { subject: `Gardien manquant : ${shortFr}`, heading: `Gardien manquant : ${shortFr}`, lines: [`${shortFr} : pas de gardien ${w.fr}. ${why.fr}`, '', `Ces joueurs jouent aux deux positions et jouent ${dualDay(ev, 'fr', false)} :`, ...list('fr'), '', 'Sur la page du match, tu peux leur demander ou les mettre dans les buts.'], link: { url: link, label: 'Voir le match' } };
-  const en = { subject: `Missing goalie: ${short.join(', ')}`, heading: `Missing goalie: ${short.join(', ')}`, lines: [`${short.join(', ')}: no goalie ${w.en}. ${why.en}`, '', `These players play both positions and are playing ${dualDay(ev, 'en', false)}:`, ...list('en'), '', 'On the game page, you can ask them or put them in goal.'], link: { url: link, label: 'View the game' } };
+  const fr = { subject: `Gardien manquant : ${shortFr}`, heading: `Gardien manquant : ${shortFr}`, lines: [`${shortFr} : pas de gardien pour le match de ${w.fr}. ${why.fr}`, ...(ev.venue ? [venueLine(ev.venue, 'fr')] : []), '', `Ces joueurs jouent aux deux positions et jouent ${dualDay(ev, 'fr', false)} :`, ...list('fr'), '', 'Sur la page du match, tu peux leur demander ou les mettre dans les buts.'], link: { url: link, label: 'Voir le match' } };
+  const en = { subject: `Missing goalie: ${short.join(', ')}`, heading: `Missing goalie: ${short.join(', ')}`, lines: [`${short.join(', ')}: no goalie for the game on ${w.en}. ${why.en}`, ...(ev.venue ? [venueLine(ev.venue, 'en')] : []), '', `These players play both positions and are playing ${dualDay(ev, 'en', false)}:`, ...list('en'), '', 'On the game page, you can ask them or put them in goal.'], link: { url: link, label: 'View the game' } };
   const { mail, identity } = await renderDualMail(env, ev, cfg, fr, en);
   const admins = isSmbhl ? [{ email: env.ADMIN_EMAIL || ADMIN_EMAIL }] : await leagueAdminEmails(env, leagueId);
   for (const a of admins) {
@@ -15869,7 +15834,7 @@ async function teamGet(req, env, url) {
   const addable = pool.filter(p => !p.placed && p.said !== 'no');
   const unavailable = pool.filter(p => (p.placed && p.placed !== team) || p.said === 'no');
 
-  const kind = p => p.role === 'sub_goalie' ? 'gardien / goalie' : 'joueur / skater';
+  const kind = p => p.role === 'sub_goalie' ? 'gardien / goalie' : 'joueur / player';
   const state = p => p.said === 'yes' ? 'a confirmé disponible / confirmed available'
     : p.said === 'no' ? 'a dit non / said no'
     : 'pas encore répondu / no answer yet';
@@ -15957,7 +15922,7 @@ async function teamGet(req, env, url) {
   <div class="card">
     <h2>${c.in} confirmés${
       shortGoalie || shortSkaters ? ' <span class="short">· équipe incomplète</span>' : ''}
-      <span class="en">${skaters} skater${skaters === 1 ? '' : 's'}${
+      <span class="en">${skaters} player${skaters === 1 ? '' : 's'}${
         shortGoalie ? ', no goalie yet' : ', goalie confirmed'}</span></h2>
     <div style="font-size:12px;color:var(--soft);margin-bottom:8px;line-height:1.3;display:flex;align-items:center;gap:6px">
       <span>💡</span>
@@ -16346,10 +16311,10 @@ function availConfirmPage(ev, url, need, a, logoTooltip = '') {
   const g = need === 'goalie';
   const action = `/avail?${['e', 'p', 'n', 't'].map(k => `${k}=${encodeURIComponent(url.searchParams.get(k) || '')}`).join('&')}`;
   return page(`À confirmer · ${w.fr}`, `<h1>Encore un clic pour confirmer<span class="en">One more tap to confirm</span></h1>
-    <p class="when">${esc(w.fr)}<span class="en">${esc(w.en)}</span></p>
+    <p class="when">${esc(w.fr)}<span class="en">${esc(w.en)}</span></p>${ev && ev.venue ? `<p class="when">${esc(venueLine(ev.venue, 'fr'))}<span class="en">${esc(venueLine(ev.venue, 'en'))}</span></p>` : ''}
     <div class="card" id="avail_confirm" style="border:2px solid #b45309;">
       <p style="font-weight:700;margin:0 0 10px;">${yes ? "Tu n'es pas encore inscrit." : "Ta réponse n'est pas encore enregistrée."}<span class="en">${yes ? 'You are not signed up yet.' : 'Your answer is not recorded yet.'}</span></p>
-      <p style="margin:0 0 16px;">${yes ? `Tu vas dire que tu es disponible ${g ? 'comme gardien' : 'comme joueur'}.` : "Tu vas dire que tu n'es pas disponible."}<span class="en">${yes ? `You are about to say you are available ${g ? 'as a goalie' : 'as a skater'}.` : 'You are about to say you are not available.'}</span></p>
+      <p style="margin:0 0 16px;">${yes ? `Tu vas dire que tu es disponible ${g ? 'comme gardien' : 'comme joueur'}.` : "Tu vas dire que tu n'es pas disponible."}<span class="en">${yes ? `You are about to say you are available ${g ? 'as a goalie' : 'as a player'}.` : 'You are about to say you are not available.'}</span></p>
       <form method="post" action="${esc(action)}" style="margin:0 0 12px;">
         <input type="hidden" name="a" value="${yes ? 'yes' : 'no'}">
         <button type="submit" class="btn ${yes ? 'in' : 'out'}" style="width:100%;padding:18px 12px;font-size:20px;">${yes ? 'OUI, JE SUIS DISPONIBLE' : 'NON, PAS DISPONIBLE'}<span class="en">${yes ? "YES, I'M AVAILABLE" : 'NO, NOT AVAILABLE'}</span></button>
@@ -16467,7 +16432,7 @@ function leagueAvailConfirmPage(L, url, need, a) {
     en: {
       title: 'One more tap to confirm',
       warn: 'Your answer is not recorded yet.',
-      what: yes ? `You're about to say you're available ${g ? 'as a goalie' : 'as a skater'}.` : "You're about to say you're not available.",
+      what: yes ? `You're about to say you're available ${g ? 'as a goalie' : 'as a player'}.` : "You're about to say you're not available.",
       btn: yes ? "Yes, I'm available" : 'No, not available',
       help: 'Until you press it, you stay as "no reply".'
     }
@@ -16585,7 +16550,7 @@ async function availRoute(req, env, url) {
     // A pickup game before its draw: in, team to come.
     return page('Confirmé', `<h1>Tu es inscrit pour ce match
       <span class="en">You're in for this game</span></h1>
-      <p class="when">${esc(w.fr)}</p>
+      <p class="when">${esc(w.fr)}</p>${ev && ev.venue ? `<p class="when">${esc(venueLine(ev.venue, 'fr'))}</p>` : ''}
       <div class="card"><p>Les équipes sont tirées avant le match : on t'envoie ton équipe avant le match.<span class="en">Teams are drawn before the game: we'll send you your team before the game.</span></p></div>`, logoTooltip);
   }
   if (r.placed) {
@@ -16595,7 +16560,7 @@ async function availRoute(req, env, url) {
           en: `Bring a ${r.placed.toLowerCase()} shirt.` };
     return page('Confirmé', `<h1>Tu joues avec ${esc(TEAM_FR[r.placed] || r.placed)}
       <span class="en">You are with ${esc(r.placed)}</span></h1>
-      <p class="when">${esc(w.fr)}</p>
+      <p class="when">${esc(w.fr)}</p>${ev && ev.venue ? `<p class="when">${esc(venueLine(ev.venue, 'fr'))}</p>` : ''}
       ${subTeamCaveatHtml(ev)}
       <div class="card"><p>${shirt.fr}<span class="en">${shirt.en}</span></p></div>`, logoTooltip);
   }
@@ -16916,7 +16881,7 @@ const I18N_BOARD = {
     copiedToast: '✓ Copied!',
     copyPrompt: 'Copy link for WhatsApp:',
     parityTitle: 'Weekly Parity Balance',
-    paritySub: 'Projected points per team (sum of confirmed skaters ppg, subs without history = 1.0 pt/g)',
+    paritySub: 'Projected points per team (sum of confirmed players ppg, subs without history = 1.0 pt/g)',
     maxSpread: 'Max spread:',
     avgPts: 'Avg',
     ptsPerGame: 'pt/g',
@@ -19054,7 +19019,7 @@ const I18N_CONTACTS = {
     activeSeasonLbl: "Active Season:",
     bannerDesc: "Official contact details for invitations and communications (email & future SMS). Current season roster and available subs.",
     cardRoster: "Roster Players",
-    cardSkaters: "Sub Skaters",
+    cardSkaters: "Sub Players",
     cardGoalies: "Sub Goalies",
     cardArchived: "Archived & Inactive",
     cardPhones: "Saved Phones",
@@ -19066,7 +19031,7 @@ const I18N_CONTACTS = {
     namePh: "Full Name *",
     mailPh: "Email (optional)",
     phonePh: "Phone (optional, e.g. 514-555-0123)",
-    btnSkater: "+ SKATER",
+    btnSkater: "+ PLAYER",
     btnGoalie: "+ GOALIE",
     recruitTitle: "Recruit from SMBHL History",
     recruitDesc: "Search for a former player in the league archives.",
@@ -19076,7 +19041,7 @@ const I18N_CONTACTS = {
     btnImportAll: "📥 Import SMBHL History as Subs",
     btnSeasonReset: "🔄 Start New Season (Reset regulars to subs)",
     t1Title: "Regular Roster",
-    t2Title: "Substitutes: Skaters",
+    t2Title: "Substitutes: Players",
     t3Title: "Substitutes: Goalies",
     t4Title: "Archives & Inactive: Season off, injuries & retired",
     t4Desc: "Regular players on season break, injured, or inactive/dormant subs (10+ invites without response). Their contact info remains saved but they no longer receive emails.",
@@ -19091,7 +19056,7 @@ const I18N_CONTACTS = {
     colPrevRole: "Previous Role",
     colReasonStatus: "Reason / Status",
     confirmedPlayersDesc: "{n} confirmed players for current season",
-    subSkatersAvail: "{n} skater{s} available",
+    subSkatersAvail: "{n} player{s} available",
     subGoaliesAvail: "{n} goalie{s} available",
     archivedDesc: "{n} player{s} archived or inactive",
     savedMsg: "✓ Saved",
@@ -19103,8 +19068,8 @@ const I18N_CONTACTS = {
     btnArchive: "ARCHIVE",
     btnRestore: "⚡ REACTIVATE",
     btnToGoalie: "GOALIE",
-    btnToSkater: "SKATER",
-    playSkater: "Skater", playGoalie: "Goalie", playBoth: "Both", playRoleTitle: "Position",
+    btnToSkater: "PLAYER",
+    playSkater: "Player", playGoalie: "Goalie", playBoth: "Both", playRoleTitle: "Position",
     unnamedNotice: "Contacts with no name: {list}. Add their name so it shows in lists and emails.",
     archivePromptTitle: "Archive {name}?\\n\\nEnter the reason by typing a number (1 to 4):\\n1 - Season off\\n2 - Injury\\n3 - Retired\\n4 - Other / Inactive",
     restoreConfirm: "Reactivate {name} in the sub pool?\\n\\n(The player will start as a sub and will not be automatically assigned to a team).",
@@ -19114,7 +19079,7 @@ const I18N_CONTACTS = {
     seasonResetConfirm: "Are you sure you want to initialize a new season?\\n\\nAll current regular players will become free subs (unassigned).\\n\\nYou can then draft new teams in the Teams tab.\\n(Archived players remain archived).",
     seasonResetSuccess: "✅ Reset successful: {n} players moved to the sub pool for the new season.",
     emptyRoster: "No regular players found for this season.",
-    emptySkaters: "No active sub skaters.",
+    emptySkaters: "No active sub players.",
     emptyGoalies: "No active sub goalies.",
     emptyArchived: "No archived or inactive players.",
     alreadyEnrolled: "already registered",
@@ -19127,7 +19092,7 @@ const I18N_CONTACTS = {
     reasonInactive: "Inactive",
     prevRegular: "Regular",
     prevSubGoalie: "Sub Goalie",
-    prevSubPlayer: "Sub Skater"
+    prevSubPlayer: "Sub Player"
   }
 };
 
@@ -20270,13 +20235,15 @@ async function renderGoalieCancelEmail(env, ev, contact, team, by = 'self', prev
     } catch (e) {}
   }
 
+  // The game row is a list row: the venue follows « · ».
+  const atVenue = ev && ev.venue ? ` · ${ev.venue}` : '';
   const text =
 `ALERTE GARDIEN / GOALIE CANCELLATION ALERT
 
 Le gardien ${goalieName} a été marqué ABSENT pour ${teamFR} (${teamEN})${prevNoteFR}.
 
 Détails / Details :
-• Match / Game : ${w.fr}
+• Match / Game : ${w.fr}${atVenue}
 • Équipe / Team : ${teamFR} (${teamEN})
 • Gardien / Goalie : ${goalieName}
 • Action par / By : ${byLabelFR}
@@ -20293,7 +20260,7 @@ ${adminHello(env, 'en')}
 Goalie ${goalieName} was marked OUT for ${teamEN}${prevNoteEN}.
 
 Details:
-• Game: ${w.en}
+• Game: ${w.en}${atVenue}
 • Team: ${teamEN}
 • Goalie: ${goalieName}
 • Action by: ${byLabelEN}
@@ -20317,7 +20284,7 @@ SMBHL Alert System`;
         <span style="color:#64748b; font-size:14px;">Goalie <b>${esc(goalieName)}</b> was marked <b>OUT</b> for <b>${esc(teamEN)}</b>${esc(prevNoteEN)}.</span>
       </p>
       <table style="font-size:14px; color:#334155; line-height:1.6; margin-bottom:6px;">
-        <tr><td style="font-weight:600; padding-right:12px; vertical-align:top;">📅 Match / Game :</td><td>${esc(w.fr)}${enLine(w.en)}</td></tr>
+        <tr><td style="font-weight:600; padding-right:12px; vertical-align:top;">📅 Match / Game :</td><td>${esc(w.fr + atVenue)}${enLine(w.en + atVenue)}</td></tr>
         <tr><td style="font-weight:600; padding-right:12px; vertical-align:top;">🏒 Équipe / Team :</td><td><b>${esc(teamFR)}</b> (${esc(teamEN)})</td></tr>
         <tr><td style="font-weight:600; padding-right:12px; vertical-align:top;">👤 Gardien / Goalie :</td><td><b>${esc(goalieName)}</b></td></tr>
         <tr><td style="font-weight:600; padding-right:12px; vertical-align:top;">⚡ Action par / By :</td><td>${esc(byLabelFR)}${enLine(byLabelEN)}</td></tr>
@@ -20935,7 +20902,7 @@ function rsvpConfirmPage(ev, eventId, playerId, token, v, logoTooltip = '') {
   const inAns = v === 'in';
   const qs = `e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}`;
   return page(`À confirmer · ${w.fr}`, `<h1>Encore un clic pour confirmer<span class="en">One more tap to confirm</span></h1>
-    <p class="when">${esc(w.fr)}<span class="en">${esc(w.en)}</span></p>
+    <p class="when">${esc(w.fr)}<span class="en">${esc(w.en)}</span></p>${ev && ev.venue ? `<p class="when">${esc(venueLine(ev.venue, 'fr'))}<span class="en">${esc(venueLine(ev.venue, 'en'))}</span></p>` : ''}
     <div class="card" id="rsvp_confirm" style="border:2px solid #b45309;">
       <p style="font-weight:700;margin:0 0 10px;">Ta réponse n'est pas encore enregistrée.<span class="en">Your answer is not recorded yet.</span></p>
       <p style="margin:0 0 16px;">Tu vas répondre : <b>${inAns ? 'PRÉSENT' : 'ABSENT'}</b><span class="en">You are about to answer: <b>${inAns ? 'IN' : 'OUT'}</b></span></p>
@@ -21666,8 +21633,12 @@ async function renderNightMovedForContact(env, leagueRow, games, contact, team, 
   const toContent = lang => {
     const dayLabel = reminderDayLabel(ev.date, lang);
     const venues = [...new Set(games.map(g => g.venue).filter(Boolean))];
-    // Inside a sentence: the French weekday in lowercase (date_format.js).
-    const when = `${formatEventDate(ev.date, lang, 'short', false)} · ${listJoin(games.map(g => formatEventTime(g.start_time, lang)), lang)}${venues.length ? ' · ' + venues.join(' / ') : ''}`;
+    // In a sentence: « dimanche 15 nov. à 19 h » / "Sunday, Nov 15 at 7 PM";
+    // the venue on a line of its own.
+    const times = listJoin(games.filter(g => g.start_time).map(g => formatEventTime(g.start_time, lang)), lang);
+    const day = sentenceDate(eventIso(ev), lang) || formatEventDate(ev.date, lang, 'long', false);
+    const when = times ? `${day}${lang === 'fr' ? ' à ' : ' at '}${times}` : day;
+    const venue = venues.length ? venueLine(venues.join(' / '), lang) : '';
     const plural = games.length > 1;
     const d = answer === 'none' ? (lang === 'fr' ? {
       subject: `${firstName}, pas de match pour ${team} ${dayLabel || 'ce jour-là'}`,
@@ -21684,24 +21655,24 @@ async function renderNightMovedForContact(env, leagueRow, games, contact, team, 
     }) : lang === 'fr' ? {
       subject: `${firstName}, nouvel horaire pour ${dayLabel || 'ton match'}`,
       headline: 'Ton horaire a changé',
-      body: endSentence(team ? `${team} joue maintenant : ${when}` : `${plural ? 'Tes matchs sont' : 'Ton match est'} maintenant : ${when}`),
+      body: endSentence(team ? `${team} joue maintenant le ${when}` : `${plural ? 'Tes matchs sont' : 'Ton match est'} maintenant le ${when}`),
       answer: answer === 'in' ? 'Ta réponse suit : tu joues toujours. Rien à faire.' : 'On attend encore ta réponse.',
       btn: answer === 'in' ? 'Voir mes matchs' : 'Répondre',
       poweredBy: 'Propulsé par Notre Ligue'
     } : {
       subject: `${firstName}, new schedule for ${dayLabel || 'your game'}`,
       headline: 'Your schedule changed',
-      body: endSentence(team ? `${team} now plays: ${when}` : `${plural ? 'Your games are' : 'Your game is'} now: ${when}`),
+      body: endSentence(team ? `${team} now plays on ${when}` : `${plural ? 'Your games are' : 'Your game is'} now on ${when}`),
       answer: answer === 'in' ? "Your answer carries over: you're still playing. Nothing to do." : 'We still need your answer.',
       btn: answer === 'in' ? 'See my games' : 'Answer',
       poweredBy: 'Powered by Notre Ligue'
     };
     return {
       subject: d.subject,
-      text: [d.headline, d.body, d.answer, d.btn ? `${d.btn}: ${pageLink}` : ''].filter(Boolean).join('\n'),
+      text: [d.headline, d.body, answer === 'none' ? '' : venue, d.answer, d.btn ? `${d.btn}: ${pageLink}` : ''].filter(Boolean).join('\n'),
       html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.headline}</h1>
-    <p style="margin:0 0 ${d.answer ? 12 : 24}px;font-size:16px;line-height:25px;">${esc(d.body)}</p>
+    <p style="margin:0 0 ${d.answer ? 12 : 24}px;font-size:16px;line-height:25px;">${esc(d.body)}${answer !== 'none' && venue ? `<br>${esc(venue)}` : ''}</p>
     ${d.answer ? `<p style="margin:0 0 24px;font-size:16px;line-height:25px;">${d.answer}</p>` : ''}
     ${d.btn ? nlEmailButton(pageLink, d.btn, barColor) : ''}`,
       poweredBy: d.poweredBy
@@ -21906,34 +21877,44 @@ function leagueReminderDict(lang, { firstName, dayLabel, ev, team, games = null 
   // directly interpolated -- an email is a single-language, one-shot
   // artifact (no live toggle possible), so it just formats straight in
   // this dict's own `lang`, no data-date-fr/en attribute pair needed.
-  const venues = games && games.length > 1 ? [...new Set(games.map(g => g.venue).filter(Boolean))] : null;
-  const when = games && games.length > 1
-    ? `${formatEventDate(ev.date, lang, 'short')} · ${listJoin(games.filter(g => g.start_time).map(g => formatEventTime(g.start_time, lang)), lang)}${venues.length ? ' · ' + venues.join(' / ') : ''}`
-    : `${formatEventDate(ev.date, lang, 'short')}${ev.start_time ? ' · ' + formatEventTime(ev.start_time, lang) : ''}${ev.venue ? ' · ' + ev.venue : ''}`;
+  // In a sentence: « le match de dimanche 15 nov. à 19 h » / "the game on
+  // Sunday, Nov 15 at 7 PM" (date_format.js); the venue and the team are
+  // lines of their own (venue, teamLine), never in the sentence.
+  const multi = !!(games && games.length > 1);
+  const times = multi
+    ? listJoin(games.filter(g => g.start_time).map(g => formatEventTime(g.start_time, lang)), lang)
+    : (ev.start_time ? formatEventTime(ev.start_time, lang) : '');
+  const day = sentenceDate(eventIso(ev), lang) || formatEventDate(ev.date, lang, 'long', false);
+  const when = times ? `${day}${lang === 'fr' ? ' à ' : ' at '}${times}` : day;
+  const venueNames = multi ? [...new Set(games.map(g => g.venue).filter(Boolean))] : (ev.venue ? [ev.venue] : []);
+  const venue = venueNames.length ? venueLine(venueNames.join(' / '), lang) : '';
+  const teamLine = team ? (lang === 'fr' ? `Équipe : ${team}` : `Team: ${team}`) : '';
   return lang === 'fr' ? {
+    venue, teamLine,
     r72Subject: `${firstName}, as-tu décidé pour ${dayLabel || 'ton prochain match'}?`,
     r72Headline: 'As-tu décidé?',
-    r72Body: `On n'a pas encore ta réponse pour ce match. ${when}.`,
+    r72Body: endSentence(multi ? `On n'a pas encore ta réponse pour tes matchs de ${when}` : `On n'a pas encore ta réponse pour le match de ${when}`),
     r24Subject: `${firstName}, dernier rappel pour ${dayLabel || 'ton prochain match'}`,
     r24Headline: 'Dernier rappel',
-    r24Body: `Le match approche et on n'a toujours pas ta réponse. ${when}.`,
+    r24Body: multi ? `Tes matchs de ${when} approchent et on n'a toujours pas ta réponse.` : `Le match de ${when} approche et on n'a toujours pas ta réponse.`,
     btnIn: 'Je joue', btnOut: 'Je ne peux pas',
     logisticsSubject: `${firstName}, les détails pour ${dayLabel || 'ton match'}`,
     logisticsHeadline: 'Détails du match',
-    logisticsBody: `Ta présence est confirmée. ${when}${team ? ` · Équipe ${team}` : ''}.`,
+    logisticsBody: endSentence(multi ? `Ta présence est confirmée pour tes matchs de ${when}` : `Ta présence est confirmée pour le match de ${when}`),
     optOut: 'Je ne peux plus jouer',
     poweredBy: 'Propulsé par Notre Ligue'
   } : {
+    venue, teamLine,
     r72Subject: `${firstName}, have you decided for ${dayLabel || 'your next game'}?`,
     r72Headline: 'Have you decided?',
-    r72Body: `We still don't have your answer for this game. ${when}.`,
+    r72Body: endSentence(multi ? `We still don't have your answer for your games on ${when}` : `We still don't have your answer for the game on ${when}`),
     r24Subject: `${firstName}, last reminder for ${dayLabel || 'your next game'}`,
     r24Headline: 'Last reminder',
-    r24Body: `The game is coming up and we still don't have your answer. ${when}.`,
+    r24Body: multi ? `Your games on ${when} are coming up and we still don't have your answer.` : `The game on ${when} is coming up and we still don't have your answer.`,
     btnIn: "I'm in", btnOut: "Can't make it",
     logisticsSubject: `${firstName}, details for ${dayLabel || 'your game'}`,
     logisticsHeadline: 'Game details',
-    logisticsBody: `You're confirmed. ${when}${team ? ` · Team ${team}` : ''}.`,
+    logisticsBody: endSentence(multi ? `You're confirmed for your games on ${when}` : `You're confirmed for the game on ${when}`),
     optOut: "I can't play anymore",
     poweredBy: 'Powered by Notre Ligue'
   };
@@ -21963,10 +21944,10 @@ function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, d
     const d = leagueReminderDict(l, { firstName, dayLabel: dayLabelFor(dayLabel, l), ev, games });
     return {
       subject: d[subjKey],
-      text: `${d[headKey]}\n${d[bodyKey]}\n${d.btnIn}: ${inLink}\n${d.btnOut}: ${outLink}`,
+      text: `${d[headKey]}\n${d[bodyKey]}${d.venue ? `\n${d.venue}` : ''}\n${d.btnIn}: ${inLink}\n${d.btnOut}: ${outLink}`,
       html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d[headKey]}</h1>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${d[bodyKey]}</p>
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${esc(d[bodyKey])}${d.venue ? `<br>${esc(d.venue)}` : ''}</p>
     ${nlEmailButton(inLink, d.btnIn, barColor)}
     <p style="margin:16px 0 0;text-align:center;font-size:15px;line-height:22px;"><a href="${outLink}" style="color:#16181d;font-weight:700;">${d.btnOut}</a></p>`,
       poweredBy: d.poweredBy
@@ -22001,11 +21982,11 @@ function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLab
     const nt = newTeamLine(l);
     return {
       subject: d.logisticsSubject,
-      text: `${nt ? `${nt}\n\n` : ''}${d.logisticsHeadline}\n${d.logisticsBody}${rl ? `\n${rl}` : ''}\n${d.optOut}: ${optOutLink}`,
+      text: `${nt ? `${nt}\n\n` : ''}${d.logisticsHeadline}\n${d.logisticsBody}${d.teamLine ? `\n${d.teamLine}` : ''}${d.venue ? `\n${d.venue}` : ''}${rl ? `\n${rl}` : ''}\n${d.optOut}: ${optOutLink}`,
       html: `${nt ? `
     <p style="margin:0 0 8px;font-size:16px;line-height:24px;font-weight:700;color:#16181d;">${esc(nt)}</p>` : ''}
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.logisticsHeadline}</h1>
-    <p style="margin:0 0 20px;font-size:16px;line-height:25px;">${d.logisticsBody}</p>${rl ? `
+    <p style="margin:0 0 20px;font-size:16px;line-height:25px;">${esc(d.logisticsBody)}${d.teamLine ? `<br>${esc(d.teamLine)}` : ''}${d.venue ? `<br>${esc(d.venue)}` : ''}</p>${rl ? `
     <p style="margin:0 0 20px;font-size:16px;line-height:25px;font-weight:700;">${rl}</p>` : ''}
     <p style="margin:0;font-size:13px;line-height:19px;color:#55585f;"><a href="${optOutLink}" style="color:#55585f;">${d.optOut}</a></p>`,
       poweredBy: d.poweredBy
@@ -22035,37 +22016,42 @@ function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLab
 // pre-formatted label per language, since that formatting itself needs
 // to know which language(s) to build.
 // team: the team the player was on FOR THIS GAME ('' when there is none:
-// a pickup game before its draw, a no-teams league). subsInvited: whether
-// subs were actually invited -- the alert used to say they were every time,
-// even in a league with no subs or a team that was not short.
-function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, team, dayLabelFr, dayLabelEn, ev, dashboardLink, languageMode = 'both', subsInvited = true }) {
+// a pickup game before its draw, a no-teams league).
+// subs: what happened to the sub call, so the sentence is true in each case
+// (lateReversalSubsState): 'invited', 'none_left' (no eligible sub left),
+// 'held' (before the league's sub-call window, subCallHours), 'not_needed'
+// (the team is not short), or null (no sub call applies: no sentence).
+// hoursLeft: the time left when the player dropped out (the alert is sent at
+// that moment, so hoursOut by default); the Comms preview passes a sample.
+function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, team, ev, dashboardLink, languageMode = 'both', subs = 'invited', subCallHours = 72, hoursLeft = null }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
-  const dFr = dayLabelFr || formatEventDate(ev.date, 'fr', 'short');
-  const dEn = dayLabelEn || formatEventDate(ev.date, 'en', 'short');
-  // The time actually left before the game when the player dropped out
-  // (the alert is sent at that moment): whole hours, or under an hour.
-  const h = Math.round(hoursOut(ev));
-  const left = h < 1
-    ? { fr: "moins d'une heure", en: 'less than an hour', frShort: "moins d'1 h", enShort: 'under 1 h' }
-    : { fr: pluralText('{n|# heure|# heures}', { n: h }, 'fr'), en: pluralText('{n|# hour|# hours}', { n: h }, 'en'), frShort: `${h} h`, enShort: `${h} h` };
-  const fr = {
-    subject: `${team ? `${team}: ` : ''}${playerName} vient de se désister · ${left.frShort} avant le match`,
-    text: `${playerName} ne joue plus\n\n${playerName}${team ? ` (${team})` : ''} vient de se désister, ${left.fr} avant le match (${dFr}).${subsInvited ? " L'invitation aux remplaçants a été lancée automatiquement." : ''}\n\nVoir le match : ${dashboardLink}`,
-    html: `
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Désistement tardif</td></tr></table>
-    <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(playerName)} ne joue plus</h1>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> avait confirmé sa présence${team ? ` avec <b>${esc(team)}</b>` : ''} et vient de changer sa réponse, ${esc(left.fr)} avant le match (${esc(dFr)}).${subsInvited ? " On a lancé l'invitation aux remplaçants automatiquement." : ''}</p>
-    ${nlEmailButton(dashboardLink, 'Voir le match', barColor)}`
+  const left = h => delayText(hoursLeft != null ? hoursLeft : hoursOut(ev), h);
+  const iso = eventIso(ev);
+  const when = l => (iso ? sentenceWhen(iso, ev.start_time, l) : formatEventDate(ev.date, l, 'long', false));
+  const SUBS = {
+    invited: { fr: 'Des remplaçants ont déjà été invités automatiquement.', en: 'Subs have already been invited automatically.' },
+    none_left: { fr: 'Il ne reste aucun remplaçant à appeler.', en: 'No sub is left to call.' },
+    held: { fr: `Les appels aux remplaçants sont en attente : ils partiront automatiquement ${subCallWindowText(subCallHours, 'fr')} avant le match.`, en: `Sub calls are on hold: they go out automatically ${subCallWindowText(subCallHours, 'en')} before the game.` },
+    not_needed: { fr: "Aucun remplaçant n'est nécessaire pour l'instant.", en: 'No sub is needed for now.' }
   };
-  const en = {
-    subject: `${team ? `${team}: ` : ''}${playerName} just dropped out, ${left.enShort} before the game`,
-    text: `${playerName} is no longer playing\n\n${playerName}${team ? ` (${team})` : ''} just dropped out, ${left.en} before the game (${dEn}).${subsInvited ? ' Subs invited automatically.' : ''}\n\nView the game: ${dashboardLink}`,
-    html: `
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}Late reversal</td></tr></table>
-    <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(playerName)} is no longer playing</h1>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;"><b>${esc(playerName)}</b> was confirmed${team ? ` for <b>${esc(team)}</b>` : ''} and just changed their answer, ${esc(left.en)} before the game (${esc(dEn)}).${subsInvited ? ' Subs have already been invited automatically.' : ''}</p>
-    ${nlEmailButton(dashboardLink, 'View the game', barColor)}`
+  const subsLine = l => (SUBS[subs] ? SUBS[subs][l] : '');
+  // The team and the venue, each on a line of its own under the sentence.
+  const lines = l => [team ? (l === 'fr' ? `Équipe : ${team}` : `Team: ${team}`) : '', venueLine(ev.venue, l)].filter(Boolean);
+  const T = {
+    fr: { tag: 'Désistement de dernière minute', head: `${playerName} ne peut plus venir`, say: `${playerName} avait confirmé sa présence pour ${when('fr')} et vient de changer sa réponse, ${left('fr')} avant le match.`, btn: 'Voir le match' },
+    en: { tag: 'Late drop-out', head: `${playerName} can't make it`, say: `${playerName} had confirmed for ${when('en')} and just changed their answer, ${left('en')} before the game.`, btn: 'View the game' }
   };
+  const part = l => ({
+    text: `${T[l].head}\n\n${[T[l].say, ...lines(l)].join('\n')}${subsLine(l) ? `\n\n${subsLine(l)}` : ''}\n\n${T[l].btn}${l === 'fr' ? ' :' : ':'} ${dashboardLink}`,
+    html: `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${LEAGUE_REMINDER_ICON_ALERT}${T[l].tag}</td></tr></table>
+    <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(T[l].head)}</h1>
+    <p style="margin:0 0 ${subsLine(l) ? 12 : 24}px;font-size:16px;line-height:25px;">${[esc(T[l].say), ...lines(l).map(esc)].join('<br>')}</p>${subsLine(l) ? `
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${esc(subsLine(l))}</p>` : ''}
+    ${nlEmailButton(dashboardLink, T[l].btn, barColor)}`
+  });
+  const fr = { subject: `${team ? `${team}: ` : ''}${playerName} vient de se désister · ${left('fr')} avant le match`, ...part('fr') };
+  const en = { subject: `${team ? `${team}: ` : ''}${playerName} just dropped out, ${left('en')} before the game`, ...part('en') };
   const assembled = assembleBilingualEmail(languageMode, { fr, en });
   const html = nlLegalEmailWrap({ languageMode: languageMode, brandName: leagueName, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' });
   return { subject: assembled.subject, text: assembled.text, html };
@@ -22078,18 +22064,30 @@ function renderLateReversalAdminAlert({ leagueName, leagueColor, playerName, tea
 // this too.
 // The late-reversal alert for one player and event, rendered and not sent
 // (the Comms preview shows it), and who it goes to.
-// opts.team / opts.subsInvited: see renderLateReversalAdminAlert (the
-// Comms preview passes neither: the roster team, subs invited).
+// opts.team / opts.subs / opts.subCallHours / opts.hoursLeft: see
+// renderLateReversalAdminAlert (the Comms preview passes the roster team,
+// subs invited, and a sample 12 hours left).
 function renderLateReversalForLeague(env, leagueRow, ev, contact, opts = {}) {
   const languageMode = leagueRow.language_mode || 'both';
-  const dayLabelFr = reminderDayLabel(ev.date, 'fr');
-  const dayLabelEn = reminderDayLabel(ev.date, 'en');
   const dashboardLink = leagueGamePageLink(env, ev);
   return renderLateReversalAdminAlert({
     leagueName: leagueRow.name, leagueColor: leagueRow.color,
-    playerName: contact.name, team: opts.team !== undefined ? (opts.team || '') : (contact.preferred_team || ''), dayLabelFr, dayLabelEn, ev, dashboardLink, languageMode,
-    subsInvited: opts.subsInvited !== undefined ? !!opts.subsInvited : true
+    playerName: contact.name, team: opts.team !== undefined ? (opts.team || '') : (contact.preferred_team || ''), ev, dashboardLink, languageMode,
+    subs: opts.subs !== undefined ? opts.subs : 'invited', subCallHours: opts.subCallHours, hoursLeft: opts.hoursLeft != null ? opts.hoursLeft : null
   });
+}
+
+// What the sub call did for the games a player just left, for the late
+// drop-out alert's sentence: invited beats none left beats held beats not
+// needed; null when no sub call applies (no team, a team not in the game).
+// There is no league setting that turns sub calls off: those are the cases.
+function lateReversalSubsState(shortages) {
+  const has = r => shortages.some(x => x && x.reason === r);
+  if (shortages.some(x => x && (x.invited > 0 || x.reason === 'recently-invited'))) return 'invited';
+  if (has('no-eligible-subs')) return 'none_left';
+  if (has('before-window')) return 'held';
+  if (has('not-short')) return 'not_needed';
+  return null;
 }
 // ---- a cancelled game (D4) ----
 // Players who said IN and players who have not answered are emailed that
@@ -22136,23 +22134,26 @@ function renderLeagueGameCancelledEmail(leagueRow, ev, contact) {
   const firstName = (contact.name || '').split(' ')[0] || contact.name || '';
   const whenFr = formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false);
   const whenEn = formatEventDateTime(ev.date, ev.start_time, 'en', 'long', false);
-  const venue = ev.venue ? String(ev.venue) : '';
-  const lineFr = `Le match du ${whenFr} est annulé${venue ? ` (lieu : ${venue})` : ''}. Pas besoin de te présenter.`;
-  const lineEn = `The game on ${whenEn} is cancelled${venue ? ` (venue: ${venue})` : ''}. No need to come.`;
-  const block = (badge, hello, title, line) => `
+  // In the sentence, « à » / "at"; the venue on a line of its own.
+  const iso = eventIso(ev);
+  const sayFr = iso ? sentenceWhen(iso, ev.start_time, 'fr') : whenFr;
+  const sayEn = iso ? sentenceWhen(iso, ev.start_time, 'en') : whenEn;
+  const linesFr = [`Le match de ${sayFr} est annulé.`, venueLine(ev.venue, 'fr'), 'Pas besoin de te présenter.'].filter(Boolean);
+  const linesEn = [`The game on ${sayEn} is cancelled.`, venueLine(ev.venue, 'en'), 'No need to come.'].filter(Boolean);
+  const block = (badge, hello, title, lines) => `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#c4153a;border-radius:3px;padding:4px 10px;font:700 13px/18px Archivo,Arial,Helvetica,sans-serif;color:#ffffff;">${badge}</td></tr></table>
     <h1 style="margin:14px 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(title)}</h1>
     <p style="margin:0 0 8px;font-size:16px;line-height:25px;">${esc(hello)}</p>
-    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${esc(line)}</p>`;
+    <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${lines.map(esc).join('<br>')}</p>`;
   const fr = {
     subject: `Match annulé · ${whenFr}`,
-    text: `Match annulé\n\nBonjour ${firstName},\n${lineFr}`,
-    html: block('Annulé', `Bonjour ${firstName},`, 'Match annulé', lineFr)
+    text: `Match annulé\n\nBonjour ${firstName},\n${linesFr.join('\n')}`,
+    html: block('Annulé', `Bonjour ${firstName},`, 'Match annulé', linesFr)
   };
   const en = {
     subject: `Game cancelled · ${whenEn}`,
-    text: `Game cancelled\n\nHi ${firstName},\n${lineEn}`,
-    html: block('Cancelled', `Hi ${firstName},`, 'Game cancelled', lineEn)
+    text: `Game cancelled\n\nHi ${firstName},\n${linesEn.join('\n')}`,
+    html: block('Cancelled', `Hi ${firstName},`, 'Game cancelled', linesEn)
   };
   const assembled = assembleBilingualEmail(leagueRow.language_mode || 'both', { fr, en });
   return { subject: assembled.subject, text: assembled.text, html: nlLegalEmailWrap({ languageMode: leagueRow.language_mode || 'both', brandName: leagueRow.name, barColor, bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) };
@@ -22840,7 +22841,8 @@ async function leagueRsvpGet(req, env, url) {
       btnIn: 'Je joue', btnOut: 'Je ne peux pas',
       lockedMsg: "Cet événement n'accepte plus de réponses.",
       doneInTitle: "C'est noté, tu joues.",
-      doneInBody: `On se voit ${dayLabel || ''}${ev.start_time ? ' à ' + formatEventTime(ev.start_time, 'fr') : ''}${ev.venue ? ` (lieu : ${ev.venue})` : ''}.`,
+      doneInBody: `On se voit ${dayLabel || ''}${ev.start_time ? ' à ' + formatEventTime(ev.start_time, 'fr') : ''}.`,
+      doneInVenue: venueLine(ev.venue, 'fr'),
       doneOutTitle: 'Merci de nous le dire.',
       doneOutBody: "On invite un remplaçant pour ta place. Rien d'autre à faire.",
       confirmTitle: 'Encore un clic pour confirmer',
@@ -22881,7 +22883,8 @@ async function leagueRsvpGet(req, env, url) {
       btnIn: "I'm in", btnOut: "Can't make it",
       lockedMsg: 'This event is no longer accepting responses.',
       doneInTitle: "Got it, you're in.",
-      doneInBody: `See you ${dayLabel || 'then'}${ev.start_time ? ' at ' + formatEventTime(ev.start_time, 'en') : ''}${ev.venue ? ` (venue: ${ev.venue})` : ''}.`,
+      doneInBody: `See you ${dayLabel || 'then'}${ev.start_time ? ' at ' + formatEventTime(ev.start_time, 'en') : ''}.`,
+      doneInVenue: venueLine(ev.venue, 'en'),
       doneOutTitle: 'Thanks for letting us know.',
       doneOutBody: "We'll invite a sub for your spot. Nothing else to do.",
       confirmTitle: 'One more tap to confirm',
@@ -22982,7 +22985,8 @@ async function leagueRsvpGet(req, env, url) {
       <div class="rv-mark">${status === 'in' ? '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 10.5l4 4 8-9"/></svg>' : '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 10h10"/></svg>'}</div>
       ${status === 'waitlist' ? `<h2 data-i18n="nightWaitTitle">${esc(t.nightWaitTitle)}</h2>
       <p data-i18n="nightWaitBody">${esc(t.nightWaitBody)}</p>` : `<h2 data-i18n="${status === 'in' ? 'doneInTitle' : 'doneOutTitle'}">${esc(status === 'in' ? t.doneInTitle : t.doneOutTitle)}</h2>
-      <p data-i18n="${status === 'in' ? (multi ? 'nightDoneInBody' : 'doneInBody') : 'doneOutBody'}">${esc(status === 'in' ? (multi ? t.nightDoneInBody : t.doneInBody) : t.doneOutBody)}</p>`}
+      <p data-i18n="${status === 'in' ? (multi ? 'nightDoneInBody' : 'doneInBody') : 'doneOutBody'}">${esc(status === 'in' ? (multi ? t.nightDoneInBody : t.doneInBody) : t.doneOutBody)}</p>${status === 'in' && !multi && t.doneInVenue ? `
+      <p data-i18n="doneInVenue">${esc(t.doneInVenue)}</p>` : ''}`}
     </section>
     ${status === 'in' || status === 'waitlist' ? (multi ? nightGamesHtml : teamMeterHtml) : ''}
     ${!locked ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="change" onclick="showAnswerForm()">${esc(t.change)}</button>` : ''}
@@ -23207,7 +23211,16 @@ async function leagueRsvpConfirmPost(req, env, url) {
     const before = await playerNight(env, ev, contact);
     // The 12h email's "can't make it" from a confirmed player: the late-
     // reversal alert to the admins, as before -- one for the night.
-    const isLateReversalOptOut = status === 'out' && before.status === 'in' && form.get('src') === 'logistics12h';
+    // Only inside the late window (the details email's own hours before the
+    // game): a link clicked after the game moved later, or from an email
+    // sent earlier than the window, is an ordinary "out".
+    let isLateReversalOptOut = status === 'out' && before.status === 'in' && form.get('src') === 'logistics12h';
+    if (isLateReversalOptOut) {
+      const advanced = (await usesAdvancedReminders(env, leagueId)) ? await getEmailSettings(env.DB, leagueId) : null;
+      const lateHours = advanced ? advancedStepHours(advanced, 'logistics_12h') : REMINDER_WINDOW_THRESHOLD_HOURS.logistics_12h;
+      const left = hoursOut(before.inGames[0] || ev);
+      isLateReversalOptOut = left > 0 && left <= lateHours;
+    }
     const night = await writeLeagueNightStatus(env, leagueId, ev, contact, status, 'self');
     const shortages = [];
     if (status === 'out') for (const w of night.written) {
@@ -23222,8 +23235,9 @@ async function leagueRsvpConfirmPost(req, env, url) {
       const first = before.inGames[0];
       const placed = await env.DB.prepare('SELECT team FROM rsvp WHERE event_id = ? AND player_id = ?').bind(first.id, playerId).first();
       const team = placed && placed.team && placed.team !== HEADCOUNT_TEAM_NAME ? placed.team : '';
-      const subsInvited = shortages.some(x => x && (x.invited > 0 || x.reason === 'recently-invited'));
-      await sendLateReversalAdminAlert(env, leagueId, first, contact, { team, subsInvited });
+      const subs = lateReversalSubsState(shortages);
+      const subCallHours = subs === 'held' ? await getSubCallHours(env.DB, leagueId) : undefined;
+      await sendLateReversalAdminAlert(env, leagueId, first, contact, { team, subs, subCallHours });
     }
   }
   const back = `/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${encodeURIComponent(token)}`;
@@ -23342,27 +23356,32 @@ async function renderAdminStatusEmail(env, leagueId, ev, contact, status) {
   }
   const leagueRow = isSmbhl ? null : await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
   const name = isSmbhl ? 'SMBHL' : ((leagueRow && leagueRow.name) || '');
+  // In the sentence: « au match de dimanche 15 nov. à 10 h 30 » / "for the
+  // game on Sunday, Nov 15 at 10:30 AM"; the venue on its own line; the
+  // button below (in SMBHL, one button after both languages).
+  const say = l => (iso ? sentenceWhen(iso, ev.start_time, l) : (l === 'fr' ? 'à venir' : 'coming up'));
   const T = {
     fr: present
-      ? { subject: `${name} : ta présence est confirmée, ${when('fr')}`, body: `L'organisateur a confirmé ta présence au match ${when('fr')}. Si ce n'est pas le cas, change ta réponse ici :`, btn: 'Changer ma réponse' }
-      : { subject: `${name} : ton absence est notée, ${when('fr')}`, body: `L'organisateur a noté ton absence au match ${when('fr')}. Si tu peux venir, change ta réponse ici :`, btn: 'Changer ma réponse' },
+      ? { subject: `${name} : ta présence est confirmée, ${when('fr')}`, lead: `L'organisateur a confirmé ta présence au match de ${say('fr')}.`, ask: "Si ce n'est pas le cas, change ta réponse avec le bouton ci-dessous.", btn: 'Changer ma réponse' }
+      : { subject: `${name} : ton absence est notée, ${when('fr')}`, lead: `L'organisateur a noté ton absence au match de ${say('fr')}.`, ask: 'Si tu peux venir, change ta réponse avec le bouton ci-dessous.', btn: 'Changer ma réponse' },
     en: present
-      ? { subject: `${name}: you're confirmed, ${when('en')}`, body: `The organizer confirmed you for the game ${when('en')}. If that's not right, change your answer here:`, btn: 'Change my answer' }
-      : { subject: `${name}: you're marked absent, ${when('en')}`, body: `The organizer marked you absent for the game ${when('en')}. If you can come, change your answer here:`, btn: 'Change my answer' }
+      ? { subject: `${name}: you're confirmed, ${when('en')}`, lead: `The organizer confirmed you for the game on ${say('en')}.`, ask: "If that's not right, change your answer with the button below.", btn: 'Change my answer' }
+      : { subject: `${name}: you're marked absent, ${when('en')}`, lead: `The organizer marked you absent for the game on ${say('en')}.`, ask: 'If you can come, change your answer with the button below.', btn: 'Change my answer' }
   };
+  const lines = l => [T[l].lead, venueLine(ev.venue, l), T[l].ask].filter(Boolean);
   if (isSmbhl) {
     const subject = `${T.fr.subject} / ${T.en.subject}`;
-    const text = `${T.fr.body} ${link}\n\n---\n\n${T.en.body} ${link}`;
-    const html = emailWrap(subject, `<p style="font-size:15px;color:#1e293b;line-height:1.5;margin:0 0 14px;">${esc(T.fr.body)}</p>
-     <div style="margin:0 0 16px;">${emailBtn(link, `${T.fr.btn} / ${T.en.btn}`, '#17457f', '#ffffff')}</div>
-     <p style="font-size:14px;color:#64748b;line-height:1.5;margin:0 0 14px;">${esc(T.en.body)}</p>`);
+    const text = `${lines('fr').join('\n')}\n\n---\n\n${lines('en').join('\n')}\n\n${T.fr.btn} / ${T.en.btn} : ${link}`;
+    const html = emailWrap(subject, `<p style="font-size:15px;color:#1e293b;line-height:1.5;margin:0 0 14px;">${lines('fr').map(esc).join('<br>')}</p>
+     <p style="font-size:14px;color:#64748b;line-height:1.5;margin:0 0 16px;">${lines('en').map(esc).join('<br>')}</p>
+     <div style="margin:0 0 16px;">${emailBtn(link, `${T.fr.btn} / ${T.en.btn}`, '#17457f', '#ffffff')}</div>`);
     return { mail: { subject, text, html }, identity: null };
   }
   const mode = (leagueRow && leagueRow.language_mode) || 'both';
   const part = l => ({
     subject: T[l].subject,
-    text: `${T[l].body} ${link}`,
-    html: `<p style="margin:0 0 20px;font-size:16px;line-height:25px;">${esc(T[l].body)}</p>\n    ${nlEmailButton(link, T[l].btn, leagueFillColor((leagueRow && leagueRow.color) || '#b3122e'))}`
+    text: `${lines(l).join('\n')}\n\n${T[l].btn}${l === 'fr' ? ' :' : ':'} ${link}`,
+    html: `<p style="margin:0 0 20px;font-size:16px;line-height:25px;">${lines(l).map(esc).join('<br>')}</p>\n    ${nlEmailButton(link, T[l].btn, leagueFillColor((leagueRow && leagueRow.color) || '#b3122e'))}`
   });
   const assembled = assembleBilingualEmail(mode, { fr: part('fr'), en: part('en') });
   const html = nlLegalEmailWrap({
@@ -23550,7 +23569,7 @@ async function handleLeagueInviteSubs(req, env, url) {
   const team = String(body.team || '').trim();
   const need = String(body.need || '').trim();
   if (!eventId || !['goalie', 'skater'].includes(need)) {
-    return Response.json({ ok: false, error: 'event_id and need (goalie|skater) are required.', errorKey: 'ADMIN_INVITE_SUBS_FIELDS_REQUIRED' }, { status: 400 });
+    return Response.json({ ok: false, error: 'event_id and need (goalie or player) are required.', errorKey: 'ADMIN_INVITE_SUBS_FIELDS_REQUIRED' }, { status: 400 });
   }
 
   const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?')
@@ -26323,7 +26342,7 @@ const I18N_POLLS = {
     presetLbl: "Preset template",
     optPresetPrompt: "Choose a template or create custom",
     optPresetNorris: "🏆 Norris Trophy Candidate (Defensemen only)",
-    optPresetMvp: "👑 Hart Trophy Candidate / MVP (All skaters)",
+    optPresetMvp: "👑 Hart Trophy Candidate / MVP (All players)",
     optPresetCustom: "❓ Custom Poll",
     titlePh: "Poll title",
     descPh: "Description or voting instructions...",
@@ -26334,7 +26353,7 @@ const I18N_POLLS = {
     targetLbl: "Eligible candidates",
     optTargetD: "Defensemen only (position = 'D')",
     optTargetF: "Forwards only (position = 'F')",
-    optTargetAll: "All skaters",
+    optTargetAll: "All players",
     seasonPh: "Season",
     allowSubsLbl: "Allow substitutes to vote",
     showOnRsvpLbl: "Display on personalized RSVP page (/rsvp)",
@@ -27924,12 +27943,14 @@ function renderCancellationEmail(ev) {
   const subj = `Match annulé : ${dFr} / Game Cancelled: ${dEn}`;
   const plain = `Bonjour / Hello,
 
-Veuillez noter que les matchs de la SMBHL prévus le ${dFr} (Semaine ${ev.week}, lieu : ${venue || 'Gymnase'}) sont ANNULÉS.
+Veuillez noter que les matchs de la SMBHL prévus le ${dFr} (Semaine ${ev.week}) sont ANNULÉS.
+Lieu : ${venue || 'Gymnase'}
 Toutes les présences et convocations pour cette date ont été fermées et annulées.
 
 ---
 
-Please note that SMBHL games scheduled for ${dEn} (Week ${ev.week}, venue: ${venue || 'Gymnasium'}) have been CANCELLED.
+Please note that SMBHL games scheduled for ${dEn} (Week ${ev.week}) have been CANCELLED.
+Venue: ${venue || 'Gymnasium'}
 All RSVPs and call-ups for this date have been cancelled.
 
 SMBHL · Ligue de Dek Hockey / Ball Hockey League
@@ -29052,7 +29073,7 @@ async function emailsPage(env = null, isAuthed = false) {
       descR49: "Urgent second reminder before calling sub pool",
       card4Title: "👥 4. Short Roster Alert",
       destShort48: "All players of the short team",
-      descShort48: "Team notice if short on skaters or goalie",
+      descShort48: "Team notice if short on players or goalie",
       card5Title: "🧤 5. Sub Pool Invites (Pool)",
       destPool: "Reserve subs by requested position",
       descPool: "Trigger invitations to the substitute pool",
@@ -32815,6 +32836,7 @@ export {
   renderLeagueReminderEmail,
   renderLeagueLogisticsEmail,
   renderLateReversalAdminAlert,
+  lateReversalSubsState,
   drain,
   afterQuiet,
   runSchedule,

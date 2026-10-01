@@ -78,8 +78,8 @@ describe('A changed matchup carries the answers', () => {
     const told = mail.sent.slice(seen).filter(m => /new schedule/.test(m.subject));
     expect(told.map(m => m.to).sort()).toEqual([P.Blue1.email, P.Blue2.email, P.Green1.email].sort()); // Green2 said no
     const blue1 = told.find(m => m.to === P.Blue1.email);
-    expect(blue1.text).toContain('Blue now plays: Sat Oct 10 · 11:30 AM · Rink 1.');
-    expect(blue1.text).toContain('Blue joue maintenant : sam 10 oct. · 11 h 30 · Rink 1.');
+    expect(blue1.text).toContain('Blue now plays on Saturday, Oct 10 at 11:30 AM.\nVenue: Rink 1');
+    expect(blue1.text).toContain('Blue joue maintenant le samedi 10 oct. à 11 h 30.\nLieu : Rink 1');
     expect(blue1.text).toContain("Your answer carries over: you're still playing. Nothing to do.");
     expect(told.find(m => m.to === P.Blue2.email).text).toContain('We still need your answer.');
     expect(told.find(m => m.to === P.Green1.email).text).toContain('10:30 AM');

@@ -20,9 +20,9 @@ describe('N1: a sentence that ends on a date', () => {
 describe('N3: the text part keeps its paragraphs', () => {
   it('the late drop-out alert: title, sentence, then the link on its own line', () => {
     const m = renderLateReversalAdminAlert({ leagueName: 'Ligue', leagueColor: '#2a5fa8', playerName: 'Léa', team: 'Otters', ev: { date: '2099-11-15', start_time: '19:00' }, dashboardLink: 'https://x.test/g', languageMode: 'fr' });
-    expect(m.text).toMatch(/^Léa ne joue plus\n\nLéa \(Otters\) vient de se désister, .+\n\nVoir le match : https:\/\/x\.test\/g$/);
+    expect(m.text).toMatch(/^Léa ne peut plus venir\n\nLéa avait confirmé sa présence pour dimanche 15 nov\. à 19 h et vient de changer sa réponse, .+ avant le match\.\nÉquipe : Otters\n\nDes remplaçants ont déjà été invités automatiquement\.\n\nVoir le match : https:\/\/x\.test\/g$/);
     const en = renderLateReversalAdminAlert({ leagueName: 'League', playerName: 'Lea', team: 'Otters', ev: { date: '2099-11-15', start_time: '19:00' }, dashboardLink: 'https://x.test/g', languageMode: 'en' });
-    expect(en.text).toMatch(/^Lea is no longer playing\n\nLea \(Otters\) just dropped out, .+\n\nView the game: https:\/\/x\.test\/g$/);
+    expect(en.text).toMatch(/^Lea can't make it\n\nLea had confirmed for Sunday, Nov 15 at 7 PM and just changed their answer, .+ before the game\.\nTeam: Otters\n\nSubs have already been invited automatically\.\n\nView the game: https:\/\/x\.test\/g$/);
   });
 });
 

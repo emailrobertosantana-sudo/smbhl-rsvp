@@ -20,7 +20,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { dualGoalieChecks, dualGoalieAction, acceptAvailability, callSubs, teamState, dualRoleLines } from '../src/index.js';
-import { formatEventDate } from '../src/date_format.js';
+import { formatEventDate, sentenceDate } from '../src/date_format.js';
 import { createSessionCookie } from '../src/auth.js';
 import { getSeasonConfigForEvent } from '../src/season_config.js';
 import { getLeagueSeasonConfig } from '../src/leagues.js';
@@ -125,7 +125,7 @@ for (const [name, P] of Object.entries(PRODUCTS)) {
       // The dual-role player's pending email is the latest one (skater again).
       const toDual = mails.filter(m => m.player_id === P.p('DR'));
       expect(toDual).toHaveLength(1);
-      expect(subjectOf(toDual[0])).toMatch(/comme joueur/);
+      expect(subjectOf(toDual[0])).toMatch(/tu reviens comme joueur/);
       const toGoalie = mails.filter(m => m.player_id === P.p('GR'));
       expect(toGoalie).toHaveLength(1);
       expect(subjectOf(toGoalie[0])).toMatch(/tu es dans les buts/);
@@ -292,25 +292,25 @@ describe('the dual-role copy names the day, never "tonight"', () => {
       for (const part of [p.subject, p.text, p.html]) expect(part).not.toMatch(NIGHT);
       expect(p.text.toLowerCase()).toContain(dayOf(ev, 'fr').toLowerCase());
       // SMBHL is bilingual; the Notre Ligue league here is French only.
-      if (m.league_id === 'smbhl') expect(p.text).toContain(formatEventDate(isoOf(ev), 'en', 'long'));
+      if (m.league_id === 'smbhl') expect(p.text).toContain(sentenceDate(isoOf(ev), 'en'));
       subjects[m.league_id].push(p.subject);
     }
     for (const league of ['smbhl', 'lg195']) {
       const all = subjects[league].join('\n');
       // to_goalie and goalie_back, to_skater, ask, the admin alert.
       expect(all).toMatch(/^\S+ \d+ \S+ : tu es dans les buts/m);
-      expect(all).toMatch(/^\S+ \d+ \S+ : tu joues comme joueur/m);
+      expect(all).toMatch(/^\S+ \d+ \S+ : tu reviens comme joueur/m);
       expect(all).toMatch(/cherche un gardien/);
       expect(all).toMatch(/Gardien manquant/);
     }
     expect(subjects.smbhl.join('\n')).toMatch(/[A-Z]\w+ [A-Z][a-z]+ \d+: you're in goal/);
-    expect(subjects.smbhl.join('\n')).toMatch(/[A-Z]\w+ [A-Z][a-z]+ \d+: you play as a skater/);
+    expect(subjects.smbhl.join('\n')).toMatch(/[A-Z]\w+ [A-Z][a-z]+ \d+: you're back as a player/);
   });
 
   it('the role line in the game-day and placement emails', async () => {
     const ev = { id: 'smbhl:2099-11-29', date: 'Sunday November 29 2099' };
     expect(dualRoleLines({ dualRole: 'goalie' }, ev)).toEqual({ fr: '🥅 Dimanche 29 nov. : tu es dans les buts.', en: "🥅 Sunday Nov 29: you're in goal." });
-    expect(dualRoleLines({ dualRole: 'skater' }, ev)).toEqual({ fr: '🏒 Dimanche 29 nov. : tu joues comme joueur.', en: '🏒 Sunday Nov 29: you play as a skater.' });
+    expect(dualRoleLines({ dualRole: 'skater' }, ev)).toEqual({ fr: '🏒 Dimanche 29 nov. : tu es joueur, pas gardien.', en: "🏒 Sunday Nov 29: you're a player, not the goalie." });
     expect(dualRoleLines({}, ev)).toBeNull();
   });
 

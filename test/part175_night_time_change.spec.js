@@ -66,7 +66,7 @@ describe('A game moved from 7pm to 9pm', () => {
     await pass(Date.now() + 15 * 60000);
     expect(changed(seen)).toEqual([P.Blue1.email, P.Blue2.email, P.Red2.email].sort());
     const blue1 = byTo(seen, P.Blue1);
-    expect(blue1.text).toContain('Blue now plays: ');
+    expect(blue1.text).toContain('Blue now plays on ');
     expect(blue1.text).toContain('9 PM');
     expect(blue1.text).not.toContain('8 PM');
     expect(blue1.text).toContain("Your answer carries over: you're still playing. Nothing to do.");
@@ -96,8 +96,8 @@ describe('A game moved from 7pm to 9pm', () => {
     await edit(X, { start_time: '21:00', end_time: '22:00' });
     await pass(Date.now() + 15 * 60000);
     expect(changed(seen)).toEqual([P.Pool1.email, P.Pool2.email].sort());
-    expect(byTo(seen, P.Pool1).text).toContain('Your game is now: ');
-    expect(byTo(seen, P.Pool1).text).toContain('Ton match est maintenant : ');
+    expect(byTo(seen, P.Pool1).text).toContain('Your game is now on ');
+    expect(byTo(seen, P.Pool1).text).toContain('Ton match est maintenant le ');
     expect(byTo(seen, P.Pool1).text).toContain('9 PM');
   });
 

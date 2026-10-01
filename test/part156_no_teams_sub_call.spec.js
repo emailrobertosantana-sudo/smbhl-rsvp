@@ -46,7 +46,7 @@ describe('The no-teams sub call', () => {
       expect(part).not.toMatch(/place (you on|dans) une? (team|équipe)/);
     }
     expect(m.text).toContain('P156 noteams cherche un joueur');
-    expect(m.text).toContain('P156 noteams needs a skater');
+    expect(m.text).toContain('P156 noteams needs a player');
   });
 
   it('a fixed-teams league\'s generic call keeps it', async () => {

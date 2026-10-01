@@ -153,7 +153,7 @@ export const ERROR_I18N = {
   IS_ACTIVE_REQUIRED: { fr: 'is_active doit être vrai ou faux.', en: 'is_active must be true or false.' },
   PLAYER_IDS_REQUIRED: { fr: 'player_ids doit être un tableau.', en: 'player_ids must be an array.' },
   NO_GOALIE_POSITION: { fr: "Cette ligue n'a pas de poste de gardien.", en: 'This league has no goalie position.' },
-  ADMIN_INVITE_SUBS_FIELDS_REQUIRED: { fr: 'Des champs requis sont manquants.', en: 'event_id, team, and need (goalie|skater) are required.' },
+  ADMIN_INVITE_SUBS_FIELDS_REQUIRED: { fr: 'Des champs requis sont manquants.', en: 'event_id, team, and need (goalie or player) are required.' },
   TEAM_UNKNOWN: { fr: 'Équipe inconnue pour cette ligue.', en: 'Unknown team for this league.' },
   SEASON_NAME_REQUIRED: { fr: 'Le nom de la saison est requis.', en: 'season_name is required.' },
   ROUTE_BLOCKED_PUBLISH: { fr: 'Cette route ne peut pas publier dans les données de cette ligue.', en: "This route cannot publish to this league's data." },

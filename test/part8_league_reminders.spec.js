@@ -392,6 +392,8 @@ describe('Part 2: per-league automated reminders', () => {
     expect(alertMail).toBeTruthy();
     expect(alertMail.to).toEqual(['reminders.optout@example.com']); // the league's own admin
     expect(alertMail.subject).toContain('Late Reversal Player');
+    // Batch 7 item 5g: the sub was invited, and the alert says so.
+    expect(alertMail.text).toContain('Des remplaçants ont déjà été invités automatiquement.');
   });
 
   it('an ordinary self-service OUT click (no src=logistics12h) never sends the late-reversal admin alert', async () => {
@@ -412,6 +414,31 @@ describe('Part 2: per-league automated reminders', () => {
     const { sentMails } = await withMailMock(() =>
       answerViaEmailLink((u, i) => SELF.fetch(u, i), `http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}&v=out`)
     );
+    expect(sentMails.some(m => m.subject.includes('désiste') || m.subject.includes('dropped'))).toBe(false);
+  });
+
+  // Batch 7 item 5g: the alert fires only inside its late window (the
+  // details email's 12 hours): the same link 40 hours out is an ordinary out.
+  it('the 12h link clicked outside the late window (40 hours out) sends no late-reversal alert', async () => {
+    const { cookie, csrfToken, leagueId } = await signupAndCreateLeague('reminders.earlyout@example.com', '203.0.113.963', 'Early Out League', ['A', 'B']);
+    const eventId = await createEventHoursFromNow(cookie, csrfToken, 40);
+    const playerId = await addPlayer(cookie, csrfToken, 'Early Out Player', 'A', 'earlyout@example.com');
+    const playerSalt = (await env.DB.prepare('SELECT token_salt FROM contacts WHERE player_id = ?').bind(playerId).first()).token_salt;
+    await SELF.fetch('http://example.com/league/rsvp/admin', {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+      body: JSON.stringify({ event_id: eventId, player_id: playerId, status: 'in' })
+    });
+
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey('raw', encoder.encode(RSVP_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(`lr:${leagueId}:${eventId}:${playerId}:${playerSalt}`));
+    const token = [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+
+    const { sentMails } = await withMailMock(() =>
+      answerViaEmailLink((u, i) => SELF.fetch(u, i), `http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}&v=out&src=logistics12h`)
+    );
+    const rsvpRow = await env.DB.prepare('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
+    expect(rsvpRow.status).toBe('out');
     expect(sentMails.some(m => m.subject.includes('désiste') || m.subject.includes('dropped'))).toBe(false);
   });
 

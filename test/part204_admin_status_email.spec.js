@@ -42,7 +42,8 @@ describe('present and absent, checked', () => {
     const p = JSON.parse(m[0].payload).prerendered;
     expect(p.to).toBe('lea.p204@example.com');
     expect(p.subject).toBe('Ligue Avis : ta présence est confirmée, dimanche 15 nov. · 19 h');
-    expect(p.text).toContain("L'organisateur a confirmé ta présence au match dimanche 15 nov. · 19 h. Si ce n'est pas le cas, change ta réponse ici : ");
+    expect(p.text).toContain("L'organisateur a confirmé ta présence au match de dimanche 15 nov. à 19 h.");
+    expect(p.text).toContain("Si ce n'est pas le cas, change ta réponse avec le bouton ci-dessous.\n\nChanger ma réponse : ");
     expect(p.text).toContain('/league/rsvp?league=');
     expect(p.text).toContain('&v=out');
     expect(p.text).not.toMatch(/organizer|confirmed you/);
@@ -54,7 +55,8 @@ describe('present and absent, checked', () => {
     const m = await statusMails(lea.player_id);
     const p = JSON.parse(m[m.length - 1].payload).prerendered;
     expect(p.subject).toBe('Ligue Avis : ton absence est notée, dimanche 15 nov. · 19 h');
-    expect(p.text).toContain("L'organisateur a noté ton absence au match dimanche 15 nov. · 19 h. Si tu peux venir, change ta réponse ici : ");
+    expect(p.text).toContain("L'organisateur a noté ton absence au match de dimanche 15 nov. à 19 h.");
+    expect(p.text).toContain('Si tu peux venir, change ta réponse avec le bouton ci-dessous.');
     expect(p.text).toContain('&v=in');
     const pending = await rows("SELECT id FROM outbox WHERE kind = 'admin_status' AND player_id = ? AND sent_at IS NULL AND cancelled = 0", lea.player_id);
     expect(pending).toHaveLength(1);
@@ -111,10 +113,12 @@ describe('the email, rendered', () => {
     const c = await one('SELECT * FROM contacts WHERE player_id = ?', lea.player_id);
     const p = (await renderAdminStatusEmail(env, league.id, { ...evRow, id: ev.id }, c, 'in')).mail;
     expect(p.subject).toBe("Ligue Avis: you're confirmed, Sunday Nov 15 · 7:30 PM");
-    expect(p.text).toContain("The organizer confirmed you for the game Sunday Nov 15 · 7:30 PM. If that's not right, change your answer here: ");
+    expect(p.text).toContain("The organizer confirmed you for the game on Sunday, Nov 15 at 7:30 PM.");
+    expect(p.text).toContain("If that's not right, change your answer with the button below.\n\nChange my answer: ");
     const out = (await renderAdminStatusEmail(env, league.id, { ...evRow, id: ev.id }, c, 'out')).mail;
     expect(out.subject).toBe("Ligue Avis: you're marked absent, Sunday Nov 15 · 7:30 PM");
-    expect(out.text).toContain('The organizer marked you absent for the game Sunday Nov 15 · 7:30 PM. If you can come, change your answer here: ');
+    expect(out.text).toContain('The organizer marked you absent for the game on Sunday, Nov 15 at 7:30 PM.');
+    expect(out.text).toContain('If you can come, change your answer with the button below.');
     expect(p.html).toContain('Change my answer');
     expect(p.html).toContain('href="https://notreligue.ca/confidentialite#en"');
     await env.DB.prepare("UPDATE leagues SET language_mode = 'fr' WHERE id = ?").bind(league.id).run();
@@ -125,8 +129,11 @@ describe('the email, rendered', () => {
     const p = (await renderAdminStatusEmail(env, 'smbhl', { id: 'smbhl:2099-11-15', date: 'Sunday November 15 2099', start_time: '10:30', season: 'Fall 2099' }, c, 'out')).mail;
     expect(p.subject).toBe("SMBHL : ton absence est notée, dimanche 15 nov. · 10 h 30 / SMBHL: you're marked absent, Sunday Nov 15 · 10:30 AM");
     const [fr, en] = p.text.split('\n\n---\n\n');
-    expect(fr).toContain("L'organisateur a noté ton absence au match dimanche 15 nov. · 10 h 30.");
-    expect(en).toContain('The organizer marked you absent for the game Sunday Nov 15 · 10:30 AM.');
+    expect(fr).toContain("L'organisateur a noté ton absence au match de dimanche 15 nov. à 10 h 30.");
+    expect(en).toContain('The organizer marked you absent for the game on Sunday, Nov 15 at 10:30 AM.');
+    // One button, after both languages.
+    expect(p.html.split('Changer ma réponse / Change my answer').length).toBe(2);
+    expect(p.html.indexOf('Changer ma réponse / Change my answer')).toBeGreaterThan(p.html.indexOf('If you can come, change your answer with the button below.'));
     expect(p.text).toContain('/rsvp?e=smbhl%3A2099-11-15&p=P2040&t=');
     expect(p.html).toContain('Changer ma réponse / Change my answer');
   });

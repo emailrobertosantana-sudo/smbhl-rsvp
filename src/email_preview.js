@@ -406,7 +406,7 @@ async function previewLeague(env, leagueId, kind, p) {
     if (kind === 'late_reversal') {
       const admins = await leagueAdminEmails(env, leagueId);
       notes.push(note(`Exemple : si ${c.name} se désistait à 12 h du match.`, `Example: if ${c.name} dropped out 12 hours before the game.`));
-      return { to: admins[0] ? admins[0].email : null, mail: renderLateReversalForLeague(env, leagueRow, ev, c), recipientCount: admins.length, source, notes };
+      return { to: admins[0] ? admins[0].email : null, mail: renderLateReversalForLeague(env, leagueRow, ev, c, { hoursLeft: 12 }), recipientCount: admins.length, source, notes };
     }
     if (kind === 'team_assigned') notes.push(note("Envoyé seulement si les équipes sont formées après l'envoi des détails 12 h.", 'Sent only when teams are drawn after the 12 h details went out.'));
     const mail = await renderLeagueReminderForContact(env, leagueRow, ev, c, kind, c.rsvp_team || null);

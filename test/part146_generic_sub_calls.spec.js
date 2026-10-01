@@ -67,17 +67,17 @@ async function deliverCall(pid) {
 describe('The invite', () => {
   it('a sub with no preference gets a generic call -- no team named', async () => {
     const m = await deliverCall('SNONE');
-    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a skater');
+    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a player');
     expect(m.text).toContain("L'équipe n'est pas encore décidée : si tu es disponible, on te place dans une équipe, et tu reçois ton équipe finale avant le match.");
     expect(m.text).not.toMatch(/Bleu|Blue/);
   });
   it('a sub whose preferred team is the one short gets that team\'s call', async () => {
     const m = await deliverCall('SBLUE');
-    expect(m.subject).toBe('Bleu cherche un joueur / Blue needs a skater');
+    expect(m.subject).toBe('Bleu cherche un joueur / Blue needs a player');
   });
   it('a sub whose preferred team is NOT short gets the generic call, not a false "Red is looking"', async () => {
     const m = await deliverCall('SRED');
-    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a skater');
+    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a player');
   });
 });
 
