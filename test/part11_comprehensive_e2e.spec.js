@@ -13,9 +13,10 @@
 //   byte-for-byte unaffected by every single step above.
 import { env, SELF } from 'cloudflare:test';
 import { formatEventDate } from '../src/date_format.js';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { dataJsonKeyFor } from '../src/league_ids.js';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow, clockIntoWindow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part11-comprehensive-e2e-secret';
@@ -79,7 +80,7 @@ describe('Part 11: the entire second-league journey, end to end', () => {
     env.RESEND_API_KEY = 're_test_key_part11';
     originalPublicUrl = env.PUBLIC_URL;
 
-    await applyRealSchema(env);
+    await applyRealSchema(env); await wideSubCallWindow(env);
 
     // SMBHL's real, existing data across every surface this journey touches.
     await env.SHEETS_KV.put('data_json', JSON.stringify(SMBHL_REAL_DATA_JSON));
@@ -225,6 +226,8 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       // full root-cause writeup), so this is deterministic at any hour.
       const skaterSubId = (await env.DB.prepare('SELECT player_id FROM contacts WHERE league_id = ? AND email = ?').bind(leagueId, 'skatersub@part11.com').first()).player_id;
       const rsvpToken = await computeRsvpToken(RSVP_SECRET, `lr:${leagueId}:${eventId}:${skaterId}:${skaterSalt}`);
+      // The game is beyond the sub-call window; the drop-out happens inside it.
+      await clockIntoWindow(vi, env, eventId);
       const { sentMails: rsvpMails, result: rsvpRes } = await withMailMock(async () =>
         SELF.fetch(`${BASE}/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(skaterId)}&t=${rsvpToken}`, {
           method: 'POST',
@@ -233,6 +236,7 @@ describe('Part 11: the entire second-league journey, end to end', () => {
         })
       );
       expect(rsvpRes.status).toBe(200);
+      vi.useRealTimers();
       expect((await rsvpRes.json()).status).toBe('out');
 
       const skaterInviteRow = await env.DB.prepare(
@@ -257,6 +261,7 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       expect(detailHtml).toContain('Canadiens Goalie One');
       expect(detailHtml).toContain('Pas répondu');
 
+      await clockIntoWindow(vi, env, eventId); // the admin correction is inside the window too
       const { sentMails: adminMails, result: adminSetRes } = await withMailMock(async () =>
         SELF.fetch(`${BASE}/league/rsvp/admin`, {
           method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
@@ -264,6 +269,7 @@ describe('Part 11: the entire second-league journey, end to end', () => {
         })
       );
       expect(adminSetRes.status).toBe(200);
+      vi.useRealTimers();
       const statusRow = await env.DB.prepare('SELECT status, status_by FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, goalieId).first();
       expect(statusRow.status).toBe('out');
       expect(statusRow.status_by).toBe('manager');

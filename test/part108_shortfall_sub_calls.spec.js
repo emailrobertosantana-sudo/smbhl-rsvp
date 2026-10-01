@@ -12,6 +12,7 @@ import { env, SELF } from 'cloudflare:test';
 import { answerViaEmailLink } from './support/email_link.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { runSchedule, runLeagueReminders } from '../src/index.js';
 import { hmac } from '../src/crypto_utils.js';
 import { withGameTimes } from './support/game_times.js';
@@ -47,7 +48,7 @@ beforeAll(async () => {
   env.RSVP_SECRET = RSVP_SECRET;
   env.RESEND_API_KEY = 'test-part108-resend';
   env.AUTH_SECRET = 'test-part108-auth';
-  await applyRealSchema(env);
+  await applyRealSchema(env); await wideSubCallWindow(env);
   await env.DB.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('email_cadence_settings', ?)`)
     .bind(JSON.stringify({ quiet_hours_enabled: false })).run();
 });

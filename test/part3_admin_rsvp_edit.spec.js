@@ -10,6 +10,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow, daysFromNow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part3-admin-rsvp-edit-secret';
@@ -54,7 +55,7 @@ describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     env.RSVP_SECRET = RSVP_SECRET;
-    await applyRealSchema(env);
+    await applyRealSchema(env); await wideSubCallWindow(env);
 
     const a = await signupAndCreateLeague('part3.rsvpedit@example.com', '203.0.113.421', 'Part 3 RSVP Edit League', ['Otters', 'Falcons']);
     leagueId = a.leagueId;
@@ -84,7 +85,7 @@ describe('Part 3: admin can view and correct a player\'s RSVP status', () => {
 
     const eventRes = await SELF.fetch('http://example.com/league/events', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify(withGameTimes({ date: '2026-12-20', season: 'Part 3 Season' }))
+      body: JSON.stringify(withGameTimes({ date: daysFromNow(3) /* inside the sub-call window */, season: 'Part 3 Season' }))
     });
     eventId = (await eventRes.json()).event.id;
   });

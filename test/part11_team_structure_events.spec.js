@@ -4,6 +4,7 @@ import { env, SELF } from 'cloudflare:test';
 import { getNonResponders, getConfirmedPlayers } from '../src/index.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow, daysFromNow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part11-team-structure-events-secret';
@@ -65,7 +66,7 @@ describe('Team structure, Part 3: events, shortage, per-event assignment', () =>
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     env.RSVP_SECRET = RSVP_SECRET;
-    await applyRealSchema(env);
+    await applyRealSchema(env); await wideSubCallWindow(env);
   });
 
   describe('FIXED MODE -- provably unaffected', () => {
@@ -119,7 +120,7 @@ describe('Team structure, Part 3: events, shortage, per-event assignment', () =>
     it("a headcount player's self-report OUT correctly triggers shortage/sub-invite detection (fixed: used to silently no-op, 'no-team-on-file')", async () => {
       const { cookie, csrfToken } = await signup('ts.events.headcount.shortage@example.com', '203.0.114.005');
       const league = await createLeague(cookie, csrfToken, { name: 'Events Headcount Shortage League', tracksStats: true, teamStructure: 'headcount', minPlayers: 1, maxPlayers: 2 });
-      const eventId = await createEvent(cookie, csrfToken, '2099-01-05');
+      const eventId = await createEvent(cookie, csrfToken, daysFromNow(3)); // inside the sub-call window
       const p1 = await addPlayer(cookie, csrfToken, 'HC Shortage Player');
       // A sub, eligible to be invited when the shortage triggers.
       await SELF.fetch('http://example.com/league/contacts', {
@@ -237,17 +238,21 @@ describe('Team structure, Part 3: events, shortage, per-event assignment', () =>
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
         body: JSON.stringify({ season_name: 'Events Weekly Shortage League Season', skaters_per_team: 1, goalies_per_team: 0, min_skaters: 1 })
       });
-      const eventId = await createEvent(cookie, csrfToken, '2099-01-15');
+      const eventId = await createEvent(cookie, csrfToken, daysFromNow(4)); // inside the sub-call window
       const p1 = await addPlayer(cookie, csrfToken, 'Weekly Shortage Player');
       await SELF.fetch('http://example.com/league/contacts', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-        body: JSON.stringify({ name: 'Weekly Shortage Sub', role: 'sub_skater', email: 'weeklyshortagesub@example.com' })
+        body: JSON.stringify({ name: 'Weekly Shortage Sub', role: 'sub_skater', email: 'weeklyshortagesub@example.com', emailChoice: 'send' }) // inside the window: the sub is to be emailed
       });
       await setStatus(cookie, csrfToken, eventId, p1, 'in');
       await SELF.fetch('http://example.com/league/events/assign-team', {
         method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
         body: JSON.stringify({ event_id: eventId, player_id: p1, team: 'Red' })
       });
+      // Inside the sub-call window, adding the sub already called it for the
+      // pool as a whole (no team): cleared, so what this checks is the call
+      // the drop-out makes for Red.
+      await env.DB.prepare("DELETE FROM outbox WHERE event_id = ? AND kind = 'sub_call'").bind(eventId).run();
       await setStatus(cookie, csrfToken, eventId, p1, 'out');
 
       const subCallRow = await env.DB.prepare(`SELECT * FROM outbox WHERE event_id = ? AND kind = 'sub_call'`).bind(eventId).first();

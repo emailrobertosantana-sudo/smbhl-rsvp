@@ -78,7 +78,7 @@ export const EVENT_KEYED_TABLES = [
 
 // settings rows whose KEY names this league or one of its events.
 function leagueSettingsKeys(leagueId, eventIds) {
-  return [`email_cadence_settings:${leagueId}`, `league_add_emails:${leagueId}`, ...eventIds.map(id => `league_message:${id}`)];
+  return [`email_cadence_settings:${leagueId}`, `league_add_emails:${leagueId}`, `league_sub_calls:${leagueId}`, ...eventIds.map(id => `league_message:${id}`)];
 }
 
 export async function checkHardDeleteEligibility(env, leagueId) {

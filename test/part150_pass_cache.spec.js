@@ -8,6 +8,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { runCronPass } from '../src/index.js';
 import { withPassCache, passCached } from '../src/pass_cache.js';
 import { hasCapability } from '../src/super_admin.js';
@@ -65,7 +66,7 @@ const n = (list, re) => list.filter(q => re.test(q)).length;
 
 beforeAll(async () => {
   env.AUTH_SECRET = 'p150-auth'; env.RSVP_SECRET = 'p150';
-  await applyRealSchema(env);
+  await applyRealSchema(env); await wideSubCallWindow(env);
 });
 
 describe('The pass cache', () => {

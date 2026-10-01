@@ -9,6 +9,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import * as R from '../src/reminders.js';
 
 const ADMIN_KEY = 'p115-admin';
@@ -56,7 +57,7 @@ beforeAll(async () => {
   env.RESEND_API_KEY = 'p115-resend';
   env.PUBLIC_URL = 'https://rsvp.notreligue.ca';
   env.MAIL_DAILY_CAP = '100';
-  await applyRealSchema(env);
+  await applyRealSchema(env); await wideSubCallWindow(env);
   await env.DB.prepare(`DELETE FROM contacts`).run();
   originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {

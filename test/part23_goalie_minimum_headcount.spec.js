@@ -12,6 +12,7 @@ import { env, SELF } from 'cloudflare:test';
 import { getLeagueSeasonConfig } from '../src/leagues.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow, daysFromNow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part23-goalie-minimum-secret';
@@ -68,7 +69,7 @@ async function setStatus(cookie, csrfToken, eventId, playerId, status) {
 describe('Live-testing Part 5: headcount goalie minimum, independent Goalie/Player axis', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
-    await applyRealSchema(env);
+    await applyRealSchema(env); await wideSubCallWindow(env);
   });
 
   describe('min_goalies omitted at creation: defaults to 1, not a silent 0 (4c)', () => {
@@ -230,7 +231,7 @@ describe('Live-testing Part 5: headcount goalie minimum, independent Goalie/Play
     it('a goalie going OUT and dropping below min_goalies triggers a real goalie-specific sub-invite', async () => {
       const { cookie, csrfToken } = await signup('goalie.shortage@example.com', '203.0.126.011');
       await createLeague(cookie, csrfToken, { name: 'Goalie Shortage League', tracksStats: true, teamStructure: 'headcount', minPlayers: 2, maxPlayers: 10, minGoalies: 1 });
-      const eventId = await createEvent(cookie, csrfToken, '2099-11-22');
+      const eventId = await createEvent(cookie, csrfToken, daysFromNow(3)); // inside the sub-call window
       const goalie = await addPlayer(cookie, csrfToken, 'Shortage Goalie', { is_goalie: true, email: 'shortagegoalie@example.com' });
       const player = await addPlayer(cookie, csrfToken, 'Shortage Filler Player', { email: 'shortagefiller@example.com' });
       // A sub goalie, eligible to be invited when the goalie-specific

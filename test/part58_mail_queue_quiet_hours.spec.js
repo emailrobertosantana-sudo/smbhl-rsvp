@@ -27,8 +27,9 @@
 // SMBHL's own existing call sites (all automatic/cron/holdcall-driven)
 // keeps its exact current quiet-hours behavior, unchanged.
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow, clockIntoWindow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part16-mail-queue-secret';
@@ -75,12 +76,14 @@ async function withMailMock(fn) {
   }
 }
 
+afterEach(() => { vi.useRealTimers(); });
+
 describe('Part 16 (live-testing task, batch 2): mail-queue quiet-hours fix', () => {
   beforeAll(async () => {
     env.AUTH_SECRET = AUTH_SECRET;
     env.RSVP_SECRET = RSVP_SECRET;
     env.RESEND_API_KEY = 'test-part16-resend-key';
-    await applyRealSchema(env);
+    await applyRealSchema(env); await wideSubCallWindow(env);
   });
 
   it('an immediate shortage-created sub-call is queued with send_after <= now, regardless of the current hour', async () => {
@@ -116,6 +119,9 @@ describe('Part 16 (live-testing task, batch 2): mail-queue quiet-hours fix', () 
        VALUES (?, ?, ?, 'Otters', 'in', 'roster', 'self', ?)`
     ).bind(eventId, league.id, playerId, new Date().toISOString()).run();
 
+    // The drop-out happens inside the sub-call window, at 23:30 (quiet hours):
+    // 91.5 hours before the 19:00 game.
+    await clockIntoWindow(vi, env, eventId, 91.5);
     const beforeEnqueue = new Date();
     const { sentMails } = await withMailMock(() =>
       SELF.fetch('http://example.com/league/rsvp/admin', {

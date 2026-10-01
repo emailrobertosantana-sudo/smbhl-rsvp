@@ -6,6 +6,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { runSchedule, drain } from '../src/index.js';
 import { withGameTimes } from './support/game_times.js';
 
@@ -38,7 +39,7 @@ beforeAll(async () => {
   env.ADMIN_KEY = ADMIN_KEY;
   env.RSVP_SECRET = 'test-part106-rsvp';
   env.RESEND_API_KEY = 'test-part106-resend';
-  await applyRealSchema(env);
+  await applyRealSchema(env); await wideSubCallWindow(env);
   await env.DB.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('email_cadence_settings', ?)`)
     .bind(JSON.stringify({ quiet_hours_enabled: false })).run();
   const { date, time } = eastern(30); // inside 36h (the follow-up job) and 48h (no waves)

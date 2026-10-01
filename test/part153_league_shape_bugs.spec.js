@@ -14,6 +14,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { H, DAY, local, mail, installMailCapture, removeMailCapture, linksIn, admin, must, pass, answer, rows, one } from './support/league_season.js';
 import { acceptAvailability, callSubsForShortfall, drain } from '../src/index.js';
 
@@ -25,7 +26,7 @@ beforeAll(async () => {
   env.MAIL_DAILY_CAP = '';
   env.PUBLIC_URL = 'https://rsvp.example.com';
   vi.useFakeTimers({ toFake: ['Date'] });
-  await applyRealSchema(env);
+  await applyRealSchema(env); await wideSubCallWindow(env);
   installMailCapture();
 });
 beforeEach(() => { vi.setSystemTime(new Date(START)); mail.sent.length = 0; });

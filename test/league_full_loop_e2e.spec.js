@@ -7,10 +7,11 @@
 //   sub-invite -> confirm SMBHL's data_json and events/contacts are
 //   byte-for-byte unaffected by all of the above.
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { drain } from '../src';
 import { dataJsonKeyFor } from '../src/league_ids.js';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow, clockIntoWindow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-full-loop-e2e-secret';
@@ -53,7 +54,7 @@ describe('Part Q: full second-league loop, end to end', () => {
     env.AUTH_SECRET = AUTH_SECRET;
     env.RSVP_SECRET = RSVP_SECRET;
 
-    await applyRealSchema(env);
+    await applyRealSchema(env); await wideSubCallWindow(env);
 
     // SMBHL's real, existing data across every surface this loop touches.
     await env.SHEETS_KV.put('data_json', JSON.stringify(SMBHL_REAL_DATA_JSON));
@@ -155,6 +156,8 @@ describe('Part Q: full second-league loop, end to end', () => {
       }
       return originalFetch(url, opts);
     };
+    // The game is beyond the sub-call window; the drop-out happens inside it.
+    await clockIntoWindow(vi, env, eventId);
     let rsvpRes;
     try {
       rsvpRes = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueId)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`, {
@@ -166,6 +169,7 @@ describe('Part Q: full second-league loop, end to end', () => {
       globalThis.fetch = originalFetch;
     }
     expect(rsvpRes.status).toBe(200);
+    vi.useRealTimers();
     expect((await rsvpRes.json()).status).toBe('out');
 
     // The automatic (Part R) sub-invite email already went out under THIS

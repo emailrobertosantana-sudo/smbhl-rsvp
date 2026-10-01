@@ -6,8 +6,9 @@
 // guard prevents re-spamming within its window; and full per-league
 // isolation, with SMBHL's data re-verified unaffected.
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+import { wideSubCallWindow, clockIntoWindow } from './support/wide_sub_call_window.js';
 import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-immediate-invite-secret';
@@ -70,6 +71,8 @@ async function withMailMock(fn) {
   }
 }
 
+afterEach(() => { vi.useRealTimers(); });
+
 describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
   let leagueA, leagueB, cookieA, cookieB, csrfTokenA, csrfTokenB;
   let smbhlContactsSnapshot, smbhlEventsSnapshot, smbhlRsvpSnapshot;
@@ -79,7 +82,7 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
     env.RSVP_SECRET = RSVP_SECRET;
     env.RESEND_API_KEY = 're_test_key_immediate_invite';
 
-    await applyRealSchema(env);
+    await applyRealSchema(env); await wideSubCallWindow(env);
 
     // SMBHL's real, existing data.
     await env.DB.prepare(`INSERT INTO contacts (player_id, name, email, role, token_salt) VALUES ('P0001', 'Real SMBHL Player', 'real@smbhl.com', 'roster', 'realsalt1')`).run();
@@ -148,6 +151,12 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
     const { playerId, salt, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'Shortage One', csrfTokenA);
     const token = await computeToken(RSVP_SECRET, `lr:${leagueA}:${eventId}:${playerId}:${salt}`);
 
+    // The game was created beyond the sub-call window; the drop-out is inside it.
+
+
+    await clockIntoWindow(vi, env, eventId);
+
+
     const { sentMails, result: res } = await withMailMock(() =>
       SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueA)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`, {
         method: 'POST',
@@ -187,6 +196,10 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
       .bind(eventId, secondId, new Date().toISOString(), leagueA).run();
 
     const token = await computeToken(RSVP_SECRET, `lr:${leagueA}:${eventId}:${playerId}:${salt}`);
+    // The game was created beyond the sub-call window; the drop-out is inside it.
+
+    await clockIntoWindow(vi, env, eventId);
+
     const { sentMails, result: res } = await withMailMock(() =>
       SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueA)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`, {
         method: 'POST',
@@ -223,6 +236,12 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
         body: JSON.stringify({ name: 'League A Sub Two', email: 'asub2@leaguea.com', role: 'sub_skater' })
       });
       const { playerId, eventId } = await setupPlayerAndEvent(cookieA, leagueA, 'Admin Marked', csrfTokenA);
+
+      // The game was created beyond the sub-call window; the drop-out is inside it.
+
+
+      await clockIntoWindow(vi, env, eventId);
+
 
       const { sentMails, result: res } = await withMailMock(() =>
         SELF.fetch('http://example.com/league/rsvp/admin', {
@@ -276,6 +295,10 @@ describe('Part R: immediate sub-invite on shortage-creating OUT', () => {
     // the SECOND out-mark adds zero additional sends, not an absolute
     // total of exactly one.
     let sentAfterFirstOut;
+    // The game was created beyond the sub-call window; the drop-out is inside it.
+
+    await clockIntoWindow(vi, env, eventId);
+
     const { sentMails } = await withMailMock(async (sentMailsSoFar) => {
       const out1 = await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(leagueA)}&e=${encodeURIComponent(eventId)}&p=${encodeURIComponent(playerId)}&t=${token}`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'out' })
