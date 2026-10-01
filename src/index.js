@@ -10731,6 +10731,7 @@ ${tabbar}`;
       backToSchedule: 'Horaire', short: 'Manque', complete: 'Complet', minReached: 'Minimum atteint',
       confirmed: 'confirmés', openSpots: 'places libres', noReply: 'sans réponse',
       inviteGoalie: 'Inviter un gardien', inviteSkater: 'Inviter des joueurs',
+      notifyPlayer: 'Aviser le joueur', notifiedMsg: '{n|# joueur avisé|# joueurs avisés}.',
       dualTitle: 'Gardiens possibles', dualDesc: `Ces joueurs jouent aux deux positions et jouent ${dualDay(ev, 'fr', false)} avec une autre équipe :`,
       dualAsk: 'Lui demander', dualSwitch: 'Mettre dans les buts', dualAsked: 'Demande envoyée.', dualSwitched: 'Fait : dans les buts pour cette équipe.',
       noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.',
@@ -10817,6 +10818,7 @@ ${tabbar}`;
       backToSchedule: 'Schedule', short: 'Short', complete: 'Full', minReached: 'Minimum reached',
       confirmed: 'confirmed', openSpots: 'open spots', noReply: 'no reply',
       inviteGoalie: 'Invite a goalie', inviteSkater: 'Invite players',
+      notifyPlayer: 'Notify the player', notifiedMsg: '{n|# player notified|# players notified}.',
       dualTitle: 'Possible goalies', dualDesc: `These players play both positions and are playing ${dualDay(ev, 'en', false)} with another team:`,
       dualAsk: 'Ask', dualSwitch: 'Put in goal', dualAsked: 'Request sent.', dualSwitched: 'Done: in goal for this team.',
       noPlayersOnTeam: 'No players assigned to this team.',
@@ -10887,6 +10889,12 @@ ${tabbar}`;
       ? `<span class="nl-badge nl-badge--out" data-no-show="${esc(p.player_id)}"><span data-i18n="noShowBadge">N'est pas venu</span></span><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="noShowUndo" onclick="setNoShow('${esc(p.player_id)}',false,this)">A joué</button>`
       : `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="noShowBtn" data-no-show-btn="${esc(p.player_id)}" onclick="setNoShow('${esc(p.player_id)}',true,this)">N'est pas venu</button>`;
   const gameOutBtn = p => multiNight ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="setGameOut" data-game-out="${esc(p.player_id)}" onclick="setPlayerStatus('${esc(p.player_id)}','out',this,'game')">Pas ce match</button>` : '';
+  // "Notify the player" for the IN / OUT below: checked by default, unless
+  // the game has started.
+  const notifyHtml = ev.state === 'open' ? `<div style="grid-column:1/-1;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <label style="display:flex;gap:8px;align-items:center;font-size:15px"><input type="checkbox" id="notify_player"${gameStarted ? '' : ' checked'} style="width:18px;height:18px"> <span data-i18n="notifyPlayer">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).notifyPlayer)}</span></label>
+    <span class="nl-help" id="notify_msg" role="status"></span>
+  </div>` : '';
   const nightScopeHelpHtml = multiNight ? `<p class="nl-help" data-i18n="nightScopeHelp" style="grid-column:1/-1">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).nightScopeHelp)}</p>` : '';
   const statusBadgeFor = p => (p.status === 'out' && p.status_by === 'night' ? STATUS_BADGE.elsewhere
     : p.status === 'out' && p.status_by === 'waitlist' ? STATUS_BADGE.waitlist
@@ -11279,7 +11287,7 @@ ${tabbar}`;
       <h2 data-i18n="noMatchupSetTitle">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetTitle)}</h2>
       <p class="nl-help" data-i18n="noMatchupSetDesc">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).noMatchupSetDesc)}</p>
     </section>`
-    : (ev.is_playoff && playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600;grid-column:1/-1"') : '') + nightScopeHelpHtml + (poolCardHtml || teamCards.join(''))}</div>
+    : (ev.is_playoff && playoffMeta ? playoffLabelSpanHtml('p', playoffMeta, lang, 'class="nl-help" style="font-weight:600;grid-column:1/-1"') : '') + notifyHtml + nightScopeHelpHtml + (poolCardHtml || teamCards.join(''))}</div>
   ${unassignedHtml}
   ${subsCardHtml}
   <!-- Item 5: before the game an admin works the RSVP list (players, then
@@ -11713,13 +11721,26 @@ async function setNoShow(playerId, noShow, btn) {
     btn.disabled = false;
   }
 }
+// "Notify the player": the count is shown after the page reloads.
+(function() {
+  try {
+    var n = sessionStorage.getItem('nl_notified');
+    if (n !== null) {
+      sessionStorage.removeItem('nl_notified');
+      var el = document.getElementById('notify_msg');
+      if (el) el.textContent = window.__pluralText(window.__pageDict().notifiedMsg, { n: Number(n) });
+    }
+  } catch (e) {}
+})();
 async function setPlayerStatus(playerId, status, btn, scope) {
   btn.disabled = true;
+  var cb = document.getElementById('notify_player');
+  var notify = !!(cb && cb.checked);
   try {
     var res = await fetch('/league/rsvp/admin', {
       method: 'POST', credentials: 'same-origin',
       headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, player_id: playerId, status: status, scope: scope || 'night' })
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, player_id: playerId, status: status, scope: scope || 'night', notify: notify })
     });
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || !data.ok) {
@@ -11727,6 +11748,7 @@ async function setPlayerStatus(playerId, status, btn, scope) {
       btn.disabled = false;
       return;
     }
+    if (notify) { try { sessionStorage.setItem('nl_notified', String(data.notified || 0)); } catch (e) {} }
     // Server-rendered counts/roster list are the source of truth --
     // reload so both the per-player status and the aggregate shortage
     // counts (which a status change can affect) stay in sync.
@@ -23286,6 +23308,75 @@ async function leagueRsvpGamePost(req, env, url) {
  * teammate-marks-teammate capability SMBHL's /team-rsvp has: there is no
  * player-facing path here at all, only this session-gated one.
  */
+// ---- the email when an admin sets a player present or absent ----
+// "Notify the player" (« Aviser le joueur »), checked by default unless the
+// game has started: one short email through the outbox (its quiet hours and
+// daily budget), the player's own answer link in it (the confirmation step
+// that keeps link scanners from answering). Built for both products;
+// SMBHL's admins change a status through the team page, which already
+// tells the player (kind 'notice'), so only the league game page asks.
+// Skipped, without error: no email address, off game emails, nothing
+// changed, or the action sent its own email.
+async function renderAdminStatusEmail(env, leagueId, ev, contact, status) {
+  const iso = (String(ev.date || '').match(/^\d{4}-\d{2}-\d{2}/) || String(ev.id || '').match(/\d{4}-\d{2}-\d{2}/) || [''])[0];
+  const when = l => (iso ? formatEventDateTime(iso, ev.start_time, l, 'long', false) : (l === 'fr' ? 'à venir' : 'coming up'));
+  const present = status === 'in';
+  const isSmbhl = leagueId === SMBHL_LEAGUE_ID;
+  let link;
+  if (isSmbhl) {
+    const t = await hmac(env.RSVP_SECRET, playerMsg(ev.id, contact.player_id, contact.token_salt));
+    link = `${env.PUBLIC_URL || 'https://rsvp.smbhl.com'}/rsvp?e=${encodeURIComponent(ev.id)}&p=${contact.player_id}&t=${t}`;
+  } else {
+    // A confirmation offers "can't make it"; an absence offers "I'm in":
+    // both through the answer page's own confirmation step.
+    const links = await leagueOptInOutLinks(env, leagueId, ev, contact);
+    link = present ? links.outLink : links.inLink;
+  }
+  const leagueRow = isSmbhl ? null : await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
+  const name = isSmbhl ? 'SMBHL' : ((leagueRow && leagueRow.name) || '');
+  const T = {
+    fr: present
+      ? { subject: `${name} : ta présence est confirmée, ${when('fr')}`, body: `L'organisateur a confirmé ta présence au match ${when('fr')}. Si ce n'est pas le cas, change ta réponse ici :`, btn: 'Changer ma réponse' }
+      : { subject: `${name} : ton absence est notée, ${when('fr')}`, body: `L'organisateur a noté ton absence au match ${when('fr')}. Si tu peux venir, change ta réponse ici :`, btn: 'Changer ma réponse' },
+    en: present
+      ? { subject: `${name}: you're confirmed, ${when('en')}`, body: `The organizer confirmed you for the game ${when('en')}. If that's not right, change your answer here:`, btn: 'Change my answer' }
+      : { subject: `${name}: you're marked absent, ${when('en')}`, body: `The organizer marked you absent for the game ${when('en')}. If you can come, change your answer here:`, btn: 'Change my answer' }
+  };
+  if (isSmbhl) {
+    const subject = `${T.fr.subject} / ${T.en.subject}`;
+    const text = `${T.fr.body} ${link}\n\n---\n\n${T.en.body} ${link}`;
+    const html = emailWrap(subject, `<p style="font-size:15px;color:#1e293b;line-height:1.5;margin:0 0 14px;">${esc(T.fr.body)}</p>
+     <div style="margin:0 0 16px;">${emailBtn(link, `${T.fr.btn} / ${T.en.btn}`, '#17457f', '#ffffff')}</div>
+     <p style="font-size:14px;color:#64748b;line-height:1.5;margin:0 0 14px;">${esc(T.en.body)}</p>`);
+    return { mail: { subject, text, html }, identity: null };
+  }
+  const mode = (leagueRow && leagueRow.language_mode) || 'both';
+  const part = l => ({
+    subject: T[l].subject,
+    text: `${T[l].body} ${link}`,
+    html: `<p style="margin:0 0 20px;font-size:16px;line-height:25px;">${esc(T[l].body)}</p>\n    ${nlEmailButton(link, T[l].btn, leagueFillColor((leagueRow && leagueRow.color) || '#b3122e'))}`
+  });
+  const assembled = assembleBilingualEmail(mode, { fr: part('fr'), en: part('en') });
+  const html = nlLegalEmailWrap({
+    languageMode: mode, brandName: name, barColor: leagueFillColor((leagueRow && leagueRow.color) || '#b3122e'), bodyHtml: assembled.html,
+    footerHtml: nlSentByFooter(mode, { forName: esc(name), fr: 'Propulsé par Notre Ligue', en: 'Powered by Notre Ligue' })
+  });
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  return { mail: { subject: assembled.subject, text: assembled.text, html }, identity: cfg.league };
+}
+
+// Queues the email; 1 when queued, 0 when skipped. A newer change for the
+// same player and game replaces one still waiting (the dedup key).
+async function notifyAdminStatusChange(env, leagueId, ev, contact, status) {
+  if (!contact || !contact.email || contact.opted_out) return 0;
+  const { mail, identity } = await renderAdminStatusEmail(env, leagueId, ev, contact, status);
+  await enqueuePrerenderedMail(env, {
+    kind: 'admin_status', leagueId, eventId: ev.id, playerId: contact.player_id,
+    dedupKey: `admin_status:${ev.id}:${contact.player_id}`, to: contact.email, mail, identity, quietHours: true
+  });
+  return 1;
+}
+
 async function handleLeagueAdminSetRsvp(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
@@ -23318,6 +23409,7 @@ async function handleLeagueAdminSetRsvp(req, env, url) {
     .bind(playerId, leagueId).first();
   if (!contact) return Response.json({ ok: false, error: 'Player not found.', errorKey: 'PLAYER_NOT_FOUND' }, { status: 404 });
 
+  const before = await env.DB.prepare('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
   // Nights (D1): the admin's IN or OUT is for the player's night, as the
   // player's own answer is -- IN puts them in this game (and, for the
   // night's other games, where the balance places them); OUT takes them
@@ -23354,7 +23446,14 @@ async function handleLeagueAdminSetRsvp(req, env, url) {
     }
   }
 
-  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, status, scope });
+  // "Notify the player": only when this game's answer really became the
+  // one asked for (an IN can end on the waitlist instead).
+  let notified = 0;
+  if (body.notify === true) {
+    const after = await env.DB.prepare('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
+    if (after && after.status === status && (!before || before.status !== status)) notified = await notifyAdminStatusChange(env, leagueId, ev, contact, status);
+  }
+  return Response.json({ ok: true, league_id: leagueId, event_id: eventId, player_id: playerId, status, scope, notified });
 }
 
 /* ---------- league-scoped shortage status (Part O) ----------
@@ -32689,7 +32788,7 @@ export {
   // Item 6: dual-role players.
   dualGoalieChecks, syncDualRoles, dualGoalieAlert, dualGoalieAction, dualGoalieOptions, callSubs,
   cancelPendingMailForContact, dualRoleLines, renderPollEmail, deadMan,
-  paymentBalances, renderPaymentReminder, sendPaymentReminders, paymentReminderPreview,
+  paymentBalances, renderPaymentReminder, sendPaymentReminders, paymentReminderPreview, renderAdminStatusEmail,
   // The hard daily cap (part163) on a direct send.
   sendMail,
   // Nights (part165): the waitlist skips a sub in an overlapping game.
