@@ -59,7 +59,7 @@ let ip = 0;
 export async function admin(tag) {
   const res = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `198.51.100.${(++ip % 250) + 1}` },
-    body: JSON.stringify({ email: `admin.${tag}@example.com`, password: 'a-strong-password-1' })
+    body: JSON.stringify({ accept_terms: true, email: `admin.${tag}@example.com`, password: 'a-strong-password-1' })
   });
   const s = {};
   const take = r => { const cookies = r.headers.getSetCookie(); s.cookie = cookies.map(c => c.split(';')[0]).join('; '); s.csrf = (cookies.find(c => c.startsWith('csrf_token=')) || '').split(';')[0].split('=')[1]; };

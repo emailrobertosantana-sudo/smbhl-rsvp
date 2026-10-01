@@ -39,11 +39,11 @@ describe('Part 1: server error responses carry a translation key, resolved clien
   it('signup: a duplicate-email failure returns both the unchanged English error text AND a matching errorKey', async () => {
     await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.641' },
-      body: JSON.stringify({ email: 'part1.dupe@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part1.dupe@example.com', password: 'a-strong-password-1' })
     });
     const res = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.642' },
-      body: JSON.stringify({ email: 'part1.dupe@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part1.dupe@example.com', password: 'a-strong-password-1' })
     });
     expect(res.status).toBe(409);
     const json = await res.json();
@@ -70,7 +70,7 @@ describe('Part 1: server error responses carry a translation key, resolved clien
   it('dashboard: a deactivate-confirmation mismatch carries errorKey, and the dashboard ships the matching translation', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.643' },
-      body: JSON.stringify({ email: 'part1.dash@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part1.dash@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);

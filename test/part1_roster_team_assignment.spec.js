@@ -36,7 +36,7 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-    body: JSON.stringify({ email, password: 'a-strong-password-1' })
+    body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' })
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);

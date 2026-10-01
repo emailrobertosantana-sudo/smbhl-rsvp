@@ -102,7 +102,7 @@ describe('Part 2: real FR/EN toggle on every public-facing page', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.611' },
-      body: JSON.stringify({ email: 'part2.rsvp@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part2.rsvp@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);
@@ -137,7 +137,7 @@ describe('Part 2: real FR/EN toggle on every public-facing page', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.612' },
-      body: JSON.stringify({ email: 'part2.public@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part2.public@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);

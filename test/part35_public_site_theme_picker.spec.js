@@ -35,7 +35,7 @@ function extractCsrfToken(res) {
 async function signup(email, ip) {
   const res = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-    body: JSON.stringify({ email, password: 'a-strong-password-1' })
+    body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' })
   });
   return { cookie: extractCookie(res), csrfToken: extractCsrfToken(res) };
 }

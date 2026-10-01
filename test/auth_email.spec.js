@@ -24,7 +24,7 @@ describe('Part E: verification email sending', () => {
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.90' },
-      body: JSON.stringify({ email: 'verify.me@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'verify.me@example.com', password: 'a-strong-password-1' })
     });
 
     const res = await handleSignup(req, env, fn);
@@ -44,7 +44,7 @@ describe('Part E: verification email sending', () => {
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.91' },
-      body: JSON.stringify({ email: 'only.this.address@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'only.this.address@example.com', password: 'a-strong-password-1' })
     });
 
     await handleSignup(req, env, fn);
@@ -56,7 +56,7 @@ describe('Part E: verification email sending', () => {
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.92' },
-      body: JSON.stringify({ email: 'send.fails@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'send.fails@example.com', password: 'a-strong-password-1' })
     });
 
     const res = await handleSignup(req, env, throwingSendMail);
@@ -70,7 +70,7 @@ describe('Part E: verification email sending', () => {
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.93' },
-      body: JSON.stringify({ email: 'no.sendmail.arg@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'no.sendmail.arg@example.com', password: 'a-strong-password-1' })
     });
 
     const res = await handleSignup(req, env, null);
@@ -83,7 +83,7 @@ describe('Part E: verification email sending', () => {
       const req = new Request('http://example.com/auth/signup', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-        body: JSON.stringify({ email, password: 'a-strong-password-1' })
+        body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' })
       });
       const res = await handleSignup(req, env, null); // no send on signup itself, for a clean slate
       const json = await res.json();

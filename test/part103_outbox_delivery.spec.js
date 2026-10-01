@@ -387,7 +387,7 @@ describe('Part 4: the league product had the same two problems', () => {
     return { date: `${g('year')}-${g('month')}-${g('day')}`, time: `${g('hour') === '24' ? '00' : g('hour')}:${g('minute')}` };
   }
   async function leagueWithPlayers(tag, n) {
-    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.230.${tag}` }, body: JSON.stringify({ email: `p103.league${tag}@example.com`, password: 'a-strong-password-1' }) });
+    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.230.${tag}` }, body: JSON.stringify({ accept_terms: true, email: `p103.league${tag}@example.com`, password: 'a-strong-password-1' }) });
     const cookie = extractCookie(s), csrf = extractCsrf(s);
     const post = (p, b) => SELF.fetch('http://example.com' + p, { method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf }, body: JSON.stringify(b) });
     const leagueId = (await (await post('/leagues/create', { name: `P103 League ${tag}`, teamNames: ['A', 'B'], tracksStats: true })).json()).league.id;

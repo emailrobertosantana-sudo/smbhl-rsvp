@@ -188,7 +188,7 @@ describe('B8: the season recap\'s French text uses the French team name', () => 
 
 describe('B9: account emails follow one rule', () => {
   const signup = async (email, ip, lang) => {
-    const r = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip }, body: JSON.stringify({ email, password: 'a-strong-password-1', lang }) });
+    const r = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip }, body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1', lang }) });
     return r.json();
   };
   let sent;

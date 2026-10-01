@@ -45,7 +45,7 @@ function extractCsrfToken(res) {
 async function signup(email, ip, lang) {
   const res = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-    body: JSON.stringify({ email, password: 'a-strong-password-1', lang })
+    body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1', lang })
   });
   const json = await res.json();
   return { cookie: extractCookie(res), csrfToken: extractCsrfToken(res), userId: json.userId };
@@ -234,7 +234,7 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
       const { sentMails } = await withMailMock(() =>
         SELF.fetch('http://example.com/auth/signup', {
           method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ email: 'langmode.verify.en@example.com', password: 'a-strong-password-1', lang: 'en' })
+          body: JSON.stringify({ accept_terms: true, email: 'langmode.verify.en@example.com', password: 'a-strong-password-1', lang: 'en' })
         })
       );
       expect(sentMails.length).toBe(1);

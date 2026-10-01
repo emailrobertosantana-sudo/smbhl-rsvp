@@ -31,7 +31,7 @@ function extractCsrfToken(res) {
 async function signup(email, ip) {
   const res = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-    body: JSON.stringify({ email, password: 'a-strong-password-1' })
+    body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' })
   });
   return { cookie: extractCookie(res), csrfToken: extractCsrfToken(res) };
 }
@@ -517,7 +517,7 @@ describe('B1: settings roster-size wording matches onboarding, in both cards, fo
   it('B1 sweep, third location: signup step 3 no longer carries a player-count question at all', async () => {
     const res = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.134.202' },
-      body: JSON.stringify({ email: 'b1.signupstep3@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'b1.signupstep3@example.com', password: 'a-strong-password-1' })
     });
     const cookie = (res.headers.get('set-cookie') || '').split(';')[0];
     const html = await (await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie } })).text();

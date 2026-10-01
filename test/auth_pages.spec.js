@@ -21,7 +21,7 @@ async function signup(email, password, ip) {
   return SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ accept_terms: true, email, password })
   });
 }
 

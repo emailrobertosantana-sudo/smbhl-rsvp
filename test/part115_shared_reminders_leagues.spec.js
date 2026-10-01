@@ -24,7 +24,7 @@ function csrfOf(res) {
   return c ? c.split(';')[0].split('=')[1] : '';
 }
 async function newLeague(email, ip, name) {
-  const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip }, body: JSON.stringify({ email, password: 'a-strong-password-1' }) });
+  const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip }, body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' }) });
   const cookie = cookieOf(s), csrf = csrfOf(s);
   const post = (path, body) => SELF.fetch('http://example.com' + path, { method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf }, body: JSON.stringify(body) });
   const leagueId = (await (await post('/leagues/create', { name, teamNames: ['Otters', 'Bears'], tracksStats: true })).json()).league.id;

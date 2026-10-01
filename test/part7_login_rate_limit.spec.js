@@ -17,7 +17,7 @@ describe('Part 7: login rate limiting', () => {
     await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.461' },
-      body: JSON.stringify({ email: 'part7.ratelimit@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part7.ratelimit@example.com', password: 'a-strong-password-1' })
     });
   });
 
@@ -80,7 +80,7 @@ describe('Part 7: login rate limiting', () => {
     // ...but a signup from the SAME IP is completely unaffected.
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-      body: JSON.stringify({ email: 'part7.separate.counter@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part7.separate.counter@example.com', password: 'a-strong-password-1' })
     });
     expect(signupRes.status).toBe(200);
   }, 15000);

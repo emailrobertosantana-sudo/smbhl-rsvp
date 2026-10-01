@@ -30,7 +30,7 @@ describe('Part 3: copy-link button on the dashboard', () => {
   it('the dashboard has a real copy-link button wired to the actual public URL', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.671' },
-      body: JSON.stringify({ email: 'part3.copylink@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part3.copylink@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);

@@ -119,7 +119,7 @@ describe('Part 11: the entire second-league journey, end to end', () => {
         SELF.fetch(`${BASE}/auth/signup`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.511' },
-          body: JSON.stringify({ email: 'part11.admin@example.com', password: 'a-strong-password-1' })
+          body: JSON.stringify({ accept_terms: true, email: 'part11.admin@example.com', password: 'a-strong-password-1' })
         })
       );
       expect(signupRes.status).toBe(200);
@@ -317,7 +317,7 @@ describe('Part 11: the entire second-league journey, end to end', () => {
       const acceptRes = await SELF.fetch(`${BASE}/league/admins/accept`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ token: inviteToken, password: 'second-admin-password' })
+        body: JSON.stringify({ accept_terms: true, token: inviteToken, password: 'second-admin-password' })
       });
       expect(acceptRes.status).toBe(200);
       const acceptJson = await acceptRes.json();

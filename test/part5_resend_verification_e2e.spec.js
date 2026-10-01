@@ -53,7 +53,7 @@ describe('Part 5: resend-verification-email flow, real end to end', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.441' },
-      body: JSON.stringify({ email: 'part5.unverified@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part5.unverified@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);
@@ -72,7 +72,7 @@ describe('Part 5: resend-verification-email flow, real end to end', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.442' },
-      body: JSON.stringify({ email: 'part5.fullflow@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part5.fullflow@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);
@@ -110,7 +110,7 @@ describe('Part 5: resend-verification-email flow, real end to end', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.443' },
-      body: JSON.stringify({ email: 'part5.alreadyverified@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part5.alreadyverified@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);

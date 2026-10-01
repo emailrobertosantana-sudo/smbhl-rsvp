@@ -29,7 +29,7 @@ describe('Part 3: event status page (design system)', () => {
   it('the SpotMeter segment count and the short Badge both reflect real confirmed/target numbers, not decoration', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.821' },
-      body: JSON.stringify({ email: 'ds.eventstatus@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'ds.eventstatus@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);

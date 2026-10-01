@@ -18,7 +18,7 @@ const FR = /Réinitialise ton mot de passe|Confirme ton courriel|On t'invite/;
 const EN = /Reset your password|Confirm your email|You've been invited/;
 
 async function signup(email, lang) {
-  const res = await post('/auth/signup', { email, password: 'a-strong-password-1', ...(lang ? { lang } : {}) });
+  const res = await post('/auth/signup', { accept_terms: true, email, password: 'a-strong-password-1', ...(lang ? { lang } : {}) });
   const cookies = res.headers.getSetCookie();
   return { cookie: cookies.map(c => c.split(';')[0]).join('; '), csrf: (cookies.find(c => c.startsWith('csrf_token=')) || '').split(';')[0].split('=')[1] };
 }

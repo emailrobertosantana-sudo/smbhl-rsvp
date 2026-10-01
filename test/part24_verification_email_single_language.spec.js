@@ -24,7 +24,7 @@ describe('Part 1 (live-testing task): verification email sends in one language o
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.100' },
-      body: JSON.stringify({ email: 'fr.signup@example.com', password: 'a-strong-password-1', lang: 'fr' })
+      body: JSON.stringify({ accept_terms: true, email: 'fr.signup@example.com', password: 'a-strong-password-1', lang: 'fr' })
     });
     const res = await handleSignup(req, env, fn);
     expect(res.status).toBe(200);
@@ -42,7 +42,7 @@ describe('Part 1 (live-testing task): verification email sends in one language o
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.101' },
-      body: JSON.stringify({ email: 'en.signup@example.com', password: 'a-strong-password-1', lang: 'en' })
+      body: JSON.stringify({ accept_terms: true, email: 'en.signup@example.com', password: 'a-strong-password-1', lang: 'en' })
     });
     const res = await handleSignup(req, env, fn);
     expect(res.status).toBe(200);
@@ -59,7 +59,7 @@ describe('Part 1 (live-testing task): verification email sends in one language o
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.102' },
-      body: JSON.stringify({ email: 'no.lang.signup@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'no.lang.signup@example.com', password: 'a-strong-password-1' })
     });
     const res = await handleSignup(req, env, fn);
     expect(res.status).toBe(200);
@@ -71,7 +71,7 @@ describe('Part 1 (live-testing task): verification email sends in one language o
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.103' },
-      body: JSON.stringify({ email: 'bad.lang.signup@example.com', password: 'a-strong-password-1', lang: 'xx' })
+      body: JSON.stringify({ accept_terms: true, email: 'bad.lang.signup@example.com', password: 'a-strong-password-1', lang: 'xx' })
     });
     const res = await handleSignup(req, env, fn);
     expect(res.status).toBe(200);
@@ -83,7 +83,7 @@ describe('Part 1 (live-testing task): verification email sends in one language o
     const req = new Request('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.104' },
-      body: JSON.stringify({ email: 'resend.lang@example.com', password: 'a-strong-password-1', lang: 'en' })
+      body: JSON.stringify({ accept_terms: true, email: 'resend.lang@example.com', password: 'a-strong-password-1', lang: 'en' })
     });
     const signupRes = await handleSignup(req, env, signupFn);
     const cookieHeader = (signupRes.headers.get('set-cookie') || '').split(';')[0];

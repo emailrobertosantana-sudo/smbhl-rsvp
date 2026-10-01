@@ -124,7 +124,7 @@ describe('Sub call link (/avail ?a=yes|no)', () => {
 describe('League RSVP link (/league/rsvp ?v=in|out, and the 12h "can\'t make it")', () => {
   let ip = 0;
   async function signup(email) {
-    const res = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.149.${++ip}` }, body: JSON.stringify({ email, password: 'a-strong-password-1' }) });
+    const res = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.149.${++ip}` }, body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' }) });
     const cookies = res.headers.getSetCookie();
     return { cookie: cookies.map(c => c.split(';')[0]).join('; '), csrf: (cookies.find(c => c.startsWith('csrf_token=')) || '').split(';')[0].split('=')[1] };
   }

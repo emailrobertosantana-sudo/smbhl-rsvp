@@ -25,7 +25,7 @@ function extractCsrfToken(res) {
 async function signup(email, ip) {
   const res = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-    body: JSON.stringify({ email, password: 'a-strong-password-1' })
+    body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' })
   });
   return { cookie: extractCookie(res), csrfToken: extractCsrfToken(res), status: res.status, json: await res.json() };
 }
@@ -135,7 +135,7 @@ describe('Signup/recovery, A3: every distinct email string is its own account --
     expect(first.status).toBe(200);
     const second = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.220.024' },
-      body: JSON.stringify({ email: 'a3.dupe@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'a3.dupe@example.com', password: 'a-strong-password-1' })
     });
     expect(second.status).toBe(409);
     const secondJson = await second.json();

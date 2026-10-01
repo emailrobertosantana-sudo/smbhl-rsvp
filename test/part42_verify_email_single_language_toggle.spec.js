@@ -14,7 +14,7 @@ const AUTH_SECRET = 'test-part7-verify-email-lang-secret';
 async function signup(email, ip, lang) {
   const res = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-    body: JSON.stringify({ email, password: 'a-strong-password-1', ...(lang ? { lang } : {}) })
+    body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1', ...(lang ? { lang } : {}) })
   });
   return res.json();
 }

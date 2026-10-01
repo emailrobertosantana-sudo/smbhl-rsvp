@@ -62,7 +62,7 @@ describe('Live-testing Part 1: language toggle consistency across signup and the
   it('step 1 -> step 2 -> step 3 -> done: every internal navigation call uses __navWithLang, not a bare location.href to another signup step', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.123.001' },
-      body: JSON.stringify({ email: 'lang.persist.steps@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'lang.persist.steps@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
 
@@ -148,7 +148,7 @@ describe('Live-testing Part 1: language toggle consistency across signup and the
   it('B1: steps 2/3 and the done screen (session-gated) also follow ?lang=, not a hardcoded French default', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.150.001' },
-      body: JSON.stringify({ email: 'b1.title.signupflow@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'b1.title.signupflow@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);

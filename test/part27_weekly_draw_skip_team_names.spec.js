@@ -51,7 +51,7 @@ describe('Part 4 (live-testing task): weekly_draw skips team names at signup, de
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.132' },
-      body: JSON.stringify({ email: 'step2.script.check@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'step2.script.check@example.com', password: 'a-strong-password-1' })
     });
     const cookieHeader = extractCookie(signupRes);
     const html = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie: cookieHeader } })).text();
@@ -72,7 +72,7 @@ describe('Part 4 (live-testing task): weekly_draw skips team names at signup, de
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.133' },
-      body: JSON.stringify({ email: 'step2.fixed.check@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'step2.fixed.check@example.com', password: 'a-strong-password-1' })
     });
     const cookieHeader = extractCookie(signupRes);
     const html = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie: cookieHeader } })).text();
@@ -84,7 +84,7 @@ describe('Part 4 (live-testing task): weekly_draw skips team names at signup, de
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.134' },
-      body: JSON.stringify({ email: 'step3.stale.check@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'step3.stale.check@example.com', password: 'a-strong-password-1' })
     });
     const cookieHeader = extractCookie(signupRes);
     const html = await (await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie: cookieHeader } })).text();
@@ -95,7 +95,7 @@ describe('Part 4 (live-testing task): weekly_draw skips team names at signup, de
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.130' },
-      body: JSON.stringify({ email: 'weekly.draw.default@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'weekly.draw.default@example.com', password: 'a-strong-password-1' })
     });
     const cookieHeader = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);
@@ -135,7 +135,7 @@ describe('Part 4 (live-testing task): weekly_draw skips team names at signup, de
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.131' },
-      body: JSON.stringify({ email: 'fixed.unaffected@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'fixed.unaffected@example.com', password: 'a-strong-password-1' })
     });
     const cookieHeader = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);

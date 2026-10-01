@@ -26,7 +26,7 @@ function csrfOf(res) {
   return c ? c.split(';')[0].split('=')[1] : '';
 }
 async function account(email, ip) {
-  const res = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip }, body: JSON.stringify({ email, password: 'a-strong-password-1' }) });
+  const res = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip }, body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' }) });
   const cookie = cookieOf(res), csrf = csrfOf(res);
   const post = (path, body) => SELF.fetch('http://example.com' + path, { method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf }, body: JSON.stringify(body) });
   return { post };

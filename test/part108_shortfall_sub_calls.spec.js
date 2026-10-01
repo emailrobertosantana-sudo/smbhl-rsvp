@@ -152,7 +152,7 @@ describe('League product: the same shortfall trigger', () => {
   function extractCookie(res) { return (res.headers.get('set-cookie') || '').split(';')[0]; }
   function extractCsrf(res) { const c = res.headers.getSetCookie().find(x => x.startsWith('csrf_token=')); return c ? c.split(';')[0].split('=')[1] : ''; }
   async function league(tag) {
-    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.232.${tag}` }, body: JSON.stringify({ email: `p108.l${tag}@example.com`, password: 'a-strong-password-1' }) });
+    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.232.${tag}` }, body: JSON.stringify({ accept_terms: true, email: `p108.l${tag}@example.com`, password: 'a-strong-password-1' }) });
     const cookie = extractCookie(s), csrf = extractCsrf(s);
     const post = (p, b) => SELF.fetch('http://example.com' + p, { method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf }, body: JSON.stringify(b) });
     await post('/leagues/create', { name: `P108 League ${tag}`, teamNames: ['Otters', 'Falcons'], tracksStats: true });

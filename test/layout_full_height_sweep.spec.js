@@ -32,7 +32,7 @@ function extractCsrfToken(res) {
 async function signupAndCreateLeague(email, ip, name) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-    body: JSON.stringify({ email, password: 'a-strong-password-1' })
+    body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' })
   });
   const cookie = extractCookie(signupRes);
   const csrfToken = extractCsrfToken(signupRes);
@@ -77,7 +77,7 @@ describe('A1: full-height layout sweep -- content defines height, no bottom-pinn
   it('signup step 2 (league details)', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.201.001' },
-      body: JSON.stringify({ email: 'a1.step2@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'a1.step2@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const html = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
@@ -87,7 +87,7 @@ describe('A1: full-height layout sweep -- content defines height, no bottom-pinn
   it('signup step 3 (team names)', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.201.002' },
-      body: JSON.stringify({ email: 'a1.step3@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'a1.step3@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const html = await (await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie } })).text();

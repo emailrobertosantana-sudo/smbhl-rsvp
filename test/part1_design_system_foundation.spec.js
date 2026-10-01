@@ -65,7 +65,7 @@ describe('Part 1 (design system): foundation', () => {
   it('a new league gets an explicit, legible preset colour by default (D2, settings polish task: a colour picker now exists, migrate-025.sql\'s own schema DEFAULT #b3122e is superseded)', async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.691' },
-      body: JSON.stringify({ email: 'part1.color@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part1.color@example.com', password: 'a-strong-password-1' })
     });
     const cookie = (signupRes.headers.get('set-cookie') || '').split(';')[0];
     const cookies = typeof signupRes.headers.getSetCookie === 'function' ? signupRes.headers.getSetCookie() : [cookie];

@@ -32,7 +32,7 @@ function extractCsrfToken(res) {
 async function signupAndCreateWeeklyDrawLeague(email, ip, name) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-    body: JSON.stringify({ email, password: 'a-strong-password-1' })
+    body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' })
   });
   const cookie = extractCookie(signupRes);
   const csrfToken = extractCsrfToken(signupRes);
@@ -258,7 +258,7 @@ describe('Part 3 (live-testing task): team-assigned follow-up email for the late
     // either of those routes) never touches league_team_assigned_email_log.
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.135.005' },
-      body: JSON.stringify({ email: 'followup.fixed.unaffected@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'followup.fixed.unaffected@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);

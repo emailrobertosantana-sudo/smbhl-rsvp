@@ -42,7 +42,7 @@ describe('Part 2: signup wizard, step-by-step', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.701' },
-      body: JSON.stringify({ email: 'wizard.e2e@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'wizard.e2e@example.com', password: 'a-strong-password-1' })
     });
     expect(signupRes.status).toBe(200);
     const cookie = extractCookie(signupRes);
@@ -105,7 +105,7 @@ describe('Part 2: signup wizard, step-by-step', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.702' },
-      body: JSON.stringify({ email: 'wizard.nodone@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'wizard.nodone@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const doneNoLeagueRes = await SELF.fetch('http://example.com/signup?step=done', { headers: { cookie }, redirect: 'manual' });
@@ -123,7 +123,7 @@ describe('Part 2: signup wizard, step-by-step', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.703' },
-      body: JSON.stringify({ email: 'wizard.a2.slugwarn@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'wizard.a2.slugwarn@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
 

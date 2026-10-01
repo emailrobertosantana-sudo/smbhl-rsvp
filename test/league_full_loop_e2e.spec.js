@@ -73,7 +73,7 @@ describe('Part Q: full second-league loop, end to end', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.42' },
-      body: JSON.stringify({ email: 'fullloop.admin@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'fullloop.admin@example.com', password: 'a-strong-password-1' })
     });
     expect(signupRes.status).toBe(200);
 

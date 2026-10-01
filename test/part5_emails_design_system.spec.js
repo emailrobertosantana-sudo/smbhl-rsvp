@@ -54,7 +54,7 @@ describe('Part 5: verification/password-reset/co-admin-invite emails (design sys
       SELF.fetch('http://example.com/auth/signup', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.851' },
-        body: JSON.stringify({ email: 'ds.email.verify@example.com', password: 'a-strong-password-1' })
+        body: JSON.stringify({ accept_terms: true, email: 'ds.email.verify@example.com', password: 'a-strong-password-1' })
       })
     );
     expect(sentMails.length).toBe(1);
@@ -74,7 +74,7 @@ describe('Part 5: verification/password-reset/co-admin-invite emails (design sys
     await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.852' },
-      body: JSON.stringify({ email: 'ds.email.reset@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'ds.email.reset@example.com', password: 'a-strong-password-1' })
     });
     const { sentMails } = await withMailMock(async () =>
       SELF.fetch('http://example.com/auth/request-password-reset', {
@@ -95,7 +95,7 @@ describe('Part 5: verification/password-reset/co-admin-invite emails (design sys
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.853' },
-      body: JSON.stringify({ email: 'ds.email.invite@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'ds.email.invite@example.com', password: 'a-strong-password-1' })
     });
     const cookie = (signupRes.headers.get('set-cookie') || '').split(';')[0];
     const cookies = typeof signupRes.headers.getSetCookie === 'function' ? signupRes.headers.getSetCookie() : [cookie];

@@ -32,7 +32,7 @@ describe('Part 3 (live-testing task): team-structure question copy is sport-neut
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.120' },
-      body: JSON.stringify({ email: 'fr.structure.copy@example.com', password: 'a-strong-password-1', lang: 'fr' })
+      body: JSON.stringify({ accept_terms: true, email: 'fr.structure.copy@example.com', password: 'a-strong-password-1', lang: 'fr' })
     });
     const cookieHeader = extractCookie(signupRes);
     const html = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie: cookieHeader } })).text();
@@ -50,7 +50,7 @@ describe('Part 3 (live-testing task): team-structure question copy is sport-neut
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.121' },
-      body: JSON.stringify({ email: 'dash.structure.copy@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'dash.structure.copy@example.com', password: 'a-strong-password-1' })
     });
     const cookieHeader = extractCookie(signupRes);
     const csrfCookies = typeof signupRes.headers.getSetCookie === 'function'

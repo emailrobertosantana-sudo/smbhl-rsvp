@@ -36,7 +36,7 @@ describe('Part 2 (live-testing task): division/age-group field is not shown or r
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.110' },
-      body: JSON.stringify({ email: 'no.division.field@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'no.division.field@example.com', password: 'a-strong-password-1' })
     });
     const cookieHeader = extractCookie(signupRes);
 
@@ -54,7 +54,7 @@ describe('Part 2 (live-testing task): division/age-group field is not shown or r
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.111' },
-      body: JSON.stringify({ email: 'signup.no.division@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'signup.no.division@example.com', password: 'a-strong-password-1' })
     });
     const cookieHeader = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);
@@ -74,7 +74,7 @@ describe('Part 2 (live-testing task): division/age-group field is not shown or r
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.112' },
-      body: JSON.stringify({ email: 'division.still.works@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'division.still.works@example.com', password: 'a-strong-password-1' })
     });
     const cookieHeader = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);

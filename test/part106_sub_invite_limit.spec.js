@@ -119,7 +119,7 @@ describe('League product: the same limit', () => {
 
   it('a later OUT does not re-invite subs already invited for the event (its old copy of the pool query did, once 10 minutes had passed)', async () => {
     env.AUTH_SECRET = 'test-part106-auth';
-    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.231.1' }, body: JSON.stringify({ email: 'p106.league@example.com', password: 'a-strong-password-1' }) });
+    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.231.1' }, body: JSON.stringify({ accept_terms: true, email: 'p106.league@example.com', password: 'a-strong-password-1' }) });
     const cookie = extractCookie(s), csrf = extractCsrf(s);
     const post = (p, b) => SELF.fetch('http://example.com' + p, { method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf }, body: JSON.stringify(b) });
     const league = (await (await post('/leagues/create', { name: 'P106 League', teamNames: ['Otters', 'Falcons'], tracksStats: true })).json()).league;
@@ -154,7 +154,7 @@ describe('League product: the manual third, from a league admin', () => {
   function extractCookie(res) { return (res.headers.get('set-cookie') || '').split(';')[0]; }
   function extractCsrf(res) { const c = res.headers.getSetCookie().find(x => x.startsWith('csrf_token=')); return c ? c.split(';')[0].split('=')[1] : ''; }
   async function admin(tag) {
-    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.233.${tag}` }, body: JSON.stringify({ email: `p106.x${tag}@example.com`, password: 'a-strong-password-1' }) });
+    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.233.${tag}` }, body: JSON.stringify({ accept_terms: true, email: `p106.x${tag}@example.com`, password: 'a-strong-password-1' }) });
     const cookie = extractCookie(s), csrf = extractCsrf(s);
     const post = (p, b, withCsrf = true) => SELF.fetch('http://example.com' + p, { method: 'POST', headers: { cookie, 'content-type': 'application/json', ...(withCsrf ? { 'x-csrf-token': csrf } : {}) }, body: JSON.stringify(b) });
     await post('/leagues/create', { name: `P106 X League ${tag}`, teamNames: ['Otters', 'Falcons'], tracksStats: true });

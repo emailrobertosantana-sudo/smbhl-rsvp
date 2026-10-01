@@ -30,7 +30,7 @@ async function signupAndCreateLeague(email, ip, leagueName, teamNames) {
   const signupRes = await SELF.fetch('http://example.com/auth/signup', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-    body: JSON.stringify({ email, password: 'a-strong-password-1' })
+    body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' })
   });
   const signupJson = await signupRes.json();
   const cookie = extractCookie(signupRes);
@@ -339,7 +339,7 @@ describe('Item 1: event page layout order', () => {
   async function signupAndCreateWeeklyDrawLeague(email, ip, name) {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-      body: JSON.stringify({ email, password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email, password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);

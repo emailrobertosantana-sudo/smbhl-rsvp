@@ -37,7 +37,7 @@ describe('Part 6: copy voice pass -- tutoiement in error messages', () => {
     const res = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.861' },
-      body: JSON.stringify({ email: 'not-an-email', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'not-an-email', password: 'a-strong-password-1' })
     });
     const json = await res.json();
     expect(json.errorKey).toBe('INVALID_EMAIL');
@@ -47,7 +47,7 @@ describe('Part 6: copy voice pass -- tutoiement in error messages', () => {
   it("the RSVP page's decline button matches the design system's real word-pair table (\"Can't make it\", not \"I can't\")", async () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.862' },
-      body: JSON.stringify({ email: 'ds.voice.rsvp@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'ds.voice.rsvp@example.com', password: 'a-strong-password-1' })
     });
     const cookie = (signupRes.headers.get('set-cookie') || '').split(';')[0];
     const cookies = typeof signupRes.headers.getSetCookie === 'function' ? signupRes.headers.getSetCookie() : [cookie];

@@ -44,7 +44,7 @@ describe('Part 8: CSRF protection', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.471' },
-      body: JSON.stringify({ email: 'part8.csrf@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part8.csrf@example.com', password: 'a-strong-password-1' })
     });
     cookie = extractCookie(signupRes);
     csrfToken = extractCsrfToken(signupRes);
@@ -141,7 +141,7 @@ describe('Part 8: CSRF protection', () => {
     const otherSignup = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.472' },
-      body: JSON.stringify({ email: 'part8.other@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part8.other@example.com', password: 'a-strong-password-1' })
     });
     const otherCsrfToken = extractCsrfToken(otherSignup);
     expect(otherCsrfToken).not.toBe(csrfToken);
@@ -158,7 +158,7 @@ describe('Part 8: CSRF protection', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.473' },
-      body: JSON.stringify({ email: 'part8.epoch@example.com', password: 'original-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part8.epoch@example.com', password: 'original-password-1' })
     });
     const oldCookie = extractCookie(signupRes);
     const oldCsrfToken = extractCsrfToken(signupRes);

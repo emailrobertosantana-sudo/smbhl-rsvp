@@ -86,7 +86,7 @@ describe('Part 1: verification/reset email FROM address is domain-aware, and a m
       SELF.fetch('http://example.com/auth/signup', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.601' },
-        body: JSON.stringify({ email: 'part1.smbhl.signup@example.com', password: 'a-strong-password-1' })
+        body: JSON.stringify({ accept_terms: true, email: 'part1.smbhl.signup@example.com', password: 'a-strong-password-1' })
       })
     );
     expect(sentMails.length).toBe(1);
@@ -104,7 +104,7 @@ describe('Part 1: verification/reset email FROM address is domain-aware, and a m
       SELF.fetch('http://example.com/auth/signup', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.602' },
-        body: JSON.stringify({ email: 'part1.notreligue.signup@example.com', password: 'a-strong-password-1' })
+        body: JSON.stringify({ accept_terms: true, email: 'part1.notreligue.signup@example.com', password: 'a-strong-password-1' })
       })
     );
     expect(sentMails.length).toBe(1);
@@ -122,7 +122,7 @@ describe('Part 1: verification/reset email FROM address is domain-aware, and a m
     await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.603' },
-      body: JSON.stringify({ email: 'part1.notreligue.reset@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part1.notreligue.reset@example.com', password: 'a-strong-password-1' })
     });
 
     const { sentMails } = await withMailMock(async () =>
@@ -146,7 +146,7 @@ describe('Part 1: verification/reset email FROM address is domain-aware, and a m
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.604' },
-      body: JSON.stringify({ email: 'part1.inviter@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part1.inviter@example.com', password: 'a-strong-password-1' })
     });
     const cookie = extractCookie(signupRes);
     const csrfToken = extractCsrfToken(signupRes);
@@ -184,7 +184,7 @@ describe('Part 1: verification/reset email FROM address is domain-aware, and a m
     const res = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.605' },
-      body: JSON.stringify({ email: 'part1.missingkey@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part1.missingkey@example.com', password: 'a-strong-password-1' })
     });
 
     // Signup itself still succeeds (best-effort email, by design) --

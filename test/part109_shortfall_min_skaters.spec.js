@@ -117,7 +117,7 @@ describe('Configured values win; the league product keeps its default', () => {
   function extractCookie(res) { return (res.headers.get('set-cookie') || '').split(';')[0]; }
   function extractCsrf(res) { const c = res.headers.getSetCookie().find(x => x.startsWith('csrf_token=')); return c ? c.split(';')[0].split('=')[1] : ''; }
   async function leagueWithTeamOf(tag, players, publish) {
-    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.234.${tag}` }, body: JSON.stringify({ email: `p109.l${tag}@example.com`, password: 'a-strong-password-1' }) });
+    const s = await SELF.fetch('http://example.com/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': `203.0.234.${tag}` }, body: JSON.stringify({ accept_terms: true, email: `p109.l${tag}@example.com`, password: 'a-strong-password-1' }) });
     const cookie = extractCookie(s), csrf = extractCsrf(s);
     const post = (p, b) => SELF.fetch('http://example.com' + p, { method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrf }, body: JSON.stringify(b) });
     const league = (await (await post('/leagues/create', { name: `P109 L${tag}`, teamNames: ['Otters', 'Falcons'], tracksStats: true })).json()).league;

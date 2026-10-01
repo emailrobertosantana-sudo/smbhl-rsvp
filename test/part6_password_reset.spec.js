@@ -50,7 +50,7 @@ describe('Part 6: password reset flow', () => {
     await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.451' },
-      body: JSON.stringify({ email: 'part6.reset@example.com', password: 'original-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'part6.reset@example.com', password: 'original-password-1' })
     });
   });
 
@@ -109,7 +109,7 @@ describe('Part 6: password reset flow', () => {
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.453' },
-      body: JSON.stringify({ email: 'part6.multisession@example.com', password: 'session-one-password' })
+      body: JSON.stringify({ accept_terms: true, email: 'part6.multisession@example.com', password: 'session-one-password' })
     });
     const oldSessionCookie = extractCookie(signupRes);
 
@@ -183,7 +183,7 @@ describe('Part 6: password reset flow', () => {
     // A signup from the SAME IP is unaffected -- separate counters.
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
-      body: JSON.stringify({ email: 'not.rate.limited@example.com', password: 'a-strong-password-1' })
+      body: JSON.stringify({ accept_terms: true, email: 'not.rate.limited@example.com', password: 'a-strong-password-1' })
     });
     expect(signupRes.status).toBe(200);
   });

@@ -80,7 +80,7 @@ export async function startPublicPageWorker({ extraVars = {} } = {}) {
     return res;
   }
   async function signup(email) {
-    const res = await api('/auth/signup', { body: { email, password: 'a-strong-password-1' } });
+    const res = await api('/auth/signup', { body: { accept_terms: true, email, password: 'a-strong-password-1' } });
     const cookies = res.headers.getSetCookie();
     const cookie = cookies.map(c => c.split(';')[0]).join('; ');
     const csrfC = cookies.find(c => c.startsWith('csrf_token='));
