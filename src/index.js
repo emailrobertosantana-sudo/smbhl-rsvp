@@ -5619,7 +5619,7 @@ async function paymentBalances(env, leagueId, seasonParam) {
     season = d.season; players = d.players || [];
   }
   const contacts = new Map(((await env.DB.prepare(
-    'SELECT player_id, name, email FROM contacts WHERE COALESCE(league_id, ?) = ?'
+    'SELECT player_id, name, email, opted_out FROM contacts WHERE COALESCE(league_id, ?) = ?'
   ).bind(SMBHL_LEAGUE_ID, leagueId).all()).results || []).map(c => [c.player_id, c]));
   const last = new Map(((await env.DB.prepare(
     `SELECT player_id, MAX(COALESCE(sent_at, created_at)) AS at FROM outbox
@@ -5631,7 +5631,8 @@ async function paymentBalances(env, leagueId, seasonParam) {
     const balance = Math.round(Number(p.outstanding || 0) * 100) / 100;
     if (!(balance > 0)) continue;
     const c = contacts.get(p.player_id);
-    const row = { player_id: p.player_id, name: (c && c.name) || p.name || '', balance, last_reminded: last.get(p.player_id) || null };
+    // opted_out: off game emails; listed, unchecked by default, still sendable.
+    const row = { player_id: p.player_id, name: (c && c.name) || p.name || '', balance, last_reminded: last.get(p.player_id) || null, opted_out: !!(c && c.opted_out) };
     if (c && c.email) owing.push({ ...row, email: c.email }); else noEmail.push(row);
   }
   return { season, owing, noEmail };
@@ -5639,12 +5640,14 @@ async function paymentBalances(env, leagueId, seasonParam) {
 
 // What can still go out today on this environment: the hard cap
 // (MAIL_HARD_DAILY_CAP, demo) or the daily cap (MAIL_DAILY_CAP), less
-// what was sent today. null: no cap configured.
+// what was sent today, less PAYMENT_REMINDER_RESERVE kept for the admin
+// alerts (wrangler.jsonc: 10 on production, 2 on demo). null: no cap.
 async function paymentReminderBudget(env) {
   const cap = hardDailyCapFromEnv(env) || dailyCapFromEnv(env);
   if (!cap) return null;
+  const reserve = Math.max(0, Math.floor(Number(env.PAYMENT_REMINDER_RESERVE) || 0));
   const { sent } = await readDailyCount(env.DB);
-  return Math.max(0, cap - sent);
+  return Math.max(0, cap - sent - reserve);
 }
 
 // One player's reminder. SMBHL: French then English, as its other emails.
@@ -13256,7 +13259,12 @@ async function prepareOutboxMessage(env, m, rctx, opts = {}) {
         pricing = await getSeasonPricing(env.DB, financeLeague, ev.season);
         if (pricing) pricingCache.set(pricingKey, pricing);
       }
-      const phone = (pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '');
+      // The e-Transfer number: the league's payment setting (the payment
+      // reminders' one); the season pricing's old field only while it is empty.
+      const payKey = `payment_info\u0000${financeLeague}`;
+      let payInfo = pricingCache.get(payKey);
+      if (!payInfo) { payInfo = await getPaymentInfo(env.DB, financeLeague); pricingCache.set(payKey, payInfo); }
+      const phone = payInfo.phone ? formatPhone(payInfo.phone) : ((pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || ''));
 
       // Item 6f: a dual-role player's role for the night (teamState counts
       // them in goal when their team's goalie is out or missing).
@@ -21576,14 +21584,14 @@ async function renderNightMovedForContact(env, leagueRow, games, contact, team, 
       headline: 'Ton horaire a changé',
       body: team ? `${team} joue maintenant : ${when}.` : `${plural ? 'Tes matchs sont' : 'Ton match est'} maintenant : ${when}.`,
       answer: answer === 'in' ? 'Ta réponse suit : tu joues toujours. Rien à faire.' : 'On attend encore ta réponse.',
-      btn: answer === 'in' ? 'Voir ma journée' : 'Répondre',
+      btn: answer === 'in' ? 'Voir mes matchs' : 'Répondre',
       poweredBy: 'Propulsé par Notre Ligue'
     } : {
       subject: `${firstName}, new schedule for ${dayLabel || 'your game'}`,
       headline: 'Your schedule changed',
       body: team ? `${team} now plays: ${when}.` : `${plural ? 'Your games are' : 'Your game is'} now: ${when}.`,
       answer: answer === 'in' ? "Your answer carries over: you're still playing. Nothing to do." : 'We still need your answer.',
-      btn: answer === 'in' ? 'See my day' : 'Answer',
+      btn: answer === 'in' ? 'See my games' : 'Answer',
       poweredBy: 'Powered by Notre Ligue'
     };
     return {
@@ -24642,7 +24650,10 @@ async function handleFinancesPricingSave(req, env) {
   const priceGoalie = Number(b.price_goalie ?? 0);
   const priceSubPlayer = Number(b.price_sub_player ?? 5);
   const priceSubGoalie = Number(b.price_sub_goalie ?? 0);
-  const etransferPhone = b.etransfer_phone !== undefined ? String(b.etransfer_phone || '').trim() : null;
+  // The e-Transfer number moved to the payment settings (payment_info:smbhl);
+  // the value already stored here stays, as the fallback, until replaced.
+  const kept = b.etransfer_phone === undefined ? await getSeasonPricing(env.DB, SMBHL_LEAGUE_ID, season) : null;
+  const etransferPhone = b.etransfer_phone !== undefined ? String(b.etransfer_phone || '').trim() : ((kept && kept.etransfer_phone) || null);
   const now = new Date().toISOString();
 
   await saveSeasonPricing(env.DB, SMBHL_LEAGUE_ID, season, { pricePlayer, priceGoalie, priceSubPlayer, priceSubGoalie, etransferPhone }, now);
@@ -24809,10 +24820,6 @@ async function financesPage(env = null, isAuthed = false) {
           <input type="number" id="p_sub_goalie" min="0" step="0.01" class="tbl-inp" style="width:100%;">
         </div>
         <div>
-          <label style="font-size:12px; font-weight:600; color:var(--soft); display:block; margin-bottom:3px;" data-i18n="lblEtransferPhone">Téléphone Virement Interac</label>
-          <input type="text" id="p_etransfer_phone" placeholder="ex: 514-XXX-XXXX" class="tbl-inp" style="width:100%;">
-        </div>
-        <div>
           <button class="btn in" id="btnSavePricing" style="font-size:15px; padding:8px 10px; margin:0; width:100%;" data-i18n="btnSavePricing">ENREGISTRER</button>
         </div>
       </div>
@@ -24972,7 +24979,6 @@ async function financesPage(env = null, isAuthed = false) {
       lblGoalieDues: 'Gardien régulier ($)',
       lblSubPlayer: 'Substitut joueur ($/match)',
       lblSubGoalie: 'Substitut gardien ($/match)',
-      lblEtransferPhone: 'Téléphone Virement Interac',
       paySettingsTitle: 'Paramètres de paiement', payEmailLabel: 'Courriel pour virement Interac', payPhoneLabel: 'Cellulaire pour virement Interac',
       payHelp: 'Affiché dans les rappels de paiement. Laissez vide pour masquer.', paySaved: 'Enregistré ✅',
       btnSavePricing: 'ENREGISTRER',
@@ -25068,7 +25074,6 @@ async function financesPage(env = null, isAuthed = false) {
       lblGoalieDues: 'Regular Goalie ($)',
       lblSubPlayer: 'Sub Player ($/game)',
       lblSubGoalie: 'Sub Goalie ($/game)',
-      lblEtransferPhone: 'Interac e-Transfer Phone',
       paySettingsTitle: 'Payment settings', payEmailLabel: 'e-Transfer email', payPhoneLabel: 'e-Transfer mobile number',
       payHelp: 'Shown in payment reminders. Leave empty to hide.', paySaved: 'Saved ✅',
       btnSavePricing: 'SAVE PRICING',
@@ -25237,7 +25242,6 @@ async function financesPage(env = null, isAuthed = false) {
     $('p_goalie').value = pr.price_goalie ?? 0;
     $('p_sub_player').value = pr.price_sub_player ?? 5;
     $('p_sub_goalie').value = pr.price_sub_goalie ?? 0;
-    $('p_etransfer_phone').value = pr.etransfer_phone || '';
 
     // KPI Cards
     const sm = d.summary || {};
@@ -25467,8 +25471,7 @@ async function financesPage(env = null, isAuthed = false) {
       price_player: Number($('p_player').value) || 0,
       price_goalie: Number($('p_goalie').value) || 0,
       price_sub_player: Number($('p_sub_player').value) || 0,
-      price_sub_goalie: Number($('p_sub_goalie').value) || 0,
-      etransfer_phone: $('p_etransfer_phone').value.trim()
+      price_sub_goalie: Number($('p_sub_goalie').value) || 0
     };
     try {
       await api('/admin/finances/pricing', { method: 'POST', body: JSON.stringify(body) });
@@ -27872,7 +27875,9 @@ async function handleSendSampleInvites(req, env) {
   // Load pricing
   const financeLeague = ev.league_id || SMBHL_LEAGUE_ID;
   let pricing = await getSeasonPricing(env.DB, financeLeague, ev.season);
-  const phone = (pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '514-575-5251');
+  // The league's payment setting first, as the game-day emails read it.
+  const payInfo = await getPaymentInfo(env.DB, financeLeague);
+  const phone = payInfo.phone ? formatPhone(payInfo.phone) : ((pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '514-575-5251'));
 
   // Load league message if configured
   let leagueMessage = null;

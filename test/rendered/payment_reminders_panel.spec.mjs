@@ -22,6 +22,8 @@ beforeAll(async () => {
   for (const [id, name, email] of [['P0001', 'Adam Albanese', 'adam@example.com'], ['P0002', 'Bruno Bédard', 'bruno@example.com'], ['P0003', 'Carl Courriel', null]]) {
     await h.db.prepare(`INSERT INTO contacts (player_id, name, email, role, is_sub, is_goalie, token_salt, league_id) VALUES (?, ?, ?, 'roster', 0, 0, 'salt', 'smbhl')`).bind(id, name, email).run();
   }
+  // Bruno is off game emails: listed, unchecked by default (batch 4 item 2c).
+  await h.db.prepare("UPDATE contacts SET opted_out = 1 WHERE player_id = 'P0002'").run();
   league = await seedPopulatedLeague(h, { email: 'owner@pay-panel.example', name: 'Ligue Paiement', teamNames: ['Otters', 'Bears'], playerName: 'Lea Player', goalieName: 'Luc Goalie' });
   await h.db.prepare("UPDATE contacts SET email = lower(replace(name, ' ', '.')) || '@example.com' WHERE league_id = ?").bind(league.league.id).run();
   await h.api('/league/finances/pricing', { ...league.session, body: { season: 'S1', mode: 'season', price_player: 85, price_goalie: 85, price_game_player: 5, price_game_goalie: 5 } });
@@ -65,13 +67,16 @@ describe('SMBHL /admin/finances', () => {
     const { page, errors, close } = await open('/admin/finances', smbhlCookies());
     await page.waitForFunction(() => document.getElementById('seasonSelect') && document.getElementById('seasonSelect').value);
     await openPanel(page);
-    expect(await page.$$eval('#pay-table input[data-pay-player]', b => b.map(x => x.checked))).toEqual([true, true]);
+    expect(await page.$$eval('#pay-table input[data-pay-player]', b => b.map(x => x.checked))).toEqual([true, false]);
+    expect(await page.textContent('#pay-table')).toContain('Désabonné des courriels de match');
     expect(await page.textContent('#pay-table')).toContain('Adam Albanese');
     expect(await page.textContent('#pay-table')).toContain('170,00');
     expect(await page.textContent('#pay-table')).toContain('Jamais');
     expect(await page.textContent('#pay-noemail')).toContain('Carl Courriel');
     expect(await page.textContent('#pay-noemail')).toContain('Aucune adresse courriel');
     expect(await page.isDisabled('#pay-noemail input')).toBe(true);
+    expect(await page.textContent('#pay-send')).toBe('Envoyer à 1 joueur');
+    await page.check('#pay-table input[data-pay-player="P0002"]');
     expect(await page.textContent('#pay-send')).toBe('Envoyer à 2 joueurs');
     await page.uncheck('#pay-table input[data-pay-player="P0002"]');
     expect(await page.textContent('#pay-send')).toBe('Envoyer à 1 joueur');
@@ -99,7 +104,8 @@ describe('SMBHL /admin/finances', () => {
     await page.waitForFunction(() => document.getElementById('seasonSelect') && document.getElementById('seasonSelect').value);
     expect(await page.textContent('#pay-open')).toBe('Send payment reminders');
     await openPanel(page);
-    expect(await page.textContent('#pay-send')).toBe('Send to 2 players');
+    expect(await page.textContent('#pay-send')).toBe('Send to 1 player');
+    expect(await page.textContent('#pay-table')).toContain('Opted out of game emails');
     expect(await page.textContent('#pay-table')).toContain('$170.00');
     expect(await page.textContent('#pay-table')).toContain('Never');
     expect(await page.textContent('#pay-noemail')).toContain('No email address');

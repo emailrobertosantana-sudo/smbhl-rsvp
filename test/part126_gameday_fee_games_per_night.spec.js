@@ -41,5 +41,19 @@ describe('Game-day sub fee follows games per night', () => {
     const [smbhl, oneGame] = sent;
     expect(smbhl.text).toContain('Frais de substitut : 10,00 $ / Sub fee: $10.00');
     expect(oneGame.text).toContain('Frais de substitut : 5,00 $ / Sub fee: $5.00');
+    // No payment setting yet: the season pricing's old number.
+    expect(smbhl.text).toContain('514-555-0000');
+  });
+
+  // Batch 4 item 2a: the e-Transfer number comes from the payment setting
+  // (payment_info:smbhl) once it is set; the old field is only the fallback.
+  it('with the payment setting, its number', async () => {
+    await env.DB.prepare(`INSERT INTO settings (key, value) VALUES ('payment_info:smbhl', '{"email":"","phone":"5145559999"}')`).run();
+    await env.DB.prepare(`INSERT INTO outbox (kind, event_id, player_id, team, dedup_key, payload, send_after, created_at, league_id) VALUES ('gameday', '2099-10-04', 'S126', 'Red', 'gd2:2099-10-04', '{}', '2000-01-01T00:00:00Z', '2000-01-01T00:00:00Z', 'smbhl')`).run();
+    sent.length = 0;
+    await drain(env);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).toContain('514-555-9999');
+    expect(sent[0].text).not.toContain('514-555-0000');
   });
 });

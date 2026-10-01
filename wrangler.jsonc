@@ -11,7 +11,10 @@
     // Emails per calendar day (UTC) the Resend plan allows -- sub calls
     // defer to the next day once roster mail has what it needs (see
     // src/mail_queue.js, DAILY SEND CAP). Change here if the plan changes.
-    "MAIL_DAILY_CAP": "90"
+    "MAIL_DAILY_CAP": "90",
+    // Payment reminders keep this many of the day's emails for the admin
+    // alerts (src/index.js paymentReminderBudget).
+    "PAYMENT_REMINDER_RESERVE": "10"
   },
   "triggers": {
     "crons": ["*/5 * * * *"]
@@ -55,6 +58,8 @@
         // kind of email (MAIL_DAILY_CAP only holds back sub calls). See
         // src/mail_queue.js hardDailyCapFromEnv.
         "MAIL_HARD_DAILY_CAP": "10",
+        // Payment reminders keep 2 of the day's 10 for the admin alerts.
+        "PAYMENT_REMINDER_RESERVE": "2",
         // Notre Ligue mail (From mail.notreligue.ca) goes through Cloudflare
         // Email Sending here, via the send_email binding below. SMBHL mail,
         // and every environment without this var, stays on Resend. See

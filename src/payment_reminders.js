@@ -103,6 +103,7 @@ export const PAYMENT_PANEL_JS = String.raw`(function () {
     fr: {
       open: 'Envoyer des rappels de paiement', colName: 'Joueur', colBalance: 'Solde', colLast: 'Dernier rappel', never: 'Jamais',
       noEmailTitle: 'Sans adresse courriel', noEmail: 'Aucune adresse courriel', note: 'Note (facultative)', preview: 'Aperçu',
+      optedOut: 'Désabonné des courriels de match',
       sendOne: 'Envoyer à {n} joueur', sendMany: 'Envoyer à {n} joueurs', close: 'Fermer',
       noInfo: "Ajoute d'abord ton courriel ou ton cellulaire pour virement Interac dans les Paramètres.",
       overBudget: "Ça enverrait {n} courriels, mais il n'en reste que {left} pour aujourd'hui.",
@@ -113,6 +114,7 @@ export const PAYMENT_PANEL_JS = String.raw`(function () {
     en: {
       open: 'Send payment reminders', colName: 'Player', colBalance: 'Balance', colLast: 'Last reminded', never: 'Never',
       noEmailTitle: 'No email address', noEmail: 'No email address', note: 'Note (optional)', preview: 'Preview',
+      optedOut: 'Opted out of game emails',
       sendOne: 'Send to {n} player', sendMany: 'Send to {n} players', close: 'Close',
       noInfo: 'Add your e-Transfer email or mobile number in Settings first.',
       overBudget: 'This would send {n} emails, but only {left} can go out today.',
@@ -180,8 +182,8 @@ export const PAYMENT_PANEL_JS = String.raw`(function () {
         + '<th style="width:32px"></th><th style="text-align:left;padding:6px">' + esc(t('colName')) + '</th>'
         + '<th style="text-align:right;padding:6px">' + esc(t('colBalance')) + '</th><th style="text-align:left;padding:6px">' + esc(t('colLast')) + '</th></tr></thead><tbody>';
       d.owing.forEach(function (p) {
-        h += '<tr><td style="padding:6px"><input type="checkbox" checked data-pay-player="' + esc(p.player_id) + '" aria-label="' + esc(p.name) + '"></td>'
-          + '<td style="padding:6px">' + esc(p.name) + '</td><td style="padding:6px;text-align:right;font-variant-numeric:tabular-nums">' + esc(money(p.balance)) + '</td>'
+        h += '<tr><td style="padding:6px"><input type="checkbox"' + (p.opted_out ? '' : ' checked') + ' data-pay-player="' + esc(p.player_id) + '" aria-label="' + esc(p.name) + '"></td>'
+          + '<td style="padding:6px">' + esc(p.name) + (p.opted_out ? ' <span data-pay-optout style="font-size:12px;opacity:.75">(' + esc(t('optedOut')) + ')</span>' : '') + '</td><td style="padding:6px;text-align:right;font-variant-numeric:tabular-nums">' + esc(money(p.balance)) + '</td>'
           + '<td style="padding:6px" data-pay-last="' + esc(p.player_id) + '">' + esc(day(p.last_reminded)) + '</td></tr>';
       });
       h += '</tbody></table></div>';

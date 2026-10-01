@@ -169,6 +169,27 @@ describe('SMBHL: the panel and the send', () => {
     expect(sent.length).toBe(sentBefore);
   });
 
+  // Batch 4 item 2c: listed, unchecked by default in the panel, still sendable.
+  it('a player off game emails is listed, marked, and can still be sent to', async () => {
+    await env.DB.prepare('UPDATE contacts SET opted_out = 1 WHERE player_id = ?').bind('P2004').run();
+    const d = await (await adminGet(`/admin/finances/reminders?s=${encodeURIComponent(SEASON)}`)).json();
+    expect(d.owing.find(p => p.player_id === 'P2004').opted_out).toBe(true);
+    expect(d.owing.find(p => p.player_id === 'P2001').opted_out).toBe(false);
+    await env.DB.prepare('UPDATE contacts SET opted_out = 0 WHERE player_id = ?').bind('P2004').run();
+  });
+
+  // Batch 4 item 2d: PAYMENT_REMINDER_RESERVE stays free for the admin alerts.
+  it("the budget keeps the alerts' reserve", async () => {
+    env.MAIL_HARD_DAILY_CAP = '50'; env.PAYMENT_REMINDER_RESERVE = '7';
+    const sentToday = ((await env.DB.prepare('SELECT sent FROM mail_daily_count WHERE day = ?').bind(new Date().toISOString().slice(0, 10)).first()) || { sent: 0 }).sent;
+    const d = await (await adminGet(`/admin/finances/reminders?s=${encodeURIComponent(SEASON)}`)).json();
+    expect(d.left).toBe(Math.max(0, 50 - sentToday - 7));
+    env.MAIL_HARD_DAILY_CAP = String(sentToday + 7 + 1);
+    const r = await adminPost('/admin/finances/reminders/send', { season: SEASON, player_ids: ['P2001', 'P2004'], note: '' });
+    expect(await r.json()).toMatchObject({ errorKey: 'PAYMENT_OVER_BUDGET', n: 2, left: 1 });
+    delete env.MAIL_HARD_DAILY_CAP; delete env.PAYMENT_REMINDER_RESERVE;
+  });
+
   it("today's budget too small: nothing at all is queued", async () => {
     env.MAIL_HARD_DAILY_CAP = '1';
     const r = await adminPost('/admin/finances/reminders/send', { season: SEASON, player_ids: ['P2001', 'P2004'], note: '' });
