@@ -77,14 +77,17 @@ describe('B2: the Friday board and game-morning list the messages in the English
 
 describe('B3: no French inside English halves', () => {
   it('message timestamps: French day names in the French half, English in the English half', () => {
-    expect(formatMsgTime('2026-09-21T23:05:00Z', 'fr')).toBe('Lun 19:05');
-    expect(formatMsgTime('2026-09-21T23:05:00Z', 'en')).toBe('Mon 19:05');
-    expect(formatMsgTime('2026-09-21T23:05:00Z', 'both')).toBe('Lun/Mon 19:05');
+    expect(formatMsgTime('2026-09-21T23:05:00Z', 'fr')).toBe('lun. 19 h 05');
+    expect(formatMsgTime('2026-09-21T23:05:00Z', 'en')).toBe('Mon 7:05 PM');
+    // Batch 4 item 3d: « (jeu. 15 h) » / "(Thu 3:00 PM)".
+    expect(formatMsgTime('2026-10-15T19:00:00Z', 'fr')).toBe('jeu. 15 h');
+    expect(formatMsgTime('2026-10-15T19:00:00Z', 'en')).toBe('Thu 3:00 PM');
+    expect(formatMsgTime('2026-09-21T23:05:00Z', 'both')).toBe('lun. 19 h 05 / Mon 7:05 PM');
     const m = body('friday_board', { ev, name: 'Marc', team: 'Red', link: 'L', payload: { teamLink: 'T', teamMessages: msgs } });
     const [frH, enH] = halves(m.html);
-    expect(frH).toContain('(Lun 19:05)');
-    expect(enH).toContain('(Mon 19:05)');
-    expect(enH).not.toContain('Lun 19:05');
+    expect(frH).toContain('(lun. 19 h 05)');
+    expect(enH).toContain('(Mon 7:05 PM)');
+    expect(enH).not.toContain('lun. 19 h 05');
   });
 
   it('the game-day website link reads "Team page on <site>", not "Team page sur"', () => {

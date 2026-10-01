@@ -1933,9 +1933,9 @@ describe("SMBHL Worker", () => {
 			expect(resUnpaid.text).toContain("Please bring $170.00 in cash to the gym or send it by Interac e-Transfer to 514-555-7890.");
 			expect(resUnpaid.html).toContain("170,00 $");
 			expect(resUnpaid.html).toContain("514-555-7890");
-			expect(resUnpaid.text).toContain("Gérer l'équipe Rouge / Manage Red roster & subs");
+			expect(resUnpaid.text).toContain("Gérer l'équipe Rouge / Manage Red's lineup and subs");
 			expect(resUnpaid.text).toContain("https://rsvp.smbhl.com/team-rsvp?s=2026&team=Red&t=tok999");
-			expect(resUnpaid.html).toContain("Gérer l&#39;équipe Rouge / Manage Red roster &amp; subs");
+			expect(resUnpaid.html).toContain("Gérer l&#39;équipe Rouge / Manage Red&#39;s lineup and subs");
 			expect(resUnpaid.html).toContain("https://rsvp.smbhl.com/team-rsvp?s=2026&amp;team=Red&amp;t=tok999");
 
 			// Regular player with 0 balance
@@ -2013,12 +2013,12 @@ describe("SMBHL Worker", () => {
 				expect(unpaidRegMail).toBeDefined();
 				expect(unpaidRegMail.html).toContain("170,00 $");
 				expect(unpaidRegMail.html).toContain("514-555-0000");
-				expect(unpaidRegMail.html).toContain("Gérer l&#39;équipe Bleu / Manage Blue roster &amp; subs");
+				expect(unpaidRegMail.html).toContain("Gérer l&#39;équipe Bleu / Manage Blue&#39;s lineup and subs");
 
 				const paidRegMail = sent.find(m => m.to[0] === 'paid_reg@test.com');
 				expect(paidRegMail).toBeDefined();
 				expect(paidRegMail.html).not.toContain("Cotisation de saison");
-				expect(paidRegMail.html).toContain("Gérer l&#39;équipe Rouge / Manage Red roster &amp; subs");
+				expect(paidRegMail.html).toContain("Gérer l&#39;équipe Rouge / Manage Red&#39;s lineup and subs");
 			} finally {
 				globalThis.fetch = originalFetch;
 			}
@@ -4867,7 +4867,7 @@ describe("SMBHL Worker", () => {
 					expect(regMail).toBeDefined();
 					expect(regMail.html).toContain("170,00 $");
 					expect(regMail.html).toContain("514-575-5251");
-					expect(regMail.html).toContain("Gérer l&#39;équipe Rouge / Manage Red roster &amp; subs");
+					expect(regMail.html).toContain("Gérer l&#39;équipe Rouge / Manage Red&#39;s lineup and subs");
 
 					// Sub preview verification
 					const subMail = sentMails.find(m => m.subject.includes("SUB"));

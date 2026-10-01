@@ -1665,7 +1665,7 @@ async function createLeagueVenueRow(env, leagueId, body) {
   const address = String(body.address || '').trim() || null;
   const mapLink = String(body.map_link || '').trim() || null;
   if (mapLink && !/^https?:\/\//i.test(mapLink)) {
-    return { ok: false, error: 'map_link must be a valid http(s) link.', errorKey: 'VENUE_MAP_LINK_INVALID' };
+    return { ok: false, error: 'The map link must be a web address (http or https).', errorKey: 'VENUE_MAP_LINK_INVALID' };
   }
   const id = crypto.randomUUID();
   await env.DB.prepare(

@@ -51,7 +51,7 @@ export async function buildSummaryText(env, ev) {
   for (const team of cfgTeams) {
     const st = await teamState(env.DB, ev.id, team, cfg);
     lines.push(`${team}: ${pluralText('{n|# joueur|# joueurs}', { n: st.skaters }, 'fr')}, ${pluralText('{n|# gardien|# gardiens}', { n: st.goalies }, 'fr')}` +
-      (st.short ? '   <-- SHORT' : ''));
+      (st.short ? '   ← manque / short' : ''));
   }
   const wait = (await env.DB.prepare(
     `SELECT c.name, a.need FROM availability a JOIN contacts c ON c.player_id=a.player_id

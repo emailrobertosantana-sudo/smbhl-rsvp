@@ -11790,18 +11790,19 @@ function formatFixtureText(matches, team, isGoalie, lang = 'fr') {
  * too, without a circular import. See that file's own comment. */
 
 
-// lang: 'fr' (Lun 19:05), 'en' (Mon 19:05) or 'both' (Lun/Mon 19:05) for
-// one list read by both languages' readers.
+// lang: 'fr' (lun. 19 h 05, jeu. 15 h), 'en' (Mon 7:05 PM, Thu 3:00 PM) or
+// 'both' (jeu. 15 h / Thu 3:00 PM) for one list read by both languages'
+// readers.
 function formatMsgTime(isoString, lang = 'fr') {
   try {
     const d = new Date(isoString);
     const p = localParts(d);
-    const days = { 'Mon': 'Lun', 'Tue': 'Mar', 'Wed': 'Mer', 'Thu': 'Jeu', 'Fri': 'Ven', 'Sat': 'Sam', 'Sun': 'Dim' };
-    const dayFr = days[p.weekday] || p.weekday;
-    const day = lang === 'en' ? p.weekday : lang === 'both' ? `${dayFr}/${p.weekday}` : dayFr;
-    const hh = String(p.hour).padStart(2, '0');
+    if (Number.isNaN(d.getTime()) || p.hour == null) return '';
+    const days = { 'Mon': 'lun.', 'Tue': 'mar.', 'Wed': 'mer.', 'Thu': 'jeu.', 'Fri': 'ven.', 'Sat': 'sam.', 'Sun': 'dim.' };
     const mm = String(p.minute).padStart(2, '0');
-    return `${day} ${hh}:${mm}`;
+    const fr = `${days[p.weekday] || p.weekday} ${p.minute ? `${p.hour} h ${mm}` : `${p.hour} h`}`;
+    const en = `${p.weekday} ${p.hour % 12 || 12}:${mm} ${p.hour < 12 ? 'AM' : 'PM'}`;
+    return lang === 'en' ? en : lang === 'both' ? `${fr} / ${en}` : fr;
   } catch (e) {
     return '';
   }
@@ -12222,8 +12223,8 @@ function renderInviteEmail({
   const tmFr = team ? (TEAM_FR[team] || team) : '';
   const tmEn = team || '';
   const teamLabel = team
-    ? `Gérer l'équipe ${tmFr} / Manage ${tmEn} roster & subs`
-    : `Gérer l'équipe / Manage team roster & subs`;
+    ? `Gérer l'équipe ${tmFr} / Manage ${tmEn}'s lineup and subs`
+    : `Gérer l'équipe / Manage the team's lineup and subs`;
 
   const cleanLeagueMsg = leagueMessage ? leagueMessage.trim() : '';
 
@@ -20316,7 +20317,7 @@ async function rsvpGet(req, env, url) {
     teamMgmtLink = `
       <div style="margin-top:14px; text-align:center;">
         <a href="${tUrl}" class="tabbtn" style="display:block; text-align:center; padding:11px 16px; font-weight:700;">
-          Gérer l'équipe ${esc(team)} / Manage ${esc(team)} roster & subs
+          Gérer l'équipe ${esc(team)} / Manage ${esc(team)}'s lineup and subs
         </a>
       </div>`;
   }
@@ -29672,6 +29673,17 @@ async function emailsPage(env = null, isAuthed = false) {
     $('btn-close-outbox-preview').onclick = () => { $('outbox-preview-modal').style.display = 'none'; };
   }
 
+  // « Semaine 2 · dimanche 11 janvier (Aréna) » / "Week 2 · Sunday, January 11
+  // (Aréna)": the date from the event id (SMBHL's date column is a label).
+  function eventOptionLabel(e, isEn) {
+    const iso = String(e.id || '').slice(-10);
+    const ok = iso.length === 10 && iso[4] === '-' && iso[7] === '-';
+    const day = ok
+      ? new Date(Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)), 12)).toLocaleDateString(isEn ? 'en-CA' : 'fr-CA', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })
+      : e.date;
+    return (isEn ? 'Week ' : 'Semaine ') + e.week + ' · ' + day + (e.venue ? ' (' + e.venue + ')' : '');
+  }
+
   function renderBroadcastEvents() {
     const sel = $('bc-event');
     sel.innerHTML = '';
@@ -29680,7 +29692,7 @@ async function emailsPage(env = null, isAuthed = false) {
     evs.forEach(e => {
       const opt = document.createElement('option');
       opt.value = e.id;
-      opt.textContent = (isEn ? 'Week ' : 'Semaine ') + e.week + ' · ' + e.date + (e.venue ? ' (' + e.venue + ')' : '');
+      opt.textContent = eventOptionLabel(e, isEn);
       sel.appendChild(opt);
     });
   }
@@ -29695,7 +29707,7 @@ async function emailsPage(env = null, isAuthed = false) {
     evs.forEach(e => {
       const opt = document.createElement('option');
       opt.value = e.id;
-      opt.textContent = (isEn ? 'Week ' : 'Semaine ') + e.week + ' · ' + e.date + (e.venue ? ' (' + e.venue + ')' : '');
+      opt.textContent = eventOptionLabel(e, isEn);
       sel.appendChild(opt);
     });
     if (curVal && Array.from(sel.options).some(o => o.value === curVal)) {

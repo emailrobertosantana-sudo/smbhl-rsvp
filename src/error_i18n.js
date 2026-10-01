@@ -126,7 +126,7 @@ export const ERROR_I18N = {
   VENUE_UNKNOWN: { fr: "Ce lieu n'appartient pas à ta ligue.", en: "venue_id must be one of this league's own saved venues." },
   VENUE_NAME_REQUIRED: { fr: 'Le nom du lieu est requis.', en: 'name is required.' },
   VENUE_NAME_TOO_LONG: { fr: 'Le nom du lieu est trop long.', en: 'Name is too long.' },
-  VENUE_MAP_LINK_INVALID: { fr: 'Le lien de la carte doit être une adresse http(s) valide.', en: 'map_link must be a valid http(s) link.' },
+  VENUE_MAP_LINK_INVALID: { fr: 'Le lien vers la carte doit être une adresse web (http ou https).', en: 'The map link must be a web address (http or https).' },
   VENUE_ID_REQUIRED: { fr: "L'identifiant du lieu est requis.", en: 'id is required.' },
   VENUE_NOT_FOUND: { fr: 'Lieu introuvable.', en: 'Venue not found.' },
   ROUTE_BLOCKED_VENUES: { fr: 'Cette route ne peut pas gérer les lieux de cette ligue.', en: 'This route cannot manage venues for this league.' },
