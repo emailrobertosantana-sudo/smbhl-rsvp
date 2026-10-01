@@ -421,6 +421,12 @@ export async function runSchedule(env) {
       const n = await callSubsForShortfall(env, ev);
       if (n) log.push(`shortfall ${ev.id}: ${n} sub call(s) queued`);
     } catch (e) { log.push(`shortfall check failed for ${ev.id}: ${e.message}`); }
+    // Dual-role players (item 6): their role for the night, and the admin's
+    // alert when another team is short a goalie. Nothing without one.
+    try {
+      const d = await reminderHost().dualGoalieChecks(env, ev);
+      if (d) log.push(`dual-role ${ev.id}: ${d} queued`);
+    } catch (e) { log.push(`dual-role check failed for ${ev.id}: ${e.message}`); }
   }
 
   try {
@@ -761,6 +767,10 @@ async function runOneLeague(env, leagueRow, budget, log) {
       for (const ev of openEvents) {
         const n = await callSubsForShortfall(env, ev);
         if (n) log.push(`${leagueRow.id}:${ev.id} shortfall: ${n} sub call(s) queued`);
+        try {
+          const d = await reminderHost().dualGoalieChecks(env, ev);
+          if (d) log.push(`${leagueRow.id}:${ev.id} dual-role: ${d} queued`);
+        } catch (e) { log.push(`${leagueRow.id}:${ev.id} dual-role check failed: ${e.message}`); }
       }
     } catch (e) { log.push(`${leagueRow.id} shortfall check failed: ${e.message}`); }
 

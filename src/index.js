@@ -9,6 +9,7 @@ import { safeNextPath, loginUrlFor, nextQuery, nextForScript } from './next_path
 import { getAddEmails, saveAddEmails } from './add_emails.js';
 import { chooseMailProvider, parseAddress } from './mail_provider.js';
 import { contactDisplayName, rosterNameMap } from './contact_name.js';
+import { passCached } from './pass_cache.js';
 import { getSubCallHours, saveSubCallHours, subCallWindowText, SUB_CALL_HOURS_CHOICES } from './sub_call_window.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix } from './health.js';
@@ -7820,7 +7821,7 @@ async function handleLeagueRosterPage(req, env, url) {
       // under a "Gardien" column reads as an error. Both renamed to the
       // neutral "Position"; the options themselves (axisPlayer/
       // axisGoalie) are unchanged, still "Joueur"/"Gardien".
-      goalieAxis: 'Position', axisPlayer: 'Joueur', axisGoalie: 'Gardien',
+      goalieAxis: 'Position', axisPlayer: 'Joueur', axisGoalie: 'Gardien', axisBoth: 'Les deux', playRoleLabel: 'Position',
       // B4 (stale-copy polish task): goalieAxisHelp ("Indépendant de
       // Régulier/Remplaçant...") removed entirely -- read like internal
       // documentation, and Role/Position are already visually separate
@@ -7901,7 +7902,7 @@ async function handleLeagueRosterPage(req, env, url) {
       inactiveSectionTitle: 'Inactive players', reactivateBtn: 'Reactivate', deactivateBtn: 'Mark inactive',
       players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.',
       weeklyDrawNote: 'Teams are assigned per game, not here: see a game’s own page.',
-      goalieAxis: 'Position', axisPlayer: 'Player', axisGoalie: 'Goalie',
+      goalieAxis: 'Position', axisPlayer: 'Skater', axisGoalie: 'Goalie', axisBoth: 'Both', playRoleLabel: 'Position',
       colGoalie: 'Position',
       canAlsoGoalie: 'Can also play goalie',
       goalieBadge: 'G',
@@ -7976,7 +7977,10 @@ async function handleLeagueRosterPage(req, env, url) {
     const nextRole = c.role === 'roster' ? 'sub_skater' : 'roster';
     const filterAttr = c.role !== 'roster' ? 'subs' : c.preferred_team ? `team:${c.preferred_team}` : 'unassigned';
     const roleBtn = `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-toggle-role="${esc(c.player_id)}" data-next-role="${nextRole}"><span data-i18n="${roleKey}">${esc(I18N_ROSTER.fr[roleKey])}</span></button>`;
-    const goalieBtn = `<button type="button" class="nl-btn ${c.is_goalie ? 'nl-btn--primary' : 'nl-btn--secondary'} nl-btn--sm" data-toggle-goalie="${esc(c.player_id)}" data-next-goalie="${c.is_goalie ? '0' : '1'}"><span data-i18n="${c.is_goalie ? 'axisGoalie' : 'axisPlayer'}">${esc(c.is_goalie ? I18N_ROSTER.fr.axisGoalie : I18N_ROSTER.fr.axisPlayer)}</span></button>`;
+    // Item 6a: what the player plays, one choice of three. "Les deux" is a
+    // player (is_goalie 0) who can also play goalie (is_backup_goalie 1).
+    const playRole = c.is_goalie ? 'goalie' : (c.is_backup_goalie ? 'both' : 'skater');
+    const goalieBtn = `<select class="nl-select" style="width:auto;min-width:8.5em;padding:6px 8px;font-size:14px" data-play-role="${esc(c.player_id)}" aria-label="${esc(I18N_ROSTER.fr.playRoleLabel)}">${['skater', 'goalie', 'both'].map(v => `<option value="${v}"${v === playRole ? ' selected' : ''} data-i18n="${{ skater: 'axisPlayer', goalie: 'axisGoalie', both: 'axisBoth' }[v]}">${esc(I18N_ROSTER.fr[{ skater: 'axisPlayer', goalie: 'axisGoalie', both: 'axisBoth' }[v]])}</option>`).join('')}</select>`;
     // E2 (players polish task): a small "G" badge next to "Joueur" for
     // anyone who can also cover goalie -- never shown for an actual
     // goalie (is_goalie already says "Gardien" on its own).
@@ -7984,7 +7988,7 @@ async function handleLeagueRosterPage(req, env, url) {
     // only in the Edit panel, which still has it) -- ticking five after an
     // import of thirty should not mean opening five panels. Hidden for an
     // actual goalie, same rule as the Edit panel.
-    const backupGoalieBadge = `<label class="ro-backup" data-backup-wrap="${esc(c.player_id)}" style="display:${c.is_goalie ? 'none' : 'flex'};align-items:center;gap:6px;margin-top:6px;font-size:13px;cursor:pointer;"><input type="checkbox" data-toggle-backup="${esc(c.player_id)}"${c.is_backup_goalie ? ' checked' : ''}><span data-i18n="canAlsoGoalie">${esc(I18N_ROSTER.fr.canAlsoGoalie)}</span></label>`;
+    const backupGoalieBadge = '';
     // Item 2: name/email/phone/can-also-play-goalie, expanding this
     // row in place -- Role and Position stay their own inline toggle
     // buttons above, untouched. The checkbox only renders under the
@@ -8018,10 +8022,6 @@ async function handleLeagueRosterPage(req, env, url) {
             <label class="nl-label" for="edit_phone_${esc(c.player_id)}" data-i18n="phoneOpt">Téléphone (optionnel)</label>
             <input class="nl-input" id="edit_phone_${esc(c.player_id)}" type="text" value="${esc(c.phone || '')}">
           </div>
-          ${showGoalieAxis && !c.is_goalie ? `<label style="display:flex;align-items:center;gap:8px;margin-top:8px;">
-            <input type="checkbox" id="edit_backup_${esc(c.player_id)}" ${c.is_backup_goalie ? 'checked' : ''}>
-            <span data-i18n="canAlsoGoalie">${esc(I18N_ROSTER.fr.canAlsoGoalie)}</span>
-          </label>` : ''}
           <div style="display:flex;gap:8px;margin-top:10px;">
             <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" data-i18n="saveEdit" onclick="submitEditRow('${esc(c.player_id)}')">Enregistrer</button>
             <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="cancel" onclick="toggleEditRow('${esc(c.player_id)}')">Annuler</button>
@@ -8651,50 +8651,24 @@ document.querySelectorAll('[data-set-team]').forEach(function(sel) {
     }
   });
 });
-// Item 4: the row's own "can also play goalie" checkbox.
-document.querySelectorAll('[data-toggle-backup]').forEach(function(box) {
-  box.addEventListener('change', async function() {
-    var playerId = box.getAttribute('data-toggle-backup');
-    var want = box.checked;
-    box.disabled = true;
+// Item 6a: what the player plays, one choice of three (Joueur / Gardien /
+// Les deux). Saved as the two flags it always was: is_goalie, and
+// is_backup_goalie ("can also play goalie").
+document.querySelectorAll('[data-play-role]').forEach(function(sel) {
+  var was = sel.value;
+  sel.addEventListener('change', async function() {
+    var playerId = sel.getAttribute('data-play-role');
+    var v = sel.value;
+    sel.disabled = true;
     document.getElementById('formErr').style.display = 'none';
     try {
-      await toggleRosterField(playerId, { is_backup_goalie: want });
-      var panelBox = document.getElementById('edit_backup_' + playerId);
-      if (panelBox) panelBox.checked = want;
+      await toggleRosterField(playerId, { is_goalie: v === 'goalie', is_backup_goalie: v === 'both' });
+      was = v;
     } catch (e) {
-      box.checked = !want;
+      sel.value = was;
       showErr(String(e.message));
     } finally {
-      box.disabled = false;
-    }
-  });
-});
-document.querySelectorAll('[data-toggle-goalie]').forEach(function(btn) {
-  btn.addEventListener('click', async function() {
-    var playerId = btn.getAttribute('data-toggle-goalie');
-    var nextGoalie = btn.getAttribute('data-next-goalie') === '1';
-    btn.disabled = true;
-    document.getElementById('formErr').style.display = 'none';
-    try {
-      await toggleRosterField(playerId, { is_goalie: nextGoalie });
-      var dict = window.__pageDict();
-      var span = btn.querySelector('span');
-      span.textContent = nextGoalie ? dict.axisGoalie : dict.axisPlayer;
-      span.setAttribute('data-i18n', nextGoalie ? 'axisGoalie' : 'axisPlayer');
-      btn.setAttribute('data-next-goalie', nextGoalie ? '0' : '1');
-      btn.classList.toggle('nl-btn--primary', nextGoalie);
-      btn.classList.toggle('nl-btn--secondary', !nextGoalie);
-      // A real goalie has no "can also play goalie" (the server clears it).
-      var wrap = document.querySelector('[data-backup-wrap="' + playerId + '"]');
-      if (wrap) {
-        wrap.style.display = nextGoalie ? 'none' : 'flex';
-        if (nextGoalie) wrap.querySelector('input').checked = false;
-      }
-    } catch (e) {
-      showErr(String(e.message));
-    } finally {
-      btn.disabled = false;
+      sel.disabled = false;
     }
   });
 });
@@ -10418,6 +10392,8 @@ ${tabbar}`;
       backToSchedule: 'Horaire', short: 'Manque', complete: 'Complet', minReached: 'Minimum atteint',
       confirmed: 'confirmés', openSpots: 'places libres', noReply: 'sans réponse',
       inviteGoalie: 'Inviter un gardien', inviteSkater: 'Inviter des joueurs',
+      dualTitle: 'Gardiens possibles', dualDesc: 'Ces joueurs jouent aux deux positions et jouent ce soir avec une autre équipe :',
+      dualAsk: 'Lui demander', dualSwitch: 'Mettre dans les buts', dualAsked: 'Demande envoyée.', dualSwitched: 'Fait : dans les buts pour cette équipe.',
       noPlayersOnTeam: 'Aucun joueur assigné à cette équipe.',
       statusIn: 'Je joue', statusOut: 'Absent', statusPending: 'Pas répondu', statusElsewhere: "Joue l'autre match", statusWaitlist: "Liste d'attente",
       noShowBtn: "N'est pas venu", noShowBadge: "N'est pas venu", noShowUndo: 'A joué', subsInGameTitle: 'Remplaçants à ce match',
@@ -10502,6 +10478,8 @@ ${tabbar}`;
       backToSchedule: 'Schedule', short: 'Short', complete: 'Full', minReached: 'Minimum reached',
       confirmed: 'confirmed', openSpots: 'open spots', noReply: 'no reply',
       inviteGoalie: 'Invite a goalie', inviteSkater: 'Invite players',
+      dualTitle: 'Possible goalies', dualDesc: 'These players play both positions and are playing tonight with another team:',
+      dualAsk: 'Ask', dualSwitch: 'Put in goal', dualAsked: 'Request sent.', dualSwitched: 'Done: in goal for this team.',
       noPlayersOnTeam: 'No players assigned to this team.',
       statusIn: "Playing", statusOut: 'Out', statusPending: 'No reply', statusElsewhere: 'In the other game', statusWaitlist: 'Waitlist',
       noShowBtn: "Didn't show", noShowBadge: "Didn't show", noShowUndo: 'Played', subsInGameTitle: 'Subs in this game',
@@ -10588,6 +10566,8 @@ ${tabbar}`;
     return '';
   }
 
+  // Item 6c: dual-role regulars who could play goal for a team short one.
+  const dualOpts = (await hasDualPlayers(env, leagueId)) ? await dualGoalieOptions(env, ev, cfg) : { short: [], players: [] };
   const teamCards = [];
   // Everyone listed on a team or pool card (the subs card lists the rest).
   const shownOnCards = new Set();
@@ -10684,6 +10664,11 @@ ${tabbar}`;
       <div class="nl-meter">${Array.from({ length: meterSpots }, (_, s) => `<i class="${s < confirmed ? 'in' : 'open'}"></i>`).join('')}</div>
       <div class="ev-ppl">${rosterListHtml}</div>
       ${inviteButtons.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">${inviteButtons.join('')}</div>` : ''}
+      ${dualOpts.short.includes(team) && dualOpts.players.length ? `<div class="ev-dual" data-dual-team="${esc(team)}" style="border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:8px;">
+        <div class="nl-label" data-i18n="dualTitle">Gardiens possibles</div>
+        <p class="nl-help" style="margin:0" data-i18n="dualDesc">Ces joueurs jouent aux deux positions et jouent ce soir avec une autre équipe :</p>
+        ${dualOpts.players.map(p => `<div class="ev-p"><span>${esc(p.name)} <span class="nl-help">(${esc(p.team)})</span></span><div style="display:flex;gap:6px;"><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="dualAsk" onclick="dualGoalie('${esc(p.player_id)}','${esc(team)}','ask',this)">Lui demander</button><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="dualSwitch" onclick="dualGoalie('${esc(p.player_id)}','${esc(team)}','switch',this)">Mettre dans les buts</button></div></div>`).join('')}
+      </div>` : ''}
       <p class="inviteMsg nl-help" style="display:none;"></p>
     </section>`);
   }
@@ -11322,6 +11307,29 @@ async function toggleEventReminders(btn) {
     msg.textContent = window.__errorText('NETWORK_ERROR'); msg.style.display = 'block';
   }
   btn.disabled = false;
+}
+// Item 6c: ask a dual-role regular to play goal for this team, or put
+// them in goal (the page reloads to show the new teams).
+async function dualGoalie(playerId, team, action, btn) {
+  var card = btn.closest('.ev-team');
+  var msg = card.querySelector('.inviteMsg');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/events/dual-goalie', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ event_id: ${JSON.stringify(ev.id)}, player_id: playerId, team: team, action: action })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    var d = window.__pageDict();
+    if (!res.ok || !data.ok) { msg.textContent = window.__errorText(data.errorKey, data.error); btn.disabled = false; }
+    else if (action === 'switch') { msg.textContent = d.dualSwitched; location.reload(); }
+    else { msg.textContent = d.dualAsked; }
+  } catch (e) {
+    msg.textContent = window.__errorText('NETWORK_ERROR');
+    btn.disabled = false;
+  }
+  msg.style.display = 'block';
 }
 async function inviteSubs(team, need, btn) {
   var card = btn.closest('.ev-team');
@@ -12067,6 +12075,14 @@ function renderInviteEmail({
 // teamless: a league with no teams (the no-teams structure: "Just my team"
 // or "Drop-in, no fixed teams") -- nothing in the email may talk about
 // being placed on a team.
+// Item 6f: a dual-role player's role for the night, in both languages.
+function dualRoleLines(payload) {
+  const r = payload && payload.dualRole;
+  if (r === 'goalie') return { fr: '🥅 Ce soir, tu joues dans les buts.', en: "🥅 Tonight you're in goal." };
+  if (r === 'skater') return { fr: '🏒 Ce soir, tu joues comme joueur.', en: '🏒 Tonight you play as a skater.' };
+  return null;
+}
+
 function body(kind, { ev, name, team, link, payload, leagueCfg = null, teamless = false }) {
   const league = leagueCfg || DEFAULT_SEASON_CONFIG.league;
   const siteUrl = league.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl;
@@ -12240,7 +12256,7 @@ NO  (Out): ${payload.no}${sign}`;
 
 Rappel : tu es confirmé(e) avec ${frTeam} pour demain, ${w.fr}!
 Reminder: you are confirmed with ${enTeam} for tomorrow, ${w.en}!
-${shirtText}${subFeeText}${matchInfo ? matchInfo + (matchInfoEn !== matchInfo ? matchInfoEn : '') + '\n' : ''}${msgsText}
+${dualRoleLines(payload) ? `${dualRoleLines(payload).fr}\n${dualRoleLines(payload).en}\n` : ''}${shirtText}${subFeeText}${matchInfo ? matchInfo + (matchInfoEn !== matchInfo ? matchInfoEn : '') + '\n' : ''}${msgsText}
 📋 Voir l'alignement de l'équipe : ${teamUrl}
 📋 View team lineup: ${teamUrl}
 ${webUrl ? `Fiche d'équipe : ${webUrl}\nTeam page: ${webUrl}\n` : ''}
@@ -12251,7 +12267,8 @@ Je ne peux pas jouer / I can't play : ${noUrl}${sign}`;
         subj,
         `<p style="font-size:16px; margin:0 0 4px; font-weight:700;">Salut <b>${esc(name)}</b> / Hi <b>${esc(name)}</b>,</p>
         <p style="font-size:16px; margin:0 0 3px; font-weight:600; color:#0f172a;">Rappel : tu es confirmé(e) avec <b>${esc(frTeam)}</b> pour demain, <b>${esc(w.fr)}</b>!</p>
-        <p style="font-size:14px; margin:0 0 16px; color:#475569;">Reminder: you are confirmed with <b>${esc(enTeam)}</b> for tomorrow, <b>${esc(w.en)}</b>!</p>
+        <p style="font-size:14px; margin:0 0 16px; color:#475569;">Reminder: you are confirmed with <b>${esc(enTeam)}</b> for tomorrow, <b>${esc(w.en)}</b>!</p>${dualRoleLines(payload) ? `
+        <p style="font-size:15px; margin:0 0 16px; font-weight:700;">${esc(dualRoleLines(payload).fr)}<br><span style="color:#475569; font-size:13px; font-weight:400;">${esc(dualRoleLines(payload).en)}</span></p>` : ''}
         ${shirtHtml}${subFeeHtml}
         ${matchInfo ? `<div style="background-color:#f8fafc; border-left:4px solid #17457f; padding:10px 14px; margin:0 0 16px; font-size:14px; white-space:pre-line;">${esc(matchInfo.trim())}${matchInfoEn !== matchInfo ? `<div style="color:#64748b; margin-top:8px;">${esc(matchInfoEn.trim())}</div>` : ''}</div>` : ''}
         ${msgsHtml}
@@ -12435,22 +12452,24 @@ Not right? Change it: ${link}${sign}`;
 `Salut ${name},
 
 Tu es inscrit avec ${tFR(team)} ${w.fr}.
-${cavFr}
+${dualRoleLines(payload) ? dualRoleLines(payload).fr + '\n' : ''}${cavFr}
 Tes détails : ${link}
 
 ---
 
 You're signed up with ${team} ${w.en}.
-${cavEn}
+${dualRoleLines(payload) ? dualRoleLines(payload).en + '\n' : ''}${cavEn}
 Your details: ${link}${sign}`;
       const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 14px;">Salut <b>${esc(name)}</b>,</p>
-        <p style="font-size:15px; margin:0 0 10px;">Tu es inscrit avec <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>.</p>
+        <p style="font-size:15px; margin:0 0 10px;">Tu es inscrit avec <b>${esc(tFR(team))}</b> <b>${esc(w.fr)}</b>.</p>${dualRoleLines(payload) ? `
+        <p style="font-size:15px; margin:0 0 10px; font-weight:700;">${esc(dualRoleLines(payload).fr)}</p>` : ''}
         <p style="font-size:14px; margin:0 0 16px; color:#64748b;">${esc(cavFr)}</p>
         <p style="margin:0 0 20px;">${emailBtn(link, 'Voir mes détails', '#17457f', '#ffffff')}</p>
         <hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">
-        <p style="font-size:15px; margin:0 0 10px; color:#334155;">You're signed up with <b>${esc(team)}</b> <b>${esc(w.en)}</b>.</p>
+        <p style="font-size:15px; margin:0 0 10px; color:#334155;">You're signed up with <b>${esc(team)}</b> <b>${esc(w.en)}</b>.</p>${dualRoleLines(payload) ? `
+        <p style="font-size:15px; margin:0 0 10px; font-weight:700; color:#334155;">${esc(dualRoleLines(payload).en)}</p>` : ''}
         <p style="font-size:14px; margin:0 0 16px; color:#64748b;">${esc(cavEn)}</p>
         <p style="margin:0 0 20px;">${emailBtn(link, 'See my details', '#17457f', '#ffffff')}</p>`
       );
@@ -12958,6 +12977,12 @@ async function prepareOutboxMessage(env, m, rctx, opts = {}) {
       }
       const phone = (pricing && pricing.etransfer_phone) ? pricing.etransfer_phone.trim() : (env.ETRANSFER_PHONE || '');
 
+      // Item 6f: a dual-role player's role for the night (teamState counts
+      // them in goal when their team's goalie is out or missing).
+      if ((m.kind === 'gameday' || m.kind === 'sub_placed') && c && c.is_backup_goalie === 1 && c.is_goalie !== 1 && playerTeam) {
+        const stDual = await teamState(env.DB, m.event_id, playerTeam, seasonCfg);
+        payload.dualRole = stDual.goalieIds.includes(m.player_id) ? 'goalie' : 'skater';
+      }
       if (m.kind === 'gameday') {
         // A sub may never have played for this team: the jersey colour (or,
         // in net, that no shirt is needed) -- what the retired "assigned"
@@ -14089,6 +14114,26 @@ async function handleLeagueAddEmailsSetting(req, env, url) {
 // A sub was just added (or became a sub): if any of the league's games
 // in range is short, they are called straight away -- not at the next
 // wave or cron pass.
+// POST /league/events/dual-goalie { event_id, player_id, team, action }:
+// the game page's "Possible goalies" (item 6c). action: 'ask' | 'switch'.
+async function handleLeagueDualGoalie(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  const body = await req.json().catch(() => ({}));
+  const ev = await getEvent(env.DB, String(body.event_id || ''));
+  if (!ev || ev.league_id !== leagueId) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+  const r = await dualGoalieAction(env, ev, String(body.player_id || ''), String(body.team || ''), String(body.action || ''));
+  if (r.ok) { try { await drain(env, 40, ev.id); } catch (_) {} }
+  return Response.json(r, { status: r.ok ? 200 : 400 });
+}
+
 async function callSubsForShortfallAfterSubAdded(env, leagueId) {
   const evs = (await env.DB.prepare(
     `SELECT * FROM events WHERE league_id = ? AND state = 'open'`
@@ -14282,6 +14327,27 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
                 AND dedup_key NOT LIKE 'remind:%')
       ORDER BY ${SUB_POOL_ORDER_BY}`
   ).bind(...poolBinds, leagueId, ev.id, ev.id, ev.id, ...subPoolOrderBinds(ev)).all()).results || [];
+  // Item 6d: a sub who plays both positions ("Les deux": sub_skater, not a
+  // goalie, is_backup_goalie) is called for a goalie shortage in the same
+  // wave as the goalie subs -- also when already called, or playing, as a
+  // skater that night. Never twice for goalie, and not after answering a
+  // goalie call. Nobody else's pool changes.
+  if (need === 'goalie') {
+    const goaliePrefix = `call:${ev.id}:goalie:`;
+    const duals = (await env.DB.prepare(
+      `SELECT c.player_id FROM contacts c
+        WHERE c.role = 'sub_skater' AND c.is_backup_goalie = 1 AND COALESCE(c.is_goalie, 0) = 0
+          AND c.league_id = ? AND c.opted_out = 0 AND c.dormant = 0 AND c.email IS NOT NULL
+          ${requireActive ? 'AND c.is_active = 1' : ''}
+          AND c.player_id NOT IN (SELECT player_id FROM availability WHERE event_id = ? AND need = 'goalie')
+          AND c.player_id NOT IN (SELECT player_id FROM outbox
+                WHERE event_id = ? AND kind = 'sub_call' AND player_id IS NOT NULL AND cancelled = 0
+                  AND dedup_key >= ? AND dedup_key < ?)
+        ORDER BY ${SUB_POOL_ORDER_BY}`
+    ).bind(leagueId, ev.id, ev.id, goaliePrefix, goaliePrefix + '\uffff', ...subPoolOrderBinds(ev)).all()).results || [];
+    const inPool = new Set(pool.map(p => p.player_id));
+    for (const d of duals) if (!inPool.has(d.player_id)) pool.push(d);
+  }
   // Nights (D1): a sub already playing a game that overlaps this one is
   // not called for it.
   if (pool.length && leagueId !== SMBHL_LEAGUE_ID) {
@@ -14379,6 +14445,39 @@ async function openSpots(db, eventId, team, need, cfg) {
 // Rows written here carry the EVENT's own league_id: a league's sub calls
 // link to this same /avail route, and an untagged row defaulted to 'smbhl'
 // -- invisible to that league's hard delete (which removes by league_id).
+// Item 6d: a dual-role sub playing as a skater on `fromTeam` moves to a
+// team of this game whose goalie spot is open (their preferred team first,
+// then the one with the most open spots). With no goalie of its own there,
+// teamState counts them in goal. Returns the new team, or null.
+async function dualSubToGoal(env, ev, playerId, fromTeam) {
+  const c = await getContact(env.DB, playerId);
+  if (!c || c.role !== 'sub_skater' || c.is_backup_goalie !== 1 || c.is_goalie === 1) return null;
+  const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
+  const cfg = await eventSeasonConfig(env, ev);
+  if ((cfg.teamStructure || 'fixed') === 'headcount') return null;
+  const options = [];
+  for (const team of gameTeamNames(ev, cfg)) {
+    if (team === fromTeam) continue;
+    const spots = await openSpots(env.DB, ev.id, team, 'goalie', cfg);
+    if (spots > 0) options.push({ team, spots, isPref: c.preferred_team === team });
+  }
+  if (!options.length) return null; // a goalie already took it: they stay a skater
+  options.sort((a, b) => (a.isPref !== b.isPref ? (a.isPref ? -1 : 1) : b.spots - a.spots));
+  const team = options[0].team;
+  await env.DB.prepare("UPDATE rsvp SET team = ?, status_by = 'self', updated_at = ? WHERE event_id = ? AND player_id = ?")
+    .bind(team, new Date().toISOString(), ev.id, playerId).run();
+  await tellSubOfPlacement(env, ev, playerId, team);
+  if (await openSpots(env.DB, ev.id, team, 'goalie', cfg) < 1) {
+    await stopWaves(env, ev.id, 'goalie', cfg);
+    await cancelPending(env, `hold:${ev.id}:${team}:goalie`);
+  }
+  // The skater spot they leave: the usual call (a real person's answer just
+  // opened it: no quiet-hours wait).
+  const isLeague = leagueId !== SMBHL_LEAGUE_ID;
+  await callSubs(env, ev, fromTeam, 'skater', 0, leagueId, isLeague && sportHasGoalie(cfg.sportType), true, true);
+  return team;
+}
+
 export async function acceptAvailability(env, ev, playerId, need) {
   const now = new Date().toISOString();
   const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
@@ -14397,7 +14496,16 @@ export async function acceptAvailability(env, ev, playerId, need) {
 
   const already = await env.DB.prepare(
     'SELECT team FROM rsvp WHERE event_id=? AND player_id=?').bind(ev.id, playerId).first();
-  if (already) return { placed: already.team };
+  if (already) {
+    // Item 6d: a sub who plays both positions, already playing as a
+    // skater, accepts a goalie spot: they move there now, and a skater call
+    // opens for the spot they leave (even if nobody takes it).
+    if (need === 'goalie' && already.team) {
+      const moved = await dualSubToGoal(env, ev, playerId, already.team);
+      if (moved) return { placed: moved, switched: true };
+    }
+    return { placed: already.team };
+  }
 
   const c = await getContact(env.DB, playerId);
   const pref = c && c.preferred_team;
@@ -14464,6 +14572,246 @@ export async function acceptAvailability(env, ev, playerId, need) {
     return { placed: team };
   }
   return { placed: null };
+}
+
+/* ---------- dual-role players: "Les deux" (item 6) ----------
+ * A player who plays skater and goalie: is_goalie 0, is_backup_goalie 1
+ * (the people page's and the players page's "Les deux"). teamState()
+ * already counts one as the team's goalie when the team's own goalie is
+ * out or missing (the skater count drops by one, and the usual skater sub
+ * call covers it). What follows:
+ *   - tells a dual-role player when their role for the night changes, and
+ *     the goalie who takes the net back (syncDualRoles, every cron pass);
+ *   - alerts the admin when another team is short a goalie and dual-role
+ *     regulars play that night (dualGoalieAlert, once per game);
+ *   - lets the admin ask one, or move one into that team's net
+ *     (dualGoalieAsk, dualGoalieSwitch: the game page's buttons).
+ * None of it runs for a league with no dual-role player: no query beyond
+ * the one that checks, no email, no change for anyone else.
+ */
+async function hasDualPlayers(env, leagueId) {
+  return passCached(env, `dual:${leagueId}`, async () => !!(await env.DB.prepare(
+    `SELECT 1 FROM contacts WHERE COALESCE(league_id, 'smbhl') = ? AND is_backup_goalie = 1 AND COALESCE(is_goalie, 0) = 0 LIMIT 1`
+  ).bind(leagueId).first()));
+}
+
+// The game's when line, mid-sentence: « dimanche 10 h 30 (lieu : X) ».
+function eventWhenLine(ev) {
+  return /^\d{4}-\d{2}-\d{2}/.test(String(ev.date || ''))
+    ? {
+        fr: `${formatEventDateTime(ev.date, ev.start_time, 'fr', 'long', false)}${ev.venue ? ` (lieu : ${ev.venue})` : ''}`,
+        en: `${formatEventDateTime(ev.date, ev.start_time, 'en', 'long')}${ev.venue ? ` (venue: ${ev.venue})` : ''}`
+      }
+    : whenLine(ev);
+}
+
+// One short email in the league's own form: SMBHL's stacked French then
+// English; a Notre Ligue league's language setting and design system.
+// fr/en: { subject, lines: [...] }.
+async function renderDualMail(env, ev, cfg, fr, en) {
+  const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
+  const league = getLeagueConfig(cfg);
+  const toHtml = lines => lines.map(l => (l ? `<p style="font-size:15px; margin:0 0 12px;">${esc(l)}</p>` : '')).join('');
+  if (leagueId === SMBHL_LEAGUE_ID) {
+    const siteHost = String(league.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+    const subject = `${fr.subject} / ${en.subject}`;
+    return {
+      mail: {
+        subject,
+        text: `${fr.lines.join('\n')}\n\n---\n\n${en.lines.join('\n')}\n\n---\n${league.name} · ${siteHost}`,
+        html: emailWrap(subject, `${toHtml(fr.lines)}<hr style="border:none; border-top:1px solid #e2e8f0; margin:22px 0;">${toHtml(en.lines)}`, league)
+      },
+      identity: { fromEmail: league.fromEmail, replyToEmail: league.replyToEmail }
+    };
+  }
+  const assembled = assembleBilingualEmail(league.languageMode || 'both', {
+    fr: { subject: fr.subject, text: fr.lines.join('\n'), html: toHtml(fr.lines) },
+    en: { subject: en.subject, text: en.lines.join('\n'), html: toHtml(en.lines) }
+  });
+  return {
+    mail: { subject: assembled.subject, text: assembled.text, html: nlEmailWrap({ brandName: league.name, barColor: leagueFillColor(league.color || '#b3122e'), bodyHtml: assembled.html, footerHtml: 'Notre Ligue' }) },
+    identity: league
+  };
+}
+
+const realTeam = team => (team && team !== HEADCOUNT_TEAM_NAME ? team : null);
+
+// kind: 'to_goalie' (a dual-role player goes in goal), 'to_skater' (back
+// to skater: the team's goalie is there after all), 'goalie_back' (to that
+// goalie), 'ask' (the admin asks one to play goal for another team).
+async function sendDualMail(env, ev, cfg, kind, playerId, team, otherId = null) {
+  const c = await getContact(env.DB, playerId);
+  if (!c || !c.email || c.opted_out) return false;
+  const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
+  const isSmbhl = leagueId === SMBHL_LEAGUE_ID;
+  const first = (c.name || '').split(' ')[0] || c.name || '';
+  const w = eventWhenLine(ev);
+  const t = realTeam(team);
+  const tFr = t ? (isSmbhl ? tFR(t) : t) : null;
+  const other = otherId ? await getContact(env.DB, otherId) : null;
+  const otherName = other ? other.name : '';
+  let fr, en;
+  if (kind === 'to_goalie') {
+    fr = { subject: 'Ce soir, tu joues dans les buts', lines: [`Salut ${first},`, '', `${t ? `${tFr} n'a pas de gardien` : "Il n'y a pas de gardien"} ${w.fr}. Comme tu peux jouer aux deux positions, tu joues dans les buts.`, "Tu n'as rien à faire. Si ça ne te convient pas, réponds à ce courriel."] };
+    en = { subject: "Tonight you're in goal", lines: [`Hi ${first},`, '', `${t ? `${t} has no goalie` : 'There is no goalie'} ${w.en}. Since you play both positions, you're in goal.`, "Nothing to do. If that doesn't work for you, reply to this email."] };
+  } else if (kind === 'to_skater') {
+    fr = { subject: 'Ce soir, tu joues comme joueur', lines: [`Salut ${first},`, '', `${t ? `Le gardien de ${tFr}` : 'Le gardien'} sera là ${w.fr} : il reprend sa place dans les buts, et tu joues comme joueur.`] };
+    en = { subject: 'Tonight you play as a skater', lines: [`Hi ${first},`, '', `${t ? `${t}'s goalie` : 'The goalie'} will be there ${w.en}: they take the net back, and you play as a skater.`] };
+  } else if (kind === 'goalie_back') {
+    fr = { subject: 'Tu es dans les buts ce soir', lines: [`Salut ${first},`, '', `Merci d'avoir confirmé. Tu es dans les buts${t ? ` pour ${tFr}` : ''} ${w.fr}.${otherName ? ` ${otherName} reprend sa place de joueur.` : ''}`] };
+    en = { subject: "You're in goal tonight", lines: [`Hi ${first},`, '', `Thanks for confirming. You're in goal${t ? ` for ${t}` : ''} ${w.en}.${otherName ? ` ${otherName} goes back to playing as a skater.` : ''}`] };
+  } else if (kind === 'ask') {
+    fr = { subject: `${tFr} cherche un gardien`, lines: [`Salut ${first},`, '', `${tFr} n'a pas de gardien ${w.fr}. Comme tu peux jouer aux deux positions, l'organisateur te demande si tu peux jouer dans les buts pour cette équipe.`, 'Réponds à ce courriel pour dire oui ou non.'] };
+    en = { subject: `${t} needs a goalie`, lines: [`Hi ${first},`, '', `${t} has no goalie ${w.en}. Since you play both positions, the organizer is asking whether you can play in goal for that team.`, 'Reply to this email to say yes or no.'] };
+  } else {
+    return false;
+  }
+  const { mail, identity } = await renderDualMail(env, ev, cfg, fr, en);
+  // One pending email per player and game: a quick change of role replaces
+  // the one not sent yet (enqueue's dedup), never adds a second.
+  const dedupKey = kind === 'ask' ? `dual_ask:${ev.id}:${playerId}:${t}` : kind === 'goalie_back' ? `dual_back:${ev.id}:${playerId}` : `dual_role:${ev.id}:${playerId}`;
+  await enqueuePrerenderedMail(env, { kind: 'dual_role', leagueId, eventId: ev.id, playerId, team: t, dedupKey, to: c.email, mail, identity });
+  return true;
+}
+
+// Every cron pass, every open game: a dual-role player's role for the night
+// (teamState's goalieIds) against the one last told (settings
+// dual_role:<event>:<player>, "skater" until told otherwise). On a change,
+// they are told; when they go back to skater, the goalie now in net is
+// told too.
+async function syncDualRoles(env, ev) {
+  if (!ev || ev.state !== 'open' || hoursOut(ev) <= 0) return 0;
+  const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
+  if (!(await hasDualPlayers(env, leagueId))) return 0;
+  const cfg = await eventSeasonConfig(env, ev);
+  const teams = (cfg.teamStructure || 'fixed') === 'headcount' ? [HEADCOUNT_TEAM_NAME] : gameTeamNames(ev, cfg);
+  let told = 0;
+  for (const team of teams) {
+    const st = await teamState(env.DB, ev.id, team, cfg);
+    const duals = st.rows.filter(r => r.player_id && r.status === 'in' && r.is_backup_goalie === 1 && r.is_goalie !== 1);
+    for (const d of duals) {
+      const role = st.goalieIds.includes(d.player_id) ? 'goalie' : 'skater';
+      const key = `dual_role:${ev.id}:${d.player_id}`;
+      const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first();
+      if ((row ? row.value : 'skater') === role) continue;
+      await env.DB.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(key, role).run();
+      if (await sendDualMail(env, ev, cfg, role === 'goalie' ? 'to_goalie' : 'to_skater', d.player_id, team)) told++;
+      // In goal first: the goalie calls still open for this game stop (the
+      // team's goalie spot is filled; stopWaves cancels them once no team of
+      // the game needs one).
+      if (role === 'goalie') {
+        await cancelPending(env, `hold:${ev.id}:${team}:goalie`);
+        if (await openSpots(env.DB, ev.id, team, 'goalie', cfg) < 1) await stopWaves(env, ev.id, 'goalie', cfg);
+      }
+      if (role === 'skater') {
+        for (const gid of st.goalieIds) if (await sendDualMail(env, ev, cfg, 'goalie_back', gid, team, d.player_id)) told++;
+      }
+    }
+  }
+  return told;
+}
+
+// The dual-role regulars playing a game whose own team has its goalie, and
+// the teams of that game short a goalie. For the admin's alert and the
+// game page's "Possible goalies".
+async function dualGoalieOptions(env, ev, cfg) {
+  const teams = (cfg.teamStructure || 'fixed') === 'headcount' ? [] : gameTeamNames(ev, cfg);
+  const short = [];
+  const goalieIds = new Set();
+  for (const team of teams) {
+    const st = await teamState(env.DB, ev.id, team, cfg);
+    if (st.shortGoalie) short.push(team);
+    for (const g of st.goalieIds) goalieIds.add(g);
+  }
+  if (!short.length) return { short, players: [] };
+  const rows = (await env.DB.prepare(
+    `SELECT r.player_id, r.team, c.name FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+      WHERE r.event_id = ? AND r.status = 'in' AND c.role = 'roster' AND c.is_backup_goalie = 1 AND COALESCE(c.is_goalie, 0) = 0
+      ORDER BY c.name`
+  ).bind(ev.id).all()).results || [];
+  const players = rows.filter(r => r.team && !short.includes(r.team) && !goalieIds.has(r.player_id));
+  return { short, players };
+}
+
+// The admin's alert (once per game, settings dual_goalie_alert:<event>):
+// a team is short a goalie, dual-role regulars play that night, and either
+// the game is 48 hours away with every goalie sub contacted, or every goalie
+// sub has already said no. Not at all once the spot is filled.
+async function dualGoalieAlert(env, ev) {
+  if (!ev || ev.state !== 'open') return 0;
+  const leagueId = ev.league_id || SMBHL_LEAGUE_ID;
+  if (!(await hasDualPlayers(env, leagueId))) return 0;
+  const hrs = hoursOut(ev);
+  if (hrs < CUTOFF_HOURS) return 0;
+  const key = `dual_goalie_alert:${ev.id}`;
+  if (await env.DB.prepare('SELECT 1 FROM settings WHERE key = ?').bind(key).first()) return 0;
+  const cfg = await eventSeasonConfig(env, ev);
+  const { short, players } = await dualGoalieOptions(env, ev, cfg);
+  if (!short.length || !players.length) return 0;
+  const isSmbhl = leagueId === SMBHL_LEAGUE_ID;
+  const goalieSubs = (await env.DB.prepare(
+    isSmbhl
+      ? `SELECT player_id FROM contacts WHERE COALESCE(league_id, 'smbhl') = 'smbhl' AND role = 'sub_goalie' AND opted_out = 0 AND dormant = 0 AND email IS NOT NULL`
+      : `SELECT player_id FROM contacts WHERE league_id = ? AND role = 'sub_skater' AND is_goalie = 1 AND opted_out = 0 AND dormant = 0 AND email IS NOT NULL AND is_active = 1`
+  ).bind(...(isSmbhl ? [] : [leagueId])).all()).results || [];
+  const called = new Set(((await env.DB.prepare(
+    `SELECT player_id, dedup_key FROM outbox WHERE event_id = ? AND kind = 'sub_call' AND sent_at IS NOT NULL AND player_id IS NOT NULL`
+  ).bind(ev.id).all()).results || []).filter(r => String(r.dedup_key || '').startsWith(`call:${ev.id}:goalie:`)).map(r => r.player_id));
+  const saidNo = new Set(((await env.DB.prepare(
+    `SELECT player_id FROM availability WHERE event_id = ? AND need = 'goalie' AND status = 'no'`
+  ).bind(ev.id).all()).results || []).map(r => r.player_id));
+  const allSaidNo = goalieSubs.length > 0 && goalieSubs.every(g => saidNo.has(g.player_id));
+  const allContacted = goalieSubs.every(g => called.has(g.player_id) || saidNo.has(g.player_id));
+  if (!allSaidNo && !(hrs <= 48 && allContacted)) return 0;
+  await env.DB.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').bind(key, new Date().toISOString()).run();
+
+  const w = eventWhenLine(ev);
+  const shortFr = short.map(t => (isSmbhl ? tFR(t) : t)).join(', ');
+  const why = {
+    fr: !goalieSubs.length ? "Il n'y a aucun gardien remplaçant." : allSaidNo ? 'Tous les gardiens remplaçants ont dit non.' : 'Tous les gardiens remplaçants ont été appelés.',
+    en: !goalieSubs.length ? 'There is no goalie sub.' : allSaidNo ? 'Every goalie sub said no.' : 'Every goalie sub has been called.'
+  };
+  const base = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
+  const link = isSmbhl ? `${base}/admin/board?e=${encodeURIComponent(ev.id)}` : `${base}/league/events/detail?e=${encodeURIComponent(ev.id)}`;
+  const list = lang => players.map(p => `- ${p.name} (${isSmbhl && lang === 'fr' ? tFR(p.team) : p.team})`);
+  const fr = { subject: `Gardien manquant : ${shortFr}`, lines: [`${shortFr} : pas de gardien ${w.fr}. ${why.fr}`, '', 'Ces joueurs jouent aux deux positions et jouent ce soir :', ...list('fr'), '', `Sur la page du match, tu peux leur demander ou les mettre dans les buts : ${link}`] };
+  const en = { subject: `Missing goalie: ${short.join(', ')}`, lines: [`${short.join(', ')}: no goalie ${w.en}. ${why.en}`, '', 'These players play both positions and are playing tonight:', ...list('en'), '', `On the game page, you can ask them or put them in goal: ${link}`] };
+  const { mail, identity } = await renderDualMail(env, ev, cfg, fr, en);
+  const admins = isSmbhl ? [{ email: env.ADMIN_EMAIL || ADMIN_EMAIL }] : await leagueAdminEmails(env, leagueId);
+  for (const a of admins) {
+    if (!a.email) continue;
+    await enqueuePrerenderedMail(env, { kind: 'dual_goalie_alert', leagueId, eventId: ev.id, dedupKey: `dual_goalie_alert:${ev.id}:${a.email}`, to: a.email, mail, identity });
+  }
+  return admins.length;
+}
+
+// The cron's hook (src/reminders.js): both checks for one open game.
+async function dualGoalieChecks(env, ev) {
+  return (await syncDualRoles(env, ev)) + (await dualGoalieAlert(env, ev));
+}
+
+// The game page's buttons. ask: an email asking the player to play goal for
+// `team`. switch: the player moves to `team` for the night (their rsvp
+// row); with no goalie of its own there, teamState counts them in goal;
+// their old team calls a skater sub as usual; they are told at once.
+async function dualGoalieAction(env, ev, playerId, team, action) {
+  const cfg = await eventSeasonConfig(env, ev);
+  const { short, players } = await dualGoalieOptions(env, ev, cfg);
+  if (!short.includes(team)) return { ok: false, error: 'This team is not short a goalie.', errorKey: 'DUAL_TEAM_NOT_SHORT' };
+  const p = players.find(x => x.player_id === playerId);
+  if (!p) return { ok: false, error: 'This player cannot be put in goal for this game.', errorKey: 'DUAL_PLAYER_NOT_AVAILABLE' };
+  if (action === 'ask') {
+    await sendDualMail(env, ev, cfg, 'ask', playerId, team);
+    return { ok: true, asked: true };
+  }
+  if (action !== 'switch') return { ok: false, error: 'Unknown action.', errorKey: 'DUAL_ACTION_UNKNOWN' };
+  await env.DB.prepare('UPDATE rsvp SET team = ?, status_by = ?, updated_at = ? WHERE event_id = ? AND player_id = ?')
+    .bind(team, 'manager', new Date().toISOString(), ev.id, playerId).run();
+  // The goalie spot is filled: no more goalie calls for this game.
+  if (await openSpots(env.DB, ev.id, team, 'goalie', cfg) < 1) await stopWaves(env, ev.id, 'goalie', cfg);
+  await syncDualRoles(env, ev);
+  try { await callSubsForShortfall(env, ev); } catch (e) { console.error(`[dual] skater call after a switch failed: ${e.message}`); }
+  return { ok: true, switched: true, from: p.team, to: team };
 }
 
 async function fillFromWaitlist(env, ev, team, need, cfg) {
@@ -16107,6 +16455,8 @@ const I18N_BOARD = {
     errEnterKey: 'Entre la clé',
     errKeyRejected: 'Clé refusée',
     noOpenGame: 'Aucun match ouvert.',
+    dualTitle: 'Gardiens possibles', dualDesc: 'Pas de gardien pour {teams}. Ces joueurs jouent aux deux positions et jouent ce soir :',
+    dualAsk: 'Lui demander', dualSwitch: 'Dans les buts pour {team}', dualAsked: 'Demande envoyée.',
     printSheets: 'Imprimer feuilles de match ↗',
     weekLabel: 'Semaine',
     whatsappTitle: 'Liens WhatsApp permanents',
@@ -16156,6 +16506,8 @@ const I18N_BOARD = {
     errEnterKey: 'Enter key',
     errKeyRejected: 'Key rejected',
     noOpenGame: 'No open game.',
+    dualTitle: 'Possible goalies', dualDesc: 'No goalie for {teams}. These players play both positions and are playing tonight:',
+    dualAsk: 'Ask', dualSwitch: 'In goal for {team}', dualAsked: 'Request sent.',
     printSheets: 'Print Game Sheets ↗',
     weekLabel: 'Week',
     whatsappTitle: 'Permanent WhatsApp Links',
@@ -16447,6 +16799,20 @@ function renderBoardUI() {
   }
   h += '</div></div>';
 
+  // Item 6c: dual-role regulars who could play goal for a team short one.
+  const dg = d.dualGoalies;
+  if (dg && dg.short && dg.short.length && dg.players && dg.players.length) {
+    h += '<div class="card" id="dualGoalies" style="margin-top:14px;border:2px solid #b45309">' +
+      '<b>' + esc(t('dualTitle')) + '</b>' +
+      '<p class="state" style="margin:4px 0 8px">' + esc(t('dualDesc').replace('{teams}', dg.short.join(', '))) + '</p>' +
+      dg.short.map(team => dg.players.map(p =>
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--rule);flex-wrap:wrap">' +
+          '<span>' + esc(p.name) + ' <span class="by">(' + esc(p.team) + ')</span></span>' +
+          '<span><button type="button" class="mini" data-dual="ask" data-dual-p="' + esc(p.player_id) + '" data-dual-t="' + esc(team) + '">' + esc(t('dualAsk')) + '</button>' +
+          '<button type="button" class="mini in" data-dual="switch" data-dual-p="' + esc(p.player_id) + '" data-dual-t="' + esc(team) + '">' + esc(t('dualSwitch').replace('{team}', team)) + '</button></span>' +
+        '</div>').join('')).join('') +
+      '<p class="state" id="dualMsg" style="margin:6px 0 0"></p></div>';
+  }
   $('main').innerHTML = h;
 }
 
@@ -16458,6 +16824,26 @@ async function load(eventId) {
   if (currentBoardData?.event?.id) currentEventId = currentBoardData.event.id;
   renderBoardUI();
 }
+
+document.addEventListener('click', async e => {
+  const b = e.target.closest && e.target.closest('[data-dual]');
+  if (!b) return;
+  b.disabled = true;
+  try {
+    const res = await fetch('/admin/board/dual-goalie', {
+      method: 'POST',
+      headers: { 'x-admin': K, 'content-type': 'application/json' },
+      body: JSON.stringify({ event_id: currentEventId, player_id: b.dataset.dualP, team: b.dataset.dualT, action: b.dataset.dual })
+    });
+    const data = await res.json().catch(() => ({}));
+    const msg = $('dualMsg');
+    if (!res.ok || !data.ok) { if (msg) msg.textContent = window.__errorText(data.errorKey, data.error); b.disabled = false; return; }
+    if (b.dataset.dual === 'switch') { load(); return; }
+    if (msg) msg.textContent = t('dualAsked');
+  } catch (err) {
+    b.disabled = false;
+  }
+});
 
 document.addEventListener('change', async e => {
   if (e.target.id === 'boardevsel') {
@@ -16972,7 +17358,9 @@ async function boardData(env, url = null) {
   }
 
   const planned_absences = await getPlannedAbsencesForSeason(env.DB, ev.season);
-  return Response.json({ event: ev, events, teams, waitlist, planned_absences, balance });
+  // Item 6c: dual-role regulars who could play goal for a team short one.
+  const dualGoalies = (await hasDualPlayers(env, ev.league_id || SMBHL_LEAGUE_ID)) ? await dualGoalieOptions(env, ev, cfg) : { short: [], players: [] };
+  return Response.json({ event: ev, events, teams, waitlist, planned_absences, balance, dualGoalies });
 }
 
 async function subsPage(env = null, isAuthed = false) {
@@ -18229,6 +18617,7 @@ const I18N_CONTACTS = {
     btnRestore: "⚡ RÉACTIVER",
     btnToGoalie: "GARDIEN",
     btnToSkater: "JOUEUR",
+    playSkater: "Joueur", playGoalie: "Gardien", playBoth: "Les deux", playRoleTitle: "Position",
     archivePromptTitle: "Archiver {name} ?\\n\\nIndiquez le motif en tapant un chiffre (1 à 4) :\\n1 - Pause de saison (Season off)\\n2 - Blessure (Injury)\\n3 - Retraite (Retired)\\n4 - Autre / Inactif",
     restoreConfirm: "Réactiver {name} dans le pool de substituts ?\\n\\n(Le joueur débutera comme substitut et ne sera pas assigné d'office à une équipe).",
     purgeConfirm: "Supprimer DEFINITIVEMENT {name} de la base de données ?\\n\\nAttention : toutes ses coordonnées seront effacées.",
@@ -18309,6 +18698,7 @@ const I18N_CONTACTS = {
     btnRestore: "⚡ REACTIVATE",
     btnToGoalie: "GOALIE",
     btnToSkater: "SKATER",
+    playSkater: "Skater", playGoalie: "Goalie", playBoth: "Both", playRoleTitle: "Position",
     archivePromptTitle: "Archive {name}?\\n\\nEnter the reason by typing a number (1 to 4):\\n1 - Season off\\n2 - Injury\\n3 - Retired\\n4 - Other / Inactive",
     restoreConfirm: "Reactivate {name} in the sub pool?\\n\\n(The player will start as a sub and will not be automatically assigned to a team).",
     purgeConfirm: "PERMANENTLY delete {name} from the database?\\n\\nWarning: all contact information will be erased.",
@@ -18420,9 +18810,17 @@ function renderContacts(d) {
   $('sub-goalie-desc').textContent = countText('subGoaliesAvail', goalieList.length);
   $('lbl-archive-count').textContent = countText('archivedDesc', archiveList.length);
 
+  // Item 6a: what a player plays, one choice of three. "Les deux" is a
+  // player who can also play goalie (is_backup_goalie), as before.
+  const playRoleSelect = (p) => {
+    const v = (p.is_goalie || p.role === 'sub_goalie') ? 'goalie' : (p.is_backup_goalie === 1 ? 'both' : 'skater');
+    return '<select class="contact-input" data-play-role="' + esc(p.player_id) + '" title="' + esc(t('playRoleTitle')) + '" style="width:auto;font-size:12px;padding:3px 4px;margin-right:4px;">' +
+      ['skater', 'goalie', 'both'].map(o => '<option value="' + o + '"' + (o === v ? ' selected' : '') + '>' + esc(t({ skater: 'playSkater', goalie: 'playGoalie', both: 'playBoth' }[o])) + '</option>').join('') + '</select>';
+  };
+
   const rowRoster = (p) => {
     const isBackup = p.is_backup_goalie === 1;
-    const backupBtn = !p.is_goalie ? '<button type="button" class="mini ' + (isBackup ? 'in' : '') + '" data-toggle-backup="' + esc(p.player_id) + '" data-val="' + (isBackup ? '0' : '1') + '" title="' + esc(isBackup ? t('btnBackupGoalieOn') : t('btnBackupGoalieOff')) + '" style="margin-right:4px;font-size:11px;padding:2px 5px;">' + (isBackup ? '🥅 G2' : '+G2') + '</button>' : '';
+    const backupBtn = playRoleSelect(p);
     const posBadge = p.is_goalie ? '<span class="pos-badge pos-G">G</span>'
       : (isBackup ? '<span class="pos-badge" style="background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe;" title="Gardien auxiliaire">' + (p.position === 'D' ? 'D/G' : (p.position === 'F' ? (currentLang === 'en' ? 'F/G' : 'A/G') : 'G2')) + '</span>'
       : (p.position === 'D' ? '<span class="pos-badge pos-D">D</span>' : '<span class="pos-badge pos-F">' + (currentLang === 'en' ? 'F' : 'A') + '</span>'));
@@ -18475,10 +18873,7 @@ function renderContacts(d) {
     // same fix, same reasoning, this is just a different role's row.
     const em = '<input type="text" inputmode="email" class="contact-input" data-em="' + esc(p.player_id) + '" value="' + esc(p.email || '') + '" placeholder="' + (currentLang === 'en' ? 'email' : 'courriel') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
     const ph = '<input type="tel" class="contact-input" data-ph="' + esc(p.player_id) + '" value="' + esc(p.phone || '') + '" placeholder="' + (currentLang === 'en' ? 'phone' : 'téléphone') + '" style="width:100%;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">';
-    const roleToggleBtnText = p.role === 'sub_goalie' ? t('btnToSkater') : t('btnToGoalie');
-    const acts = '<button class="mini" data-mv="' + esc(p.player_id) + '" data-to="' +
-          (p.role === 'sub_goalie' ? 'sub_skater' : 'sub_goalie') + '">' +
-          esc(roleToggleBtnText) + '</button> ' +
+    const acts = playRoleSelect(p) +
       '<button class="mini out" data-archive="' + esc(p.player_id) + '" data-name="' + esc(p.name) + '" data-role="' + esc(p.role) + '" title="' + esc(t('btnArchive')) + '">' + esc(t('btnArchive')) + '</button>';
     const searchKey = [p.name, p.preferred_team, p.email, p.phone, p.role].filter(Boolean).join(' ');
     return '<tr class="contact-row" data-search="' + esc(searchKey) + '">' +
@@ -18628,6 +19023,14 @@ function wire() {
     await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
       action: 'role', player_id: b.dataset.mv, role: b.dataset.to }) });
     load();
+  }));
+
+  document.querySelectorAll('[data-play-role]').forEach(sel => sel.addEventListener('change', async () => {
+    try {
+      await api('/admin/contacts', { method: 'POST', body: JSON.stringify({
+        action: 'play_role', player_id: sel.dataset.playRole, play_role: sel.value }) });
+      load();
+    } catch (e) { alert('Erreur: ' + e.message); }
   }));
 
   document.querySelectorAll('[data-toggle-backup]').forEach(b => b.addEventListener('click', async () => {
@@ -19017,6 +19420,7 @@ async function peopleData(env) {
         phone: c.phone || '',
         role: subRole,
         is_goalie: c.is_goalie || (c.role === 'sub_goalie' ? 1 : 0),
+        is_backup_goalie: c.is_backup_goalie || 0,
         dormant: 0,
         asked_streak: c.asked_streak || 0,
         last_asked: c.last_asked || null,
@@ -19158,6 +19562,20 @@ async function peopleAction(req, env) {
     await env.DB.prepare('UPDATE contacts SET role=?, is_goalie=? WHERE player_id=?')
       .bind(b.role, b.role === 'sub_goalie' ? 1 : 0, id).run();
     return Response.json({ ok: true });
+  }
+
+  // Item 6a: Joueur / Gardien / Les deux. A sub's role follows (sub_goalie
+  // for Gardien, sub_skater otherwise); a regular keeps role 'roster'.
+  if (b.action === 'play_role') {
+    const v = String(b.play_role || '');
+    if (!['skater', 'goalie', 'both'].includes(v)) return new Response('bad play_role', { status: 400 });
+    const c = await env.DB.prepare('SELECT role FROM contacts WHERE player_id=?').bind(id).first();
+    if (!c) return new Response('not found', { status: 404 });
+    const isSub = c.role === 'sub_skater' || c.role === 'sub_goalie';
+    const role = isSub ? (v === 'goalie' ? 'sub_goalie' : 'sub_skater') : c.role;
+    await env.DB.prepare('UPDATE contacts SET role=?, is_goalie=?, is_backup_goalie=? WHERE player_id=?')
+      .bind(role, v === 'goalie' ? 1 : 0, v === 'both' ? 1 : 0, id).run();
+    return Response.json({ ok: true, role, is_goalie: v === 'goalie' ? 1 : 0, is_backup_goalie: v === 'both' ? 1 : 0 });
   }
 
   if (b.action === 'backup_goalie') {
@@ -21139,16 +21557,19 @@ function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, d
 // 30-emails.md: one button per email).
 // Live-testing task (batch 3), Part 1: reconciled onto the same shared
 // assembler as renderLeagueReminderEmail above -- see its own comment.
-function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang, games = null }) {
+function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang, games = null, role = null }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
+  const roleLine = l => (role === 'goalie' ? (l === 'fr' ? 'Ce soir, tu joues dans les buts.' : "Tonight you're in goal.") : role === 'skater' ? (l === 'fr' ? 'Ce soir, tu joues comme joueur.' : 'Tonight you play as a skater.') : '');
   const toContent = l => {
     const d = leagueReminderDict(l, { firstName, dayLabel: dayLabelFor(dayLabel, l), ev, team, games });
+    const rl = roleLine(l);
     return {
       subject: d.logisticsSubject,
-      text: `${d.logisticsHeadline}\n${d.logisticsBody}\n${d.optOut}: ${optOutLink}`,
+      text: `${d.logisticsHeadline}\n${d.logisticsBody}${rl ? `\n${rl}` : ''}\n${d.optOut}: ${optOutLink}`,
       html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.logisticsHeadline}</h1>
-    <p style="margin:0 0 20px;font-size:16px;line-height:25px;">${d.logisticsBody}</p>
+    <p style="margin:0 0 20px;font-size:16px;line-height:25px;">${d.logisticsBody}</p>${rl ? `
+    <p style="margin:0 0 20px;font-size:16px;line-height:25px;font-weight:700;">${rl}</p>` : ''}
     <p style="margin:0;font-size:13px;line-height:19px;color:#55585f;"><a href="${optOutLink}" style="color:#55585f;">${d.optOut}</a></p>`,
       poweredBy: d.poweredBy
     };
@@ -21538,6 +21959,15 @@ async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId =
 // first of them, the one the links are signed for.
 async function renderLeagueReminderForContact(env, leagueRow, ev, contact, kind, team = null, games = null) {
   const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
+  // Item 6f: a dual-role player's role for the night, in the details email.
+  let role = null;
+  if (kind !== 'reminder_72h' && kind !== 'reminder_24h' && team && team !== HEADCOUNT_TEAM_NAME && await hasDualPlayers(env, leagueRow.id)) {
+    const full = await getContact(env.DB, contact.player_id);
+    if (full && full.is_backup_goalie === 1 && full.is_goalie !== 1) {
+      const st = await teamState(env.DB, ev.id, team, await eventSeasonConfig(env, ev));
+      role = st.goalieIds.includes(contact.player_id) ? 'goalie' : 'skater';
+    }
+  }
   const dayLabel = { fr: reminderDayLabel(ev.date, 'fr'), en: reminderDayLabel(ev.date, 'en') };
   const firstName = (contact.name || '').split(' ')[0] || contact.name;
   const { inLink, outLink, optOutLink } = await leagueOptInOutLinks(env, leagueRow.id, ev, contact);
@@ -21545,7 +21975,7 @@ async function renderLeagueReminderForContact(env, leagueRow, ev, contact, kind,
     ? renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang, games })
     // A no-teams league's single pool (HEADCOUNT_TEAM_NAME, 'Tous') is internal:
     // the details email said 'Équipe Tous / Team Tous'.
-    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: team === HEADCOUNT_TEAM_NAME ? null : team, optOutLink, forcedLang, games });
+    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: team === HEADCOUNT_TEAM_NAME ? null : team, optOutLink, forcedLang, games, role });
 }
 
 // night: the night's games when there is more than one (D1), ev first:
@@ -30562,7 +30992,7 @@ async function handleChampionPhoto(req, env, url) {
 // The shared reminder module (src/reminders.js) calls back into these.
 installReminderHost({
   enqueue, teamState, remindSubs, callSubs, getTeamMessages, callSubsForShortfall, ensureNextEvent, getEvent,
-  drain, deadMan, ADMIN_EMAIL, sendLeagueReminderKind, getLeagueSeasonConfig, randomAssignEventTeams, dateFR, SHORTFALL_HORIZON_HOURS
+  drain, deadMan, ADMIN_EMAIL, sendLeagueReminderKind, getLeagueSeasonConfig, randomAssignEventTeams, dateFR, SHORTFALL_HORIZON_HOURS, dualGoalieChecks
 });
 installEmailPreviewHost({
   prepareOutboxMessage, createOutboxRenderContext, dateFR, teamState, ADMIN_EMAIL, computeSeasonAwards, formatEventDate,
@@ -30938,6 +31368,8 @@ async function handleFetch(req, env, ctx) {
         return await addContactsWithEmailChoice(req, env, url, handleLeagueContactsBulkCreate);
       if (url.pathname === '/league/settings/add-emails' && req.method === 'POST')
         return await handleLeagueAddEmailsSetting(req, env, url);
+      if (url.pathname === '/league/events/dual-goalie' && req.method === 'POST')
+        return await handleLeagueDualGoalie(req, env, url);
       if (url.pathname === '/league/settings/sub-calls' && req.method === 'POST')
         return await handleLeagueSubCallsSetting(req, env, url);
       // Live-testing task (batch 6), Part 5: inline role/goalie editing
@@ -31245,6 +31677,16 @@ async function handleFetch(req, env, ctx) {
           }
         }
         return adminAuthResponse(auth);
+      }
+      if (url.pathname === '/admin/board/dual-goalie' && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const body = await req.json().catch(() => ({}));
+        const ev = await getEvent(env.DB, String(body.event_id || ''));
+        if (!ev || (ev.league_id || SMBHL_LEAGUE_ID) !== SMBHL_LEAGUE_ID) return Response.json({ ok: false, error: 'Event not found.', errorKey: 'EVENT_NOT_FOUND' }, { status: 404 });
+        const r = await dualGoalieAction(env, ev, String(body.player_id || ''), String(body.team || ''), String(body.action || ''));
+        if (r.ok) { try { await drain(env, 40, ev.id); } catch (_) {} }
+        return Response.json(r, { status: r.ok ? 200 : 400 });
       }
       if (url.pathname === '/admin/subs/reassign' && req.method === 'POST') {
         const auth = checkAdminAuth(req, env);
@@ -31744,6 +32186,8 @@ async function handleFetch(req, env, ctx) {
 
 export {
   body,
+  // Item 6: dual-role players.
+  dualGoalieChecks, syncDualRoles, dualGoalieAlert, dualGoalieAction, dualGoalieOptions, callSubs,
   // The hard daily cap (part163) on a direct send.
   sendMail,
   // Nights (part165): the waitlist skips a sub in an overlapping game.

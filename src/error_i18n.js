@@ -98,6 +98,9 @@ export const ERROR_I18N = {
   // Players page answers this one with its own dialog, never as an error).
   ADD_EMAILS_ENABLED_REQUIRED: { fr: 'Indique si les courriels sont activés ou non.', en: 'Say whether emails are on or off.' },
   SUB_CALL_HOURS_INVALID: { fr: 'Choisis un des délais offerts.', en: 'Choose one of the times offered.' },
+  DUAL_TEAM_NOT_SHORT: { fr: "Cette équipe ne manque pas de gardien.", en: 'This team is not short a goalie.' },
+  DUAL_PLAYER_NOT_AVAILABLE: { fr: 'Ce joueur ne peut pas être mis dans les buts pour ce match.', en: 'This player cannot be put in goal for this game.' },
+  DUAL_ACTION_UNKNOWN: { fr: 'Action inconnue.', en: 'Unknown action.' },
   ADD_NOTICE_REQUIRED: { fr: "Lis d'abord quand ces joueurs recevront leur premier courriel.", en: 'Read first when these players will get their first email.' },
   ADD_EMAIL_CHOICE_REQUIRED: { fr: "Choisis d'abord si ces joueurs reçoivent un courriel.", en: 'Choose first whether these players are emailed.' },
   BULK_FIRST_DATE_REQUIRED: { fr: 'Choisis une première date.', en: 'Choose a first date.' },

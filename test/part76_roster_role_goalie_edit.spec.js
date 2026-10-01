@@ -168,8 +168,8 @@ describe('Part 5 (live-testing task, batch 6): roster role/goalie are now editab
       expect(html).not.toContain('Independent of Regular/Sub');
     });
 
-    // Item 4: the table row now carries a checkbox (ticked) instead of a G badge.
-    it('POST /league/contacts persists is_backup_goalie=1 for a Player, and the table row shows it ticked', async () => {
+    // Item 6a: the row's choice of three shows « Les deux » for a player who can also play goalie.
+    it('POST /league/contacts persists is_backup_goalie=1 for a Player, and the table row shows « Les deux »', async () => {
       const { cookie, csrfToken } = await signup('rosteredit.e2.create@example.com', '203.0.190.022');
       await createLeague(cookie, csrfToken, { name: 'E2 Create League', teamNames: ['X', 'Y'] });
       const contact = await addContact(cookie, csrfToken, { name: 'Dual Position Player', is_goalie: false, is_backup_goalie: true });
@@ -179,7 +179,8 @@ describe('Part 5 (live-testing task, batch 6): roster role/goalie are now editab
       expect(row.is_backup_goalie).toBe(1);
 
       const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
-      expect(html).toContain(`data-toggle-backup="${contact.player_id}" checked`);
+      const sel = html.slice(html.indexOf(`data-play-role="${contact.player_id}"`), html.indexOf('</select>', html.indexOf(`data-play-role="${contact.player_id}"`)));
+      expect(sel).toMatch(/<option value="both" selected/);
     });
 
     it('is_backup_goalie is never set for an actual goalie, even if a caller sends true for both', async () => {
@@ -295,7 +296,7 @@ describe('Part 5 (live-testing task, batch 6): roster role/goalie are now editab
 
     const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
     expect(html).toContain('data-toggle-role=');
-    expect(html).toContain('data-toggle-goalie=');
+    expect(html).toContain('data-play-role=');
 
     const scripts = extractInlineScripts(html);
     assertNoSyntaxError(scripts, '/league/roster');
@@ -338,7 +339,7 @@ describe('Item 2: inline player editing (name, email, phone, can-also-play-goali
     expect(html).toContain(`data-toggle-role="${player.player_id}"`);
   });
 
-  it('the goalie flag ("can also play goalie") can be changed on an EXISTING player through the rendered edit form, not just the route directly', async () => {
+  it('the goalie flag ("can also play goalie") can be changed on an EXISTING player through the row choice of three, not just the route directly', async () => {
     const { cookie, csrfToken } = await signup('item2.edit.goalieflag@example.com', '203.0.191.002');
     await createLeague(cookie, csrfToken, { name: 'Item2 Edit Goalie Flag League', teamNames: ['A', 'B'] });
     const player = await addContact(cookie, csrfToken, { name: 'Goalie Flag Player', team: 'A', email: 'goalieflag@example.com' });
@@ -347,20 +348,15 @@ describe('Item 2: inline player editing (name, email, phone, can-also-play-goali
     expect(before.is_backup_goalie).toBe(0);
 
     const html = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
-    // The checkbox the rendered "can also play goalie" control is --
-    // present, unchecked, and inside this player's own edit row.
-    expect(html).toContain(`id="edit_backup_${player.player_id}"`);
-    const rowStart = html.indexOf(`id="edit_row_${player.player_id}"`);
-    const rowEnd = html.indexOf('</tr>', rowStart);
-    const rowHtml = html.slice(rowStart, rowEnd);
-    expect(rowHtml).toContain(`id="edit_backup_${player.player_id}"`);
-    expect(rowHtml).not.toMatch(new RegExp(`id="edit_backup_${player.player_id}"[^>]*checked`));
+    // The row's choice of three (item 6a), on « Joueur » for now.
+    const selStart = html.indexOf(`data-play-role="${player.player_id}"`);
+    expect(selStart).toBeGreaterThan(-1);
+    expect(html.slice(selStart, html.indexOf('</select>', selStart))).toMatch(/<option value="skater" selected/);
 
-    // Exactly the request submitEditRow() issues when that checkbox is
-    // ticked and Save is clicked.
+    // Exactly the request the choice sends for « Les deux ».
     const res = await SELF.fetch('http://example.com/league/contacts/update', {
       method: 'POST', headers: { cookie, 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-      body: JSON.stringify({ player_id: player.player_id, name: player.name, email: 'goalieflag@example.com', phone: '', is_backup_goalie: true })
+      body: JSON.stringify({ player_id: player.player_id, is_goalie: false, is_backup_goalie: true })
     });
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -369,9 +365,10 @@ describe('Item 2: inline player editing (name, email, phone, can-also-play-goali
     const after = await env.DB.prepare('SELECT is_backup_goalie FROM contacts WHERE player_id = ?').bind(player.player_id).first();
     expect(after.is_backup_goalie).toBe(1);
 
-    // The row's checkbox is ticked on a fresh load of the same rendered page.
+    // The row's choice shows « Les deux » on a fresh load of the same page.
     const html2 = await (await SELF.fetch('http://example.com/league/roster', { headers: { cookie } })).text();
-    expect(html2).toContain(`data-toggle-backup="${player.player_id}" checked`);
+    const sel2 = html2.indexOf(`data-play-role="${player.player_id}"`);
+    expect(html2.slice(sel2, html2.indexOf('</select>', sel2))).toMatch(/<option value="both" selected/);
   });
 
   it('the checkbox never renders for a player already flagged as a real goalie (mutually exclusive, matching the add-player form)', async () => {

@@ -27,21 +27,20 @@ async function open(path, { lang } = {}) {
 
 describe('Players table', () => {
   // Item 4: "can also play goalie" settable from the row itself.
-  it('ticking "can also play goalie" in a row saves it, without opening Edit', async () => {
+  // Item 6a: a row's choice of three (Joueur / Gardien / Les deux) saves at once.
+  it('choosing "Les deux" in a row saves it, without opening Edit', async () => {
     const lea = await h.db.prepare(`SELECT player_id FROM contacts WHERE league_id = ? AND name = 'Lea Player'`).bind(league.league.id).first();
     const { page, errors, close } = await open('/league/roster');
-    const box = `[data-toggle-backup="${lea.player_id}"]`;
-    expect(await page.isVisible(box)).toBe(true);
+    const sel = `[data-play-role="${lea.player_id}"]`;
+    expect(await page.isVisible(sel)).toBe(true);
     expect(await page.isVisible(`[id="edit_row_${lea.player_id}"]`)).toBe(false);
-    await page.check(box);
-    await page.waitForFunction(sel => !document.querySelector(sel).disabled, box);
-    const row = await h.db.prepare('SELECT is_backup_goalie FROM contacts WHERE player_id = ?').bind(lea.player_id).first();
-    expect(row.is_backup_goalie).toBe(1);
-    // The Edit panel shows the same state.
-    expect(await page.isChecked(`[id="edit_backup_${lea.player_id}"]`)).toBe(true);
-    await page.uncheck(box);
-    await page.waitForFunction(sel => !document.querySelector(sel).disabled, box);
-    expect((await h.db.prepare('SELECT is_backup_goalie FROM contacts WHERE player_id = ?').bind(lea.player_id).first()).is_backup_goalie).toBe(0);
+    const flags = () => h.db.prepare('SELECT is_goalie, is_backup_goalie FROM contacts WHERE player_id = ?').bind(lea.player_id).first();
+    await page.selectOption(sel, 'both');
+    await page.waitForFunction(s => !document.querySelector(s).disabled, sel);
+    expect(await flags()).toMatchObject({ is_goalie: 0, is_backup_goalie: 1 });
+    await page.selectOption(sel, 'skater');
+    await page.waitForFunction(s => !document.querySelector(s).disabled, sel);
+    expect(await flags()).toMatchObject({ is_goalie: 0, is_backup_goalie: 0 });
     expect(errors).toEqual([]);
     await close();
   }, 120000);
