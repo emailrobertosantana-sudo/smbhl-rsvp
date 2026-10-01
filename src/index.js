@@ -13,6 +13,7 @@ import { passCached } from './pass_cache.js';
 import { getSubCallHours, saveSubCallHours, subCallWindowText, SUB_CALL_HOURS_CHOICES } from './sub_call_window.js';
 import { legalRoute, nlLegalEmailWrap, legalLinksPageHtml, legalLinksEmailHtml, LEGAL_I18N } from './legal.js';
 import { TERMS_LABEL, getTermsAcceptance } from './terms.js';
+import { ARCHIVO_WOFF2 } from './fonts_archivo.js';
 import { PAYMENT_REMINDER_KIND, getPaymentInfo, savePaymentInfo, hasPaymentInfo, normalizePhone, formatPhone, paymentReminderLines, cleanNote, PAYMENT_PANEL_JS } from './payment_reminders.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
@@ -22,7 +23,7 @@ import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, mak
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation, claimOutboxRow, hardDailyCapFromEnv, hardCapError, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
-import { handleSignup, handleLogin, handleAcceptTerms, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
+import { handleSignup, handleLogin, handleAcceptTerms, purgeRateLimitIps, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
@@ -315,7 +316,7 @@ ${CLIENT_ERROR_REPORTER}
 <meta itemprop="isFamilyFriendly" content="true">
 <meta name="classification" content="Sports, Hockey">
 <link rel="icon" href="${esc(league.faviconUrl)}" type="image/svg+xml">
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+${titles && titles.noGoogleFonts ? '' : '<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">'}
 <script>
 (function() {
   var lang = 'fr';
@@ -3228,7 +3229,7 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
   const result = await verifyInviteToken(env, token);
 
   if (!result.ok) {
-    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: productName(env) }, `
+    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: productName(env), noGoogleFonts: env.LEAGUE_PRODUCT === 'true' }, `
       <h1>Invitation invalide ou expirée<span class="en">Invalid or expired invitation</span></h1>
       <p class="state">Demande à l'administrateur de la ligue de t'envoyer une nouvelle invitation.<span class="en" style="display:block;">Ask the league admin to send you a new invitation.</span></p>
     `), { status: result.error === 'expired' ? 410 : 400, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
@@ -3236,7 +3237,7 @@ async function handleLeagueAdminAcceptPage(req, env, url) {
 
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(result.leagueId).first();
   if (!leagueRow) {
-    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: productName(env) }, `
+    return new Response(page({ fr: 'Invitation invalide', en: 'Invalid invitation', brand: productName(env), noGoogleFonts: env.LEAGUE_PRODUCT === 'true' }, `
       <h1>Cette ligue n'existe plus<span class="en">This league no longer exists</span></h1>
     `), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
@@ -3370,7 +3371,7 @@ window.addEventListener('admin_lang_changed', function(e) {
     </script>${toggleScript}`;
   }
 
-  return new Response(page('Invitation', body), {
+  return new Response(page({ fr: 'Invitation', en: 'Invitation', brand: productName(env), noGoogleFonts: env.LEAGUE_PRODUCT === 'true' }, body), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -31544,6 +31545,8 @@ async function runCronPass(env) {
       if (log.length) console.log('health:', log.join(' | '));
     } catch (e) { console.error(`[health] pass failed: ${e.message}`); }
   }
+  // The rate limits' IP addresses, kept 24 hours (src/auth.js).
+  try { await purgeRateLimitIps(env); } catch (e) { console.error(`[auth] IP purge: ${e.message}`); }
   try { await recordHeartbeat(env, 'end', { ok: passOk, error: passError }); } catch (e) { console.error(`[health] heartbeat end: ${e.message}`); }
   await pingHeartbeatUrl(env, passOk);
 }
@@ -31931,6 +31934,13 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueSeasonPublish(req, env);
       // The legal pages (src/legal.js), on the Notre Ligue host only.
       if (req.method === 'GET') { const legal = legalRoute(env, url); if (legal) return legal; }
+      // Archivo for Notre Ligue pages (design_system.js NL_FONT_FACE_CSS), from this Worker.
+      if (req.method === 'GET' && url.pathname.startsWith('/fonts/') && Object.prototype.hasOwnProperty.call(ARCHIVO_WOFF2, url.pathname.slice(7))) {
+        const bin = atob(ARCHIVO_WOFF2[url.pathname.slice(7)]);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new Response(bytes, { headers: { 'content-type': 'font/woff2', 'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' } });
+      }
       // Signup/login/dashboard pages — pure UI on top of the routes above.
       if ((url.pathname === '/signup' || url.pathname === '/signup/') && req.method === 'GET')
         return await renderSignupPage(req, env, url);

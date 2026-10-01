@@ -2,18 +2,6 @@
 
 Oct 1, 2026 · @Roberto
 
-## Statut / Status
-
-**Ébauche, pas encore en vigueur.** À faire réviser par un avocat avant la publication sur notreligue.ca. **Draft, not yet in force:** to be reviewed by a lawyer before it is published.
-
-À compléter avant la publication / To complete before publishing:
-
-- [ ] Adresse postale de l'entreprise / Business mailing address
-- [ ] Enregistrer le nom « Notre Ligue » au Registraire des entreprises / Register the name with the Registraire des entreprises
-- [ ] Faire l'évaluation des transferts hors Québec (section 7) / Complete the assessment of transfers outside Quebec
-- [ ] Vérifier dans le code les témoins et les journaux techniques (sections 4 et 8) / Verify cookies and technical logs against the code
-- [ ] Date d'entrée en vigueur / Effective date
-
 ## Version française
 
 Notre Ligue recueille seulement ce qu'il faut pour faire fonctionner ta ligue, ne vend aucun renseignement et ne fait aucune publicité. Cette politique explique ce que nous recueillons, pourquoi, avec qui c'est partagé et comment exercer tes droits.
@@ -36,10 +24,12 @@ Roberto Santana est responsable de la protection des renseignements personnels. 
 
 | Personne | Renseignements | Source |
 | --- | --- | --- |
-| Administrateur | Nom, adresse courriel, mot de passe (conservé sous forme hachée, jamais en clair), paramètres de la ligue | L'administrateur |
+| Administrateur | Adresse courriel, mot de passe (conservé sous forme hachée, jamais en clair), paramètres de la ligue | L'administrateur |
 | Administrateur | Renseignements de facturation | Stripe, qui traite le paiement. Nous ne voyons jamais le numéro de carte |
 | Joueur | Nom, adresse courriel, numéro de téléphone (facultatif), rôle, équipe, réponses aux invitations, statistiques, montants dus | La ligue |
 | Toute personne qui visite le site | Journaux techniques : adresse IP, navigateur, date et heure | Ton navigateur, par notre hébergeur |
+
+Nous conservons aussi les adresses IP utilisées pour les inscriptions, les connexions et les réinitialisations de mot de passe, pendant 24 heures, afin de bloquer les abus.
 
 ### 5. Utilisation
 
@@ -68,7 +58,7 @@ Nous confions certains traitements à des fournisseurs établis hors du Québec,
 
 ### 8. Témoins (cookies)
 
-Nous utilisons seulement les témoins nécessaires pour rester connecté. Aucun témoin de publicité ou de suivi.
+Nous utilisons seulement des témoins nécessaires au fonctionnement du service : rester connecté, protéger les formulaires, et retenir ta langue et la ligue que tu consultes. Aucun témoin de publicité ou de suivi.
 
 ### 9. Conservation
 
@@ -127,10 +117,12 @@ Roberto Santana is the person in charge of the protection of personal informatio
 
 | Person | Information | Source |
 | --- | --- | --- |
-| Admin | Name, email address, password (stored hashed, never in plain text), league settings | The admin |
+| Admin | Email address, password (stored hashed, never in plain text), league settings | The admin |
 | Admin | Billing information | Stripe, which processes the payment. We never see the card number |
 | Player | Name, email address, phone number (optional), role, team, answers to invitations, stats, amounts owed | The league |
 | Anyone visiting the site | Technical logs: IP address, browser, date and time | Your browser, through our host |
+
+We also keep the IP addresses used for sign-ups, sign-ins and password resets, for 24 hours, to block abuse.
 
 ### 5. How it is used
 
@@ -159,7 +151,7 @@ We rely on providers established outside Quebec, mainly in the United States, fo
 
 ### 8. Cookies
 
-We only use the cookies needed to keep you signed in. No advertising or tracking cookies.
+We only use cookies the service needs to work: keeping you signed in, protecting forms, and remembering your language and the league you are viewing. No advertising or tracking cookies.
 
 ### 9. Retention
 

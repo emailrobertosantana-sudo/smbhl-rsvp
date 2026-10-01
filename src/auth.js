@@ -644,6 +644,16 @@ export async function isLeagueEmailVerified(env, leagueId) {
 const SIGNUP_WINDOW_MS = 60 * 60 * 1000;
 const SIGNUP_LIMIT_PER_WINDOW = 5;
 
+// The IP addresses these limits keep (signup_attempts: sign-ups, sign-ins,
+// password resets) are erased after IP_RETENTION_HOURS (every cron pass,
+// purgeRateLimitIps): the longest window is an hour, and the privacy policy
+// says 24 hours.
+export const IP_RETENTION_HOURS = 24;
+export async function purgeRateLimitIps(env, now = Date.now()) {
+  const r = await env.DB.prepare('DELETE FROM signup_attempts WHERE CAST(window_start AS INTEGER) < ?').bind(now - IP_RETENTION_HOURS * 3600000).run();
+  return r.meta?.changes || 0;
+}
+
 // Returns 'ok' (and records the attempt) or 'rate_limited' (and does not).
 export async function checkSignupRateLimit(env, ip) {
   const now = Date.now();

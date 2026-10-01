@@ -2,22 +2,6 @@
 
 Oct 1, 2026 · @Roberto
 
-## Statut / Status
-
-**Ébauche, pas encore en vigueur.** À faire réviser par un avocat avant la publication sur notreligue.ca. **Draft, not yet in force:** to be reviewed by a lawyer before it is published.
-
-Points à faire valider par l'avocat / Points for the lawyer:
-
-- [ ] Le tutoiement suit la règle de Notre Ligue; l'avocat peut préférer le vouvoiement pour un contrat / The informal « tu » follows Notre Ligue's rule; a lawyer may prefer « vous » in a contract
-- [ ] Portée de la clause d'indemnisation (section 4) et de la limite de responsabilité (section 16) pour un administrateur qui est un consommateur / Reach of the indemnity and liability limit when the admin is a consumer
-- [ ] Conformité de l'annulation et du remboursement à la Loi sur la protection du consommateur / Cancellation and refund rules under the Consumer Protection Act
-
-À compléter avant la publication / To complete before publishing:
-
-- [ ] Adresse postale de l'entreprise / Business mailing address
-- [ ] Lien vers la page des prix / Link to the pricing page
-- [ ] Date d'entrée en vigueur / Effective date
-
 ## Version française
 
 Ces conditions encadrent l'utilisation de Notre Ligue par les ligues et leurs administrateurs. En créant un compte, tu les acceptes, ainsi que la politique de confidentialité.

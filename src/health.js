@@ -137,9 +137,20 @@ export async function pingHeartbeatUrl(env, ok) {
 // ALERT_WEBHOOK_URL: ntfy.sh (a push to a phone, no account), Discord, or
 // a Slack-style incoming webhook. Plain HTTPS from the Worker to that
 // service -- works when Resend is down or the day's cap is spent.
+// The webhook is a third party (ntfy.sh): the alert carries counts, dates,
+// league names and error text, never an email or an IP address. Error text
+// is free text, so any address in it is masked first (scrubForWebhook).
+export function scrubForWebhook(s) {
+  return String(s == null ? '' : s)
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[courriel/email]')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP]')
+    .replace(/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b/gi, '[IP]');
+}
 export async function postWebhook(env, title, text) {
   const url = env.ALERT_WEBHOOK_URL;
   if (!url) return false;
+  title = scrubForWebhook(title);
+  text = scrubForWebhook(text);
   try {
     const host = new URL(url).hostname;
     let res;
