@@ -2855,7 +2855,7 @@ export async function handleScoresheetEmail(message, env, sendMailFunc, replyToE
     </tr>
     <tr>
       <td style="background-color:#f8fafc; padding:14px 20px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b; text-align:center;">
-        ${notifyLeagueCfg.name} · ${notifyLeagueCfg.tagline} · <a href="${notifyLeagueCfg.siteUrl}" style="color:#2563eb; text-decoration:none;">${String(notifyLeagueCfg.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '')}</a>
+        ${notifyLeagueCfg.name}${notifyLeagueCfg.tagline ? ` · ${notifyLeagueCfg.tagline}` : ""} · <a href="${notifyLeagueCfg.siteUrl}" style="color:#2563eb; text-decoration:none;">${String(notifyLeagueCfg.siteUrl || '').replace(/^https?:\/\//, '').replace(/\/$/, '')}</a>
       </td>
     </tr>
   </table>
@@ -3428,7 +3428,7 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
     </tr>
     <tr>
       <td style="background-color:#f8fafc; padding:14px 20px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b; text-align:center;">
-        ${league.name} · ${league.tagline} · <a href="${league.siteUrl}" style="color:#2563eb; text-decoration:none;">${siteHost}</a>
+        ${league.name}${league.tagline ? ` · ${league.tagline}` : ""} · <a href="${league.siteUrl}" style="color:#2563eb; text-decoration:none;">${siteHost}</a>
       </td>
     </tr>
   </table>

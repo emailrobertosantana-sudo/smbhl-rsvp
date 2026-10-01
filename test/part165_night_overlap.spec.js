@@ -99,7 +99,8 @@ describe('Subs: a call, an acceptance, the waitlist', () => {
     expect(called).not.toContain(sub.player_id);
 
     // An old link to B, accepted anyway.
-    const html = await (await accept(B)).text();
+    // The league's /avail page escapes apostrophes (&#39;).
+    const html = (await (await accept(B)).text()).replace(/&#39;/g, "'");
     expect(html).toContain("Tu joues déjà à cette heure-là");
     expect(html).toContain("You're already playing at that time");
     expect(html).toContain('On ne peut pas te mettre dans les deux.');

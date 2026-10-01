@@ -217,7 +217,7 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
   // Once per cron pass (src/pass_cache.js); read only, below.
   const leagueRow = await passCached(env, `leaguerow:${leagueId}`, () => env.DB.prepare(
     `SELECT l.id, l.name, l.slug, l.team_names, l.language_mode, l.color, l.team_structure, l.min_players, l.max_players, l.min_goalies, l.max_goalies, l.sport_type, u.email AS admin_email
-       FROM leagues l JOIN users u ON u.id = l.created_by
+       FROM leagues l LEFT JOIN users u ON u.id = l.created_by
       WHERE l.id = ?`
   ).bind(leagueId).first());
   if (leagueRow) {
@@ -227,7 +227,9 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
         if (Array.isArray(parsed) && parsed.length > 0) leagueTeamNames = parsed;
       } catch (_) {}
     }
-    if (leagueRow.admin_email) {
+    // Every league gets its own identity, even with no creator account
+    // left (LEFT JOIN above): never SMBHL's name, sender or reply-to.
+    {
       // Bug 1 fix (live-testing): every league used to send FROM the
       // admin's own raw signup email ("{name} <{admin_email}>") --
       // Resend rejects that outright (403) since it's never a domain
@@ -248,7 +250,7 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
       leagueBranding = {
         name: leagueRow.name,
         fromEmail: `${leagueRow.name} <${leagueSlug}@mail.notreligue.ca>`,
-        replyToEmail: leagueRow.admin_email,
+        replyToEmail: leagueRow.admin_email || 'bonjour@notreligue.ca',
         siteUrl: env.PUBLIC_URL || DEFAULT_SEASON_CONFIG.league.siteUrl,
         // Part 4 foundation: no UI to set this away from 'both' yet --
         // see migrate-023.sql. Every league today reads 'both' here.

@@ -112,7 +112,9 @@ export function normalizeSeasonConfig(rawConfig) {
   const rawLeague = (rawConfig.league && typeof rawConfig.league === 'object') ? rawConfig.league : {};
   const league = {
     name: rawLeague.name || DEFAULT_SEASON_CONFIG.league.name,
-    tagline: rawLeague.tagline || DEFAULT_SEASON_CONFIG.league.tagline,
+    // An empty tagline is a real value (a Notre Ligue league has none): only
+    // a missing one falls back to the default.
+    tagline: rawLeague.tagline != null ? rawLeague.tagline : DEFAULT_SEASON_CONFIG.league.tagline,
     fromEmail: rawLeague.fromEmail || DEFAULT_SEASON_CONFIG.league.fromEmail,
     replyToEmail: rawLeague.replyToEmail || DEFAULT_SEASON_CONFIG.league.replyToEmail,
     siteUrl: rawLeague.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl,
@@ -444,7 +446,7 @@ export function getLeagueConfig(config) {
   const raw = (config && config.league && typeof config.league === 'object') ? config.league : {};
   return {
     name: raw.name || DEFAULT_SEASON_CONFIG.league.name,
-    tagline: raw.tagline || DEFAULT_SEASON_CONFIG.league.tagline,
+    tagline: raw.tagline != null ? raw.tagline : DEFAULT_SEASON_CONFIG.league.tagline,
     fromEmail: raw.fromEmail || DEFAULT_SEASON_CONFIG.league.fromEmail,
     replyToEmail: raw.replyToEmail || DEFAULT_SEASON_CONFIG.league.replyToEmail,
     siteUrl: raw.siteUrl || DEFAULT_SEASON_CONFIG.league.siteUrl,

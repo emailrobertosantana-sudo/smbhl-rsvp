@@ -304,7 +304,7 @@ function page(title, body, logoTooltip = '', leagueCfg = null, hideLangSwitch = 
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ${CLIENT_ERROR_REPORTER}
 <title>${esc(titleFr)}${titleSep}${esc(brand)}</title>${titles ? `<meta name="nl-titles" data-title-fr="${esc(titles.fr)}${titleSep}${esc(brand)}" data-title-en="${esc(titles.en)}${titleSep}${esc(brand)}">` : ''}
-<meta name="description" content="Plateforme de présence et gestion d’équipe de la ligue de hockey balle ${esc(league.name)} (${esc(league.tagline)}).">
+<meta name="description" content="Plateforme de présence et gestion d’équipe de la ligue de hockey balle ${esc(league.name)}${league.tagline ? ` (${esc(league.tagline)})` : ""}.">
 <meta name="rating" content="general">
 <meta name="rating" content="safe for kids">
 <meta itemprop="isFamilyFriendly" content="true">
@@ -11852,7 +11852,7 @@ export function emailWrap(title, contentHtml, leagueCfg = null) {
     </tr>
     <tr>
       <td style="background-color:#f8fafc; padding:14px 20px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b; text-align:center;">
-        ${esc(league.name)} · ${esc(league.tagline)} · <a href="${esc(league.siteUrl)}" style="color:#2563eb; text-decoration:none;">${esc(siteHost)}</a>
+        ${esc(league.name)}${league.tagline ? ` · ${esc(league.tagline)}` : ""} · <a href="${esc(league.siteUrl)}" style="color:#2563eb; text-decoration:none;">${esc(siteHost)}</a>
       </td>
     </tr>
   </table>
@@ -12666,7 +12666,7 @@ ${siteUrl}
 Merci à tous pour cette excellente saison et à très bientôt pour la prochaine saison !
 
 ---
-${league.name} · ${league.tagline} · ${siteHost}`;
+${league.name}${league.tagline ? ` · ${league.tagline}` : ""} · ${siteHost}`;
 
       const awardsHtml = awardDefs.map(a => {
         const val = (awards[a.key] || '').trim();
@@ -15533,6 +15533,159 @@ function availConfirmPage(ev, url, need, a, logoTooltip = '') {
     </div>`, logoTooltip);
 }
 
+// Notre Ligue: the pages a sub call's YES and NO links open (/avail), in
+// the league's own branding (its name in the header, the Notre Ligue
+// footer, "Page | League" tab title) and in the league's language, with
+// the real date. SMBHL's events keep availConfirmPage and page() above.
+// A league set to both languages gets both versions and the same FR/EN
+// toggle (and saved choice) as its other player pages.
+async function leagueAvailContext(env, ev) {
+  const leagueId = ev && ev.league_id;
+  if (!leagueId || leagueId === SMBHL_LEAGUE_ID) return null;
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  const league = cfg.league || {};
+  const mode = league.languageMode === 'fr' || league.languageMode === 'en' ? league.languageMode : 'both';
+  return { ev, cfg, league, langs: mode === 'both' ? ['fr', 'en'] : [mode] };
+}
+function leagueAvailWhen(ev, lang) {
+  return formatEventDateTime(ev.date, ev.start_time, lang, 'long');
+}
+function leagueAvailVenue(ev, lang) {
+  return ev.venue ? `${lang === 'en' ? 'Venue:' : 'Lieu :'} ${ev.venue}` : '';
+}
+// titles: { fr, en } without the league; body: lang => inner HTML.
+function leagueAvailDoc(L, titles, body) {
+  const name = L.league.name || 'Notre Ligue';
+  const both = L.langs.length > 1;
+  const first = L.langs[0];
+  const blocks = L.langs.map(l => `<div class="av-lang" data-lb="${l}"${both && l !== first ? ' hidden' : ''}>${body(l)}</div>`).join('');
+  const powered = { fr: 'Propulsé par Notre Ligue', en: 'Powered by Notre Ligue' };
+  const bodyHtml = `<style>
+  .nl { display: flex; flex-direction: column; min-height: 100dvh; }
+  .av-body { flex: 1; max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); }
+  .av-lang { display: flex; flex-direction: column; gap: var(--space-4); }
+  .av-lang[hidden] { display: none; }
+  .av-q { font: 800 30px/34px var(--font-display); font-stretch: 118%; letter-spacing: -.02em; margin: 0; }
+  .av-meta { display: flex; flex-direction: column; gap: 4px; font-size: 18px; line-height: 28px; }
+  .av-where { font-size: 16px; line-height: 24px; color: var(--ink-muted); }
+  .av-confirm { border: 2px solid var(--warning, #b45309); border-radius: var(--radius-lg); padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+  .av-warn { font-weight: 700; font-size: 18px; line-height: 26px; margin: 0; }
+  .nl a.av-foot { display: block; padding: var(--space-4); border-top: 1px solid var(--line); font-size: 13px; line-height: 18px; color: var(--ink-muted); text-align: center; text-decoration: none; }
+</style>
+<header class="nl-header">
+  <span class="nl-brand nl-brand--league">${esc(name)}</span>
+  <div class="spacer"></div>
+  ${both ? `<div class="nl-lang" role="group" aria-label="Langue / Language">
+    <button type="button" id="btn-lang-fr" aria-pressed="true" onclick="window.__setLang('fr')">FR</button>
+    <button type="button" id="btn-lang-en" aria-pressed="false" onclick="window.__setLang('en')">EN</button>
+  </div>` : ''}
+</header>
+<main class="av-body">${blocks}</main>
+${L.langs.map(l => `<a class="av-foot" data-lb="${l}" href="https://notreligue.ca"${both && l !== first ? ' hidden' : ''}>${esc(powered[l])}</a>`).join('')}
+${both ? `<script>
+(function() {
+  var titles = ${JSON.stringify({ fr: `${titles.fr} | ${name}`, en: `${titles.en} | ${name}` })};
+  function show(l) {
+    document.querySelectorAll('[data-lb]').forEach(function(el) { el.hidden = el.getAttribute('data-lb') !== l; });
+    document.title = titles[l];
+    document.documentElement.lang = l === 'en' ? 'en-CA' : 'fr-CA';
+    var fr = document.getElementById('btn-lang-fr'), en = document.getElementById('btn-lang-en');
+    if (fr) fr.setAttribute('aria-pressed', String(l === 'fr'));
+    if (en) en.setAttribute('aria-pressed', String(l === 'en'));
+  }
+  var lang = 'fr';
+  try {
+    var saved = localStorage.getItem('smbhl_admin_lang');
+    if (saved === 'fr' || saved === 'en') lang = saved;
+    else if (/^en/i.test(navigator.language || '')) lang = 'en';
+  } catch (e) {}
+  window.__currentLang = lang;
+  window.__setLang = function(l) {
+    if (l !== 'fr' && l !== 'en') return;
+    window.__currentLang = l;
+    try { localStorage.setItem('smbhl_admin_lang', l); } catch (e) {}
+    show(l);
+  };
+  show(lang);
+})();
+</script>` : ''}`;
+  return new Response(nlDocument({
+    title: `${titles[first]} | ${name}`,
+    titles: both ? { fr: `${titles.fr} | ${name}`, en: `${titles.en} | ${name}` } : null,
+    lang: first, bodyHtml, leagueColor: L.league.color || null
+  }), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+}
+function leagueAvailNotice(L, fr, en) {
+  const text = { fr, en };
+  return leagueAvailDoc(L, text, l => `<h1 class="av-q">${esc(text[l])}</h1>`);
+}
+// The game line every /avail page shows: date and time, then the venue.
+function leagueAvailMeta(ev, l) {
+  const venue = leagueAvailVenue(ev, l);
+  return `<div class="av-meta"><div>${esc(leagueAvailWhen(ev, l))}</div>${venue ? `<div class="av-where">${esc(venue)}</div>` : ''}</div>`;
+}
+function leagueAvailConfirmPage(L, url, need, a) {
+  const ev = L.ev;
+  const yes = a !== 'no';
+  const g = need === 'goalie';
+  const action = `/avail?${['e', 'p', 'n', 't'].map(k => `${k}=${encodeURIComponent(url.searchParams.get(k) || '')}`).join('&')}`;
+  const T = {
+    fr: {
+      title: 'Encore un clic pour confirmer',
+      warn: "Ta réponse n'est pas encore enregistrée.",
+      what: yes ? `Tu vas dire que tu es disponible ${g ? 'comme gardien' : 'comme joueur'}.` : "Tu vas dire que tu n'es pas disponible.",
+      btn: yes ? 'Oui, je suis disponible' : 'Non, pas disponible',
+      help: "Tant que tu n'as pas appuyé, tu restes « sans réponse »."
+    },
+    en: {
+      title: 'One more tap to confirm',
+      warn: 'Your answer is not recorded yet.',
+      what: yes ? `You're about to say you're available ${g ? 'as a goalie' : 'as a skater'}.` : "You're about to say you're not available.",
+      btn: yes ? "Yes, I'm available" : 'No, not available',
+      help: 'Until you press it, you stay as "no reply".'
+    }
+  };
+  return leagueAvailDoc(L, { fr: 'À confirmer', en: 'To confirm' }, l => `<section class="av-confirm" id="avail_confirm" role="alert">
+    <h1 class="av-q">${esc(T[l].title)}</h1>
+    ${leagueAvailMeta(ev, l)}
+    <p class="av-warn">${esc(T[l].warn)}</p>
+    <p style="margin:0">${esc(T[l].what)}</p>
+    <form method="post" action="${esc(action)}" style="margin:0">
+      <input type="hidden" name="a" value="${yes ? 'yes' : 'no'}">
+      <button type="submit" class="nl-btn ${yes ? 'nl-btn--league' : 'nl-btn--secondary'} nl-btn--lg nl-btn--block">${esc(T[l].btn)}</button>
+    </form>
+    <p class="nl-help" style="margin:0">${esc(T[l].help)}</p>
+  </section>`);
+}
+// After the answer: r is acceptAvailability's result, or { no: true }.
+function leagueAvailResultPage(L, need, r) {
+  const ev = L.ev;
+  const g = need === 'goalie';
+  let T;
+  if (r.no) {
+    T = { fr: { title: 'Merci, noté', body: "On ne t'appellera pas pour ce match." }, en: { title: 'Thanks, noted', body: "We won't call you for this game." } };
+  } else if (r.overlap) {
+    T = {
+      fr: { title: 'Tu joues déjà à cette heure-là', body: `Tu joues déjà un autre match à la même heure (${leagueAvailWhen(r.overlap, 'fr')}). On ne peut pas te mettre dans les deux.` },
+      en: { title: "You're already playing at that time", body: `You're in another game at the same time (${leagueAvailWhen(r.overlap, 'en')}). We can't put you in both.` }
+    };
+  } else if (r.pool) {
+    T = { fr: { title: 'Ta place est réservée pour ce match', body: 'Les équipes sont formées avant le match : on te dit dans quelle équipe tu joues avant le match.' }, en: { title: "You're in for this game", body: "Teams are made before the game: we'll tell you your team before the game." } };
+  } else if (r.placed) {
+    T = {
+      fr: { title: `Tu joues avec ${r.placed}`, body: g ? 'Tu es dans les buts pour ce match.' : 'Merci de dépanner.' },
+      en: { title: `You're with ${r.placed}`, body: g ? "You're in goal for this game." : 'Thanks for filling in.' }
+    };
+  } else {
+    T = { fr: { title: "Sur la liste d'attente", body: "La place est comblée. Si une autre équipe a besoin de toi avant le match, on te place automatiquement et on t'écrit." }, en: { title: 'On the waitlist', body: 'That spot is filled. If another team needs you before the game, we place you automatically and email you.' } };
+  }
+  const caveat = r.placed && hoursOut(ev) > 24 ? SUB_TEAM_CAVEAT : null;
+  return leagueAvailDoc(L, { fr: T.fr.title, en: T.en.title }, l => `<h1 class="av-q">${esc(T[l].title)}</h1>
+    ${leagueAvailMeta(ev, l)}
+    ${caveat ? `<p class="nl-help" id="sub_team_caveat" style="margin:0">${esc(caveat[l])}</p>` : ''}
+    <p style="margin:0">${esc(T[l].body)}</p>`);
+}
+
 // Wherever a sub sees their team before the game: more than 24 h out a
 // placement is provisional (reshuffles send no email), so say so. Inside
 // 24 h the team shown is the one the game-day email carries.
@@ -15554,22 +15707,31 @@ async function availRoute(req, env, url) {
   const form = req.method === 'POST' ? await req.formData().catch(() => null) : null;
   const ans = form ? String(form.get('a') || '') : url.searchParams.get('a');
   const token = url.searchParams.get('t');
-  if (!['goalie', 'skater'].includes(need)) return notice('Lien incomplet', 'Incomplete link');
+  // A Notre Ligue game: every page below in the league's branding and
+  // language (leagueAvailDoc). Looked up first so that even an error says
+  // the league's name, not SMBHL's.
+  const evFirst = eventId ? await getEvent(env.DB, eventId) : null;
+  const L = evFirst ? await leagueAvailContext(env, evFirst) : null;
+  const say = (fr, en) => (L ? leagueAvailNotice(L, fr, en) : notice(fr, en));
+  if (!['goalie', 'skater'].includes(need)) return say('Lien incomplet', 'Incomplete link');
 
   const c = await getContact(env.DB, playerId);
-  if (!c) return notice('Joueur inconnu', 'Unknown player');
+  if (!c) return say('Joueur inconnu', 'Unknown player');
   const want = await hmac(env.RSVP_SECRET, `a:${eventId}:${playerId}:${need}:${c.token_salt}`);
-  if (!same(want, token)) return notice('Lien invalide ou expiré', 'Invalid or expired link');
+  if (!same(want, token)) return say('Lien invalide ou expiré', 'Invalid or expired link');
 
-  const ev = await getEvent(env.DB, eventId);
-  if (!ev) return notice('Match introuvable', 'Game not found');
-  if (closedToAnswers(ev)) return notice('Les réponses sont fermées', 'Responses are closed');
+  const ev = evFirst;
+  if (!ev) return say('Match introuvable', 'Game not found');
+  if (closedToAnswers(ev)) return say('Les réponses sont fermées', 'Responses are closed');
 
   const w = whenLine(ev);
   // Opening the link records nothing (a link scanner said Yes for two
   // subs who never came): it shows what they are about to answer, and
   // their answer is recorded when they press the button (POST /avail).
-  if (req.method !== 'POST') return availConfirmPage(ev, url, need, ans === 'no' ? 'no' : 'yes', await getStandingsTooltip(env));
+  if (req.method !== 'POST') {
+    if (L) return leagueAvailConfirmPage(L, url, need, ans === 'no' ? 'no' : 'yes');
+    return availConfirmPage(ev, url, need, ans === 'no' ? 'no' : 'yes', await getStandingsTooltip(env));
+  }
   await env.DB.prepare(
     `UPDATE contacts SET asked_streak = 0, answered_ever = 1, dormant = 0
       WHERE player_id = ?`).bind(playerId).run();
@@ -15579,10 +15741,12 @@ async function availRoute(req, env, url) {
       `INSERT INTO availability (event_id,player_id,need,status,answered_at,league_id)
        VALUES (?,?,?,'no',?,?) ON CONFLICT(event_id,player_id,need) DO UPDATE SET status='no'`
     ).bind(eventId, playerId, need, new Date().toISOString(), ev.league_id || SMBHL_LEAGUE_ID).run();
+    if (L) return leagueAvailResultPage(L, need, { no: true });
     return notice('Merci, noté', 'Thanks, noted');
   }
 
   const r = await acceptAvailability(env, ev, playerId, need);
+  if (L) return leagueAvailResultPage(L, need, r);
   const logoTooltip = await getStandingsTooltip(env);
   if (r.overlap) {
     const o = whenLine(r.overlap);
@@ -31432,9 +31596,12 @@ async function handleFetch(req, env, ctx) {
         return await handleSeasonRecapSend(req, env);
       if (url.pathname === '/api/champion-photo' && req.method === 'GET')
         return await handleChampionPhoto(req, env, url);
-      if (url.pathname === '/avail' && (req.method === 'GET' || req.method === 'POST'))
-        return new Response(await availRoute(req, env, url),
+      if (url.pathname === '/avail' && (req.method === 'GET' || req.method === 'POST')) {
+        // A Notre Ligue game's page comes back as a Response already.
+        const out = await availRoute(req, env, url);
+        return out instanceof Response ? out : new Response(out,
           { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+      }
       if (url.pathname === '/health')
         return new Response('ok');
       if (url.pathname === '/' || url.pathname === '') {

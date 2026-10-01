@@ -63,10 +63,11 @@ describe('A short pickup game calls subs on headcount, before the draw', () => {
   it('a sub who says yes joins the pool; the draw gives them a team; after the draw nothing is called', async () => {
     const { a, ev, subIds } = await pickup('draw', { min: 10, max: 14, regulars: 6, subs: 2 });
     await callSubsForShortfall(env, ev);
-    const page = await (await accept(await availLink(ev, subIds[0]))).text();
-    expect(page).toContain("Tu es inscrit pour ce match");
+    // The league's /avail page (neutral French, apostrophes escaped as &#39;).
+    const page = (await (await accept(await availLink(ev, subIds[0]))).text()).replace(/&#39;/g, "'");
+    expect(page).toContain("Ta place est réservée pour ce match");
     expect(page).toContain("You're in for this game");
-    expect(page).toContain("Teams are drawn before the game: we'll send you your team before the game.");
+    expect(page).toContain("Teams are made before the game: we'll tell you your team before the game.");
     let row = await one('SELECT team, status, role FROM rsvp WHERE event_id = ? AND player_id = ?', ev.id, subIds[0]);
     expect(row).toEqual({ team: null, status: 'in', role: 'sub' });
     expect((await a.post('/league/events/random-assign', { event_id: ev.id })).status).toBe(200);
