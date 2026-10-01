@@ -8,6 +8,7 @@ import { pluralText, PLURAL_TEXT_JS } from './plural.js';
 import { safeNextPath, loginUrlFor, nextQuery, nextForScript } from './next_path.js';
 import { getAddEmails, saveAddEmails } from './add_emails.js';
 import { chooseMailProvider, parseAddress } from './mail_provider.js';
+import { contactDisplayName, rosterNameMap } from './contact_name.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
@@ -4669,7 +4670,7 @@ async function handleLeagueCommsData(req, env, url) {
   // sub-call invites (outbox) -- already-honest failure tracking via
   // its own `error` column.
   const outboxRows = (await env.DB.prepare(
-    `SELECT o.kind, o.event_id, o.player_id, c.name AS player_name, o.sent_at, o.cancelled, o.error, o.created_at, e.date AS event_date,
+    `SELECT o.kind, o.event_id, o.player_id, c.player_id AS contact_id, c.name AS player_name, c.email AS player_email, o.sent_at, o.cancelled, o.error, o.created_at, e.date AS event_date,
             o.attempts, o.failed_at, o.next_attempt_at, o.defer_reason
        FROM outbox o
        LEFT JOIN contacts c ON c.player_id = o.player_id
@@ -4694,7 +4695,7 @@ async function handleLeagueCommsData(req, env, url) {
   // of its own -- joined through events, same as everywhere else this
   // table is touched).
   const teamAssignedRows = (await env.DB.prepare(
-    `SELECT t.event_id, t.player_id, c.name AS player_name, t.sent_at, e.date AS event_date
+    `SELECT t.event_id, t.player_id, c.player_id AS contact_id, c.name AS player_name, c.email AS player_email, t.sent_at, e.date AS event_date
        FROM league_team_assigned_email_log t
        JOIN events e ON e.id = t.event_id
        LEFT JOIN contacts c ON c.player_id = t.player_id
@@ -4704,11 +4705,18 @@ async function handleLeagueCommsData(req, env, url) {
   // Every failure this task's own fix now actually records (see this
   // function's own top comment).
   const failureRows = (await env.DB.prepare(
-    `SELECT event_id, player_id, kind, error, failed_at FROM league_mail_failure_log
-      WHERE league_id = ? ORDER BY failed_at DESC LIMIT ?`
+    `SELECT f.event_id, f.player_id, f.kind, f.error, f.failed_at,
+            c.player_id AS contact_id, c.name AS player_name, c.email AS player_email
+       FROM league_mail_failure_log f
+       LEFT JOIN contacts c ON c.player_id = f.player_id
+      WHERE f.league_id = ? ORDER BY f.failed_at DESC LIMIT ?`
   ).bind(leagueId, ACTIVITY_LIMIT).all()).results || [];
 
   const activity = [];
+  // Who a row names: never the raw contact key (src/contact_name.js).
+  const recipientOf = r => (r.player_id
+    ? contactDisplayName({ contact: r.contact_id ? { player_id: r.contact_id, name: r.player_name, email: r.player_email } : null, id: r.player_id })
+    : null);
   // Outbox QA batch: status from the shared state model
   // (src/mail_queue.js). 'retrying' is its own status -- it used to show
   // as failed until a later success, then flipped to sent with the old
@@ -4717,7 +4725,7 @@ async function handleLeagueCommsData(req, env, url) {
     const status = outboxRowStatus(o);
     activity.push({
       kind: o.kind, eventId: o.event_id, eventDate: o.event_date,
-      recipient: o.player_name || o.player_id || null,
+      recipient: recipientOf(o),
       status,
       reason: (status === 'failed' || status === 'retrying' || status === 'skipped') ? (o.error || null) : null,
       attempts: o.attempts || 0,
@@ -4759,7 +4767,7 @@ async function handleLeagueCommsData(req, env, url) {
   for (const t of teamAssignedRows) {
     activity.push({
       kind: 'team_assigned', eventId: t.event_id, eventDate: t.event_date,
-      recipient: t.player_name || t.player_id || null,
+      recipient: recipientOf(t),
       status: 'sent',
       reason: null,
       at: t.sent_at
@@ -4768,7 +4776,7 @@ async function handleLeagueCommsData(req, env, url) {
   for (const f of failureRows) {
     activity.push({
       kind: f.kind, eventId: f.event_id, eventDate: null,
-      recipient: f.player_id || null,
+      recipient: recipientOf(f),
       status: 'failed',
       reason: f.error,
       at: f.failed_at
@@ -16388,7 +16396,7 @@ async function getPlayerStats(env) {
       const gp = c.gp || 0;
       const pts = c.pts || 0;
       const ppg = gp > 0 ? +(pts / gp).toFixed(1) : null;
-      map.set(p.id, { ppg, gp, pts });
+      map.set(p.id, { ppg, gp, pts, name: p.name || '' });
     }
     DATA_CACHE = map;
     DATA_CACHE_TIME = now;
@@ -17375,7 +17383,11 @@ async function subsData(env, url) {
 
   const subs = [];
   for (const pid of invitedPlayerIds) {
-    const contact = contactMap.get(pid) || { player_id: pid, name: pid, email: null, role: 'sub_skater', is_goalie: 0 };
+    // A sub call can outlive its contact (a deleted contact keeps its
+    // outbox rows): the name comes from contactDisplayName, never the key.
+    const knownContact = contactMap.get(pid) || null;
+    const contact = knownContact || { player_id: pid, name: '', email: null, role: 'sub_skater', is_goalie: 0 };
+    const displayName = contactDisplayName({ contact: knownContact, roster: statsMap, id: pid });
     const outs = playerOutbox.get(pid) || [];
     const avail = availMap.get(pid);
     const rsvp = rsvpMap.get(pid);
@@ -17480,7 +17492,8 @@ async function subsData(env, url) {
     const st = statsMap.get(pid);
     subs.push({
       player_id: pid,
-      name: contact.name,
+      name: displayName,
+      realName: String(knownContact?.name || '').trim(),
       email: contact.email,
       need,
       role: contact.role,
@@ -17512,7 +17525,10 @@ async function subsData(env, url) {
   // Deduplicate subs by player_id and normalized name
   const dedupedSubsMap = new Map();
   for (const s of subs) {
-    const key = cleanName(s.name) || s.player_id;
+    // The contact's own name, not the display name: every nameless row
+    // shares one label, and must not merge into one.
+    const key = cleanName(s.realName) || s.player_id;
+    delete s.realName;
     if (!dedupedSubsMap.has(key)) {
       dedupedSubsMap.set(key, s);
     } else {
@@ -18764,6 +18780,13 @@ async function peopleData(env) {
 
   archivedPeople.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
+  // Anyone still without a name gets the readable label, never a blank
+  // or the key (src/contact_name.js).
+  const rosterNames = rosterNameMap(d.players);
+  for (const p of [...rosterPeople, ...subPeople, ...archivedPeople]) {
+    if (!String(p.name || '').trim()) p.name = contactDisplayName({ contact: contactMap.get(p.player_id) || null, roster: rosterNames, id: p.player_id });
+  }
+
   return Response.json({
     people: [...rosterPeople, ...subPeople, ...archivedPeople],
     archived: archivedPeople,
@@ -18824,7 +18847,7 @@ async function peopleAction(req, env) {
     const res = await env.DB.prepare('UPDATE contacts SET email=? WHERE player_id=?')
       .bind(emailVal, id).run();
     if (res.meta.changes === 0) {
-      let name = b.name || id;
+      let name = b.name || ''; // never the key as a name: pages show a readable label for an empty one
       try {
         const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
           || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
@@ -18862,7 +18885,7 @@ async function peopleAction(req, env) {
     const res = await env.DB.prepare('UPDATE contacts SET phone=? WHERE player_id=?')
       .bind(phoneVal, id).run();
     if (res.meta.changes === 0) {
-      let name = b.name || id;
+      let name = b.name || ''; // never the key as a name: pages show a readable label for an empty one
       try {
         const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
           || await (await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`)).text();
@@ -18901,7 +18924,7 @@ async function peopleAction(req, env) {
     const reason = b.reason || 'season_off';
     const c = await env.DB.prepare('SELECT role, is_goalie, name FROM contacts WHERE player_id=?').bind(id).first();
     const prevRole = (c && c.role !== 'archived') ? c.role : (b.role || 'roster');
-    let name = c?.name || b.name || id;
+    let name = c?.name || b.name || ''; // never the key as a name
     if (!c) {
       try {
         const raw = (env.SHEETS_KV ? await env.SHEETS_KV.get('data_json') : null)
@@ -23406,6 +23429,7 @@ async function handleFinancesData(req, env, url) {
     'SELECT player_id, name, email, role, is_goalie, is_sub, preferred_team FROM contacts WHERE league_id = ?'
   ).bind(SMBHL_LEAGUE_ID).all()).results || [];
   const contactMap = new Map(contactsList.map(c => [c.player_id, c]));
+  const rosterNames = rosterNameMap(d.players);
 
   // 5. Gather players for this season
   const playerEntries = [];
@@ -23485,7 +23509,7 @@ async function handleFinancesData(req, env, url) {
       processedPlayerIds.add(rr.player_id);
       playerEntries.push({
         player_id: rr.player_id,
-        name: c?.name || rr.player_id,
+        name: contactDisplayName({ contact: c, roster: rosterNames, id: rr.player_id }),
         team: rr.team || c?.preferred_team || null,
         role: isSub ? (isGoalie ? 'sub_goalie' : 'sub_skater') : (isGoalie ? 'roster_goalie' : 'roster_skater'),
         is_goalie: isGoalie,
@@ -23503,7 +23527,7 @@ async function handleFinancesData(req, env, url) {
       const isGoalie = c ? (c.is_goalie === 1 || c.role === 'sub_goalie') : false;
       playerEntries.push({
         player_id: pid,
-        name: c?.name || pid,
+        name: contactDisplayName({ contact: c, roster: rosterNames, id: pid }),
         team: c?.preferred_team || null,
         role: isGoalie ? 'sub_goalie' : 'sub_skater',
         is_goalie: isGoalie,
@@ -23522,7 +23546,7 @@ async function handleFinancesData(req, env, url) {
       const isSub = contactIsSub(c) !== false;
       playerEntries.push({
         player_id: pid,
-        name: c?.name || pid,
+        name: contactDisplayName({ contact: c, roster: rosterNames, id: pid }),
         team: c?.preferred_team || null,
         role: isSub ? (isGoalie ? 'sub_goalie' : 'sub_skater') : (isGoalie ? 'roster_goalie' : 'roster_skater'),
         is_goalie: isGoalie,
@@ -24640,13 +24664,16 @@ async function handlePollsData(req, env) {
     poll.results = results;
     const votes = (await env.DB.prepare(
       `SELECT v.id, v.poll_id, v.voter_id, v.candidate_id, v.candidate_name, v.created_at, v.updated_at,
-              c.name AS voter_name, c.preferred_team AS voter_team
+              c.player_id AS contact_id, c.name AS voter_name, c.email AS voter_email, c.preferred_team AS voter_team
          FROM poll_votes v
          LEFT JOIN contacts c ON c.player_id = v.voter_id
         WHERE v.poll_id = ?
         ORDER BY v.updated_at DESC`
     ).bind(poll.id).all()).results || [];
-    poll.votes_list = votes;
+    poll.votes_list = votes.map(({ contact_id, voter_email, ...v }) => ({
+      ...v,
+      voter_name: contactDisplayName({ contact: contact_id ? { player_id: contact_id, name: v.voter_name, email: voter_email } : null, id: v.voter_id })
+    }));
 
     // Recipient counts
     const rosterCount = (await env.DB.prepare(
@@ -25169,7 +25196,7 @@ function renderPolls(d) {
       const dtLocale = currentLang === 'en' ? 'en-US' : 'fr-CA';
       const dt = v.updated_at ? new Date(v.updated_at).toLocaleString(dtLocale, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
       return '<tr>' +
-        '<td><b>' + esc(v.voter_name || v.voter_id) + '</b>' + (v.voter_team ? ' <span class="by">' + esc(v.voter_team) + '</span>' : '') + '</td>' +
+        '<td><b>' + esc(v.voter_name || '–') + '</b>' + (v.voter_team ? ' <span class="by">' + esc(v.voter_team) + '</span>' : '') + '</td>' +
         '<td>' + esc(v.candidate_name) + '</td>' +
         '<td style="color:var(--soft);font-size:12px;">' + esc(dt) + '</td>' +
       '</tr>';
@@ -26931,7 +26958,7 @@ async function handleEmailsData(req, env, url) {
     const outbox = ((await env.DB.prepare(
       `SELECT o.id, o.kind, o.event_id, o.player_id, o.team, o.dedup_key, o.payload, o.send_after, o.sent_at, o.cancelled, o.error, o.created_at,
               o.attempts, o.next_attempt_at, o.failed_at, o.last_error, o.defer_reason,
-              c.name AS player_name, c.email AS player_email,
+              c.player_id AS contact_id, c.name AS player_name, c.email AS player_email,
               e.date AS event_date, e.week AS event_week
          FROM outbox o
          LEFT JOIN contacts c ON c.player_id = o.player_id
@@ -26940,7 +26967,13 @@ async function handleEmailsData(req, env, url) {
           AND (o.id IN (SELECT id FROM outbox WHERE COALESCE(league_id, 'smbhl') IN ('smbhl', 'system') ORDER BY id DESC LIMIT 150)
            OR (o.created_at >= ? AND (o.failed_at IS NOT NULL OR (o.error IS NOT NULL AND o.sent_at IS NULL AND o.cancelled = 0))))
         ORDER BY o.id DESC LIMIT 500`
-    ).bind(failureWindow).all()).results || []).map(o => ({ ...o, status: outboxRowStatus(o) }));
+    ).bind(failureWindow).all()).results || []).map(({ contact_id, ...o }) => ({
+      ...o,
+      // A row for a person always has a readable name, even when the
+      // contact is gone or has none (src/contact_name.js).
+      player_name: o.player_id ? contactDisplayName({ contact: contact_id ? { player_id: contact_id, name: o.player_name, email: o.player_email } : null, id: o.player_id }) : o.player_name,
+      status: outboxRowStatus(o)
+    }));
 
     // failed = permanent failures + rows still retrying (both need an
     // admin's eyes); retrying is also reported on its own. A row that
@@ -28389,7 +28422,7 @@ async function emailsPage(env = null, isAuthed = false) {
           (o.event_date ? '<div style="font-size:11px; color:var(--soft);">' + esc(o.event_date) + '</div>' : '');
       }
 
-      const playerText = '<div style="font-weight:600;">' + esc(o.player_name || o.player_id || (currentLang === 'en' ? 'All / Admin' : 'Tous / Admin')) + '</div>' +
+      const playerText = '<div style="font-weight:600;">' + esc(o.player_name || (currentLang === 'en' ? 'All / Admin' : 'Tous / Admin')) + '</div>' +
         (o.player_email ? '<div style="font-size:11px; color:var(--soft); font-family:monospace;">' + esc(o.player_email) + '</div>' : '');
 
       const sendAfterFmt = fmtLocalTime(o.send_after);
@@ -28534,7 +28567,7 @@ async function emailsPage(env = null, isAuthed = false) {
       '<div style="font-size:12px; font-weight:700;">' + statusText + '</div>' +
     '</div>' +
     '<div style="background:#f8fafc; border:1px solid var(--rule); border-radius:6px; padding:12px 14px; margin-bottom:14px; font-size:13px; line-height:1.5;">' +
-      '<div><b>' + (isEn ? '👤 Recipient: ' : '👤 Destinataire : ') + '</b>' + esc(o.player_name || o.player_id || (isEn ? 'All' : 'Tous')) + (o.player_email ? ' &lt;' + esc(o.player_email) + '&gt;' : '') + '</div>' +
+      '<div><b>' + (isEn ? '👤 Recipient: ' : '👤 Destinataire : ') + '</b>' + esc(o.player_name || (isEn ? 'All' : 'Tous')) + (o.player_email ? ' &lt;' + esc(o.player_email) + '&gt;' : '') + '</div>' +
       '<div><b>' + (isEn ? '🏒 Team: ' : '🏒 Équipe : ') + '</b>' + esc(o.team || '–') + '</div>' +
       '<div><b>' + (isEn ? '📅 Game: ' : '📅 Match : ') + '</b>' + (isEn ? 'Week ' : 'Semaine ') + esc(o.event_week || '–') + (o.event_date ? ' (' + esc(o.event_date) + ')' : '') + '</div>' +
       '<div><b>' + (isEn ? '⏰ Scheduled for: ' : '⏰ Prévu pour : ') + '</b>' + esc(fmtLocalTime(o.send_after)) + ' <span style="font-size:11px; color:var(--soft);">' + (isEn ? '(Montreal local time)' : '(Heure locale Montréal)') + '</span></div>' +
@@ -29281,11 +29314,16 @@ async function handleTeamsAdd(req, env) {
   }
 
   let p = (d.players || []).find(x => x.id === pid);
+  // The public site shows this name: never write the key in its place.
+  const newName = String(name || contact?.name || '').trim();
+  if (!p && !newName) {
+    return new Response(JSON.stringify({ error: 'Joueur introuvable / Player not found' }), { status: 404 });
+  }
   if (!p) {
     p = {
       id: pid,
-      key: (name || contact?.name || pid).toUpperCase(),
-      name: name || contact?.name || pid,
+      key: newName.toUpperCase(),
+      name: newName,
       seasons: {},
       gseasons: {}
     };
