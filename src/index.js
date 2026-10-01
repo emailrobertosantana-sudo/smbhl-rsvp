@@ -12268,7 +12268,7 @@ NO  (Out): ${payload.no}${sign}`;
       const text =
 `Salut ${name} / Hi ${name},
 
-Rappel : tu es confirmé(e) avec ${frTeam} pour demain, ${w.fr}!
+Rappel : ta présence est confirmée avec ${frTeam} pour demain, ${w.fr}!
 Reminder: you are confirmed with ${enTeam} for tomorrow, ${w.en}!
 ${dualRoleLines(payload, ev) ? `${dualRoleLines(payload, ev).fr}\n${dualRoleLines(payload, ev).en}\n` : ''}${shirtText}${subFeeText}${matchInfo ? matchInfo + (matchInfoEn !== matchInfo ? matchInfoEn : '') + '\n' : ''}${msgsText}
 📋 Voir l'alignement de l'équipe : ${teamUrl}
@@ -12280,7 +12280,7 @@ Je ne peux pas jouer / I can't play : ${noUrl}${sign}`;
       const html = wrapEmail(
         subj,
         `<p style="font-size:16px; margin:0 0 4px; font-weight:700;">Salut <b>${esc(name)}</b> / Hi <b>${esc(name)}</b>,</p>
-        <p style="font-size:16px; margin:0 0 3px; font-weight:600; color:#0f172a;">Rappel : tu es confirmé(e) avec <b>${esc(frTeam)}</b> pour demain, <b>${esc(w.fr)}</b>!</p>
+        <p style="font-size:16px; margin:0 0 3px; font-weight:600; color:#0f172a;">Rappel : ta présence est confirmée avec <b>${esc(frTeam)}</b> pour demain, <b>${esc(w.fr)}</b>!</p>
         <p style="font-size:14px; margin:0 0 16px; color:#475569;">Reminder: you are confirmed with <b>${esc(enTeam)}</b> for tomorrow, <b>${esc(w.en)}</b>!</p>${dualRoleLines(payload, ev) ? `
         <p style="font-size:15px; margin:0 0 16px; font-weight:700;">${esc(dualRoleLines(payload, ev).fr)}<br><span style="color:#475569; font-size:13px; font-weight:400;">${esc(dualRoleLines(payload, ev).en)}</span></p>` : ''}
         ${shirtHtml}${subFeeHtml}
@@ -15034,6 +15034,8 @@ async function ensureNextEvent(env, force = false) {
 async function deadMan(env) {
   const now = new Date();
   const problems = [];
+  // Each problem's French line, for the email's French section.
+  const frWording = new Map();
 
   const evs = (await env.DB.prepare(
     `SELECT * FROM events WHERE state='open'`).all()).results || [];
@@ -15045,7 +15047,9 @@ async function deadMan(env) {
     for (const [job, by] of expect) {
       if (hrs > by || hrs <= 0) continue;
       if (await jobDone(env.DB, ev.id, job)) continue;
-      problems.push(`${job} never ran for ${ev.id} (${Math.round(hrs)}h to go)`);
+      const left = Math.round(hrs);
+      problems.push(`${job} never ran for ${ev.id} (${left}h to go)`);
+      frWording.set(problems[problems.length - 1], `${job} ne s'est pas exécuté pour ${ev.id} (match dans ${left} h)`);
     }
   }
 
@@ -15057,8 +15061,8 @@ async function deadMan(env) {
   // The two counted lines read with real plurals now; their keys keep the
   // wording they always had, so an alert already sent is not sent again.
   const keyWording = new Map();
-  const counted = (text, legacy) => { keyWording.set(text, legacy); problems.push(text); };
-  if (stuck.n > 0) counted(`${pluralText('{n|# message|# messages}', { n: stuck.n }, 'en')} stuck in the outbox over an hour`, `${stuck.n} message(s) stuck in the outbox over an hour`);
+  const counted = (text, legacy, fr) => { keyWording.set(text, legacy); frWording.set(text, fr); problems.push(text); };
+  if (stuck.n > 0) counted(`${pluralText('{n|# message|# messages}', { n: stuck.n }, 'en')} stuck in the outbox over an hour`, `${stuck.n} message(s) stuck in the outbox over an hour`, `${pluralText('{n|# message bloqué|# messages bloqués}', { n: stuck.n }, 'fr')} dans la file d'envoi depuis plus d'une heure`);
 
   // Outbox QA batch: a permanent send failure (bad address, rejected
   // recipient, or retries exhausted) is now its own state -- tell the
@@ -15066,7 +15070,7 @@ async function deadMan(env) {
   const failedRecently = (await env.DB.prepare(
     `SELECT count(*) n FROM outbox WHERE failed_at IS NOT NULL AND failed_at >= ?`
   ).bind(new Date(now.getTime() - 24 * 3600000).toISOString()).first()) || { n: 0 };
-  if (failedRecently.n > 0) counted(`${pluralText('{n|# email|# emails}', { n: failedRecently.n }, 'en')} failed permanently in the last 24 hours`, `${failedRecently.n} email(s) failed permanently in the last 24 hours`);
+  if (failedRecently.n > 0) counted(`${pluralText('{n|# email|# emails}', { n: failedRecently.n }, 'en')} failed permanently in the last 24 hours`, `${failedRecently.n} email(s) failed permanently in the last 24 hours`, `${pluralText('{n|# courriel a échoué|# courriels ont échoué}', { n: failedRecently.n }, 'fr')} définitivement dans les dernières 24 heures`);
 
   // One combined email per pass (a single subrequest, whatever the
   // number of problems -- see src/mail_queue.js's reserved budget), and
@@ -15081,12 +15085,14 @@ async function deadMan(env) {
   }
   if (fresh.length) {
     const list = fresh.map(f => `- ${f.p}`).join('\n');
+    const listFr = fresh.map(f => `- ${frWording.get(f.p) || f.p}`).join('\n');
     // Also by webhook (src/health.js): this email is about mail not going
     // out, and may not go out itself.
     await postWebhook(env, 'SMBHL : le système a manqué quelque chose / something did not run', list);
     try {
       await sendMail(env, env.ADMIN_EMAIL || ADMIN_EMAIL, 'SMBHL : le système a manqué quelque chose',
-        `Quelque chose ne s'est pas exécuté :\n\n${list}\n\n` +
+        `Quelque chose ne s'est pas exécuté :\n\n${listFr}\n\n` +
+        `À vérifier : l'onglet Comms (filtre des échecs) et la table des tâches (jobs).\n\n` +
         `Something did not run:\n\n${list}\n\n` +
         `Check: the Comms tab (Failed filter) and the jobs table.`);
       for (const f of fresh) {
@@ -21604,16 +21610,21 @@ function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, d
 // 30-emails.md: one button per email).
 // Live-testing task (batch 3), Part 1: reconciled onto the same shared
 // assembler as renderLeagueReminderEmail above -- see its own comment.
-function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang, games = null, role = null }) {
+// newTeam (team_assigned): a short heading above the shared details says
+// the player is now on that team.
+function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang, games = null, role = null, newTeam = false }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
   const roleLine = l => { const r = dualRoleText(role, ev); return r ? r[l] : ''; };
+  const newTeamLine = l => (newTeam && team ? (l === 'fr' ? `Tu fais maintenant partie de ${team}` : `You're now on ${team}`) : '');
   const toContent = l => {
     const d = leagueReminderDict(l, { firstName, dayLabel: dayLabelFor(dayLabel, l), ev, team, games });
     const rl = roleLine(l);
+    const nt = newTeamLine(l);
     return {
       subject: d.logisticsSubject,
-      text: `${d.logisticsHeadline}\n${d.logisticsBody}${rl ? `\n${rl}` : ''}\n${d.optOut}: ${optOutLink}`,
-      html: `
+      text: `${nt ? `${nt}\n\n` : ''}${d.logisticsHeadline}\n${d.logisticsBody}${rl ? `\n${rl}` : ''}\n${d.optOut}: ${optOutLink}`,
+      html: `${nt ? `
+    <p style="margin:0 0 8px;font-size:16px;line-height:24px;font-weight:700;color:#16181d;">${esc(nt)}</p>` : ''}
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.logisticsHeadline}</h1>
     <p style="margin:0 0 20px;font-size:16px;line-height:25px;">${d.logisticsBody}</p>${rl ? `
     <p style="margin:0 0 20px;font-size:16px;line-height:25px;font-weight:700;">${rl}</p>` : ''}
@@ -22022,7 +22033,7 @@ async function renderLeagueReminderForContact(env, leagueRow, ev, contact, kind,
     ? renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang, games })
     // A no-teams league's single pool (HEADCOUNT_TEAM_NAME, 'Tous') is internal:
     // the details email said 'Équipe Tous / Team Tous'.
-    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: team === HEADCOUNT_TEAM_NAME ? null : team, optOutLink, forcedLang, games, role });
+    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: team === HEADCOUNT_TEAM_NAME ? null : team, optOutLink, forcedLang, games, role, newTeam: kind === 'team_assigned' });
 }
 
 // night: the night's games when there is more than one (D1), ev first:
@@ -25619,8 +25630,10 @@ async function renderPollEmail(env, poll, p) {
       const text = `Salut ${firstName} / Hi ${firstName},
 
 Un vote officiel de la SMBHL est maintenant ouvert : ${poll.title}
+An official SMBHL vote is now open: ${poll.title}
 ${poll.description ? '\n' + poll.description + '\n' : ''}
 Pour soumettre ou modifier ton vote, clique sur ce lien direct :
+To cast or change your vote, use this direct link:
 ${voteUrl}
 
 ---
@@ -25642,7 +25655,8 @@ SMBHL · smbhl.com`;
            ${emailBtn(voteUrl, 'Voter / Vote', '#8b5cf6', '#ffffff')}
          </div>
          <p style="font-size:12px;color:#94a3b8;margin:16px 0 0;border-top:1px solid #e2e8f0;padding-top:10px;">
-           Ce lien de vote t'est réservé. Tu peux modifier ton choix en tout temps tant que le scrutin est ouvert.
+           Ce lien de vote t'est réservé. Tu peux modifier ton choix en tout temps tant que le scrutin est ouvert.<br>
+           This voting link is yours alone. You can change your choice any time while the vote is open.
          </p>`
       );
       return { subject: subj, text, html };
@@ -29256,7 +29270,7 @@ async function emailsPage(env = null, isAuthed = false) {
         '<div style="background:#fff; border:1px solid var(--rule); border-radius:4px; padding:12px 14px; font-size:13px; line-height:1.5;">' +
           '<div style="border-bottom:1px solid #e2e8f0; padding-bottom:6px; margin-bottom:8px;"><b>' + (isEn ? 'Subject:' : 'Objet :') + '</b> ' + (isEn ? 'See you at the gym tomorrow! 🏑' : 'À demain pour le match ! 🏑') + '</div>' +
           '<div>' + (isEn ? 'Hi ' : 'Salut ') + '<b>' + esc(o.player_name || (isEn ? 'Player' : 'Joueur')) + '</b>,</div>' +
-          '<div style="margin:6px 0; color:#1e293b;">' + (isEn ? ('Reminder: you are confirmed with <b>' + esc(tmStr) + '</b> for tomorrow, <b>' + esc(dtStr) + '</b>!') : ('Rappel : tu es confirmé(e) avec <b>' + esc(tmStr) + '</b> pour demain, <b>' + esc(dtStr) + '</b>!')) + '</div>' +
+          '<div style="margin:6px 0; color:#1e293b;">' + (isEn ? ('Reminder: you are confirmed with <b>' + esc(tmStr) + '</b> for tomorrow, <b>' + esc(dtStr) + '</b>!') : ('Rappel : ta présence est confirmée avec <b>' + esc(tmStr) + '</b> pour demain, <b>' + esc(dtStr) + '</b>!')) + '</div>' +
           '<div style="background:#f8fafc; border:1px dashed #cbd5e1; border-radius:4px; padding:8px 10px; font-size:12px; margin-bottom:10px;">' +
             '<div>• <b>' + (isEn ? 'Schedule & Gym:' : 'Horaire &amp; Gymnase :') + '</b> ' + (isEn ? 'Game details and weekly matchup' : 'Détails du match et adversaire de la semaine') + '</div>' +
             '<div>• <b>' + (isEn ? 'Team Notes:' : 'Messages d&apos;équipe :') + '</b> ' + (isEn ? 'Latest notes published to the team board' : 'Dernières notes publiées sur le tableau d&apos;équipe') + '</div>' +
@@ -32235,7 +32249,7 @@ export {
   body,
   // Item 6: dual-role players.
   dualGoalieChecks, syncDualRoles, dualGoalieAlert, dualGoalieAction, dualGoalieOptions, callSubs,
-  cancelPendingMailForContact, dualRoleLines,
+  cancelPendingMailForContact, dualRoleLines, renderPollEmail, deadMan,
   // The hard daily cap (part163) on a direct send.
   sendMail,
   // Nights (part165): the waitlist skips a sub in an overlapping game.

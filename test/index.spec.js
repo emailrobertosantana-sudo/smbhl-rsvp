@@ -500,7 +500,7 @@ describe("SMBHL Worker", () => {
 
 		// French text
 		expect(res.text).toContain("Salut Roberto");
-		expect(res.text).toContain("tu es confirmé(e) avec Rouge pour demain");
+		expect(res.text).toContain("ta présence est confirmée avec Rouge pour demain");
 		expect(res.text).toContain("Voir l'alignement de l'équipe : https://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Red&t=abc123token");
 		expect(res.text).toContain("Fiche d'équipe : https://smbhl.com/#/team/Fall%202026/Red");
 		expect(res.text).toContain("Tu ne peux plus venir? Mets ton statut à jour ici.");
