@@ -97,3 +97,55 @@ export function formatEventDateTime(dateISO, timeHHMM, lang = 'fr', style = 'sho
   const t = timeHHMM ? formatEventTime(timeHHMM, lang) : '';
   return t ? `${d} · ${t}` : d;
 }
+
+// ---- pages (batch 4 item 4) ----
+// French pages write the date in words: « jeudi 15 oct. » in lists and
+// panels ('short'), « jeudi 15 octobre 2026 » where there is room
+// ('long'). An abbreviated month takes a period; a month written in full
+// (mars, mai, juin, août) does not. English pages keep formatEventDate's
+// own forms ("Thu Oct 15", "Thursday Oct 15"). Times are formatEventTime
+// for both pages and emails: « 18 h 08 », « 18 h » for a whole hour.
+// Emails keep formatEventDate: these are for pages only.
+function monthAbbrFrDot(m) {
+  const a = MONTH_ABBR_FR[m - 1];
+  return a === MONTH_FULL_FR[m - 1] ? a : `${a}.`;
+}
+export function formatPageDate(dateISO, lang = 'fr', style = 'short') {
+  if (lang === 'en') return formatEventDate(dateISO, 'en', style);
+  const p = dateParts(dateISO);
+  if (!p) return '';
+  return style === 'long'
+    ? `${DAY_FULL_FR[p.dow]} ${p.d} ${MONTH_FULL_FR[p.m - 1]} ${p.y}`
+    : `${DAY_FULL_FR[p.dow]} ${p.d} ${monthAbbrFrDot(p.m)}`;
+}
+export function formatPageDateTime(dateISO, timeHHMM, lang = 'fr', style = 'short') {
+  const d = formatPageDate(dateISO, lang, style);
+  const t = timeHHMM ? formatEventTime(timeHHMM, lang) : '';
+  return t ? `${d} · ${t}` : d;
+}
+
+// The same French page format for the pages' own scripts (lists drawn in
+// the browser): window.__nlDate(iso, style) and window.__nlTime(hhmm), from
+// the same tables, so the two cannot drift (test/rendered/page_dates.spec.mjs
+// runs both over the same dates). French only: the English branches of
+// those scripts are unchanged. No backslash, backtick or dollar-brace in the
+// browser text.
+export const PAGE_DATE_JS = `(function() {
+  var DAYS = ${JSON.stringify(DAY_FULL_FR)}, ABBR = ${JSON.stringify(MONTH_ABBR_FR)}, FULL = ${JSON.stringify(MONTH_FULL_FR)};
+  window.__nlDate = function(iso, style) {
+    var s = String(iso || '');
+    if (s.length < 10 || s.charAt(4) !== '-' || s.charAt(7) !== '-') return '';
+    var y = Number(s.slice(0, 4)), m = Number(s.slice(5, 7)), d = Number(s.slice(8, 10));
+    if (!y || !m || !d) return '';
+    var dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    if (style === 'long') return DAYS[dow] + ' ' + d + ' ' + FULL[m - 1] + ' ' + y;
+    return DAYS[dow] + ' ' + d + ' ' + (ABBR[m - 1] === FULL[m - 1] ? ABBR[m - 1] : ABBR[m - 1] + '.');
+  };
+  window.__nlTime = function(t) {
+    var s = String(t || ''), i = s.indexOf(':');
+    if (i < 1) return '';
+    var h = Number(s.slice(0, i)), mi = Number(s.slice(i + 1, i + 3));
+    if (isNaN(h) || isNaN(mi)) return '';
+    return mi === 0 ? h + ' h' : h + ' h ' + (mi < 10 ? '0' : '') + mi;
+  };
+})();`;

@@ -108,8 +108,8 @@ describe('Part 2: league branding on session-based pages', () => {
     // Design system Part 3: the event's own date, not a generic label.
     // Superseded by live-testing task (batch 2), Part 6: dates now
     // render in the design system's own format -- 2026-12-13 is a
-    // Sunday, so "Dim 13 déc" replaces the old raw ISO title.
-    expect(html).toContain(`<title>Dim 13 déc | ${LEAGUE_NAME}</title>`);
+    // Sunday: French pages write it in words (batch 4 item 4).
+    expect(html).toContain(`<title>dimanche 13 déc. | ${LEAGUE_NAME}</title>`);
     expect(html).not.toContain('SMBHL');
   });
 

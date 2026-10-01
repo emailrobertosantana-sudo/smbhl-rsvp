@@ -20,7 +20,7 @@
 // .rv-foot elsewhere in this app), and "Dupliquer" sitting on its own
 // line below each row instead of inline with the row's other actions.
 import { env, SELF } from 'cloudflare:test';
-import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from '../src/date_format.js';
+import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime, formatPageDate, formatPageDateTime } from '../src/date_format.js';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { extractInlineScripts } from './support/inline_scripts.js';
@@ -129,8 +129,8 @@ describe('Part 6 (live-testing task, batch 2): date/time formatting', () => {
       // attributes (e.g. "<leagueId>:2026-09-27") -- that's an id, not
       // a displayed date, and out of scope here. The actual DISPLAY
       // element (.sc-when) is what must show the real, formatted date.
-      expect(html).toContain('Dim 27 sept');
-      expect(html).toContain('data-date-fr="Dim 27 sept"');
+      expect(html).toContain('dimanche 27 sept.');
+      expect(html).toContain('data-date-fr="dimanche 27 sept."');
       expect(html).toContain('data-date-en="Sun Sep 27"');
       expect(html).toContain('data-date-fr="10 h 30"');
       expect(html).toContain('data-date-en="10:30 AM"');
@@ -148,11 +148,11 @@ describe('Part 6 (live-testing task, batch 2): date/time formatting', () => {
       // embedded in the page's own API calls -- see the schedule
       // list's identical note above)
       expect(html).toContain('<h1');
-      expect(html).toContain('Dimanche 27 sept');
+      expect(html).toContain('dimanche 27 septembre 2026');
       expect(html).toContain('data-date-en="Sunday Sep 27');
       // The <title> tag is real, user-visible text too (browser tab,
       // bookmarks, history) -- also fixed, not raw ISO either.
-      expect(html).toContain('<title>Dim 27 sept |');
+      expect(html).toContain('<title>dimanche 27 sept. |');
       const scripts = extractInlineScripts(html);
       for (const s of scripts) expect(() => new Function(s)).not.toThrow();
     });
@@ -161,7 +161,7 @@ describe('Part 6 (live-testing task, batch 2): date/time formatting', () => {
       const { league } = await setupLeagueWithEvent('dateformat.public@example.com', '203.0.166.003');
       const html = await (await SELF.fetch(`http://example.com/league/public?league=${encodeURIComponent(league.id)}`)).text();
       expect(html).not.toContain('2026-09-27');
-      expect(html).toContain('Dim 27 sept');
+      expect(html).toContain('dimanche 27 sept.');
       expect(html).toContain('data-date-en="Sun Sep 27"');
       const scripts = extractInlineScripts(html);
       for (const s of scripts) expect(() => new Function(s)).not.toThrow();
@@ -181,7 +181,7 @@ describe('Part 6 (live-testing task, batch 2): date/time formatting', () => {
       const token = [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
       const html = await (await SELF.fetch(`http://example.com/league/rsvp?league=${encodeURIComponent(league.id)}&e=${encodeURIComponent(event.id)}&p=${encodeURIComponent(player.player_id)}&t=${token}`)).text();
       expect(html).not.toContain('2026-09-27');
-      expect(html).toContain('Dimanche 27 sept');
+      expect(html).toContain('dimanche 27 septembre 2026');
       const scripts = extractInlineScripts(html);
       for (const s of scripts) expect(() => new Function(s)).not.toThrow();
     });
@@ -199,4 +199,35 @@ describe('Part 6 (live-testing task, batch 2): date/time formatting', () => {
   // body()) is a small, directly-readable regex check plus the same
   // formatEventDateTime already covered above; not re-verified via a
   // flaky round trip here.
+});
+
+// Batch 4 item 4: French pages write the date in words; English pages and
+// every email keep the forms above.
+describe('page dates and times (French pages)', () => {
+  it('lists: weekday in full, the month abbreviated with a period unless written in full', () => {
+    expect(formatPageDate('2026-10-15', 'fr')).toBe('jeudi 15 oct.');
+    expect(formatPageDate('2026-03-05', 'fr')).toBe('jeudi 5 mars');
+    expect(formatPageDate('2026-05-07', 'fr')).toBe('jeudi 7 mai');
+    expect(formatPageDate('2026-06-04', 'fr')).toBe('jeudi 4 juin');
+    expect(formatPageDate('2026-07-02', 'fr')).toBe('jeudi 2 juill.');
+    expect(formatPageDate('2026-08-06', 'fr')).toBe('jeudi 6 août');
+    expect(formatPageDate('2026-02-05', 'fr')).toBe('jeudi 5 févr.');
+  });
+  it('where there is room: the date in full, with the year', () => {
+    expect(formatPageDate('2026-10-15', 'fr', 'long')).toBe('jeudi 15 octobre 2026');
+  });
+  it('times: 24-hour, « 18 h 08 », « 18 h » on the hour (the same rule as the emails)', () => {
+    expect(formatPageDateTime('2026-10-15', '18:08', 'fr')).toBe('jeudi 15 oct. · 18 h 08');
+    expect(formatPageDateTime('2026-10-15', '18:00', 'fr')).toBe('jeudi 15 oct. · 18 h');
+    expect(formatPageDateTime('2026-10-15', '10:30', 'fr', 'long')).toBe('jeudi 15 octobre 2026 · 10 h 30');
+  });
+  it('English pages unchanged', () => {
+    expect(formatPageDate('2026-10-15', 'en')).toBe('Thu Oct 15');
+    expect(formatPageDateTime('2026-10-15', '18:08', 'en')).toBe('Thu Oct 15 · 6:08 PM');
+    expect(formatPageDate('2026-10-15', 'en')).toBe(formatEventDate('2026-10-15', 'en', 'short'));
+  });
+  it('emails unchanged', () => {
+    expect(formatEventDate('2026-10-15', 'fr', 'short')).toBe('Jeu 15 oct');
+    expect(formatEventDateTime('2026-10-15', '18:08', 'fr', 'long', false)).toBe('jeudi 15 oct · 18 h 08');
+  });
 });

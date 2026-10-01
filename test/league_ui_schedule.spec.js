@@ -95,8 +95,8 @@ describe('UI task Part T: GET /league/schedule', () => {
     expect(html).toContain('Schedule Page Rink');
     // Superseded by live-testing task (batch 2), Part 6: dates now
     // render in the design system's own format -- 2026-12-06 is a
-    // Sunday, so "Dim 6 déc" replaces the old raw ISO assertion.
-    expect(html).toContain('Dim 6 déc');
+    // Sunday: French pages write it in words (batch 4 item 4).
+    expect(html).toContain('dimanche 6 déc.');
     expect(html).toContain(`/league/events/detail?e=${encodeURIComponent(eventA)}`);
     expect(html).toContain('id="e_date"');
     expect(html).toContain('id="e_submit"');

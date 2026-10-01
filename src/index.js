@@ -16,7 +16,7 @@ import { PAYMENT_REMINDER_KIND, getPaymentInfo, savePaymentInfo, hasPaymentInfo,
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
-import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime } from './date_format.js';
+import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime, formatPageDate, formatPageDateTime, PAGE_DATE_JS } from './date_format.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart, eventHasStarted } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
@@ -186,7 +186,7 @@ const esc = s => String(s == null ? '' : s)
 // versions) can swap it live on toggle without needing this formatting
 // logic duplicated as embedded browser-facing text.
 function dateSpanHtml(tag, dateISO, style, extraAttrs) {
-  const fr = formatEventDate(dateISO, 'fr', style);
+  const fr = formatPageDate(dateISO, 'fr', style);
   const en = formatEventDate(dateISO, 'en', style);
   return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(fr)}</${tag}>`;
 }
@@ -205,7 +205,7 @@ function timeSpanHtml(tag, timeHHMM, extraAttrs) {
   return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(fr)}</${tag}>`;
 }
 function dateTimeSpanHtml(tag, dateISO, timeHHMM, style, extraAttrs) {
-  const fr = formatEventDateTime(dateISO, timeHHMM, 'fr', style);
+  const fr = formatPageDateTime(dateISO, timeHHMM, 'fr', style);
   const en = formatEventDateTime(dateISO, timeHHMM, 'en', style);
   return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(fr)}</${tag}>`;
 }
@@ -925,6 +925,7 @@ window.__csrfHeader = function() {
 };
 ${ERROR_TEXT_JS}
 ${PLURAL_TEXT_JS}
+${PAGE_DATE_JS}
 (function() {
   var lang = 'fr';
   try {
@@ -1029,6 +1030,7 @@ ${PLURAL_TEXT_JS}
     // automations, the goal tally...), which listens for nl_lang_changed
     // and redraws. This used to relabel only server-rendered text.
     if (document.documentElement) document.documentElement.lang = l === 'en' ? 'en-CA' : 'fr-CA';
+    document.querySelectorAll('input[type="date"], input[type="time"], input[type="datetime-local"]').forEach(function(el) { el.setAttribute('lang', l === 'en' ? 'en-CA' : 'fr-CA'); });
     var titlesEl = document.querySelector ? document.querySelector('meta[name="nl-titles"]') : null;
     if (titlesEl) document.title = titlesEl.getAttribute(l === 'en' ? 'data-title-en' : 'data-title-fr');
     if (window.__onLangApplied) window.__onLangApplied(l);
@@ -2547,7 +2549,7 @@ async function loadHardDeleteStatus() {
       statusEl.textContent = window.__pageDict().hardDeleteNotDeactivated;
       btn.disabled = true;
     } else if (data.status === 'locked') {
-      statusEl.textContent = window.__pageDict().hardDeleteLocked + ' ' + new Date(data.unlockAt).toLocaleDateString(window.__currentLang === 'en' ? 'en-CA' : 'fr-CA');
+      statusEl.textContent = window.__pageDict().hardDeleteLocked + ' ' + (window.__currentLang === 'en' ? new Date(data.unlockAt).toLocaleDateString('en-CA') : window.__nlDate(new Date(data.unlockAt).toLocaleDateString('sv-SE'), 'long'));
       btn.disabled = true;
     } else if (data.status === 'eligible') {
       statusEl.textContent = window.__pageDict().hardDeleteEligible;
@@ -5225,7 +5227,11 @@ async function doLogout() {
 }
 function fmtWhen(iso) {
   if (!iso) return '';
-  try { return new Date(iso).toLocaleString(window.__currentLang === 'en' ? 'en-CA' : 'fr-CA', { dateStyle: 'short', timeStyle: 'short' }); }
+  try {
+    if (window.__currentLang === 'en') return new Date(iso).toLocaleString('en-CA', { dateStyle: 'short', timeStyle: 'short' });
+    var dt = new Date(iso);
+    return window.__nlDate(dt.toLocaleDateString('sv-SE'), 'short') + ' · ' + window.__nlTime(dt.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }));
+  }
   catch (e) { return iso; }
 }
 // E3 (Comms polish task): no_recipients gets the same neutral grey as
@@ -8757,7 +8763,7 @@ function renderImportReminderNotice(okCount) {
   var locale = window.__currentLang === 'en' ? 'en-CA' : 'fr-CA';
   var esc = function(t) { var el = document.createElement('div'); el.textContent = t; return el.innerHTML; };
   var items = IMPORT_REM_GAMES.map(function(g) {
-    var when = new Date(g.date + 'T12:00:00Z').toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) + ' ' + g.start_time;
+    var when = locale === 'en-CA' ? new Date(g.date + 'T12:00:00Z').toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) + ' ' + g.start_time : window.__nlDate(g.date, 'short') + ' · ' + window.__nlTime(g.start_time);
     var what = g.steps.map(function(st) { return (st.kind === 'reminder_72h' ? d.importRem72 : d.importRem24) + (st.now ? ' (' + d.importRemNow + ')' : ''); }).join(', ');
     return '<li><b>' + esc(when) + '</b> · ' + esc(what) + '</li>';
   }).join('');
@@ -9943,7 +9949,7 @@ function renderBulkReminderNotice() {
   if (!soon.length) { box.style.display = 'none'; document.getElementById('be_suppress_soon').checked = false; return; }
   var locale = window.__currentLang === 'en' ? 'en-CA' : 'fr-CA';
   var items = soon.map(function(g) {
-    var when = new Date(g.date + 'T12:00:00Z').toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+    var when = locale === 'en-CA' ? new Date(g.date + 'T12:00:00Z').toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) : window.__nlDate(g.date, 'short');
     var what = g.outs.map(function(o) { return stepLabel(o.step) + ' (' + (o.skipped ? d.remNoticeTooLate : d.remNoticeGoesOut.replace('{t}', roughTime(o.inHours))) + ')'; }).join(', ');
     return '<li><b>' + escText(when) + '</b> · ' + escText(what) + '</li>';
   }).join('');
@@ -11666,7 +11672,7 @@ async function setPlayerStatus(playerId, status, btn, scope) {
   }
 }`;
 
-  return new Response(nlDocument({ titles: { fr: `${formatEventDate(ev.date, 'fr', 'short')} | ${leagueRow.name}`, en: `${formatEventDate(ev.date, 'en', 'short')} | ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+  return new Response(nlDocument({ titles: { fr: `${formatPageDate(ev.date, 'fr', 'short')} | ${leagueRow.name}`, en: `${formatEventDate(ev.date, 'en', 'short')} | ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
 }
@@ -16273,7 +16279,7 @@ async function leagueAvailContext(env, ev) {
   return { ev, cfg, league, langs: mode === 'both' ? ['fr', 'en'] : [mode] };
 }
 function leagueAvailWhen(ev, lang) {
-  return formatEventDateTime(ev.date, ev.start_time, lang, 'long');
+  return lang === 'en' ? formatEventDateTime(ev.date, ev.start_time, 'en', 'long') : formatPageDateTime(ev.date, ev.start_time, 'fr', 'long');
 }
 function leagueAvailVenue(ev, lang) {
   return ev.venue ? `${lang === 'en' ? 'Venue:' : 'Lieu :'} ${ev.venue}` : '';
