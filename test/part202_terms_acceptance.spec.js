@@ -95,7 +95,7 @@ describe('an existing account with no acceptance on record', () => {
 
   it('the sign-in page sends to the screen when asked', async () => {
     const html = await (await SELF.fetch('http://example.com/login')).text();
-    expect(html).toContain("data.termsNeeded ? '/accept-terms?next=' + encodeURIComponent(dest) : dest");
+    expect(html).toContain("if (data.termsNeeded) { window.location.href = '/accept-terms?next=' + encodeURIComponent(");
   });
 });
 

@@ -1577,8 +1577,9 @@ async function submitLogin() {
       btn.disabled = false;
       return;
     }
-    var dest = ${nextForScript(next)} || '/dashboard';
-    window.location.href = data.termsNeeded ? '/accept-terms?next=' + encodeURIComponent(dest) : dest;
+    // An account with no acceptance on record is asked once first (src/terms.js).
+    if (data.termsNeeded) { window.location.href = '/accept-terms?next=' + encodeURIComponent(${nextForScript(next)} || '/dashboard'); return; }
+    window.location.href = ${nextForScript(next)} || '/dashboard';
   } catch (e) {
     showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
