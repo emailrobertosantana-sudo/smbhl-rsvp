@@ -416,7 +416,7 @@ async function takeEmailAllowance(env, now) {
 
 const leagueName = (names, scope) => scope === 'system' ? 'Système / System' : (names.get(scope) || scope);
 
-// host: { sendMail, leagueAdminEmails, opsEmail, publicUrl, renderAdminAlert }
+// host: { sendMail, leagueAdminEmails, opsEmail, publicUrl, renderAdminAlert, leagueMailStopped? }
 export async function notifyAlerts(env, host, alerts, now = new Date()) {
   const log = [];
   const pendingOps = alerts.filter(a => !a.ops_notified_at);
@@ -453,6 +453,9 @@ export async function notifyAlerts(env, host, alerts, now = new Date()) {
   let sentThisPass = 0;
   for (const [leagueId, list] of byLeague) {
     if (sentThisPass >= MAX_ADMIN_EMAILS_PER_PASS) break;
+    // Billing batch 3: no alert email while the league's automatic emails
+    // are stopped (read-only, or past its grace). The banner still shows it.
+    if (host.leagueMailStopped && await host.leagueMailStopped(env, leagueId)) { await markAll(list, 'admin_notified_at'); continue; }
     const admins = await host.leagueAdminEmails(env, leagueId);
     if (!admins.length) { await markAll(list, 'admin_notified_at'); continue; } // the banner still shows it
     const leagueRow = await env.DB.prepare('SELECT id, name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();

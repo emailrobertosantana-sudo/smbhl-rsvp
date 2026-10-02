@@ -676,7 +676,18 @@ export function localDateInDays(days, now = Date.now()) {
 
 // One league's pass (the body of runLeagueReminders' loop).
 async function runOneLeague(env, leagueRow, budget, log) {
-  const { getLeagueSeasonConfig, randomAssignEventTeams, callSubsForShortfall, drain } = reminderHost();
+  const { getLeagueSeasonConfig, randomAssignEventTeams, callSubsForShortfall, drain, leagueMailStopped } = reminderHost();
+  // Billing batch 3 (src/billing.js classifyLeague): a read-only league, or
+  // one past its 14 days at 15 players, gets no reminder wave, auto-draw or
+  // shortfall sub call. What is already queued (a billing notice, mail from
+  // before) is still delivered. False with no query while billing is off.
+  if (leagueMailStopped && await leagueMailStopped(env, leagueRow.id)) {
+    const stoppedDrain = await drain(env, MAIL_SENDS_PER_INVOCATION, null, leagueRow.id, budget);
+    if (stoppedDrain.sent > 0 || stoppedDrain.failed > 0) {
+      log.push(`${leagueRow.id} drain sent=${stoppedDrain.sent} failed=${stoppedDrain.failed} retrying=${stoppedDrain.retrying}`);
+    }
+    return;
+  }
   {
     // Which cadence model this league is on (the advanced_reminders flag).
     const advancedSettings = (await usesAdvancedReminders(env, leagueRow.id)) ? await getEmailSettings(env.DB, leagueRow.id) : null;

@@ -29,6 +29,8 @@
 //   - the "Test interne" promotion code is deactivated at launch, and its
 //     test subscriptions cancelled.
 // Design: the billing report (batch 6), docs/billing.md.
+// Batch 3 added the state (classifyLeague, below): read-only, grace, the
+// free slot, the 12-month clock; src/billing_enforcement.js acts on it.
 
 export const SMBHL_ID = 'smbhl';
 export const TRIAL_MONTHS = 2;
@@ -148,6 +150,128 @@ export function freeSlotLeagueId(leagues) {
   return free.length ? free[0].id : null;
 }
 
+// Batch 3 (enforcement): one owner's free slot. Candidates: the owner's
+// active leagues (not deactivated, not SMBHL) that are neither marked never
+// billed nor given the free exception (those are free on their own and
+// never take the slot). leagues: [{ id, created_at, created_by,
+// deactivated_at }]; rowsById: Map of league_billing rows. Returns a Map
+// owner -> the league holding the slot.
+export function freeSlotsByOwner(leagues, rowsById) {
+  const byOwner = new Map();
+  for (const l of leagues || []) {
+    if (!l || l.id === SMBHL_ID || l.deactivated_at) continue;
+    const r = rowsById.get(l.id) || null;
+    if (r && (r.free_exception || r.billing_exempt)) continue;
+    const owner = (r && r.owner_user_id) || l.created_by || null;
+    if (!owner) continue;
+    if (!byOwner.has(owner)) byOwner.set(owner, []);
+    byOwner.get(owner).push({ id: l.id, created_at: l.created_at, count: r ? r.regular_count : 0 });
+  }
+  return new Map([...byOwner].map(([o, ls]) => [o, freeSlotLeagueId(ls)]));
+}
+
+// Free: a count under 15 and either the free exception or the owner's free
+// slot.
+export function isFreeEligible(league, row, slotByOwner) {
+  if (!league) return false;
+  if (row && row.free_exception) return true;
+  const owner = (row && row.owner_user_id) || league.created_by || null;
+  return !!owner && slotByOwner.get(owner) === league.id;
+}
+
+export const GRACE_DAYS = 14;
+export const INACTIVE_DELETE_MONTHS = 12;
+const LIVE_STATUSES = ['active', 'past_due', 'paused'];
+
+// Batch 3: where a league stands, and what that means. Pure.
+//   status   exempt | off | trial | free | active | past_due | paused |
+//            grace | custom | unpaid
+//   readOnly every change refused (src/write_guard.js mode 'billing'),
+//            automatic emails stopped; players still answer
+//   reason   trial_ended | trial_no_card | paused | payment_failed |
+//            cancelled (when readOnly)
+//   mailStopped  automatic emails stopped: read-only, or a free league
+//            past its 14 days at 15 players or more
+//   inactive the 12-month clock runs (trial ended unpaid, or cancelled)
+// A free league that reaches 15 (row.status 'free', written by the daily
+// job, src/billing_enforcement.js) is in its grace, never read-only.
+// Above 100 players nothing is gated (a custom price is agreed by hand).
+// A live subscription decides before the trial: a league that subscribed
+// inside its trial is active, paused or past due as Stripe says.
+export function classifyLeague(env, league, row, { freeEligible = false, now = new Date() } = {}) {
+  const count = row && row.regular_count != null ? Number(row.regular_count) : 0;
+  const countTier = tierForCount(count);
+  const base = { count, countTier, freeEligible: !!freeEligible, readOnly: false, reason: null, mailStopped: false, inactive: false, trialEnd: null, graceEndsAt: null };
+  if (!league || league.id === SMBHL_ID || (row && row.billing_exempt)) return { ...base, status: 'exempt' };
+  if (!billingEnabled(env)) return { ...base, status: 'off' };
+  const trial = trialWindow(env, league, row);
+  const s = { ...base, trialEnd: trial ? trial.end : null };
+  const ro = reason => ({ ...s, readOnly: true, mailStopped: true, reason });
+  const live = !!(row && row.stripe_subscription_id && LIVE_STATUSES.includes(row.status));
+  if (live && row.status === 'active') return { ...s, status: 'active' };
+  // Stripe's own pause (status 'paused'): the trial ended with no card.
+  // That one is an unpaid trial: its 12-month clock runs. A pause the owner
+  // chose (pause_collection) never does.
+  if (live && row.status === 'paused') {
+    const noCard = row.stripe_status === 'paused';
+    return { ...ro(noCard ? 'trial_no_card' : 'paused'), status: 'paused', inactive: noCard };
+  }
+  if (live && row.status === 'past_due') return { ...ro('payment_failed'), status: 'past_due' };
+  if (trial && now.getTime() < Date.parse(trial.end)) return { ...s, status: 'trial' };
+  if (countTier === 'free' && freeEligible) return { ...s, status: 'free' };
+  if (countTier === 'custom') return { ...s, status: 'custom' };
+  if (row && (row.grace_ends_at || row.status === 'free')) {
+    const ended = !!(row.grace_ends_at && now.getTime() >= Date.parse(row.grace_ends_at));
+    return { ...s, status: 'grace', graceEndsAt: row.grace_ends_at || null, mailStopped: ended };
+  }
+  // Cancelled after a paid period; otherwise the trial ended unpaid (a
+  // subscription cancelled inside its trial included).
+  const cancelled = !!(row && row.stripe_subscription_id && row.status === 'inactive' && row.last_paid_at);
+  return { ...ro(cancelled ? 'cancelled' : 'trial_ended'), status: 'unpaid', inactive: true };
+}
+
+// A league's state, read now. Null when billing is off, on SMBHL, or for a
+// league that does not exist. The free slot is looked up only when it can
+// matter (a count under 15 with no exception).
+export async function leagueStateFor(env, league, row, now = new Date()) {
+  if (!league || league.id === SMBHL_ID || !billingEnabled(env)) return null;
+  let freeEligible = !!(row && row.free_exception);
+  if (!freeEligible && tierForCount(row && row.regular_count) === 'free') {
+    const owner = (row && row.owner_user_id) || league.created_by || null;
+    if (owner) {
+      const sibs = (await env.DB.prepare(
+        `SELECT l.id, l.created_at, l.created_by, l.deactivated_at, b.owner_user_id, b.regular_count, b.free_exception, b.billing_exempt
+           FROM leagues l LEFT JOIN league_billing b ON b.league_id = l.id
+          WHERE COALESCE(b.owner_user_id, l.created_by) = ? AND l.id != ?`
+      ).bind(owner, SMBHL_ID).all()).results || [];
+      freeEligible = isFreeEligible(league, row, freeSlotsByOwner(sibs, new Map(sibs.map(x => [x.id, x]))));
+    }
+  }
+  return classifyLeague(env, league, row, { freeEligible, now });
+}
+
+export async function loadLeagueState(env, leagueId, now = new Date()) {
+  if (!env || env.LEAGUE_PRODUCT !== 'true' || !billingEnabled(env) || !leagueId || leagueId === SMBHL_ID) return null;
+  const league = await env.DB.prepare('SELECT id, name, created_at, created_by, deactivated_at FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (!league) return null;
+  const row = await env.DB.prepare('SELECT * FROM league_billing WHERE league_id = ?').bind(leagueId).first();
+  return leagueStateFor(env, league, row, now);
+}
+
+// For the automatic emails (reminder waves, sub calls, admin alerts):
+// stopped while the league is read-only or past its grace. False while
+// billing is off (no query at all), on SMBHL, and when the check fails.
+export async function leagueAutoMailStopped(env, leagueId, now = new Date()) {
+  if (!env || env.LEAGUE_PRODUCT !== 'true' || !billingEnabled(env) || !leagueId || leagueId === SMBHL_ID) return false;
+  try {
+    const st = await loadLeagueState(env, leagueId, now);
+    return !!(st && st.mailStopped);
+  } catch (e) {
+    console.error(`[billing] mail check for ${leagueId}: ${e.message}`);
+    return false;
+  }
+}
+
 // What the super-admin page shows for one league. Pure. status:
 //   exempt   SMBHL, or a league marked never billed
 //   off      billing is off (BILLING_LAUNCH_AT unset)
@@ -186,15 +310,9 @@ export async function billingSummaries(env, leagues, now = new Date()) {
   try { rows = (await env.DB.prepare('SELECT * FROM league_billing').all()).results || []; }
   catch (_) { return out; }
   const byId = new Map(rows.map(r => [r.league_id, r]));
-  const byOwner = new Map();
-  for (const l of leagues) {
-    const r = byId.get(l.id);
-    const owner = (r && r.owner_user_id) || l.created_by || null;
-    if (!owner || l.id === SMBHL_ID) continue;
-    if (!byOwner.has(owner)) byOwner.set(owner, []);
-    byOwner.get(owner).push({ id: l.id, created_at: l.created_at, count: r ? r.regular_count : 0 });
-  }
-  const slotByOwner = new Map([...byOwner].map(([o, ls]) => [o, freeSlotLeagueId(ls)]));
+  // The same free slot the enforcement uses (deactivated leagues and
+  // exceptions never hold it).
+  const slotByOwner = freeSlotsByOwner(leagues, byId);
   for (const l of leagues) {
     const r = byId.get(l.id) || null;
     const owner = (r && r.owner_user_id) || l.created_by || null;
@@ -204,7 +322,7 @@ export async function billingSummaries(env, leagues, now = new Date()) {
 }
 
 // Super-admin: the free exception (free even when the owner already has a
-// free league). Never for SMBHL.
+// free league; the count must still be under 15). Never for SMBHL.
 export async function setFreeException(env, leagueId, on) {
   if (!leagueId || leagueId === SMBHL_ID) return { ok: false, error: 'SMBHL is never billed.', errorKey: 'BILLING_SMBHL' };
   const league = await env.DB.prepare('SELECT id, created_by FROM leagues WHERE id = ?').bind(leagueId).first();
@@ -214,5 +332,14 @@ export async function setFreeException(env, leagueId, on) {
     `INSERT INTO league_billing (league_id, owner_user_id, free_exception, updated_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(league_id) DO UPDATE SET free_exception = excluded.free_exception, updated_at = excluded.updated_at`
   ).bind(leagueId, league.created_by || null, on ? 1 : 0, at).run();
+  // Batch 3: the exception unlocks at once (a free league is never read-only,
+  // in grace or on the 12-month clock). The daily job does the same on its
+  // next pass; this is so the super-admin does not wait for it.
+  if (on) {
+    await env.DB.prepare(
+      `UPDATE league_billing SET read_only_since = NULL, emails_paused_since = NULL, grace_ends_at = NULL, inactive_since = NULL
+        WHERE league_id = ? AND COALESCE(status, '') NOT IN ('active', 'past_due', 'paused') AND COALESCE(regular_count, 0) <= ?`
+    ).bind(leagueId, TIER_LIMITS.free).run();
+  }
   return { ok: true };
 }

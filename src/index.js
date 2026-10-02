@@ -26,13 +26,13 @@ import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation, claimO
 import { handleSignup, handleLogin, handleAcceptTerms, purgeRateLimitIps, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, newestSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
-import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, setFreeException, billingEnabled } from './billing.js';
+import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, setFreeException, billingEnabled, loadLeagueState, leagueAutoMailStopped } from './billing.js';
 import { handleStripeWebhook, processPendingStripeEvents } from './stripe_webhook.js';
 import { checkStripeConfig } from './billing_check.js';
 import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS } from './billing_actions.js';
 import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail } from './league_health.js';
 import { readSupportSession, supportEnv, supportResponse, startSupport, endSupport, clearSupportCookieHeader, readSupportLog } from './support_mode.js';
-import { writeRefusal } from './write_guard.js';
+import { writeRefusal, isWriteRequest, writeAllowed } from './write_guard.js';
 import { superAdminListPage, superAdminLeaguePage, LEAGUE_PAGE_CONSTANTS } from './super_admin_ui.js';
 import { prepareOpsDigest, deliverOpsDigest, OPS_DIGEST_TO, OPS_DIGEST_KIND } from './ops_digest.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
@@ -6074,7 +6074,12 @@ const I18N_BILLING = {
     ownerOnly: "Seul le propriétaire de la ligue peut gérer l'abonnement.",
     success: 'Merci! Ton abonnement est actif.',
     canceled: "L'abonnement n'a pas été complété.",
-    error: 'Une erreur est survenue. Réessaie.'
+    error: 'Une erreur est survenue. Réessaie.',
+    addCard: 'Ajouter une carte',
+    trialEndedCard: 'Ton essai est terminé. Ajoute une carte pour réactiver ton abonnement.',
+    readOnlyNote: 'Ta ligue est en lecture seule. Abonne-toi pour la réactiver.',
+    secondLeague: 'Tu as déjà une ligue gratuite : celle-ci demande un forfait.',
+    emailsStopped: 'Les courriels automatiques sont arrêtés. Abonne-toi pour les remettre en marche.'
   },
   en: {
     navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Settings',
@@ -6092,7 +6097,12 @@ const I18N_BILLING = {
     ownerOnly: 'Only the league owner can manage the subscription.',
     success: 'Thanks! Your subscription is active.',
     canceled: 'The subscription was not completed.',
-    error: 'Something went wrong. Try again.'
+    error: 'Something went wrong. Try again.',
+    addCard: 'Add a card',
+    trialEndedCard: 'Your trial has ended. Add a card to reactivate your subscription.',
+    readOnlyNote: 'Your league is read-only. Subscribe to reactivate it.',
+    secondLeague: 'You already have a free league: this one needs a plan.',
+    emailsStopped: 'Automatic emails are stopped. Subscribe to turn them back on.'
   }
 };
 // The lines with numbers or dates, in both languages.
@@ -6102,15 +6112,22 @@ function billingLines(view) {
   const row = view.row || {};
   const L = {};
   L.count = {
-    fr: `Ta ligue compte ${pluralText('{n|# joueur régulier|# joueurs réguliers}', { n: view.count }, 'fr')} : forfait ${plan(view.countTier, 'fr')}.`,
-    en: `Your league has ${pluralText('{n|# regular player|# regular players}', { n: view.count }, 'en')}: ${plan(view.countTier, 'en')} plan.`
+    fr: `Ta ligue compte ${pluralText('{n|# joueur régulier|# joueurs réguliers}', { n: view.count }, 'fr')} : forfait ${plan(view.planTier || view.countTier, 'fr')}.`,
+    en: `Your league has ${pluralText('{n|# regular player|# regular players}', { n: view.count }, 'en')}: ${plan(view.planTier || view.countTier, 'en')} plan.`
+  };
+  // Batch 3: a free league at 15 players or more has 14 days to subscribe.
+  const st = view.state || {};
+  if (st.status === 'grace' && st.graceEndsAt && !st.mailStopped) L.grace = {
+    fr: `Ta ligue compte 15 joueurs réguliers ou plus. Abonne-toi d'ici le ${d(st.graceEndsAt, 'fr')} pour garder les courriels automatiques.`,
+    en: `Your league has 15 or more regular players. Subscribe by ${d(st.graceEndsAt, 'en')} to keep the automatic emails.`
   };
   if (view.trial && view.trial.daysLeft > 0) L.trial = {
     fr: `Essai gratuit : ${pluralText('{n|il reste # jour|il reste # jours}', { n: view.trial.daysLeft }, 'fr')}.`,
     en: `Free trial: ${pluralText('{n|# day|# days}', { n: view.trial.daysLeft }, 'en')} left.`
   };
-  if (['standard', 'plus'].includes(view.countTier)) {
-    const c = PRICE_CENTS[view.countTier];
+  const planTier = view.planTier || view.countTier;
+  if (['standard', 'plus'].includes(planTier)) {
+    const c = PRICE_CENTS[planTier];
     L.monthly = { fr: `Mensuel : ${money(c.month, 'fr')} par mois`, en: `Monthly: ${money(c.month, 'en')} per month` };
     L.yearly = { fr: `Annuel : ${money(c.year, 'fr')} par année (2 mois gratuits)`, en: `Yearly: ${money(c.year, 'en')} per year (2 months free)` };
   }
@@ -6169,9 +6186,16 @@ async function handleLeagueBillingPage(req, env, url) {
   const row = view.row || {};
   const k = key => `data-i18n="${key}">${esc(t[key])}`;
   const bi = (line, tag = 'p', attrs = '') => (line ? `<${tag}${attrs} data-date-fr="${esc(line.fr)}" data-date-en="${esc(line.en)}">${esc(line[lang] || line.fr)}</${tag}>` : '');
-  const paid = ['standard', 'plus'].includes(view.countTier);
+  const paid = ['standard', 'plus'].includes(view.planTier);
+  const st = view.state || {};
   let action = '';
-  if (view.live) {
+  if (view.live && row.stripe_status === 'paused') {
+    // Decision 3: Stripe paused it at the trial's end, for want of a card.
+    // The portal adds one; the app then resumes the subscription.
+    action = `${bi(L.plan)}
+    <p class="bl-note" ${k('trialEndedCard')}</p>
+    ${ctx.isOwner ? `<div class="bl-actions"><button type="button" class="nl-btn nl-btn--primary" data-billing="portal" ${k('addCard')}</button></div>` : `<p class="nl-help" ${k('ownerOnly')}</p>`}`;
+  } else if (view.live) {
     const canPause = row.billing_interval === 'month' && row.status === 'active' && !row.cancel_at_period_end;
     // "Billing restarts today." is true only past the trial: in the trial,
     // resume keeps the first charge at the trial's end (resumeSubscription).
@@ -6191,12 +6215,16 @@ async function handleLeagueBillingPage(req, env, url) {
       <p ${k('pauseConfirm')}</p>
       <div class="bl-actions"><button type="button" class="nl-btn nl-btn--secondary" data-billing="pause" ${k('pauseYes')}</button><button type="button" class="nl-btn nl-btn--ghost" id="bl-pause-no" ${k('cancelBtn')}</button></div>
     </div>` : ''}` : `<p class="nl-help" ${k('ownerOnly')}</p>`}`;
-  } else if (view.countTier === 'free') {
+  } else if (view.planTier === 'free') {
     action = `<p ${k('free')}</p>`;
-  } else if (view.countTier === 'custom') {
+  } else if (view.planTier === 'custom') {
     action = `<p ${k('custom')}</p>`;
   } else if (paid) {
     action = `${!L.trial && view.trial ? `<p ${k('trialOver')}</p>` : ''}
+    ${st.status === 'unpaid' ? `<p class="bl-note" ${k('readOnlyNote')}</p>` : ''}
+    ${st.status === 'grace' && st.mailStopped ? `<p class="bl-note" ${k('emailsStopped')}</p>` : ''}
+    ${bi(L.grace, 'p', ' class="bl-note"')}
+    ${view.countTier === 'free' ? `<p ${k('secondLeague')}</p>` : ''}
     <fieldset class="bl-choice"${ctx.isOwner ? '' : ' disabled'}>
       <label><input type="radio" name="bl-interval" value="month" checked> ${bi(L.monthly, 'span')}</label>
       <label><input type="radio" name="bl-interval" value="year"> ${bi(L.yearly, 'span')}</label>
@@ -14330,6 +14358,8 @@ async function teamsWithPlayers(env, leagueId) {
 
 async function alertAdminShortGame(env, ev, shortages) {
   const leagueId = ev.league_id;
+  // Billing batch 3: no admin alert while the league's automatic emails are stopped.
+  if (await leagueAutoMailStopped(env, leagueId)) return 0;
   if (await shortGameAlertHeld(env, ev)) return 0;
   const roster = await teamsWithPlayers(env, leagueId);
   const open = [];
@@ -21682,6 +21712,7 @@ async function writeLeagueNightStatus(env, leagueId, ev, contact, status, status
 // are emailed once per player and set of games (the dedup key is checked
 // first: enqueue() would replace a pending row).
 async function alertAdminNightWaitlist(env, leagueId, games, contact) {
+  if (await leagueAutoMailStopped(env, leagueId)) return 0;
   const first = games[0];
   const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow) return 0;
@@ -21783,6 +21814,7 @@ function nightGameMin(cfg, leagueId, goalie) {
 
 async function alertAdminThinConcurrentGame(env, leagueId, game) {
   if (!game || !leagueId || leagueId === SMBHL_LEAGUE_ID || closedToAnswers(game)) return 0;
+  if (await leagueAutoMailStopped(env, leagueId)) return 0;
   const cfg = await getLeagueSeasonConfig(env, leagueId, game.season);
   if ((cfg.teamStructure || 'fixed') === 'fixed') return 0;
   const cluster = concurrencyClusters((await nightGamesOf(env, game)).filter(g => g.state === 'open')).find(c => c.some(g => g.id === game.id));
@@ -22190,6 +22222,9 @@ async function maybeInviteSubsForShortage(env, leagueId, ev, contact) {
   // assigned for this event, or null if not yet assigned (in which
   // case there's genuinely no team to detect a shortage for yet, same
   // graceful no-op as before).
+  // Billing batch 3: a read-only league's automatic sub calls stop (the
+  // player's own answer is still recorded by the caller).
+  if (await leagueAutoMailStopped(env, leagueId)) return { invited: 0, reason: 'billing-emails-stopped' };
   const rsvpRow = await env.DB.prepare('SELECT team FROM rsvp WHERE event_id = ? AND player_id = ?').bind(ev.id, contact.player_id).first();
   const team = (rsvpRow && rsvpRow.team) || null;
   if (!team) return { invited: 0, reason: 'no-team-on-file' };
@@ -22583,6 +22618,7 @@ async function leagueAdminEmails(env, leagueId) {
 }
 
 async function sendLateReversalAdminAlert(env, leagueId, ev, contact, opts = {}) {
+  if (await leagueAutoMailStopped(env, leagueId)) return;
   const leagueRow = await env.DB.prepare('SELECT name, color, language_mode FROM leagues WHERE id = ?').bind(leagueId).first();
   if (!leagueRow) return;
   const admins = await leagueAdminEmails(env, leagueId);
@@ -32006,7 +32042,10 @@ async function handleChampionPhoto(req, env, url) {
 // The shared reminder module (src/reminders.js) calls back into these.
 installReminderHost({
   enqueue, teamState, remindSubs, callSubs, getTeamMessages, callSubsForShortfall, ensureNextEvent, getEvent,
-  drain, deadMan, ADMIN_EMAIL, sendLeagueReminderKind, getLeagueSeasonConfig, randomAssignEventTeams, dateFR, SHORTFALL_HORIZON_HOURS, dualGoalieChecks, tFR
+  drain, deadMan, ADMIN_EMAIL, sendLeagueReminderKind, getLeagueSeasonConfig, randomAssignEventTeams, dateFR, SHORTFALL_HORIZON_HOURS, dualGoalieChecks, tFR,
+  // Billing batch 3: a read-only league's automatic emails stop (false, with
+  // no query, while billing is off).
+  leagueMailStopped: leagueAutoMailStopped
 });
 installEmailPreviewHost({
   prepareOutboxMessage, createOutboxRenderContext, dateFR, teamState, ADMIN_EMAIL, computeSeasonAwards, formatEventDate,
@@ -32032,6 +32071,7 @@ function opsDigestHost(env) {
 function healthHost(env) {
   return {
     sendMail, leagueAdminEmails, renderAdminAlert: (leagueRow, alerts) => renderLeagueHealthAlert(env, leagueRow, alerts),
+    leagueMailStopped: leagueAutoMailStopped,
     opsEmail: env.OPS_ALERT_EMAIL || env.ADMIN_EMAIL || ADMIN_EMAIL,
     publicUrl: env.PUBLIC_URL || ''
   };
@@ -32216,11 +32256,15 @@ export default {
     let resp;
     if (sup) {
       resp = writeRefusal(req, new URL(req.url), 'support') || await handleFetch(req, supportEnv(env, sup), ctx);
+      resp = await billingBanner(req, env, resp);
       let name = null;
       try { const row = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(sup.leagueId).first(); name = row && row.name; } catch (_) {}
       resp = supportResponse(resp, name);
     } else {
-      resp = await handleFetch(req, env, ctx);
+      // A read-only league (billing batch 3, src/billing.js classifyLeague):
+      // its writes refused before routing, like support mode's.
+      resp = (await billingWriteRefusal(req, env)) || await handleFetch(req, env, ctx);
+      resp = await billingBanner(req, env, resp);
     }
     if (env.DEMO_ENV !== 'true') return resp;
     const headers = new Headers(resp.headers);
@@ -32228,6 +32272,57 @@ export default {
     return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
   }
 };
+
+// Billing batch 3: a write by an admin of a read-only league is refused
+// here, before routing (src/write_guard.js mode 'billing': the billing page,
+// the account, players' answers and leaving the league still go through).
+// The league is the one the request's session acts on, as every league
+// route resolves it. Notre Ligue only, only once BILLING_LAUNCH_AT is set:
+// nothing is read otherwise. A check that fails lets the request through.
+async function billingWriteRefusal(req, env) {
+  if (env.LEAGUE_PRODUCT !== 'true' || !billingEnabled(env) || !isWriteRequest(req)) return null;
+  const url = new URL(req.url);
+  if (writeAllowed(url, 'billing')) return null;
+  if (!/(?:^|;\s*)user_session=/.test(req.headers.get('cookie') || '')) return null;
+  try {
+    const leagueId = await resolveSessionLeagueId(req, env, url);
+    const state = await loadLeagueState(env, leagueId);
+    if (!state || !state.readOnly) return null;
+  } catch (e) {
+    console.error(`[billing] read-only check: ${e.message}`);
+    return null;
+  }
+  return writeRefusal(req, url, 'billing');
+}
+
+// The admin pages of a read-only league (or one whose automatic emails are
+// stopped) say so at the top, with a link to the billing page. Both
+// languages, like the support banner. Not on the billing page itself (it
+// has its own lines), nor on players' or public pages.
+export const BILLING_BANNER_TEXT = {
+  fr: { readOnly: 'Ta ligue est en lecture seule : tu peux tout consulter, mais rien modifier.', mailStopped: 'Les courriels automatiques de ta ligue sont arrêtés.', link: "Voir l'abonnement" },
+  en: { readOnly: 'Your league is read-only: you can see everything, but change nothing.', mailStopped: "Your league's automatic emails are stopped.", link: 'See the subscription' }
+};
+async function billingBanner(req, env, resp) {
+  if (env.LEAGUE_PRODUCT !== 'true' || !billingEnabled(env) || req.method !== 'GET' || resp.status !== 200) return resp;
+  if (!(resp.headers.get('content-type') || '').includes('text/html')) return resp;
+  const url = new URL(req.url);
+  const p = url.pathname;
+  if (!(p === '/dashboard' || p.startsWith('/league/'))) return resp;
+  if (['/league/rsvp', '/league/public', '/league/billing', '/league/admins'].some(x => p === x || p.startsWith(x + '/'))) return resp;
+  if (!/(?:^|;\s*)(user_session|nl_support)=/.test(req.headers.get('cookie') || '')) return resp;
+  let state = null;
+  try { state = await loadLeagueState(env, await resolveSessionLeagueId(req, env, url)); } catch (_) { return resp; }
+  if (!state || !state.mailStopped) return resp;
+  const T = BILLING_BANNER_TEXT;
+  const k = state.readOnly ? 'readOnly' : 'mailStopped';
+  const banner = `<div id="nl-billing-banner" role="status" style="background:#fff4d6;color:#16181d;border-bottom:1px solid #d9b44a;font:500 15px/22px Archivo,Arial,Helvetica,sans-serif;padding:10px 16px;display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center">`
+    + `<span><span lang="fr-CA">${esc(T.fr[k])}</span> / <span lang="en-CA">${esc(T.en[k])}</span></span>`
+    + `<a href="/league/billing" style="color:#16181d;font-weight:700;text-decoration:underline;min-height:24px">${esc(T.fr.link)} / ${esc(T.en.link)}</a></div>`;
+  const headers = new Headers(resp.headers);
+  const out = new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
+  return new HTMLRewriter().on('body', { element(el) { el.prepend(banner, { html: true }); } }).transform(out);
+}
 
 // The request's support session, or null: Notre Ligue only, never on the
 // super-admin's own routes.

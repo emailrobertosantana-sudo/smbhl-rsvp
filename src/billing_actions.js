@@ -24,7 +24,7 @@
 //   at the new price.
 // Only the league's owner (leagues.created_by) acts; every admin sees the
 // page. SMBHL is never billed. Nothing happens while billing is off.
-import { billingEnabled, refreshRegularCount, tierForCount, trialWindow, SMBHL_ID } from './billing.js';
+import { billingEnabled, refreshRegularCount, tierForCount, trialWindow, leagueStateFor, SMBHL_ID } from './billing.js';
 import { stripeRequest, stripeId } from './stripe.js';
 import { writeSubscription } from './stripe_webhook.js';
 
@@ -59,8 +59,14 @@ export async function billingView(env, leagueId, now = new Date()) {
   const trial = trialWindow(env, league, row);
   const trialLeftMs = trial ? Date.parse(trial.end) - now.getTime() : 0;
   const countTier = tierForCount(count);
+  // Batch 3: the league's state (read-only, grace, ...) and the plan it
+  // needs. A league under 15 that is not its owner's free one (the oldest
+  // keeps the free slot) needs the Standard plan.
+  const state = await leagueStateFor(env, league, row, now);
+  const freeEligible = !!(state && state.freeEligible);
+  const planTier = countTier === 'free' && !freeEligible ? 'standard' : countTier;
   return {
-    league, row, count, countTier,
+    league, row, count, countTier, state, freeEligible, planTier,
     trial: trial ? { end: trial.end, daysLeft: trialLeftMs > 0 ? Math.ceil(trialLeftMs / DAY) : 0 } : null,
     live: hasLiveSubscription(row),
     pendingTier: hasLiveSubscription(row) && ['standard', 'plus'].includes(countTier) && row.tier !== countTier ? countTier : null
@@ -80,8 +86,8 @@ export async function createCheckout(env, leagueId, interval, { origin, lang, no
   const view = await billingView(env, leagueId, now);
   if (!view) return { ok: false, errorKey: 'BILLING_NOT_AVAILABLE', status: 404 };
   if (view.live) return { ok: false, errorKey: 'BILLING_ALREADY_SUBSCRIBED', status: 409 };
-  if (!['standard', 'plus'].includes(view.countTier)) return { ok: false, errorKey: view.countTier === 'free' ? 'BILLING_FREE' : 'BILLING_CUSTOM', status: 409 };
-  const price = priceIdFor(env, view.countTier, interval);
+  if (!['standard', 'plus'].includes(view.planTier)) return { ok: false, errorKey: view.planTier === 'free' ? 'BILLING_FREE' : 'BILLING_CUSTOM', status: 409 };
+  const price = priceIdFor(env, view.planTier, interval);
   if (!price) return { ok: false, errorKey: 'BILLING_NOT_CONFIGURED', status: 503 };
   const owner = await ownerOf(env, leagueId);
   const back = `${origin}/league/billing`;

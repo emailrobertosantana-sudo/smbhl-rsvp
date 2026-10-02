@@ -103,6 +103,8 @@ export const ERROR_I18N = {
   DUAL_ACTION_UNKNOWN: { fr: 'Action inconnue.', en: 'Unknown action.' },
   // Support mode (src/support_mode.js): the super-admin views a league read-only.
   SUPPORT_READ_ONLY: { fr: 'Mode soutien, lecture seule : rien ne peut être modifié.', en: 'Support mode, read-only: nothing can be changed.' },
+  // Billing batch 3 (src/write_guard.js mode 'billing'): a read-only league.
+  LEAGUE_READ_ONLY: { fr: "Ta ligue est en lecture seule. Va à la page Abonnement pour la réactiver.", en: 'Your league is read-only. Go to the Subscription page to reactivate it.' },
   // Terms acceptance (src/terms.js).
   TERMS_NOT_ACCEPTED: { fr: 'Coche la case pour accepter les conditions et la politique de confidentialité.', en: 'Check the box to accept the terms and the privacy policy.' },
   // Payment reminders (src/payment_reminders.js).
