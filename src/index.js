@@ -486,10 +486,9 @@ const notice = (fr, en, logoTooltip = '') => page(fr, `<h1>${esc(fr)}<span class
  * precisely -- real markup, real FR copy (tutoiement, verb buttons, no
  * exclamation marks) transcribed from that file, not paraphrased.
  * Built on nlDocument() (design_system.js), never page() -- page() is
- * SMBHL's own shell, out of scope. Two deliberate deviations from the
- * literal preview, both because this app has no real content to back
- * them: the "Prix" (pricing) nav item is dropped (no pricing page
- * exists), and the hero's second "Voir un exemple" button is dropped
+ * SMBHL's own shell, out of scope. One deliberate deviation from the
+ * literal preview, because this app has no real content to back
+ * it: the hero's second "Voir un exemple" button is dropped
  * (no canonical demo league exists to link it to) -- the design
  * system's own "one primary action, everything else secondary" rule
  * is still satisfied with just the one primary CTA. Footer's
@@ -510,6 +509,13 @@ const I18N_HOME = {
     f4Title: 'Calendrier et séries', f4Body: 'Matchs, séries éliminatoires et rappels automatiques, sans rien relancer à la main.',
     f5Title: 'Paiements et finances', f5Body: 'Rappels de paiement avec tes coordonnées Interac, et le suivi des finances de ta ligue.',
     f6Title: 'Une page pour ta ligue', f6Body: 'Calendrier, équipes, résultats et statistiques sur une page publique à partager dans le groupe.',
+    eyebrowP: 'Tarifs', headingP: 'Un prix fixe par mois.', sublineP: 'Pas de crédits à acheter, et rien ne bloque ton calendrier.',
+    t1Name: 'Gratuit', t1Range: 'Moins de 15 joueurs', t1Price: '0\u00a0$',
+    t2Name: 'Standard', t2Range: '15 à 50 joueurs', t2Price: '9,99\u00a0$ CAD par mois, ou 99,90\u00a0$ par an',
+    t3Name: 'Plus', t3Range: '51 à 100 joueurs', t3Price: '19,99\u00a0$ CAD par mois, ou 199,90\u00a0$ par an',
+    t4Name: 'Sur mesure', t4Range: 'Plus de 100 joueurs', writeUs: 'Écris-nous',
+    soon: 'Facturation bientôt disponible',
+    priceNote: 'Prix avant taxes. Seuls les joueurs réguliers avec un courriel comptent. 2 mois gratuits pour chaque ligue, sans carte. Les forfaits mensuels peuvent être mis en pause pendant la saison morte.',
     eyebrow2: 'Comment ça marche', heading2: 'Trois étapes, une fois. Ensuite ça roule tout seul.',
     s1Title: 'Créer ta ligue', s1Body: "Le nom, ta formule de jeu, l'adresse de ta page. Cinq minutes.",
     s2Title: 'Ajouter tes joueurs', s2Body: 'Un nom et un courriel. Importe une liste si tu en as une.',
@@ -533,6 +539,13 @@ const I18N_HOME = {
     f4Title: 'Schedule and playoffs', f4Body: 'Games, playoffs and automatic reminders, with no chasing by hand.',
     f5Title: 'Payments and finances', f5Body: "Payment reminders with your Interac e-Transfer details, and your league's finances in one place.",
     f6Title: 'A page for your league', f6Body: 'Schedule, teams, results and stats on a public page you can share in the group chat.',
+    eyebrowP: 'Pricing', headingP: 'One flat monthly price.', sublineP: 'No credits to buy, and nothing blocks your schedule.',
+    t1Name: 'Free', t1Range: 'Under 15 players', t1Price: '$0',
+    t2Name: 'Standard', t2Range: '15 to 50 players', t2Price: '$9.99 CAD per month, or $99.90 per year',
+    t3Name: 'Plus', t3Range: '51 to 100 players', t3Price: '$19.99 CAD per month, or $199.90 per year',
+    t4Name: 'Custom', t4Range: 'Over 100 players', writeUs: 'Write to us',
+    soon: 'Billing coming soon',
+    priceNote: 'Prices before tax. Only regular players with an email count. 2 months free for every league, no card. Monthly plans can pause for the off-season.',
     eyebrow2: 'How it works', heading2: 'Three steps, once. Then it runs itself.',
     s1Title: 'Create your league', s1Body: 'Name, how it runs, your page address. Five minutes.',
     s2Title: 'Add your players', s2Body: 'A name and an email. Import a list if you have one.',
@@ -592,6 +605,17 @@ function renderMarketingHomepage(req) {
   .home-feat h3 { font: 600 18px/24px var(--font-display); font-stretch: 118%; }
   .home-feat p { color: var(--ink-muted); font-size: 15px; line-height: 23px; }
   .home-how { background: var(--surface-sunken); }
+  .home-sub { color: var(--ink-muted); font-size: 17px; line-height: 26px; margin-top: calc(-1 * var(--space-5)); max-width: 640px; }
+  .home-tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-5); margin-top: var(--space-6); }
+  .home-tier { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+  .home-tier h3 { font: 700 20px/26px var(--font-display); font-stretch: 118%; }
+  .home-tier .range { color: var(--ink-muted); font-size: 15px; }
+  .home-tier .price { font-weight: 700; font-size: 17px; line-height: 24px; }
+  .home-tier .nl-badge { align-self: flex-start; }
+  .home-tier .go { margin-top: auto; }
+  .home-tier .go a { text-decoration: underline; font-weight: 600; color: var(--ink); }
+  .home-beta-note { margin-top: var(--space-5); color: var(--ink-muted); font-size: 15px; }
+  .home-fine { margin-top: var(--space-3); color: var(--ink-muted); font-size: 13px; line-height: 19px; max-width: 760px; }
   .home-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-6); }
   .home-num { font: 800 64px/1 var(--font-display); font-stretch: 118%; color: var(--ink); box-shadow: inset 0 -14px 0 var(--yellow); align-self: flex-start; padding: 0 4px; letter-spacing: -.02em; }
   .home-step h3 { font: 600 20px/26px var(--font-display); font-stretch: 118%; }
@@ -603,8 +627,8 @@ function renderMarketingHomepage(req) {
   .home-final .nl-btn--primary { background: var(--yellow); color: var(--on-yellow) !important; }
   .home-footer { padding: var(--space-5) 0; font-size: 13px; color: var(--ink-muted); border-top: 1px solid var(--line); }
   .home-footer .home-in { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
-  @media (max-width: 900px) { .home-hero { grid-template-columns: 1fr; } .home-mock { display: none; } .home-feats { grid-template-columns: 1fr 1fr; } .home-steps { grid-template-columns: 1fr; } }
-  @media (max-width: 639px) { .home-feats { grid-template-columns: 1fr; } }
+  @media (max-width: 900px) { .home-hero { grid-template-columns: 1fr; } .home-mock { display: none; } .home-feats, .home-tiers { grid-template-columns: 1fr 1fr; } .home-steps { grid-template-columns: 1fr; } }
+  @media (max-width: 639px) { .home-feats, .home-tiers { grid-template-columns: 1fr; } }
   @media (max-width: 560px) { .home-hero h1 { font-size: 34px; line-height: 36px; } }
 </style>
 <div class="nl-hero">
@@ -653,6 +677,20 @@ function renderMarketingHomepage(req) {
     <div class="home-feat"><div class="home-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><rect x="2" y="5" width="16" height="11" rx="1"/><path d="M2 9h16M5 13h3"/></svg></div><h3 data-i18n="f5Title">${T.f5Title}</h3><p data-i18n="f5Body">${T.f5Body}</p></div>
     <div class="home-feat"><div class="home-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><rect x="4" y="2" width="12" height="16" rx="1"/><path d="M7 6h6M7 10h6M7 14h3"/></svg></div><h3 data-i18n="f6Title">${T.f6Title}</h3><p data-i18n="f6Body">${T.f6Body}</p></div>
   </div>
+</div></section>
+
+<section class="home-band" id="pricing"><div class="home-in">
+  <div class="home-eyebrow" data-i18n="eyebrowP">${T.eyebrowP}</div>
+  <h2 class="home-sec-h" data-i18n="headingP">${T.headingP}</h2>
+  <p class="home-sub" data-i18n="sublineP">${T.sublineP}</p>
+  <div class="home-tiers">
+    <div class="home-tier"><h3 data-i18n="t1Name">${T.t1Name}</h3><div class="range" data-i18n="t1Range">${T.t1Range}</div><div class="price" data-i18n="t1Price">${T.t1Price}</div><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t2Name">${T.t2Name}</h3><div class="range" data-i18n="t2Range">${T.t2Range}</div><div class="price" data-i18n="t2Price">${T.t2Price}</div><span class="nl-badge" data-i18n="soon">${T.soon}</span><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t3Name">${T.t3Name}</h3><div class="range" data-i18n="t3Range">${T.t3Range}</div><div class="price" data-i18n="t3Price">${T.t3Price}</div><span class="nl-badge" data-i18n="soon">${T.soon}</span><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t4Name">${T.t4Name}</h3><div class="range" data-i18n="t4Range">${T.t4Range}</div><div class="go"><a href="mailto:bonjour@notreligue.ca" data-i18n="writeUs">${T.writeUs}</a></div></div>
+  </div>
+  <p class="home-beta-note" data-i18n="beta">${T.beta}</p>
+  <p class="home-fine" data-i18n="priceNote">${T.priceNote}</p>
 </div></section>
 
 <section class="home-band home-how" id="comment-ca-marche"><div class="home-in">

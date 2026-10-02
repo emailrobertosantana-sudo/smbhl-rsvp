@@ -105,3 +105,30 @@ describe('item 2: six feature cards', () => {
     ]) expect(en).toContain(s);
   });
 });
+
+describe('item 3: the pricing section', () => {
+  it('after the cards and before how it works, four tiers, no payment button', async () => {
+    const fr = await (await home('/', { 'accept-language': 'fr-CA' })).text();
+    const at = id => fr.indexOf(`id="${id}"`);
+    expect(at('pricing')).toBeGreaterThan(at('fonctionnalites'));
+    expect(at('pricing')).toBeLessThan(at('comment-ca-marche'));
+    const sec = fr.slice(at('pricing'), at('comment-ca-marche'));
+    for (const s of [
+      '>Tarifs<', 'Un prix fixe par mois.', 'Pas de crédits à acheter, et rien ne bloque ton calendrier.',
+      'Gratuit', 'Moins de 15 joueurs', '0 $',
+      'Standard', '15 à 50 joueurs', '9,99 $ CAD par mois, ou 99,90 $ par an',
+      'Plus', '51 à 100 joueurs', '19,99 $ CAD par mois, ou 199,90 $ par an',
+      'Sur mesure', 'Plus de 100 joueurs', '<a href="mailto:bonjour@notreligue.ca" data-i18n="writeUs">Écris-nous</a>',
+      'Ligues bêta : ton essai de 2 mois commence le jour du lancement de la facturation.',
+      'Prix avant taxes. Seuls les joueurs réguliers avec un courriel comptent. 2 mois gratuits pour chaque ligue, sans carte. Les forfaits mensuels peuvent être mis en pause pendant la saison morte.'
+    ]) expect(sec).toContain(s);
+    expect(sec.match(/Facturation bientôt disponible/g)).toHaveLength(2);
+    expect(sec.match(/href="\/signup"/g)).toHaveLength(3);
+    expect(sec).not.toMatch(/stripe|checkout|acheter maintenant|s'abonner/i);
+    const en = await (await home('/?lang=en')).text();
+    for (const s of ['>Pricing<', 'One flat monthly price.', 'No credits to buy, and nothing blocks your schedule.', 'Under 15 players', '$0',
+      '$9.99 CAD per month, or $99.90 per year', '$19.99 CAD per month, or $199.90 per year', 'Custom', 'Over 100 players', '>Write to us</a>',
+      'Billing coming soon', 'Prices before tax. Only regular players with an email count. 2 months free for every league, no card. Monthly plans can pause for the off-season.'
+    ]) expect(en).toContain(s);
+  });
+});
