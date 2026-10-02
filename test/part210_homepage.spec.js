@@ -75,3 +75,33 @@ describe('item 1: the copy', () => {
     expect(html).not.toContain('In French and English');
   });
 });
+
+describe('item 2: six feature cards', () => {
+  it('French and English cards, one icon style, no warning triangle', async () => {
+    const fr = await (await home('/', { 'accept-language': 'fr-CA' })).text();
+    for (const s of [
+      "Ce qu'on prend en charge", "Le travail ennuyeux d'une ligue, fait automatiquement.",
+      'Présence en un clic', 'Chaque semaine, tes joueurs reçoivent un message. Un clic pour dire oui ou non. Aucune application à installer.',
+      'Remplaçants automatiques', "Il manque du monde? On invite ta liste de remplaçants à un rythme raisonnable, avec une liste d'attente.",
+      'Ta formule, ton choix', 'Équipes fixes, tirage de la semaine ou sans équipes. Un joueur peut aussi être gardien.',
+      'Calendrier et séries', 'Matchs, séries éliminatoires et rappels automatiques, sans rien relancer à la main.',
+      'Paiements et finances', 'Rappels de paiement avec tes coordonnées Interac, et le suivi des finances de ta ligue.',
+      'Une page pour ta ligue', 'Calendrier, équipes, résultats et statistiques sur une page publique à partager dans le groupe.'
+    ]) expect(fr).toContain(s);
+    expect(fr.match(/class="home-feat"/g)).toHaveLength(6);
+    const feats = fr.slice(fr.indexOf('id="fonctionnalites"'), fr.indexOf('id="comment-ca-marche"'));
+    expect(feats).not.toContain('M10 3l8 14H2z');
+    expect(fr).not.toMatch(/home-i[1-4]/);
+    expect(fr).toContain('grid-template-columns: repeat(3, 1fr)');
+    const en = await (await home('/?lang=en')).text();
+    for (const s of [
+      'What we handle for you', 'The boring league work, done automatically.',
+      'Every week, players get a message. One tap to say yes or no. No app to install.',
+      'Short on players? We invite your sub list at a steady pace, with a waitlist.',
+      'Your format, your choice', 'Fixed teams, weekly draw or no teams. A player can also play goalie.',
+      'Schedule and playoffs', 'Games, playoffs and automatic reminders, with no chasing by hand.',
+      'Payments and finances', "Payment reminders with your Interac e-Transfer details, and your league's finances in one place.",
+      'A page for your league', 'Schedule, teams, results and stats on a public page you can share in the group chat.'
+    ]) expect(en).toContain(s);
+  });
+});

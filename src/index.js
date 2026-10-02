@@ -503,11 +503,13 @@ const I18N_HOME = {
     heroBody: "Notre Ligue invite tes joueurs, compte qui sera là et trouve des remplaçants quand il manque du monde. Toi, tu joues.",
     cta: 'Créer ma ligue', proof: 'Prêt en 5 minutes. 2 mois gratuits, sans carte. Gratuit sous 15 joueurs.',
     beta: 'Ligues bêta\u00a0: ton essai de 2 mois commence le jour du lancement de la facturation.',
-    eyebrow1: 'Ce qu\'on fait pour toi', heading1: 'Le travail plate de la ligue, fait automatiquement.',
-    f1Title: 'Présences en un tap', f1Body: "Chaque semaine, les joueurs reçoivent un texto. Un tap pour dire oui ou non. Pas d'appli à installer.",
-    f2Title: 'Remplaçants automatiques', f2Body: 'Une équipe manque de joueurs? On invite ta liste de remplaçants, premier arrivé, premier servi.',
-    f3Title: 'Équipes et alignements', f3Body: 'Place chaque joueur dans une équipe, change en un clic, garde les gardiens en rotation.',
-    f4Title: 'Une page pour ta ligue', f4Body: 'Horaire, équipes et classement sur une page publique à partager dans le groupe.',
+    eyebrow1: 'Ce qu\'on prend en charge', heading1: "Le travail ennuyeux d'une ligue, fait automatiquement.",
+    f1Title: 'Présence en un clic', f1Body: 'Chaque semaine, tes joueurs reçoivent un message. Un clic pour dire oui ou non. Aucune application à installer.',
+    f2Title: 'Remplaçants automatiques', f2Body: "Il manque du monde? On invite ta liste de remplaçants à un rythme raisonnable, avec une liste d'attente.",
+    f3Title: 'Ta formule, ton choix', f3Body: 'Équipes fixes, tirage de la semaine ou sans équipes. Un joueur peut aussi être gardien.',
+    f4Title: 'Calendrier et séries', f4Body: 'Matchs, séries éliminatoires et rappels automatiques, sans rien relancer à la main.',
+    f5Title: 'Paiements et finances', f5Body: 'Rappels de paiement avec tes coordonnées Interac, et le suivi des finances de ta ligue.',
+    f6Title: 'Une page pour ta ligue', f6Body: 'Calendrier, équipes, résultats et statistiques sur une page publique à partager dans le groupe.',
     eyebrow2: 'Comment ça marche', heading2: 'Trois étapes, une fois. Ensuite ça roule tout seul.',
     s1Title: 'Créer ta ligue', s1Body: "Le nom, ta formule de jeu, l'adresse de ta page. Cinq minutes.",
     s2Title: 'Ajouter tes joueurs', s2Body: 'Un nom et un courriel. Importe une liste si tu en as une.',
@@ -525,10 +527,12 @@ const I18N_HOME = {
     cta: 'Create my league', proof: 'Ready in 5 minutes. 2 months free, no card. Free under 15 players.',
     beta: 'Beta leagues: your 2-month trial starts the day billing launches.',
     eyebrow1: 'What we handle for you', heading1: 'The boring league work, done automatically.',
-    f1Title: 'Attendance in one tap', f1Body: "Every week, players get a text. One tap to say yes or no. No app to install.",
-    f2Title: 'Automatic subs', f2Body: 'A team short on players? We invite your sub list, first come first served.',
-    f3Title: 'Teams and lineups', f3Body: 'Put each player on a team, change it in one click, keep goalies in rotation.',
-    f4Title: 'A page for your league', f4Body: 'Schedule, teams and standings on a public page you can share in the group chat.',
+    f1Title: 'Attendance in one tap', f1Body: 'Every week, players get a message. One tap to say yes or no. No app to install.',
+    f2Title: 'Automatic subs', f2Body: 'Short on players? We invite your sub list at a steady pace, with a waitlist.',
+    f3Title: 'Your format, your choice', f3Body: 'Fixed teams, weekly draw or no teams. A player can also play goalie.',
+    f4Title: 'Schedule and playoffs', f4Body: 'Games, playoffs and automatic reminders, with no chasing by hand.',
+    f5Title: 'Payments and finances', f5Body: "Payment reminders with your Interac e-Transfer details, and your league's finances in one place.",
+    f6Title: 'A page for your league', f6Body: 'Schedule, teams, results and stats on a public page you can share in the group chat.',
     eyebrow2: 'How it works', heading2: 'Three steps, once. Then it runs itself.',
     s1Title: 'Create your league', s1Body: 'Name, how it runs, your page address. Five minutes.',
     s2Title: 'Add your players', s2Body: 'A name and an email. Import a list if you have one.',
@@ -580,11 +584,10 @@ function renderMarketingHomepage(req) {
   .home-band { padding: var(--space-9) 0; }
   .home-eyebrow { font: 700 12px/16px var(--font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
   .home-sec-h { font: 700 36px/42px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; margin: 8px 0 var(--space-7); max-width: 640px; }
-  .home-feats { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-5); }
+  .home-feats { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-5); margin-top: var(--space-6); }
   .home-ico { width: 40px; height: 40px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; }
   .home-ico svg { width: 22px; height: 22px; }
-  .home-i1, .home-i3 { background: var(--primary); color: var(--yellow); }
-  .home-i2, .home-i4 { background: var(--yellow); color: var(--on-yellow); }
+  .home-ico { background: var(--primary); color: var(--yellow); }
   .home-feat { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-lg); }
   .home-feat h3 { font: 600 18px/24px var(--font-display); font-stretch: 118%; }
   .home-feat p { color: var(--ink-muted); font-size: 15px; line-height: 23px; }
@@ -601,7 +604,8 @@ function renderMarketingHomepage(req) {
   .home-footer { padding: var(--space-5) 0; font-size: 13px; color: var(--ink-muted); border-top: 1px solid var(--line); }
   .home-footer .home-in { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
   @media (max-width: 900px) { .home-hero { grid-template-columns: 1fr; } .home-mock { display: none; } .home-feats { grid-template-columns: 1fr 1fr; } .home-steps { grid-template-columns: 1fr; } }
-  @media (max-width: 560px) { .home-feats { grid-template-columns: 1fr; } .home-hero h1 { font-size: 34px; line-height: 36px; } }
+  @media (max-width: 639px) { .home-feats { grid-template-columns: 1fr; } }
+  @media (max-width: 560px) { .home-hero h1 { font-size: 34px; line-height: 36px; } }
 </style>
 <div class="nl-hero">
   <header class="nl-header">
@@ -642,10 +646,12 @@ function renderMarketingHomepage(req) {
   <div class="home-eyebrow" data-i18n="eyebrow1">${T.eyebrow1}</div>
   <h2 class="home-sec-h" data-i18n="heading1">${T.heading1}</h2>
   <div class="home-feats">
-    <div class="home-feat"><div class="home-ico home-i1"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 10.5l4 4 8-9"/></svg></div><h3 data-i18n="f1Title">${T.f1Title}</h3><p data-i18n="f1Body">${T.f1Body}</p></div>
-    <div class="home-feat"><div class="home-ico home-i2"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 3l8 14H2z"/><path d="M10 8v4M10 14.5v.5"/></svg></div><h3 data-i18n="f2Title">${T.f2Title}</h3><p data-i18n="f2Body">${T.f2Body}</p></div>
-    <div class="home-feat"><div class="home-ico home-i3"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="3"/><circle cx="14" cy="9" r="2.5"/><path d="M2 17c0-3 2.5-5 5-5s5 2 5 5M12 17c0-2 1-4 3-4s3 1.5 3 4"/></svg></div><h3 data-i18n="f3Title">${T.f3Title}</h3><p data-i18n="f3Body">${T.f3Body}</p></div>
-    <div class="home-feat"><div class="home-ico home-i4"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="14" height="13" rx="1"/><path d="M3 8h14M7 2v4M13 2v4"/></svg></div><h3 data-i18n="f4Title">${T.f4Title}</h3><p data-i18n="f4Body">${T.f4Body}</p></div>
+    <div class="home-feat"><div class="home-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg></div><h3 data-i18n="f1Title">${T.f1Title}</h3><p data-i18n="f1Body">${T.f1Body}</p></div>
+    <div class="home-feat"><div class="home-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><circle cx="8" cy="7" r="3"/><path d="M2 17c0-3 2.7-5 6-5s6 2 6 5M16 5v6M13 8h6"/></svg></div><h3 data-i18n="f2Title">${T.f2Title}</h3><p data-i18n="f2Body">${T.f2Body}</p></div>
+    <div class="home-feat"><div class="home-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><circle cx="7" cy="7" r="3"/><circle cx="14" cy="9" r="2.5"/><path d="M2 17c0-3 2.5-5 5-5s5 2 5 5M12 17c0-2 1-4 3-4s3 1.5 3 4"/></svg></div><h3 data-i18n="f3Title">${T.f3Title}</h3><p data-i18n="f3Body">${T.f3Body}</p></div>
+    <div class="home-feat"><div class="home-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><rect x="3" y="4" width="14" height="13" rx="1"/><path d="M3 8h14M7 2v4M13 2v4"/></svg></div><h3 data-i18n="f4Title">${T.f4Title}</h3><p data-i18n="f4Body">${T.f4Body}</p></div>
+    <div class="home-feat"><div class="home-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><rect x="2" y="5" width="16" height="11" rx="1"/><path d="M2 9h16M5 13h3"/></svg></div><h3 data-i18n="f5Title">${T.f5Title}</h3><p data-i18n="f5Body">${T.f5Body}</p></div>
+    <div class="home-feat"><div class="home-ico"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><rect x="4" y="2" width="12" height="16" rx="1"/><path d="M7 6h6M7 10h6M7 14h3"/></svg></div><h3 data-i18n="f6Title">${T.f6Title}</h3><p data-i18n="f6Body">${T.f6Body}</p></div>
   </div>
 </div></section>
 
