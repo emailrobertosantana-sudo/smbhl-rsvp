@@ -147,6 +147,7 @@ const STYLE = `<style>
   .sa-timeline li { display: flex; gap: var(--space-3); flex-wrap: wrap; }
   .sa-timeline b { min-width: 230px; }
   .sa-flag { display: block; margin: 0 0 var(--space-1); }
+  .sa-date { white-space: nowrap; }
   @media (max-width: 639px) { .sa-dl { grid-template-columns: 1fr; } .sa-timeline b { min-width: 0; } }
 </style>`;
 
@@ -205,6 +206,12 @@ function day(isoText) {
 // A trial ending at 00:00 on a day: its last day is the day before.
 function lastDay(isoText) { var t = Date.parse(String(isoText || '')); return isNaN(t) ? day(isoText) : day(new Date(t - 1).toISOString()); }
 function hm(isoText) { var t = Date.parse(String(isoText || '')); return isNaN(t) ? '' : mtl(t, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); }
+// A date or date-time never breaks inside itself (item E): escaped, in a
+// nowrap span when it is one; any other text only escaped.
+function dateHtml(s) {
+  s = String(s == null ? '' : s);
+  return /^[0-9]{4}-[0-9]{2}-[0-9]{2}( [0-9]{2}:[0-9]{2})?$/.test(s) ? '<span class="sa-date">' + esc(s) + '</span>' : esc(s);
+}
 function lightHtml(light) {
   if (!light) return '<span class="sa-light sa-light--off"><i></i>' + esc(T('deactivated')) + '</span>';
   return '<span class="sa-light sa-light--' + light + '"><i></i>' + esc(T(light)) + '</span>';
@@ -263,12 +270,12 @@ function rowHtml(m) {
     '<td>' + lightHtml(m.light) + (m.healthLive ? ' <span class="sa-muted" title="' + esc(T('liveMark')) + '">*</span>' : '') + '</td>' +
     '<td><a href="' + esc(href) + '">' + esc(m.name) + '</a></td>' +
     '<td>' + esc(m.ownerMasked || '') + '</td>' +
-    '<td>' + esc(day(m.createdAt)) + '</td>' +
+    '<td>' + dateHtml(day(m.createdAt)) + '</td>' +
     '<td>' + esc(players) + '</td>' +
     '<td>' + esc(statusText(m)) + '</td>' +
-    '<td>' + esc(m.lastAdminSignInAt ? day(m.lastAdminSignInAt) : T('never')) + '</td>' +
+    '<td>' + dateHtml(m.lastAdminSignInAt ? day(m.lastAdminSignInAt) : T('never')) + '</td>' +
     '<td>' + esc(shareText(m)) + '</td>' +
-    '<td>' + esc(m.nextGame || T('none')) + '</td>' +
+    '<td>' + dateHtml(m.nextGame || T('none')) + '</td>' +
     '</tr>';
 }
 function render() {
@@ -349,12 +356,12 @@ function renderSignals(h) {
     return '<tr><td>' + esc(T('rule_' + s.key)) + '</td>' +
       '<td class="' + (s.ok ? 'sa-ok' : 'sa-bad') + '">' + esc(s.ok ? T('met') : T('notMet')) + '</td>' +
       '<td>' + lightHtml(levels[s.key] || s.level) + '</td>' +
-      '<td>' + esc(valueFor(s.key, h.metrics || {})) + '</td></tr>';
+      '<td>' + dateHtml(valueFor(s.key, h.metrics || {})) + '</td></tr>';
   }).join('');
 }
 function renderTimeline() {
   return D.timeline.map(function(t) {
-    return '<li><b>' + esc(T('tl_' + t.key)) + '</b><span>' + (t.at ? esc(day(t.at)) + (t.observed ? ' <span class="sa-muted">' + esc(T('observed')) + '</span>' : '') : '<span class="sa-muted">' + esc(T('notYet')) + '</span>') + '</span></li>';
+    return '<li><b>' + esc(T('tl_' + t.key)) + '</b><span>' + (t.at ? dateHtml(day(t.at)) +(t.observed ? ' <span class="sa-muted">' + esc(T('observed')) + '</span>' : '') : '<span class="sa-muted">' + esc(T('notYet')) + '</span>') + '</span></li>';
   }).join('');
 }
 function renderLog() {
@@ -363,7 +370,7 @@ function renderLog() {
   var rowsHtml = D.supportLog.slice().reverse().map(function(e) {
     var end = e.endedAt ? day(e.endedAt) + ' ' + hm(e.endedAt)
       : (e.expiresAt && Date.parse(e.expiresAt) < now ? T('logExpired') : T('logOpen'));
-    return '<tr><td>' + esc(day(e.startedAt) + ' ' + hm(e.startedAt)) + '</td><td>' + esc(end) + '</td>' +
+    return '<tr><td>' + dateHtml(day(e.startedAt) + ' ' + hm(e.startedAt)) + '</td><td>' + dateHtml(end) + '</td>' +
       '<td>' + esc(T('who_' + String(e.who || '').replace('-', '_'))) + '</td><td>' + esc(e.browser || '') + '</td><td><code>' + esc(e.sid) + '</code></td></tr>';
   }).join('');
   return '<div class="sa-scroll"><table class="sa-table"><thead><tr><th>' + esc(T('logStarted')) + '</th><th>' + esc(T('logEnded')) + '</th><th>' + esc(T('logWho')) + '</th><th>' + esc(T('logBrowser')) + '</th><th>' + esc(T('logSession')) + '</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
@@ -389,7 +396,7 @@ function render() {
   $('sa-name').textContent = m.name;
   document.title = m.name + ' | Notre Ligue';
   $('sa-light').innerHTML = lightHtml(h.light);
-  $('sa-computed').textContent = h.live ? T('computedLive') : fill(T('computedAt'), { d: day(h.computedAt) });
+  $('sa-computed').innerHTML = h.live ? esc(T('computedLive')) : fill(esc(T('computedAt')), { d: dateHtml(day(h.computedAt)) });
   $('sa-signals').innerHTML = renderSignals(h);
   $('sa-timeline').innerHTML = renderTimeline();
   $('sa-billing').innerHTML = '<dl class="sa-dl">' +
@@ -397,7 +404,7 @@ function render() {
     '<dt>' + esc(T('bCountTier')) + '</dt><dd>' + esc(tierText(m.countTier)) + '</dd>' +
     '<dt>' + esc(T('bStatus')) + '</dt><dd>' + esc(statusText(m)) + '</dd>' +
     '<dt>' + esc(T('bTier')) + '</dt><dd>' + esc(tierText(m.billedTier)) + '</dd>' +
-    '<dt>' + esc(T('bTrialEnd')) + '</dt><dd>' + esc(lastDay(m.trialEndsAt)) + '</dd>' +
+    '<dt>' + esc(T('bTrialEnd')) + '</dt><dd>' + dateHtml(lastDay(m.trialEndsAt)) + '</dd>' +
     '<dt><label for="sa-free">' + esc(T('bFree')) + '</label></dt><dd><input type="checkbox" id="sa-free"' + (m.freeException ? ' checked' : '') + '> <span class="sa-muted">' + esc(T('bFreeHelp')) + '</span></dd>' +
     '</dl>';
   $('sa-settings').innerHTML = renderSettings();

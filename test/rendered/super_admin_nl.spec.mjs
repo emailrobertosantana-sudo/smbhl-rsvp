@@ -24,8 +24,8 @@ beforeAll(async () => {
 }, 240000);
 afterAll(async () => { await browser?.close(); await h?.dispose(); });
 
-async function open(path, { lang = 'fr' } = {}) {
-  const context = await browser.newContext();
+async function open(path, { lang = 'fr', viewport = null } = {}) {
+  const context = await browser.newContext(viewport ? { viewport } : {});
   await context.addCookies([{ name: 'admin_key', value: ADMIN_KEY, url: h.baseUrl + '/' }]);
   await context.addInitScript(l => { try { localStorage.setItem('smbhl_admin_lang', l); } catch (e) {} }, lang);
   const page = await context.newPage();
@@ -104,6 +104,54 @@ describe('the super-admin on Notre Ligue', () => {
     // Out of support mode: the dashboard has no banner (and no session).
     await page.goto(h.baseUrl + '/dashboard', { waitUntil: 'load' });
     expect(await page.$('#nl-support-banner')).toBeNull();
+    expect(errors).toEqual([]);
+    await context.close();
+  }, 120000);
+
+  // Item E (2026-10-02): at a narrow width, no date (« 2026-09-28 ») or
+  // date-time (« 2026-12-10 10:30 ») breaks inside itself, on the list and
+  // on the league page. Each one found in the text is measured: all its
+  // line boxes on one line.
+  function brokenDates(sel) {
+    const re = /[0-9]{4}-[0-9]{2}-[0-9]{2}( [0-9]{2}:[0-9]{2})?/g;
+    const broken = [];
+    let checked = 0;
+    const walker = document.createTreeWalker(document.querySelector(sel), NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = walker.nextNode())) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(n.data))) {
+        const r = document.createRange();
+        r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length);
+        const tops = new Set([...r.getClientRects()].filter(x => x.width > 0).map(x => Math.round(x.top)));
+        checked++;
+        if (tops.size !== 1) broken.push(m[0]);
+      }
+    }
+    return { checked, broken };
+  }
+
+  it('at a narrow width, dates and date-times never break inside themselves (list and league page)', async () => {
+    const viewport = { width: 320, height: 800 };
+    let { context, page, errors } = await open('/super-admin/leagues', { viewport });
+    await page.waitForSelector('tr.sa-row');
+    const list = await page.evaluate(brokenDates, '#sa-tbody');
+    // Each row's sign-up date at least.
+    expect(list.checked).toBeGreaterThanOrEqual(2);
+    expect(list.broken).toEqual([]);
+    expect(errors).toEqual([]);
+    await context.close();
+
+    // The populated league: its support log (a date-time) is there since the
+    // test above.
+    ({ context, page, errors } = await open(`/super-admin/league?id=${encodeURIComponent(populated.league.id)}`, { viewport }));
+    await page.waitForSelector('#sa-log table');
+    const leaguePage = await page.evaluate(brokenDates, '#sa-main');
+    expect(leaguePage.checked).toBeGreaterThanOrEqual(4);
+    expect(leaguePage.broken).toEqual([]);
+    const logStart = await page.textContent('#sa-log tbody tr td:first-child');
+    expect(logStart).toMatch(/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}$/);
     expect(errors).toEqual([]);
     await context.close();
   }, 120000);
