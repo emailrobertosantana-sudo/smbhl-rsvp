@@ -47,7 +47,7 @@ describe('the super-admin on Notre Ligue', () => {
     expect(html.match(/.{0,80}(SMBHL|smbhl-horizontal|Barlow).{0,40}/g)).toBeNull();
     const names = await page.$$eval('tr.sa-row td:nth-child(2)', tds => tds.map(td => td.textContent));
     expect(names.sort()).toEqual(['Les Castors', 'Ligue Aurore']);
-    expect(await page.$$eval('#sa-table th', ths => ths.map(t => t.textContent))).toEqual(['État', 'Ligue', 'Propriétaire', 'Inscription', 'Joueurs réguliers (palier)', 'Essai ou abonnement', 'Dernière connexion admin', 'Réponses (14 jours)', 'Prochain match']);
+    expect(await page.$$eval('#sa-table th', ths => ths.map(t => t.textContent))).toEqual(['État', 'Ligue', 'Propriétaire', 'Inscription', 'Joueurs réguliers (palier)', 'Essai ou abonnement', 'Dernière connexion admin', 'Réponses (14 jours)', 'Prochain match', 'Angle', 'Source', 'Campagne', 'Contenu']); // ad test item 3: the attribution columns
     // The trial placeholder is filled in, in the page the browser runs.
     const trialFr = await page.$$eval('tr.sa-row td:nth-child(6)', tds => tds.map(td => td.textContent));
     expect(trialFr.length).toBe(2);
