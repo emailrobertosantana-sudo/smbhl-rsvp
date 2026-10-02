@@ -14,6 +14,16 @@ import { getSubCallHours, saveSubCallHours, subCallWindowText, SUB_CALL_HOURS_CH
 import { legalRoute, nlLegalEmailWrap, legalLinksPageHtml, legalLinksEmailHtml, LEGAL_I18N } from './legal.js';
 import { TERMS_LABEL, getTermsAcceptance } from './terms.js';
 import { ARCHIVO_WOFF2 } from './fonts_archivo.js';
+import { SHARE_IMAGE_PATH, SHARE_IMAGE_WIDTH, SHARE_IMAGE_HEIGHT, SHARE_IMAGE_PNG_BASE64 } from './share_image.js';
+// The share image's bytes, decoded once per isolate.
+let shareImageCache = null;
+function shareImageBytes() {
+  if (!shareImageCache) shareImageCache = Uint8Array.from(atob(SHARE_IMAGE_PNG_BASE64), c => c.charCodeAt(0));
+  return shareImageCache;
+}
+// Public pages that answer only on notreligue.ca: rsvp.notreligue.ca sends
+// them there (301), so notreligue.ca is the one canonical address.
+const NL_CANONICAL_HOST_PATHS = new Set(['/', '/fr', '/en', '/confidentialite', '/conditions', '/privacy', '/terms', '/sitemap.xml']);
 import { PAYMENT_REMINDER_KIND, getPaymentInfo, savePaymentInfo, hasPaymentInfo, normalizePhone, formatPhone, paymentReminderLines, cleanNote, PAYMENT_PANEL_JS } from './payment_reminders.js';
 import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER, HIDDEN_ATTR_CSS } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
@@ -627,7 +637,13 @@ function homeHeadHtml(origin, lang, canonicalPath) {
     `<meta property="og:url" content="${esc(canonical)}">`,
     `<meta property="og:locale" content="${locale}">`,
     `<meta property="og:locale:alternate" content="${other}">`,
-    '<meta name="twitter:card" content="summary">',
+    `<meta property="og:image" content="${esc(abs(SHARE_IMAGE_PATH))}">`,
+    `<meta property="og:image:width" content="${SHARE_IMAGE_WIDTH}">`,
+    `<meta property="og:image:height" content="${SHARE_IMAGE_HEIGHT}">`,
+    '<meta property="og:image:alt" content="Notre Ligue">',
+    '<meta name="twitter:card" content="summary_large_image">',
+    `<meta name="twitter:image" content="${esc(abs(SHARE_IMAGE_PATH))}">`,
+    '<meta name="twitter:image:alt" content="Notre Ligue">',
     `<meta name="twitter:title" content="${esc(S.title)}">`,
     `<meta name="twitter:description" content="${esc(S.description)}">`,
     '<script type="application/ld+json">' + JSON.stringify(ld).replace(/</g, '\\u003c') + '</script>'
@@ -32354,6 +32370,13 @@ export default {
       const u = new URL(req.url);
       return new Response(null, { status: 301, headers: { location: `https://notreligue.ca${u.pathname}${u.search}` } });
     }
+    // rsvp.notreligue.ca: the public pages live on notreligue.ca only (one
+    // canonical address); the app's paths (admin, rsvp, avail, billing,
+    // webhooks, sign-in) stay on rsvp.notreligue.ca.
+    if (host === 'rsvp.notreligue.ca') {
+      const u = new URL(req.url);
+      if (NL_CANONICAL_HOST_PATHS.has(u.pathname)) return new Response(null, { status: 301, headers: { location: `https://notreligue.ca${u.pathname}${u.search}` } });
+    }
     // Support mode (src/support_mode.js, Notre Ligue only): writes refused
     // before routing (src/write_guard.js), the request on a read-only env,
     // no Set-Cookie back, the banner on every page. The super-admin's own
@@ -32487,6 +32510,9 @@ async function handleFetch(req, env, ctx) {
         if (env.LEAGUE_PRODUCT === 'true')
           return new Response(nlRobotsTxt(url.origin), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
       }
+      // The share image (scripts/build_share_image.mjs), Notre Ligue only.
+      if (url.pathname === SHARE_IMAGE_PATH && (req.method === 'GET' || req.method === 'HEAD') && env.LEAGUE_PRODUCT === 'true')
+        return headAware(req, new Response(shareImageBytes(), { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' } }));
       if (url.pathname === '/sitemap.xml' && req.method === 'GET' && env.LEAGUE_PRODUCT === 'true' && (env.DEMO_ENV !== 'true' || nlIndexableHost(env, url)))
         return new Response(nlSitemapXml(url.origin), { headers: { 'content-type': 'application/xml; charset=utf-8' } });
       if (url.pathname.startsWith('/admin') && url.hostname.endsWith('workers.dev')) {
