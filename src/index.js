@@ -603,7 +603,27 @@ const HOME_SEO = {
     offers: [['Free', '0'], ['Standard', '9.99'], ['Plus', '19.99']]
   }
 };
-function homeHeadHtml(origin, lang, canonicalPath) {
+// Ad test (2026-10-02): ?a= swaps only the hero's headline and subhead.
+// 'comptes', a missing a or an unknown value: the page's own hero.
+const HOME_ANGLES = {
+  remplacants: {
+    fr: { heroTitle: 'Il manque du monde? Tes remplaçants sont invités automatiquement.', heroBody: "Notre Ligue invite ta liste de remplaçants à un rythme raisonnable, avec une liste d'attente. Toi, tu joues." },
+    en: { heroTitle: 'Short on players? Your subs are invited automatically.', heroBody: 'Notre Ligue invites your sub list at a steady pace, with a waitlist. You just play.' }
+  },
+  prix: {
+    fr: { heroTitle: 'Gratuit sous 15 joueurs. Ensuite, un prix fixe par mois.', heroBody: 'Pas de crédits à acheter, et rien ne bloque ton calendrier. 2 mois gratuits, sans carte.' },
+    en: { heroTitle: 'Free under 15 players. Then one flat monthly price.', heroBody: 'No credits to buy, and nothing blocks your schedule. 2 months free, no card.' }
+  }
+};
+function homeAngle(url) {
+  const a = url.searchParams.get('a');
+  return a && Object.prototype.hasOwnProperty.call(HOME_ANGLES, a) ? a : null;
+}
+// An ad or tracking variant of the page (?a=, utm_*): kept out of the index.
+function homeIsTrackedVariant(url) {
+  return url.searchParams.has('a') || [...url.searchParams.keys()].some(k => k.startsWith('utm_'));
+}
+function homeHeadHtml(origin, lang, canonicalPath, noindex = false) {
   const S = HOME_SEO[lang];
   const abs = p => origin + p;
   const canonical = abs(canonicalPath);
@@ -623,6 +643,7 @@ function homeHeadHtml(origin, lang, canonicalPath) {
   };
   return [
     '',
+    ...(noindex ? ['<meta name="robots" content="noindex, follow">'] : []),
     `<link rel="canonical" href="${esc(canonical)}">`,
     `<link rel="alternate" hreflang="fr-CA" href="${esc(abs('/fr'))}">`,
     `<link rel="alternate" hreflang="en-CA" href="${esc(abs('/en'))}">`,
@@ -653,7 +674,11 @@ function renderMarketingHomepage(req, forcedLang = null) {
   const q = reqUrl.searchParams.get('lang');
   const lang = forcedLang || resolveHomeLang(req);
   const canonicalPath = forcedLang ? '/' + forcedLang : (q === 'fr' || q === 'en') ? '/' + q : '/';
-  const T = I18N_HOME[lang];
+  // The ad angle (?a=): the hero's headline and subhead, in both languages
+  // so the in-page toggle keeps it; everything else is the page's own.
+  const angle = homeAngle(reqUrl);
+  const HOME = angle ? { fr: { ...I18N_HOME.fr, ...HOME_ANGLES[angle].fr }, en: { ...I18N_HOME.en, ...HOME_ANGLES[angle].en } } : I18N_HOME;
+  const T = HOME[lang];
   const bodyHtml = `
 <style>
   .nl-hero .nl-header { background: transparent; border-bottom-color: #2a2e36; max-width: var(--content-wide); margin: 0 auto; padding: 0 var(--space-6); }
@@ -852,12 +877,12 @@ function renderMarketingHomepage(req, forcedLang = null) {
 </div></footer>
 <script>
 window.__nlServerLang = '${lang}';
-${nlAuthScript(I18N_HOME)}
+${nlAuthScript(HOME)}
 </script>`;
   return nlDocument({
     titles: { fr: HOME_SEO.fr.title, en: HOME_SEO.en.title },
     description: HOME_SEO[lang].description,
-    headHtml: homeHeadHtml(reqUrl.origin, lang, canonicalPath),
+    headHtml: homeHeadHtml(reqUrl.origin, lang, canonicalPath, homeIsTrackedVariant(reqUrl)),
     bodyHtml,
     lang
   });
