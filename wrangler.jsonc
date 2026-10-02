@@ -74,7 +74,11 @@
         "STRIPE_PRICE_STANDARD_YEARLY": "price_1ULpoZA7Yxc2R6KssVewqYes",
         "STRIPE_PRICE_PLUS_MONTHLY": "price_1ULpriA7Yxc2R6Ks8ETGyZaI",
         "STRIPE_PRICE_PLUS_YEARLY": "price_1ULpsiA7Yxc2R6KsSWuEJd5j",
-        "STRIPE_API_VERSION": "2026-08-26.dahlia"
+        "STRIPE_API_VERSION": "2026-08-26.dahlia",
+        // Billing launch (src/billing.js): every Notre Ligue league's trial
+        // starts here (2 months). Demo only; SMBHL and production never
+        // get one.
+        "BILLING_LAUNCH_AT": "2026-10-02"
       },
       "send_email": [
         { "name": "SEND_EMAIL" }
