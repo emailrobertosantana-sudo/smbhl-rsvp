@@ -391,11 +391,11 @@ export function validateGameStats(game, options = {}) {
   const awayGoalieGa = game.away_goalie?.ga !== null && game.away_goalie?.ga !== '' ? Number(game.away_goalie.ga) : null;
 
   if (homeScore !== null && awayGoalieGa !== null && awayGoalieGa !== homeScore) {
-    warnings.push(`Gardien ${game.away_team} (${game.away_goalie?.name || 'Gardien'}): Buts accordés (${awayGoalieGa}) ≠ Buts ${game.home_team} (${homeScore})`);
+    warnings.push(`Gardien ${game.away_team} (${game.away_goalie?.name || 'Gardien'}) : Buts accordés (${awayGoalieGa}) ≠ Buts ${game.home_team} (${homeScore})`);
   }
 
   if (awayScore !== null && homeGoalieGa !== null && homeGoalieGa !== awayScore) {
-    warnings.push(`Gardien ${game.home_team} (${game.home_goalie?.name || 'Gardien'}): Buts accordés (${homeGoalieGa}) ≠ Buts ${game.away_team} (${awayScore})`);
+    warnings.push(`Gardien ${game.home_team} (${game.home_goalie?.name || 'Gardien'}) : Buts accordés (${homeGoalieGa}) ≠ Buts ${game.away_team} (${awayScore})`);
   }
 
   const balanced = warnings.length === 0 && homeScore !== null && awayScore !== null && game.has_home_sheet !== false && game.has_away_sheet !== false;
@@ -1236,7 +1236,7 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
                 <div id="gwarn_${gIdx}_home" class="player-warn-msg"></div>
               </div>
               <div class="goalie-ga-row">
-                <span class="goalie-ga-label" data-i18n="gaLabel">Buts alloués (GA):</span>
+                <span class="goalie-ga-label" data-i18n="gaLabel">Buts alloués (GA) :</span>
                 <input type="number" class="ga-input" name="g_${gIdx}_home_ga" value="${g.home_goalie?.ga !== null && g.home_goalie?.ga !== undefined ? g.home_goalie.ga : ''}" min="0" oninput="recalc()">
               </div>
             </div>
@@ -1322,7 +1322,7 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
                 <div id="gwarn_${gIdx}_away" class="player-warn-msg"></div>
               </div>
               <div class="goalie-ga-row">
-                <span class="goalie-ga-label" data-i18n="gaLabel">Buts alloués (GA):</span>
+                <span class="goalie-ga-label" data-i18n="gaLabel">Buts alloués (GA) :</span>
                 <input type="number" class="ga-input" name="g_${gIdx}_away_ga" value="${g.away_goalie?.ga !== null && g.away_goalie?.ga !== undefined ? g.away_goalie.ga : ''}" min="0" oninput="recalc()">
               </div>
             </div>
@@ -1456,7 +1456,7 @@ const I18N_REVIEW_PAGE = {
     optgrpGoalies: "Gardiens / Joueurs",
     optgrpPlayers: "Joueurs de la ligue",
     namePlaceholder: "Prénom Nom",
-    gaLabel: "Buts alloués (GA):",
+    gaLabel: "Buts alloués (GA) :",
     thPlayer: "Joueur",
     thPresent: "Présent",
     thGoals: "Buts",
@@ -1484,7 +1484,7 @@ const I18N_REVIEW_PAGE = {
     warnMoreAssistsThanGoals: (team, gameNum, assists, maxAssists, maxPerGoal) =>
       team + " (Match #" + gameNum + "): Plus de passes (" + assists + ") que de buts permises (" + maxAssists + "). Maximum " + maxPerGoal + " passe" + (maxPerGoal > 1 ? "s" : "") + " par but.",
     warnGoalsMismatch: (team, gameNum, sum, score) =>
-      team + " (Match #" + gameNum + "): Buts des joueurs (" + sum + ") ≠ Pointage (" + score + ")",
+      team + " (Match #" + gameNum + ") : Buts des joueurs (" + sum + ") ≠ Pointage (" + score + ")",
     warnGaMismatch: (team, goalieName, ga, opponentTeam, oppScore) =>
       "Gardien " + team + " (" + goalieName + "): GA (" + ga + ") ≠ Buts " + opponentTeam + " (" + oppScore + ")",
     warnCardTitle: n => "⚠️ Attention : " + n + (n > 1 ? " incohérences détectées" : " incohérence détectée"),
@@ -1498,7 +1498,7 @@ const I18N_REVIEW_PAGE = {
     backupEmailDeferred: "Le courriel de sauvegarde n'est PAS encore parti : la limite d'envois quotidienne est atteinte. Il est en file d'attente et partira le {date}.",
     backupEmailFailed: "Le courriel de sauvegarde n'a PAS pu être envoyé : {error}",
     alertError: err => "Erreur: " + err,
-    alertNetError: err => "Erreur réseau: " + err,
+    alertNetError: err => "Erreur réseau : " + err,
     confirmDiscard: "Voulez-vous vraiment rejeter et supprimer ces feuilles et photos?",
     alertDiscardSuccess: "Session rejetée et photos supprimées.",
     btnReprocess: "⚡ Réanalyser avec l'IA 🤖",
@@ -3367,7 +3367,7 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
       const text = `${adminHello(env, 'fr')}\n\n` +
         `Les résultats de la semaine ${weekNum} ont été confirmés et publiés avec succès sur ${siteHost}!\n\n` +
         `Matchs enregistrés :\n${gameLines}\n\n` +
-        `Une copie de sauvegarde de sécurité a été archivée dans le Cloud (clé: ${backupKey}).\n` +
+        `Une copie de sauvegarde de sécurité a été archivée dans le Cloud (clé : ${backupKey}).\n` +
         `Le fichier data.json à jour est joint à ce courriel.\n\n` +
         `Lien direct de téléchargement de cette sauvegarde :\n${downloadUrl}\n\n` +
         `Site en direct : ${league.siteUrl}\n\n` +

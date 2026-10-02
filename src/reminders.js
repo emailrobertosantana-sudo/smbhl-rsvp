@@ -44,13 +44,14 @@ function reminderHost() {
 // The admin's weekly summary (24 h before the game): each team's count and
 // the sub waitlist. Its own function so the Comms preview shows exactly it.
 export async function buildSummaryText(env, ev) {
-  const { teamState, dateFR } = reminderHost();
+  const { teamState, dateFR, tFR } = reminderHost();
   const cfg = await getSeasonConfigForEvent(env, ev.id, ev.season);
   const cfgTeams = getTeamNames(cfg);
   const lines = [];
   for (const team of cfgTeams) {
     const st = await teamState(env.DB, ev.id, team, cfg);
-    lines.push(`${team}: ${pluralText('{n|# joueur|# joueurs}', { n: st.skaters }, 'fr')}, ${pluralText('{n|# gardien|# gardiens}', { n: st.goalies }, 'fr')}` +
+    // French block: the team's French name (« Rouge »), a space before « : ».
+    lines.push(`${tFR ? tFR(team, cfg) : team} : ${pluralText('{n|# joueur|# joueurs}', { n: st.skaters }, 'fr')}, ${pluralText('{n|# gardien|# gardiens}', { n: st.goalies }, 'fr')}` +
       (st.short ? '   ← manque / short' : ''));
   }
   const wait = (await env.DB.prepare(
@@ -59,7 +60,7 @@ export async function buildSummaryText(env, ev) {
         AND a.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id=? AND player_id IS NOT NULL)
       ORDER BY a.answered_at`).bind(ev.id, ev.id).all()).results || [];
   return `Semaine ${ev.week} : ${dateFR(ev.date)}\n\n` + lines.join('\n') +
-    (wait.length ? `\n\nListe d'attente: ` +
+    (wait.length ? `\n\nListe d'attente : ` +
       wait.map(w => `${w.name} (${w.need === 'goalie' ? 'G' : 'J'})`).join(', ') : '');
 }
 

@@ -507,7 +507,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         "kind": "created",
         "league_id": "smbhl",
         "next_attempt_at": null,
-        "payload": "{"text":"Semaine 6 : dimanche 15 novembre 10:30, Aréna Golden\\n33 joueurs au dossier.\\n\\nLiens d'équipe (à partager sur WhatsApp) :\\n\\nRed (Rouge):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Red&t=35d5e6e20315e0910724d5204dfe61e0\\n\\nBlue (Bleu):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Blue&t=f7bf336d6abf8f46d63f42b77ffef89b\\n\\nWhite (Blanc):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=White&t=227396ad6816bf5532a9872f46557948\\n\\nBlack (Noir):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Black&t=e60c2caa6e42ff1bad2895beec531c23\\n"}",
+        "payload": "{"text":"Semaine 6 : dimanche 15 novembre à 10 h 30\\nLieu : Aréna Golden\\n33 joueurs au dossier.\\n\\nLiens d'équipe (à partager sur WhatsApp) :\\n\\nRed (Rouge) :\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Red&t=35d5e6e20315e0910724d5204dfe61e0\\n\\nBlue (Bleu) :\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Blue&t=f7bf336d6abf8f46d63f42b77ffef89b\\n\\nWhite (Blanc) :\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=White&t=227396ad6816bf5532a9872f46557948\\n\\nBlack (Noir) :\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Black&t=e60c2caa6e42ff1bad2895beec531c23\\n"}",
         "player_id": null,
         "send_after": "2026-11-07T16:45:00.000Z",
         "sent_at": "2026-11-07T16:45:00.000Z",
@@ -4003,7 +4003,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         "kind": "summary",
         "league_id": "smbhl",
         "next_attempt_at": null,
-        "payload": "{"text":"Semaine 6 : dimanche 15 novembre\\n\\nRed: 2 joueurs, 1 gardien   ← manque / short\\nBlue: 1 joueur, 1 gardien   ← manque / short\\nWhite: 0 joueur, 0 gardien   ← manque / short\\nBlack: 0 joueur, 0 gardien   ← manque / short\\n\\nListe d'attente: Sub 3 (J)"}",
+        "payload": "{"text":"Semaine 6 : dimanche 15 novembre\\n\\nRouge : 2 joueurs, 1 gardien   ← manque / short\\nBleu : 1 joueur, 1 gardien   ← manque / short\\nBlanc : 0 joueur, 0 gardien   ← manque / short\\nNoir : 0 joueur, 0 gardien   ← manque / short\\n\\nListe d'attente : Sub 3 (J)"}",
         "player_id": null,
         "send_after": "2026-11-15T01:05:00.000Z",
         "sent_at": "2026-11-15T01:05:00.000Z",
@@ -4174,7 +4174,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         "kind": "created",
         "league_id": "smbhl",
         "next_attempt_at": null,
-        "payload": "{"text":"Semaine 7 : dimanche 22 novembre 10:30, Aréna Golden\\n33 joueurs au dossier.\\n\\nLiens d'équipe (à partager sur WhatsApp) :\\n\\nRed (Rouge):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Red&t=35d5e6e20315e0910724d5204dfe61e0\\n\\nBlue (Bleu):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Blue&t=f7bf336d6abf8f46d63f42b77ffef89b\\n\\nWhite (Blanc):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=White&t=227396ad6816bf5532a9872f46557948\\n\\nBlack (Noir):\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Black&t=e60c2caa6e42ff1bad2895beec531c23\\n"}",
+        "payload": "{"text":"Semaine 7 : dimanche 22 novembre à 10 h 30\\nLieu : Aréna Golden\\n33 joueurs au dossier.\\n\\nLiens d'équipe (à partager sur WhatsApp) :\\n\\nRed (Rouge) :\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Red&t=35d5e6e20315e0910724d5204dfe61e0\\n\\nBlue (Bleu) :\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Blue&t=f7bf336d6abf8f46d63f42b77ffef89b\\n\\nWhite (Blanc) :\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=White&t=227396ad6816bf5532a9872f46557948\\n\\nBlack (Noir) :\\nhttps://rsvp.smbhl.com/team-rsvp?s=Fall%202026&team=Black&t=e60c2caa6e42ff1bad2895beec531c23\\n"}",
         "player_id": null,
         "send_after": "2026-11-15T18:05:00.000Z",
         "sent_at": "2026-11-15T18:05:00.000Z",
@@ -4676,7 +4676,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
       ],
       "sent": [
         {
-          "h": "35e57f317a53e78c",
+          "h": "f5365266e62210b4",
           "subject": "Semaine 6 créée / week 6 is up",
           "to": "admin@smbhl.test",
         },
@@ -4969,7 +4969,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         },
         {
           "h": "ffde9ed7ba09461c",
-          "subject": "SMBHL : le système a manqué quelque chose",
+          "subject": "SMBHL : le système a manqué quelque chose / SMBHL: something did not run",
           "to": "admin@smbhl.test",
         },
       ],
@@ -4977,7 +4977,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-12T19:05:00Z",
       "log": [
-        "cron: outbox due=8 sent=7 failed=1 | ALERT: 1 message stuck in the outbox over an hour",
+        "cron: outbox due=8 sent=7 failed=1 | ALERT: 1 message stuck in the email queue for over an hour",
       ],
       "outbox": [
         {
@@ -5048,8 +5048,8 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
           "to": "s0007@example.com",
         },
         {
-          "h": "2bf50f5a001c0212",
-          "subject": "SMBHL : le système a manqué quelque chose",
+          "h": "019c1087ab49e0da",
+          "subject": "SMBHL : le système a manqué quelque chose / SMBHL: something did not run",
           "to": "admin@smbhl.test",
         },
       ],
@@ -5057,7 +5057,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-12T20:05:00Z",
       "log": [
-        "cron: r72 smbhl:2026-11-15 | outbox due=27 sent=24 failed=3 | ALERT: 1 message stuck in the outbox over an hour; 1 email failed permanently in the last 24 hours",
+        "cron: r72 smbhl:2026-11-15 | outbox due=27 sent=24 failed=3 | ALERT: 1 message stuck in the email queue for over an hour; 1 email failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5242,7 +5242,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-13T14:35:00Z",
       "log": [
-        "cron: r49 smbhl:2026-11-15 | outbox due=27 sent=24 failed=3 | ALERT: 1 message stuck in the outbox over an hour; 2 emails failed permanently in the last 24 hours",
+        "cron: r49 smbhl:2026-11-15 | outbox due=27 sent=24 failed=3 | ALERT: 1 message stuck in the email queue for over an hour; 2 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5424,7 +5424,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         },
         {
           "h": "d5ee294beb60a0d4",
-          "subject": "SMBHL : le système a manqué quelque chose",
+          "subject": "SMBHL : le système a manqué quelque chose / SMBHL: something did not run",
           "to": "admin@smbhl.test",
         },
       ],
@@ -5432,7 +5432,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-13T15:35:00Z",
       "log": [
-        "cron: short48 smbhl:2026-11-15 | outbox due=6 sent=5 failed=1 | ALERT: 2 messages stuck in the outbox over an hour; 2 emails failed permanently in the last 24 hours",
+        "cron: short48 smbhl:2026-11-15 | outbox due=6 sent=5 failed=1 | ALERT: 2 messages stuck in the email queue for over an hour; 2 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5513,8 +5513,8 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
           "to": "r0011@example.com",
         },
         {
-          "h": "26ea2b4c7c389483",
-          "subject": "SMBHL : le système a manqué quelque chose",
+          "h": "a497980c62642967",
+          "subject": "SMBHL : le système a manqué quelque chose / SMBHL: something did not run",
           "to": "admin@smbhl.test",
         },
       ],
@@ -5522,7 +5522,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-13T19:05:00Z",
       "log": [
-        "cron: friday_board smbhl:2026-11-15 | outbox due=10 sent=7 failed=3 | ALERT: 1 message stuck in the outbox over an hour; 3 emails failed permanently in the last 24 hours",
+        "cron: friday_board smbhl:2026-11-15 | outbox due=10 sent=7 failed=3 | ALERT: 1 message stuck in the email queue for over an hour; 3 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5629,7 +5629,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         },
         {
           "h": "c5ab9d10c31451bf",
-          "subject": "SMBHL : le système a manqué quelque chose",
+          "subject": "SMBHL : le système a manqué quelque chose / SMBHL: something did not run",
           "to": "admin@smbhl.test",
         },
       ],
@@ -5637,7 +5637,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-14T03:35:00Z",
       "log": [
-        "cron: pool36 smbhl:2026-11-15 | outbox due=15 sent=8 failed=2 | ALERT: 2 messages stuck in the outbox over an hour; 2 emails failed permanently in the last 24 hours",
+        "cron: pool36 smbhl:2026-11-15 | outbox due=15 sent=8 failed=2 | ALERT: 2 messages stuck in the email queue for over an hour; 2 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5752,7 +5752,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-14T04:30:00Z",
       "log": [
-        "cron: outbox due=1 sent=0 failed=0 | ALERT: 1 message stuck in the outbox over an hour; 2 emails failed permanently in the last 24 hours",
+        "cron: outbox due=1 sent=0 failed=0 | ALERT: 1 message stuck in the email queue for over an hour; 2 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -5886,7 +5886,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-14T23:05:00Z",
       "log": [
-        "cron: r24 smbhl:2026-11-15 | gameday24 smbhl:2026-11-15 | outbox due=45 sent=40 failed=5 | ALERT: 1 message stuck in the outbox over an hour; 3 emails failed permanently in the last 24 hours",
+        "cron: r24 smbhl:2026-11-15 | gameday24 smbhl:2026-11-15 | outbox due=45 sent=40 failed=5 | ALERT: 1 message stuck in the email queue for over an hour; 3 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -6196,7 +6196,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T01:05:00Z",
       "log": [
-        "cron: summary smbhl:2026-11-15 | outbox due=21 sent=19 failed=2 | ALERT: 3 messages stuck in the outbox over an hour; 3 emails failed permanently in the last 24 hours",
+        "cron: summary smbhl:2026-11-15 | outbox due=21 sent=19 failed=2 | ALERT: 3 messages stuck in the email queue for over an hour; 3 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -6347,8 +6347,8 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
           "to": "r0033@example.com",
         },
         {
-          "h": "b8720ad575c0cecc",
-          "subject": "Sommaire semaine 6",
+          "h": "37c9c4baa5713542",
+          "subject": "Sommaire semaine 6 / Week 6 summary",
           "to": "admin@smbhl.test",
         },
         {
@@ -6377,8 +6377,8 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
           "to": "sg002@example.com",
         },
         {
-          "h": "06bcad43b5c1357f",
-          "subject": "SMBHL : le système a manqué quelque chose",
+          "h": "e283af3bdbd19e4a",
+          "subject": "SMBHL : le système a manqué quelque chose / SMBHL: something did not run",
           "to": "admin@smbhl.test",
         },
       ],
@@ -6386,7 +6386,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T13:35:00Z",
       "log": [
-        "cron: gameday_morning smbhl:2026-11-15 | outbox due=11 sent=7 failed=4 | ALERT: 2 messages stuck in the outbox over an hour; 4 emails failed permanently in the last 24 hours",
+        "cron: gameday_morning smbhl:2026-11-15 | outbox due=11 sent=7 failed=4 | ALERT: 2 messages stuck in the email queue for over an hour; 4 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -6528,7 +6528,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
         },
         {
           "h": "a9640f12adee386e",
-          "subject": "SMBHL : le système a manqué quelque chose",
+          "subject": "SMBHL : le système a manqué quelque chose / SMBHL: something did not run",
           "to": "admin@smbhl.test",
         },
       ],
@@ -6536,7 +6536,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T18:05:00Z",
       "log": [
-        "cron: lock smbhl:2026-11-15 | created smbhl:2026-11-22 week 7 (33 players) | outbox due=3 sent=1 failed=2 | ALERT: 2 messages stuck in the outbox over an hour; 4 emails failed permanently in the last 24 hours",
+        "cron: lock smbhl:2026-11-15 | created smbhl:2026-11-22 week 7 (33 players) | outbox due=3 sent=1 failed=2 | ALERT: 2 messages stuck in the email queue for over an hour; 4 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {
@@ -6632,7 +6632,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
           "to": "flaky-r0003@example.com",
         },
         {
-          "h": "ce8dec2edcfc3bad",
+          "h": "764981c9bdcca9cc",
           "subject": "Semaine 7 créée / week 7 is up",
           "to": "admin@smbhl.test",
         },
@@ -6641,7 +6641,7 @@ exports[`SMBHL's cron over one game week, recorded before the migration > reprod
     {
       "at": "2026-11-15T19:00:00Z",
       "log": [
-        "cron: outbox due=0 sent=0 failed=0 | ALERT: 2 messages stuck in the outbox over an hour; 4 emails failed permanently in the last 24 hours",
+        "cron: outbox due=0 sent=0 failed=0 | ALERT: 2 messages stuck in the email queue for over an hour; 4 emails failed permanently in the last 24 hours",
       ],
       "outbox": [
         {

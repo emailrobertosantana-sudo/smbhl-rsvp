@@ -12977,7 +12977,7 @@ ${payload.teamLink}${sign}`;
                text: payload.text, html: null };
 
     case 'summary':
-      return { subject: `Sommaire semaine ${ev.week}`, text: payload.text, html: null };
+      return { subject: `Sommaire semaine ${ev.week} / Week ${ev.week} summary`, text: payload.text, html: null };
 
     case 'season_recap_prompt': {
       const season = (payload && payload.season) || ev?.season || 'Fall 2026';
@@ -15263,11 +15263,12 @@ async function buildCreatedNoticeText(env, ev, players) {
     for (const team of cfgTeams) {
       const salt = await teamSalt(env.DB, ev.season, team);
       const tk = await hmac(env.RSVP_SECRET, teamMsg(ev.season, team, salt));
-      links.push(`${team} (${tFR(team, cfg)}):\n${env.PUBLIC_URL}` +
+      links.push(`${team} (${tFR(team, cfg)}) :\n${env.PUBLIC_URL}` +
         `/team-rsvp?s=${encodeURIComponent(ev.season)}&team=${team}&t=${tk}`);
     }
-    return `Semaine ${ev.week} : ${dateFR(ev.date)}${ev.start_time ? ' ' + ev.start_time : ''}` +
-      `${ev.venue ? ', ' + ev.venue : ''}\n${players} joueurs au dossier.\n\n` +
+    // « Semaine 7 : dimanche 22 novembre à 10 h 30 », the venue on its own line.
+    return `Semaine ${ev.week} : ${dateFR(ev.date)}${ev.start_time ? ' à ' + formatEventTime(ev.start_time, 'fr') : ''}` +
+      `${ev.venue ? '\n' + venueLine(ev.venue, 'fr') : ''}\n${players} joueurs au dossier.\n\n` +
       `Liens d'équipe (à partager sur WhatsApp) :\n\n${links.join('\n\n')}\n`;
   }
 }
@@ -15405,7 +15406,7 @@ async function deadMan(env) {
   // wording they always had, so an alert already sent is not sent again.
   const keyWording = new Map();
   const counted = (text, legacy, fr) => { keyWording.set(text, legacy); frWording.set(text, fr); problems.push(text); };
-  if (stuck.n > 0) counted(`${pluralText('{n|# message|# messages}', { n: stuck.n }, 'en')} stuck in the outbox over an hour`, `${stuck.n} message(s) stuck in the outbox over an hour`, `${pluralText('{n|# message bloqué|# messages bloqués}', { n: stuck.n }, 'fr')} dans la file d'envoi depuis plus d'une heure`);
+  if (stuck.n > 0) counted(`${pluralText('{n|# message|# messages}', { n: stuck.n }, 'en')} stuck in the email queue for over an hour`, `${stuck.n} message(s) stuck in the outbox over an hour`, `${pluralText('{n|# message bloqué|# messages bloqués}', { n: stuck.n }, 'fr')} dans la file d'envoi depuis plus d'une heure`);
 
   // Outbox QA batch: a permanent send failure (bad address, rejected
   // recipient, or retries exhausted) is now its own state -- tell the
@@ -15433,7 +15434,7 @@ async function deadMan(env) {
     // out, and may not go out itself.
     await postWebhook(env, 'SMBHL : le système a manqué quelque chose / something did not run', list);
     try {
-      await sendMail(env, env.ADMIN_EMAIL || ADMIN_EMAIL, 'SMBHL : le système a manqué quelque chose',
+      await sendMail(env, env.ADMIN_EMAIL || ADMIN_EMAIL, 'SMBHL : le système a manqué quelque chose / SMBHL: something did not run',
         `Quelque chose ne s'est pas exécuté :\n\n${listFr}\n\n` +
         `À vérifier : l'onglet Comms (filtre des échecs) et la table des tâches (jobs).\n\n` +
         `Something did not run:\n\n${list}\n\n` +
@@ -15945,7 +15946,7 @@ async function teamGet(req, env, url) {
     </div>
 
     ${authorHtml}
-    <input id="msgtext" maxlength="160" placeholder="Écris une note (ex: retard de 10 min, décision d'avant-match)..." style="width:100%; font:inherit; padding:10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:10px;">
+    <input id="msgtext" maxlength="160" placeholder="Écris une note (ex. : retard de 10 min, décision d'avant-match)..." style="width:100%; font:inherit; padding:10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:10px;">
     <div class="btns">
       <button class="btn" id="msgsend" style="padding:12px 10px;">PUBLIER<span class="en">POST NOTE</span></button>
     </div>
@@ -18516,7 +18517,7 @@ async function subsData(env, url) {
       sortPriority = 4;
       statusLabelFr = "Dans la file d'attente";
       statusLabelEn = 'Queued';
-      statusDetail = initialSendAfter ? `Prévu: ${initialSendAfter.slice(11, 16)}` : 'Vague future';
+      statusDetail = initialSendAfter ? `Prévu : ${initialSendAfter.slice(11, 16)}` : 'Vague future';
     } else if (isCancelled) {
       statusCode = 'cancelled';
       sortPriority = 6;
@@ -18851,7 +18852,7 @@ async function peoplePage(env = null, isAuthed = false) {
             <p style="font-size:13px; color:var(--soft); margin:0 0 8px;" data-i18n="extPersonDesc">Quelqu'un qui n'est pas encore dans l'historique SMBHL.</p>
             <input id="nname" data-i18n-ph="namePh" placeholder="Prénom Nom *" style="width:100%; font:inherit; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:6px;">
             <input id="nmail" type="email" data-i18n-ph="mailPh" placeholder="Courriel (optionnel)" style="width:100%; font:inherit; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:6px;">
-            <input id="nphone" type="tel" data-i18n-ph="phonePh" placeholder="Téléphone (optionnel, ex: 514-555-0123)" style="width:100%; font:inherit; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:8px;">
+            <input id="nphone" type="tel" data-i18n-ph="phonePh" placeholder="Téléphone (optionnel, ex. : 514-555-0123)" style="width:100%; font:inherit; padding:8px 10px; border:1px solid var(--rule2); border-radius:3px; margin-bottom:8px;">
             <div class="btns" style="display:flex; gap:8px;">
               <button class="btn" id="njoueur" type="button" style="font-size:13px; padding:6px 12px;" data-i18n="btnSkater">+ JOUEUR</button>
               <button class="btn" id="ngardien" type="button" style="font-size:13px; padding:6px 12px;" data-i18n="btnGoalie">+ GARDIEN</button>
@@ -18992,7 +18993,7 @@ const I18N_CONTACTS = {
     extPersonDesc: "Quelqu'un qui n'est pas encore dans l'historique SMBHL.",
     namePh: "Prénom Nom *",
     mailPh: "Courriel (optionnel)",
-    phonePh: "Téléphone (optionnel, ex: 514-555-0123)",
+    phonePh: "Téléphone (optionnel, ex. : 514-555-0123)",
     btnSkater: "+ JOUEUR",
     btnGoalie: "+ GARDIEN",
     recruitTitle: "Recruter depuis l'historique SMBHL",
@@ -21711,7 +21712,7 @@ async function renderNightMovedForContact(env, leagueRow, games, contact, team, 
     };
     return {
       subject: d.subject,
-      text: [d.headline, d.body, answer === 'none' ? '' : venue, d.answer, d.btn ? `${d.btn}: ${pageLink}` : ''].filter(Boolean).join('\n'),
+      text: [d.headline, d.body, answer === 'none' ? '' : venue, d.answer, d.btn ? `${d.btn}${lang === 'fr' ? ' :' : ':'} ${pageLink}` : ''].filter(Boolean).join('\n'),
       html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.headline}</h1>
     <p style="margin:0 0 ${d.answer ? 12 : 24}px;font-size:16px;line-height:25px;">${esc(d.body)}${answer !== 'none' && venue ? `<br>${esc(venue)}` : ''}</p>
@@ -21986,7 +21987,7 @@ function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, d
     const d = leagueReminderDict(l, { firstName, dayLabel: dayLabelFor(dayLabel, l), ev, games });
     return {
       subject: d[subjKey],
-      text: `${d[headKey]}\n${d[bodyKey]}${d.venue ? `\n${d.venue}` : ''}\n${d.btnIn}: ${inLink}\n${d.btnOut}: ${outLink}`,
+      text: `${d[headKey]}\n${d[bodyKey]}${d.venue ? `\n${d.venue}` : ''}\n${d.btnIn}${l === 'fr' ? ' :' : ':'} ${inLink}\n${d.btnOut}${l === 'fr' ? ' :' : ':'} ${outLink}`,
       html: `
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d[headKey]}</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${esc(d[bodyKey])}${d.venue ? `<br>${esc(d.venue)}` : ''}</p>
@@ -22024,7 +22025,7 @@ function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLab
     const nt = newTeamLine(l);
     return {
       subject: d.logisticsSubject,
-      text: `${nt ? `${nt}\n\n` : ''}${d.logisticsHeadline}\n${d.logisticsBody}${d.teamLine ? `\n${d.teamLine}` : ''}${d.venue ? `\n${d.venue}` : ''}${rl ? `\n${rl}` : ''}\n${d.optOut}: ${optOutLink}`,
+      text: `${nt ? `${nt}\n\n` : ''}${d.logisticsHeadline}\n${d.logisticsBody}${d.teamLine ? `\n${d.teamLine}` : ''}${d.venue ? `\n${d.venue}` : ''}${rl ? `\n${rl}` : ''}\n${d.optOut}${l === 'fr' ? ' :' : ':'} ${optOutLink}`,
       html: `${nt ? `
     <p style="margin:0 0 8px;font-size:16px;line-height:24px;font-weight:700;color:#16181d;">${esc(nt)}</p>` : ''}
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.logisticsHeadline}</h1>
@@ -25287,7 +25288,7 @@ async function financesPage(env = null, isAuthed = false) {
       customDueTitle: 'Montant personnalisé (différent du tarif calculé)',
       awaitingSheet: '{n} soir{s} en attente de la feuille de match : pas encore facturé{s}',
       standardDueTitle: 'Tarif standard calculé',
-      promptNewSeason: 'Nom de la nouvelle saison (ex: Winter 2027, Spring 2027) :',
+      promptNewSeason: 'Nom de la nouvelle saison (ex. : Winter 2027, Spring 2027) :',
       errDescRequired: 'Veuillez entrer une description.',
       errAmountPositive: 'Le montant doit être supérieur à 0.',
       pricingSavedToast: 'Tarifs sauvegardés ✅',
@@ -26984,7 +26985,7 @@ async function schedulePage(env = null, isAuthed = false) {
       </div>
       <div class="form-group">
         <label for="edit-venue" data-i18n="lblVenue">Lieu / Gymnase</label>
-        <input class="form-control" id="edit-venue" placeholder="ex: Collège Laval" data-i18n-ph="phEditVenue" value="Collège Laval">
+        <input class="form-control" id="edit-venue" placeholder="ex. : Collège Laval" data-i18n-ph="phEditVenue" value="Collège Laval">
       </div>
       <div class="form-group">
         <label for="edit-state" data-i18n="lblGameStatus">Statut du match</label>
@@ -27015,7 +27016,7 @@ async function schedulePage(env = null, isAuthed = false) {
       <p id="cancel-event-info" style="font-size:14px; margin:0 0 12px;"></p>
       <div class="form-group">
         <label for="cancel-reason" data-i18n="lblCancelReason">Motif de l'annulation (optionnel, affiché dans le courriel)</label>
-        <input class="form-control" id="cancel-reason" data-i18n-ph="cancelReasonPh" placeholder="ex: Tempête de neige / Fermeture de l'établissement">
+        <input class="form-control" id="cancel-reason" data-i18n-ph="cancelReasonPh" placeholder="ex. : Tempête de neige / Fermeture de l'établissement">
       </div>
       <div class="form-group">
         <label data-i18n="lblCancelPreview">Aperçu du courriel qui sera envoyé</label>
@@ -27067,7 +27068,7 @@ async function schedulePage(env = null, isAuthed = false) {
       btnOpenState: "Ouvrir",
       btnReopenState: "Rouvrir",
       btnNotifyCancelled: "✉️ Avis joueurs",
-      phEditDate: "ex: 4 oct. 2026", phEditVenue: "ex: Collège Laval",
+      phEditDate: "ex: 4 oct. 2026", phEditVenue: "ex. : Collège Laval",
       btnPreviewEmail: "👁 Aperçu de l'avis",
       btnImportArchive: "📥 Importer (Archive)",
       btnImportActive: "🚀 Importer & Activer",
@@ -27096,7 +27097,7 @@ async function schedulePage(env = null, isAuthed = false) {
       cancelNoticeTitle: "Annulation officielle du match",
       cancelNoticeDesc: "Ce match a été marqué ANNULÉ. Souhaitez-vous envoyer automatiquement un avis d'annulation par courriel à tous les joueurs de la ligue?",
       lblCancelReason: "Motif de l'annulation (optionnel, affiché dans le courriel)",
-      cancelReasonPh: "ex: Tempête de neige / Fermeture de l'établissement",
+      cancelReasonPh: "ex. : Tempête de neige / Fermeture de l'établissement",
       lblCancelPreview: "Aperçu du courriel qui sera envoyé",
       btnClose: "Fermer",
       btnTestAdmin: "Tester (aperçu admin)",
@@ -28821,7 +28822,7 @@ async function emailsPage(env = null, isAuthed = false) {
         </div>
         <div class="form-group">
           <label for="lm-content" data-i18n="lblLmContent">Contenu du message / Note de la semaine :</label>
-          <textarea id="lm-content" class="form-control" rows="4" placeholder="Ex: Bienvenue à la semaine 3! Veuillez noter que..." data-i18n-ph="phLmContent" style="resize:vertical;"></textarea>
+          <textarea id="lm-content" class="form-control" rows="4" placeholder="Ex. : Bienvenue à la semaine 3! Veuillez noter que..." data-i18n-ph="phLmContent" style="resize:vertical;"></textarea>
         </div>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <button type="button" id="lm-save-btn" class="act-btn primary" data-i18n="btnLmSave">💾 Enregistrer le message</button>
@@ -28935,7 +28936,7 @@ async function emailsPage(env = null, isAuthed = false) {
 
         <div class="form-group">
           <label for="bc-subject" data-i18n="lblBcSubject">Sujet du courriel</label>
-          <input type="text" id="bc-subject" class="form-control" placeholder="ex: Info importante pour les séries éliminatoires" data-i18n-ph="phBcSubject" required>
+          <input type="text" id="bc-subject" class="form-control" placeholder="ex. : Info importante pour les séries éliminatoires" data-i18n-ph="phBcSubject" required>
         </div>
 
         <div class="form-group">
@@ -29034,7 +29035,7 @@ async function emailsPage(env = null, isAuthed = false) {
       lmSubtitle: "Ajoutez une annonce spéciale ou note pour la semaine. Elle apparaîtra en haut du courriel d'invitation initiale pour tous les réguliers et substituts invités.",
       lblLmEvent: "Semaine / Match ciblé :",
       lblLmContent: "Contenu du message / Note de la semaine :",
-      phLmContent: "Ex: Bienvenue à la semaine 3! Veuillez noter que...",
+      phLmContent: "Ex. : Bienvenue à la semaine 3! Veuillez noter que...",
       btnLmSave: "💾 Enregistrer le message",
       btnLmClear: "Effacer",
       lblLmPreview: "📢 Aperçu : Message de la ligue / Note from the League",
@@ -29078,7 +29079,7 @@ async function emailsPage(env = null, isAuthed = false) {
       lblBcTarget: "Cible des destinataires",
       lblBcEvent: "Match ciblé",
       lblBcSubject: "Sujet du courriel",
-      phBcSubject: "ex: Info importante pour les séries éliminatoires",
+      phBcSubject: "ex. : Info importante pour les séries éliminatoires",
       lblBcMsg: "Contenu du message",
       phBcMsg: "Écrivez votre message ici...",
       btnBcTest: "🧪 Tester (Aperçu admin)",
@@ -31631,7 +31632,7 @@ async function handleChampionPhoto(req, env, url) {
 // The shared reminder module (src/reminders.js) calls back into these.
 installReminderHost({
   enqueue, teamState, remindSubs, callSubs, getTeamMessages, callSubsForShortfall, ensureNextEvent, getEvent,
-  drain, deadMan, ADMIN_EMAIL, sendLeagueReminderKind, getLeagueSeasonConfig, randomAssignEventTeams, dateFR, SHORTFALL_HORIZON_HOURS, dualGoalieChecks
+  drain, deadMan, ADMIN_EMAIL, sendLeagueReminderKind, getLeagueSeasonConfig, randomAssignEventTeams, dateFR, SHORTFALL_HORIZON_HOURS, dualGoalieChecks, tFR
 });
 installEmailPreviewHost({
   prepareOutboxMessage, createOutboxRenderContext, dateFR, teamState, ADMIN_EMAIL, computeSeasonAwards, formatEventDate,

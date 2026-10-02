@@ -2318,7 +2318,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
 
     const promptAliasesMsg = currentLang === 'en'
       ? "Aliases / alternative names (comma-separated, e.g. Red Wings, Rouges):"
-      : "Alias / noms alternatifs (séparés par des virgules, ex: Red Wings, Rouges) :";
+      : "Alias / noms alternatifs (séparés par des virgules, ex. : Red Wings, Rouges) :";
     const curAliasesStr = (cur.aliases || []).join(', ');
     const newAliases = prompt(promptAliasesMsg, curAliasesStr);
 
@@ -2418,7 +2418,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
   }
 
   function addTeamTagPrompt() {
-    const promptMsg = currentLang === 'en' ? "Name of new team (e.g. Green, Gold, Orange, Grey, Hawks):" : "Nom de la nouvelle équipe (ex: Green, Gold, Orange, Grey, Hawks) :";
+    const promptMsg = currentLang === 'en' ? "Name of new team (e.g. Green, Gold, Orange, Grey, Hawks):" : "Nom de la nouvelle équipe (ex. : Green, Gold, Orange, Grey, Hawks) :";
     const name = prompt(promptMsg);
     if (name && name.trim()) {
       const clean = name.trim();
@@ -2603,7 +2603,7 @@ export async function renderSeasonPage(env = null, isAuthed = false, adminTabsHt
   }
 
   function addSlotPrompt(dIdx) {
-    const timePrompt = currentLang === 'en' ? "Game time (e.g. 10:30 AM, 12:30 PM, 19:00):" : "Heure du match (ex: 10:30 AM, 12:30 PM, 19:00) :";
+    const timePrompt = currentLang === 'en' ? "Game time (e.g. 10:30 AM, 12:30 PM, 19:00):" : "Heure du match (ex. : 10:30 AM, 12:30 PM, 19:00) :";
     const time = prompt(timePrompt, "12:30 PM");
     if (!time) return;
     const gymPrompt = currentLang === 'en' ? "Gym or rink name (e.g. Gym #1, Gym #2, Court A):" : "Nom du gymnase ou terrain (ex: Gym #1, Gym #2, Terrain A) :";

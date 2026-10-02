@@ -54,7 +54,10 @@ describe('3c: the stuck-mail alert', () => {
     expect(fr).toContain('- 1 courriel a échoué définitivement dans les dernières 24 heures');
     expect(fr).toContain("À vérifier : l'onglet Comms (filtre des échecs) et la table des tâches (jobs).");
     expect(fr).not.toMatch(/stuck|failed permanently/);
-    expect(en).toContain('- 3 messages stuck in the outbox over an hour');
+    // Batch 8 item 2a: plain words, a bilingual subject.
+    expect(en).toContain('- 3 messages stuck in the email queue for over an hour');
+    expect(en).not.toContain('outbox');
+    expect(sent[0].subject).toBe('SMBHL : le système a manqué quelque chose / SMBHL: something did not run');
     expect(en).toContain('- 1 email failed permanently in the last 24 hours');
     const keys = ((await env.DB.prepare("SELECT key FROM settings WHERE key LIKE 'alert:%'").all()).results || []).map(r => r.key);
     expect(keys).toContain('alert:3_message(s)_stuck_in_the_outbox_over_an_hour');
