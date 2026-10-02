@@ -130,6 +130,19 @@ export async function resolveSessionLeagueId(req, env, url) {
     if (ok) return chosen;
   }
 
+  return newestSessionLeagueId(req, env, session);
+}
+
+// The user's most recently created league, for the pages that follow a new
+// league (signup's last step, the onboarding steps) and the fallback of
+// resolveSessionLeagueId. In support mode, always the league being
+// supported, never the owner's other leagues. Callers still run
+// checkLeagueAccess on the result.
+export async function newestSessionLeagueId(req, env, session = null) {
+  const sup = await readSupportSession(req, env);
+  if (sup) return sup.leagueId;
+  if (!session) session = await checkUserSession(req, env);
+  if (!session) return null;
   const row = await env.DB.prepare(
     `SELECT la.league_id FROM league_admins la JOIN leagues l ON l.id = la.league_id
       WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`

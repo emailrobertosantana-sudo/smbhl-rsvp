@@ -28,7 +28,7 @@
 // IS a real row in `leagues`; this module adds the actual guarantee).
 
 import { checkUserSession, checkCsrfToken } from './auth.js';
-import { leagueAccessResponse, resolveSessionLeagueId } from './leagues.js';
+import { checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId } from './leagues.js';
 import { SMBHL_LEAGUE_ID, dataJsonKeyFor } from './league_ids.js';
 
 export const HARD_DELETE_UNLOCK_DAYS = 15;
@@ -195,12 +195,10 @@ function eligibilityResponse(elig) {
 }
 
 // POST /league/hard-delete -- body: { confirmPhrase }. Session-gated,
-// but deliberately NOT via leagues.js's checkLeagueAccess: that helper
-// blocks every route once a league is deactivated (Part 10's own
-// design), and hard delete can only ever be reached FOR a deactivated
-// league. This checks the same underlying league_admins link directly
-// instead, ignoring the deactivated block that would otherwise make
-// hard delete unreachable by its own precondition.
+// through leagues.js's checkLeagueAccess like every other route (so support
+// mode reaches only the league being supported), with one difference: its
+// 'deactivated' answer is accepted, since hard delete can only ever be
+// reached FOR a deactivated league.
 export async function handleLeagueHardDelete(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
@@ -212,10 +210,8 @@ export async function handleLeagueHardDelete(req, env, url) {
   if (!leagueId) {
     return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
   }
-  const link = await env.DB.prepare(
-    'SELECT 1 FROM league_admins WHERE user_id = ? AND league_id = ?'
-  ).bind(session.userId, leagueId).first();
-  if (!link) return leagueAccessResponse('forbidden');
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok' && access !== 'deactivated') return leagueAccessResponse(access);
 
   const elig = await checkHardDeleteEligibility(env, leagueId);
   const eligErr = eligibilityResponse(elig);

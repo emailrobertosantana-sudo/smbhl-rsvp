@@ -24,7 +24,7 @@ import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, e
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation, claimOutboxRow, hardDailyCapFromEnv, hardCapError, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
 import { handleSignup, handleLogin, handleAcceptTerms, purgeRateLimitIps, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, newestSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, setFreeException, billingEnabled } from './billing.js';
 import { handleStripeWebhook, processPendingStripeEvents } from './stripe_webhook.js';
@@ -1538,12 +1538,13 @@ async function renderSignupPage(req, env, url) {
   if (step === '2' || step === '3' || step === 'done') {
     const session = await checkUserSession(req, env);
     if (!session) return Response.redirect(`${url.origin}/signup?step=1${langQS}`, 302);
+    // The newest league, through the shared access check (in support mode,
+    // only the league being supported).
+    const newestId = await newestSessionLeagueId(req, env, session);
+    const newestAccess = newestId ? await checkLeagueAccess(req, env, newestId) : null;
+    const newest = newestAccess === 'ok' || newestAccess === 'deactivated' ? newestId : null;
     if (step === 'done') {
-      const league = await env.DB.prepare(
-        `SELECT l.name, l.slug FROM leagues l
-          JOIN league_admins a ON a.league_id = l.id
-         WHERE a.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
-      ).bind(session.userId).first();
+      const league = newest ? await env.DB.prepare('SELECT name, slug FROM leagues WHERE id = ?').bind(newest).first() : null;
       if (!league) return Response.redirect(`${url.origin}/signup?step=2${langQS}`, 302);
       return new Response(renderSignupDone(league, renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     }
@@ -1560,11 +1561,7 @@ async function renderSignupPage(req, env, url) {
     // knows how to pick up wherever THAT league's own setup left off)
     // instead of ever re-rendering the pre-league wizard for a session
     // that has moved past it.
-    const existingLeague = await env.DB.prepare(
-      `SELECT l.id FROM leagues l JOIN league_admins a ON a.league_id = l.id
-        WHERE a.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
-    ).bind(session.userId).first();
-    if (existingLeague) return Response.redirect(`${url.origin}/onboarding/season${langQS.replace('&', '?')}`, 302);
+    if (newest) return Response.redirect(`${url.origin}/onboarding/season${langQS.replace('&', '?')}`, 302);
     if (step === '3') return new Response(renderSignupStep3(renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     return new Response(renderSignupStep2(renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
@@ -2243,14 +2240,14 @@ async function handleDashboardPage(req, env, url) {
   // The current league (resolveSessionLeagueId: an explicit league_id, the
   // nl_league cookie, then the most recent), only if this admin runs it;
   // otherwise the most recent, as before.
-  const currentId = await resolveSessionLeagueId(req, env, url);
-  const leagueRow = (currentId && await env.DB.prepare(
-    `SELECT l.* FROM leagues l JOIN league_admins la ON la.league_id = l.id
-      WHERE la.user_id = ? AND l.id = ?`
-  ).bind(session.userId, currentId).first()) || await env.DB.prepare(
-    `SELECT l.* FROM leagues l JOIN league_admins la ON la.league_id = l.id
-      WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
-  ).bind(session.userId).first();
+  // Both through the shared access check: in support mode, only the league
+  // being supported. A deactivated league still shows, with its notice.
+  const shown = async id => {
+    if (!id) return null;
+    const access = await checkLeagueAccess(req, env, id);
+    return access === 'ok' || access === 'deactivated' ? env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(id).first() : null;
+  };
+  const leagueRow = (await shown(await resolveSessionLeagueId(req, env, url))) || (await shown(await newestSessionLeagueId(req, env, session)));
   const verified = await isUserEmailVerified(env, session.userId);
   // Part 2: self-healing backfill -- a league created before slugs
   // existed just gets one generated and persisted the first time its
@@ -2918,11 +2915,13 @@ async function handleOnboardingSeasonPage(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(loginUrlFor(url), 302);
 
-  const leagueRow = await env.DB.prepare(
-    `SELECT l.* FROM leagues l JOIN league_admins la ON la.league_id = l.id
-      WHERE la.user_id = ? ORDER BY l.created_at DESC LIMIT 1`
-  ).bind(session.userId).first();
-  if (!leagueRow || leagueRow.deactivated_at) return Response.redirect(url.origin + '/dashboard', 302);
+  // The newest league, through the shared access check (in support mode,
+  // only the league being supported); a deactivated one goes to the
+  // dashboard.
+  const newestId = await newestSessionLeagueId(req, env, session);
+  const leagueRow = newestId && (await checkLeagueAccess(req, env, newestId)) === 'ok'
+    ? await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(newestId).first() : null;
+  if (!leagueRow) return Response.redirect(url.origin + '/dashboard', 302);
 
   const leagueData = await getLeagueDataJson(env, leagueRow.id);
   const currentSeason = leagueData ? leagueData.current_season : null;
@@ -10850,10 +10849,9 @@ async function confirmDeleteEvent(eventId) {
 // league is shown, as before.
 async function dashboardInAdminsLeague(req, env, url) {
   const wanted = url.searchParams.get('league_id');
-  const session = wanted ? await checkUserSession(req, env) : null;
-  const runs = session && await env.DB.prepare(
-    'SELECT 1 FROM league_admins la JOIN leagues l ON l.id = la.league_id WHERE la.user_id = ? AND la.league_id = ? AND l.deactivated_at IS NULL'
-  ).bind(session.userId, wanted).first();
+  // The shared access check: this admin runs it and it is active (in
+  // support mode, only the league being supported).
+  const runs = wanted ? (await checkLeagueAccess(req, env, wanted)) === 'ok' : false;
   if (!runs) {
     if (!wanted) return handleDashboardPage(req, env, url);
     const plain = new URL(url); plain.searchParams.delete('league_id');
@@ -32644,8 +32642,10 @@ async function handleFetch(req, env, ctx) {
         if (!session) return leagueAccessResponse('unauthenticated');
         const leagueId = await resolveSessionLeagueId(req, env, url);
         if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
-        const link = await env.DB.prepare('SELECT 1 FROM league_admins WHERE user_id = ? AND league_id = ?').bind(session.userId, leagueId).first();
-        if (!link) return leagueAccessResponse('forbidden');
+        // The shared access check; a deactivated league is the one case
+        // hard delete is for, so that answer is accepted.
+        const access = await checkLeagueAccess(req, env, leagueId);
+        if (access !== 'ok' && access !== 'deactivated') return leagueAccessResponse(access);
         const elig = await checkHardDeleteEligibility(env, leagueId);
         return Response.json({ ok: true, status: elig.status, unlockAt: elig.unlockAt || null, unlockDays: HARD_DELETE_UNLOCK_DAYS });
       }
