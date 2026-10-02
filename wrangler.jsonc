@@ -51,15 +51,11 @@
         // meaning (a future real-production league-product deployment
         // would set this without DEMO_ENV).
         "LEAGUE_PRODUCT": "true",
-        // Same meaning as the top-level MAIL_DAILY_CAP (this env block's
-        // vars replace, not merge with, the top-level ones).
-        "MAIL_DAILY_CAP": "10",
-        // Demo shares production's Resend account: a HARD cap on every
-        // kind of email (MAIL_DAILY_CAP only holds back sub calls). See
-        // src/mail_queue.js hardDailyCapFromEnv.
-        "MAIL_HARD_DAILY_CAP": "10",
-        // Payment reminders keep 2 of the day's 10 for the admin alerts.
-        "PAYMENT_REMINDER_RESERVE": "2",
+        // No daily caps here (caps batch, item 1a): this env block's vars
+        // replace the top-level ones, so MAIL_DAILY_CAP, MAIL_HARD_DAILY_CAP
+        // and PAYMENT_REMINDER_RESERVE are unset for Notre Ligue. Its limits
+        // are src/mail_guard.js's: 25 a day to players for a free league,
+        // and the five rules that pause a mistake.
         // Notre Ligue mail (From mail.notreligue.ca) goes through Cloudflare
         // Email Sending here, via the send_email binding below. SMBHL mail,
         // and every environment without this var, stays on Resend. See

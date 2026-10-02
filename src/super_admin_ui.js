@@ -53,7 +53,13 @@ export const LIST_I18N = {
     empty: 'Aucune ligue ne correspond.', liveMark: 'Calcul en direct, pas encore enregistré',
     // Ad test item 3.
     colAngle: 'Angle', colSource: 'Source', colCampaign: 'Campagne', colContent: 'Contenu',
-    colLeaguesCreated: 'Ligues créées', colFirstInvites: 'Premières invitations envoyées', periodLabel: 'Période'
+    colLeaguesCreated: 'Ligues créées', colFirstInvites: 'Premières invitations envoyées', periodLabel: 'Période',
+    // Caps batch, item 2 (src/mail_guard.js).
+    pausesTitle: 'Envois en pause', pauseAll: 'Toutes les ligues', pauseAddr: 'Une adresse dans {league} ({masked})',
+    pauseSince: 'depuis le {d}', pauseHeld: '{n|# courriel retenu|# courriels retenus}',
+    release: 'Relâcher', cancelHeld: 'Annuler les courriels retenus',
+    rule_2a: 'Même courriel en boucle', rule_2b: 'Une personne inondée', rule_2c: 'Ligue bien au-dessus de sa normale',
+    rule_2d: "Trop de courriels d'un coup", rule_2e: 'Rebonds en hausse'
   },
   en: {
     ...COMMON.en,
@@ -63,7 +69,12 @@ export const LIST_I18N = {
     colBilling: 'Trial or subscription', colSignin: 'Last admin sign-in', colAnswers: 'Answers (14 days)', colNext: 'Next game',
     empty: 'No league matches.', liveMark: 'Computed live, not stored yet',
     colAngle: 'Angle', colSource: 'Source', colCampaign: 'Campaign', colContent: 'Content',
-    colLeaguesCreated: 'Leagues created', colFirstInvites: 'First invites sent', periodLabel: 'Period'
+    colLeaguesCreated: 'Leagues created', colFirstInvites: 'First invites sent', periodLabel: 'Period',
+    pausesTitle: 'Paused sending', pauseAll: 'All leagues', pauseAddr: 'One address in {league} ({masked})',
+    pauseSince: 'since {d}', pauseHeld: '{n|# email held|# emails held}',
+    release: 'Release', cancelHeld: 'Cancel the held emails',
+    rule_2a: 'Same email in a loop', rule_2b: 'One person flooded', rule_2c: 'League far above its normal',
+    rule_2d: 'Everything at once', rule_2e: 'Bounces spiking'
   }
 };
 
@@ -156,6 +167,8 @@ const STYLE = `<style>
   .sa-period { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
   .sa-period .nl-input { width: 170px; }
   .sa-attr { margin: var(--space-3) 0 var(--space-5); max-width: 640px; }
+  .sa-pause { border: 2px solid var(--danger); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); margin: 0 0 var(--space-3); }
+  .sa-pause p { margin: 0 0 var(--space-1); }
   @media (max-width: 639px) { .sa-dl { grid-template-columns: 1fr; } .sa-timeline b { min-width: 0; } }
 </style>`;
 
@@ -295,14 +308,36 @@ var attr = [];
 function attrHtml(a) {
   return '<tr><td>' + esc(a.utmContent || '–') + '</td><td>' + a.leagues + '</td><td>' + a.firstInvites + '</td></tr>';
 }
+// Caps batch, item 2: sending a rule paused (src/mail_guard.js), with
+// Release and Cancel the held emails.
+var pauses = [];
+function pluralN(t, n) {
+  return String(t).replace(/[{]n[|]([^|}]*)[|]([^}]*)[}]/g, function(m, one, many) {
+    var single = window.__currentLang === 'en' ? n === 1 : n < 2;
+    return (single ? one : many).split('#').join(String(n));
+  });
+}
+function pauseHtml(p) {
+  var who = p.scope === 'global' ? T('pauseAll')
+    : (p.scope.indexOf('addr:') === 0 ? fill(T('pauseAddr'), { league: p.leagueName || '', masked: p.masked || '' }) : (p.leagueName || p.leagueId || ''));
+  var since = fill(T('pauseSince'), { d: day(p.since) + ' ' + hm(p.since) });
+  return '<div class="sa-pause" data-scope="' + esc(p.scope) + '">' +
+    '<p><b>' + esc(who) + '</b> · ' + esc(T('rule_' + p.rule)) + '</p>' +
+    '<p class="sa-muted">' + esc(since) + ' · ' + esc(pluralN(T('pauseHeld'), p.held || 0)) + '</p>' +
+    '<div class="sa-actions"><button type="button" class="nl-btn nl-btn--primary" data-act="release">' + esc(T('release')) + '</button>' +
+    '<button type="button" class="nl-btn nl-btn--secondary" data-act="cancel">' + esc(T('cancelHeld')) + '</button></div></div>';
+}
 function render() {
   $('sa-tbody').innerHTML = rows.map(rowHtml).join('');
   $('sa-empty').hidden = rows.length > 0;
   $('sa-attr-tbody').innerHTML = attr.map(attrHtml).join('');
+  $('sa-pauses').hidden = !pauses.length;
+  $('sa-pauses-list').innerHTML = pauses.map(pauseHtml).join('');
 }
 function load() {
   var q = new URLSearchParams({ status: $('sa-status').value, q: $('sa-q').value.trim(), from: $('sa-from').value, to: $('sa-to').value });
   return api('/super-admin/leagues/data?' + q.toString()).then(function(data) {
+    pauses = data.pauses || [];
     rows = data.rows || [];
     attr = (data.attribution && data.attribution.rows) || [];
     if (data.attribution) { $('sa-from').value = data.attribution.from; $('sa-to').value = data.attribution.to; }
@@ -315,6 +350,15 @@ $('sa-status').addEventListener('change', reload);
 $('sa-from').addEventListener('change', reload);
 $('sa-to').addEventListener('change', reload);
 $('sa-q').addEventListener('input', function() { clearTimeout(timer); timer = setTimeout(reload, 250); });
+$('sa-pauses-list').addEventListener('click', function(e) {
+  var b = e.target.closest('button[data-act]');
+  if (!b) return;
+  var scope = b.closest('.sa-pause').getAttribute('data-scope');
+  b.disabled = true;
+  api('/super-admin/mail/' + b.getAttribute('data-act'), { method: 'POST', body: { scope: scope } })
+    .then(reload)
+    .catch(function(err) { $('sa-err').textContent = T('err') + err.message; b.disabled = false; });
+});
 $('sa-tbody').addEventListener('click', function(e) {
   if (e.target.closest('a')) return;
   var tr = e.target.closest('tr.sa-row');
@@ -344,6 +388,10 @@ ${header()}
         <input id="sa-q" class="nl-input" type="search" autocomplete="off" data-i18n-ph="searchPh" placeholder="${esc(T.searchPh)}"></label>
     </div>
     <p class="sa-err" id="sa-err"></p>
+    <section id="sa-pauses" hidden>
+      <h2 data-i18n="pausesTitle">${esc(T.pausesTitle)}</h2>
+      <div id="sa-pauses-list"></div>
+    </section>
     <div class="sa-tools">
       <label><span data-i18n="periodLabel">${esc(T.periodLabel)}</span>
         <span class="sa-period"><input id="sa-from" class="nl-input" type="date" value="${esc(period.from)}"><span aria-hidden="true">–</span><input id="sa-to" class="nl-input" type="date" value="${esc(period.to)}"></span></label>

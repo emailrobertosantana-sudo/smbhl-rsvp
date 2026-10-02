@@ -9,7 +9,10 @@
 //     the day they enter);
 //   - failed payments (Stripe's invoice.payment_failed events);
 //   - leagues that went above 100 regular players (billing batch 3: the
-//     owner's notice to write for a custom price, src/billing_enforcement.js).
+//     owner's notice to write for a custom price, src/billing_enforcement.js);
+//   - the sending rules that tripped, and the month's emails against the
+//     3,000 included, with the three busiest leagues (caps batch, item 3,
+//     src/mail_guard.js).
 //
 // When: right after the daily health run (prepareOpsDigest stores what is
 // to be told, settings key ops_digest:pending, no migration), and sent by
@@ -24,6 +27,8 @@ import { maskEmail } from './contact_name.js';
 import { getSetting, putSetting } from './league_health.js';
 import { nlEmailWrap } from './design_system.js';
 import { montrealDate, lastDayBefore } from './montreal_time.js';
+import { monthUsage, markCrossed, tripsSince, tripNumbers, RULES, MONTHLY_INCLUDED } from './mail_guard.js';
+import { pluralText } from './plural.js';
 
 export const OPS_DIGEST_TO = 'bonjour@notreligue.ca';
 export const OPS_DIGEST_KIND = 'ops_digest';
@@ -32,8 +37,11 @@ export const DIGEST_CUTOFF_KEY = 'ops_digest:cutoff';
 export const DIGEST_LAST_KEY = 'ops_digest:last';
 
 const parseJson = v => { try { return JSON.parse(v); } catch (_) { return null; } };
-const emptyItems = () => ({ signups: [], worsened: [], trials: [], payments: [], custom: [] });
-export const digestHasItems = items => !!items && ['signups', 'worsened', 'trials', 'payments', 'custom'].some(k => (items[k] || []).length > 0);
+// Caps batch, item 3: the month's sending is shown in every digest, but on
+// its own it sends one only the day the month crosses MONTHLY_INCLUDED
+// (crossed) or when a sending rule tripped (trips).
+const emptyItems = () => ({ signups: [], worsened: [], trials: [], payments: [], custom: [], trips: [], crossed: [] });
+export const digestHasItems = items => !!items && ['signups', 'worsened', 'trials', 'payments', 'custom', 'trips', 'crossed'].some(k => (items[k] || []).length > 0);
 
 // After the daily health run: what happened since the last cutoff, added to
 // any digest still waiting. Returns the pending digest, or null.
@@ -65,15 +73,45 @@ export async function prepareOpsDigest(env, health, now = new Date()) {
     ).bind(cutoff, nowIso).all()).results || [];
     for (const g of big) items.custom.push({ id: g.league_id, name: g.name || g.league_id, count: Number(g.regular_count) || null });
   } catch (_) {}
+  // Caps batch, item 3: the sending rules that tripped, and the month's usage.
+  let usage = null;
+  try {
+    for (const t of await tripsSince(env, cutoff)) if (t.since <= nowIso) items.trips.push({ rule: t.rule, scope: t.scope, name: t.leagueName || '', numbers: t.numbers || {}, at: t.since });
+    usage = await monthUsage(env, now);
+    if (usage.crossedNow) { items.crossed.push({ month: usage.month, sent: usage.sent }); await markCrossed(env, usage.month, now); }
+  } catch (e) { console.error(`[digest] mail usage: ${e.message}`); }
   await putSetting(db, DIGEST_CUTOFF_KEY, nowIso);
   const pending = parseJson(await getSetting(db, DIGEST_PENDING_KEY));
-  if (!digestHasItems(items)) return pending && digestHasItems(pending.items) ? pending : null;
+  if (!digestHasItems(items)) {
+    if (!(pending && digestHasItems(pending.items))) return null;
+    if (usage) { pending.usage = usage; await putSetting(db, DIGEST_PENDING_KEY, pending); }
+    return pending;
+  }
   const merged = pending && pending.items ? pending : { since: cutoff, items: emptyItems() };
   for (const k of Object.keys(items)) merged.items[k] = [...(merged.items[k] || []), ...items[k]];
   merged.day = (health && health.day) || montrealDate(now);
   merged.preparedAt = nowIso;
+  if (usage) merged.usage = usage;
   await putSetting(db, DIGEST_PENDING_KEY, merged);
   return merged;
+}
+
+// Numbers as written in each language: « 3 000 », "3,000".
+export function digestNumber(n, lang) {
+  const s = String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, lang === 'fr' ? ' ' : ',');
+  return s;
+}
+// The usage lines (item 3). Pure.
+export function usageLines(usage, lang) {
+  if (!usage) return [];
+  const fr = lang === 'fr';
+  const n = digestNumber(usage.sent, lang), inc = digestNumber(MONTHLY_INCLUDED, lang);
+  const lines = [pluralText(fr ? `{c|${n} courriel|${n} courriels} ce mois-ci, sur ${inc} inclus` : `{c|${n} email|${n} emails} this month, of ${inc} included`, { c: usage.sent }, lang)];
+  if (usage.over) lines.push(fr
+    ? `Le mois a dépassé les ${digestNumber(MONTHLY_INCLUDED, 'fr')} courriels inclus : chaque courriel de plus est facturé.`
+    : `The month is past the ${digestNumber(MONTHLY_INCLUDED, 'en')} included emails: each extra email is billed.`);
+  if (usage.top && usage.top.length) lines.push((fr ? 'Ligues les plus actives : ' : 'Busiest leagues: ') + usage.top.map(t => `${t.name} (${digestNumber(t.n, lang)})`).join(', '));
+  return lines;
 }
 
 const LIGHT = { fr: { red: 'rouge', yellow: 'jaune', green: 'vert' }, en: { red: 'red', yellow: 'yellow', green: 'green' } };
@@ -107,6 +145,16 @@ export function renderOpsDigest(pending, publicUrl = '') {
       title: fr ? 'Paiements en échec' : 'Failed payments',
       lines: it.payments.map(p => fr ? `${p.name} : le ${day(p.at)}` : `${p.name}: on ${day(p.at)}`)
     });
+    // Caps batch, item 3: rules that tripped, then the month's sending.
+    if ((it.trips || []).length) out.push({
+      title: fr ? "Règles d'envoi déclenchées" : 'Sending rules tripped',
+      lines: it.trips.map(t => {
+        const who = t.scope === 'global' ? (fr ? 'Toutes les ligues' : 'All leagues') : (t.name || '');
+        return fr ? `${who} : ${RULES[t.rule].fr}, ${tripNumbers(t.rule, t.numbers, 'fr')} (le ${day(t.at)})`
+          : `${who}: ${RULES[t.rule].en}, ${tripNumbers(t.rule, t.numbers, 'en')} (on ${day(t.at)})`;
+      })
+    });
+    if (pending.usage) out.push({ title: fr ? 'Envois du mois' : "This month's sending", lines: usageLines(pending.usage, lang) });
     return out;
   };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

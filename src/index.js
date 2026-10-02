@@ -43,7 +43,9 @@ import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, se
 import { handleStripeWebhook, processPendingStripeEvents, resumeIfCardAdded } from './stripe_webhook.js';
 import { runBillingEnforcement } from './billing_enforcement.js';
 import { BILLING_NOTICE_KIND } from './billing_notices.js';
-import { montrealDate } from './montreal_time.js';
+import { montrealDate, montrealMidnight, addDays as addMontrealDays } from './montreal_time.js';
+import { freeCapBannerHtml } from './mail_limit_banner.js';
+import { guardOn, checkSend, recordSend, HELD_UNTIL, FREE_CAP_REASON, heldReason, freeCapHeldCount, cancelFreeCapHeld, listPauses, releaseScope, cancelScope, checkBounces, pruneGuardState } from './mail_guard.js';
 import { checkStripeConfig } from './billing_check.js';
 import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS, ownerOf } from './billing_actions.js';
 import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail, attributionSummary, defaultAttributionPeriod } from './league_health.js';
@@ -2803,9 +2805,15 @@ async function handleDashboardPage(req, env, url) {
       <p class="nl-help" style="margin:8px 0 0;" data-i18n="healthTold">L'équipe Notre Ligue a été avertie.</p>
     </section>` : '';
 
+    // A free league's daily limit (caps batch, item 1c): the emails waiting
+    // for tomorrow, with a way to drop them.
+    const heldByLimit = env.LEAGUE_PRODUCT === 'true' ? await freeCapHeldCount(env, leagueRow.id) : 0;
+    const mailLimitHtml = freeCapBannerHtml(heldByLimit, lang);
+
     bodyHtml = `${dashStyles()}${header}
 <main class="dash-main">
   ${healthHtml}
+  ${mailLimitHtml}
   <div class="dash-top">
     <div>
       <h1>${esc(leagueRow.name)}</h1>
@@ -3005,6 +3013,21 @@ async function submitHardDelete() {
 if (document.getElementById('hardDeleteStatus')) {
   loadHardDeleteStatus();
   window.addEventListener('nl_lang_changed', loadHardDeleteStatus);
+}
+// Caps batch, item 1c: drop the emails a free league's daily limit holds.
+async function cancelHeldMail() {
+  var btn = document.getElementById('heldCancelBtn');
+  var msg = document.getElementById('heldCancelMsg');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/mail/held/cancel', { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()), body: '{}' });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { btn.disabled = false; msg.textContent = window.__errorText(data.errorKey, data.error); msg.style.display = 'block'; return; }
+    btn.style.display = 'none';
+    msg.style.display = 'block';
+  } catch (e) {
+    btn.disabled = false; msg.textContent = window.__errorText('NETWORK_ERROR'); msg.style.display = 'block';
+  }
 }
 `;
 
@@ -5844,18 +5867,37 @@ async function handleLeagueCommsBroadcast(req, env, url) {
   const cfg = await getLeagueSeasonConfig(env, leagueId);
   const { text, html } = renderLeagueBroadcastEmail(leagueRow, subject, message);
 
-  let sent = 0, failed = 0, deferred = 0;
+  let sent = 0, failed = 0, deferred = 0, blocked = 0;
   for (const r of recipients) {
     try {
-      await sendMail(env, r.email, subject, text, html, null, cfg.league);
+      await sendMail(env, r.email, subject, text, html, null, cfg.league, { leagueId, kind: 'broadcast', eventId: eventId || null, toPlayer: true });
       sent++;
     } catch (e) {
-      // Deferred = queued for when the daily limit resets: not sent, not failed.
-      if (isMailDeferred(e)) deferred++; else failed++;
+      // Deferred = queued for when the daily limit resets (or held by the
+      // sending guard): not sent, not failed. Blocked = this very email
+      // already went to this person (src/mail_guard.js, rule 2a).
+      if (isMailDeferred(e)) deferred++; else if (e && e.blocked) blocked++; else failed++;
     }
   }
 
-  return Response.json({ ok: true, sent_count: sent, failed_count: failed, deferred_count: deferred, total: recipients.length });
+  return Response.json({ ok: true, sent_count: sent, failed_count: failed, deferred_count: deferred, blocked_count: blocked, total: recipients.length });
+}
+
+// POST /league/mail/held/cancel (caps batch, item 1c): the emails a free
+// league's daily limit holds for tomorrow are not sent.
+async function handleLeagueHeldMailCancel(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) return Response.json({ ok: false, errorKey: 'NOT_FOUND' }, { status: 404 });
+  const cancelled = await cancelFreeCapHeld(env, leagueId);
+  return Response.json({ ok: true, cancelled });
 }
 
 // Email preview (src/email_preview.js): the email as it would go out with
@@ -13203,9 +13245,30 @@ function extractEmailAddress(fromValue) {
 // row (attachments included) instead of being lost, and MailDeferredError
 // is thrown so no caller can mistake it for a send. opts.fromQueue: the
 // drain's own sends -- the drain defers its rows itself.
+// Notre Ligue's sending guard (src/mail_guard.js): a direct send is checked
+// only when its caller names the league (opts.leagueId; opts.toPlayer for
+// mail to a player or sub, opts.kind, opts.eventId). Sign-up, password
+// reset, invitations and the operator's mail name none and are never held.
+// A held or deferred email is queued (MailDeferredError, like a quota
+// deferral); a blocked duplicate throws MailBlockedError. The drain's own
+// sends were checked by the drain (opts.guard: what to record).
+class MailBlockedError extends Error {
+  constructor() { super('blocked: the same email was already sent (rule 2a)'); this.name = 'MailBlockedError'; this.blocked = true; }
+}
 async function sendMail(env, to, subject, text, html = null, attachments = null, leagueCfg = null, opts = {}) {
   // Support mode (src/support_mode.js): no email can be sent.
   if (env && env.SUPPORT_MODE) throw new Error('support mode: read-only, no email is sent');
+  let guard = opts.guard || null;
+  if (!opts.fromQueue && opts.leagueId && !opts.essential && guardOn(env)) {
+    const ctx = { leagueId: opts.leagueId, kind: opts.kind || 'direct_mail', eventId: opts.eventId || null, address: to, toPlayer: !!opts.toPlayer, subject, text };
+    const d = await checkSend(env, ctx);
+    if (d.action === 'block') throw new MailBlockedError();
+    if (d.action === 'hold' || d.action === 'defer') {
+      const until = await queueGuardedDirectMail(env, { to, subject, text, html, attachments, leagueCfg, ctx }, d);
+      throw new MailDeferredError(until, d.action === 'hold' ? 'held' : FREE_CAP_REASON);
+    }
+    guard = { leagueId: opts.leagueId, toPlayer: !!opts.toPlayer, dupKey: d.dupKey };
+  }
   try {
     // A hard daily cap (demo): every kind counts; reached, the email waits
     // for tomorrow like a Resend quota refusal (src/mail_queue.js).
@@ -13227,8 +13290,35 @@ async function sendMail(env, to, subject, text, html = null, attachments = null,
   if (env.DB) {
     try { await countSentMail(env.DB, { subCall: !!opts.subCall }); }
     catch (e) { console.error(`[sendMail] daily count not updated: ${e.message}`); }
+    try { await recordSend(env, { leagueId: (guard && guard.leagueId) || opts.leagueId || null, toPlayer: !!(guard && guard.toPlayer), address: to, dupKey: guard && guard.dupKey }); }
+    catch (e) { console.error(`[sendMail] guard counters not updated: ${e.message}`); }
   }
   return true;
+}
+
+// The next Montreal day's first hour outside quiet hours, for a free
+// league's held emails (item 1b).
+async function nextMontrealDayTarget(env, leagueId, now = new Date()) {
+  return afterQuiet(env, montrealMidnight(addMontrealDays(montrealDate(now), 1)), leagueId && leagueId !== SMBHL_LEAGUE_ID ? leagueId : null);
+}
+
+// A direct send the guard held or deferred, queued as a pre-rendered outbox
+// row the drain sends once it is released (or the next day). Returns when.
+async function queueGuardedDirectMail(env, { to, subject, text, html, attachments, leagueCfg, ctx }, decision) {
+  const now = new Date();
+  const held = decision.action === 'hold';
+  const until = held ? HELD_UNTIL : (await nextMontrealDayTarget(env, ctx.leagueId, now)).toISOString();
+  const payload = JSON.stringify({ prerendered: {
+    to, subject, text, html: html || null, attachments: attachments && attachments.length ? attachments : null,
+    identity: leagueCfg ? { fromEmail: leagueCfg.fromEmail || null, replyToEmail: leagueCfg.replyToEmail || null } : null,
+    guard: { leagueId: ctx.leagueId, kind: ctx.kind, eventId: ctx.eventId, toPlayer: !!ctx.toPlayer }
+  } });
+  await env.DB.prepare(
+    `INSERT INTO outbox (kind, event_id, player_id, payload, send_after, created_at, next_attempt_at, defer_reason, league_id, quiet_exempt)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 1)`
+  ).bind(ctx.kind || 'direct_mail', ctx.eventId || 'system', payload, now.toISOString(), now.toISOString(), until,
+    held ? heldReason(decision.scope) : FREE_CAP_REASON, ctx.leagueId).run();
+  return until;
 }
 
 // When today's budget is gone, the next chance to send: 00:00 UTC, moved
@@ -14715,7 +14805,8 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
   // Daily send cap (src/mail_queue.js, DAILY SEND CAP): read once per
   // drain, only if a sub call is due, then kept current locally.
   const dailyCap = dailyCapFromEnv(env);
-  if (!dailyCap && due.some(r => r.kind === 'sub_call')) console.warn('[drain] MAIL_DAILY_CAP not configured: no daily send cap enforced');
+  // Notre Ligue has no daily cap by design (src/mail_guard.js holds its limits).
+  if (!dailyCap && env.LEAGUE_PRODUCT !== 'true' && due.some(r => r.kind === 'sub_call')) console.warn('[drain] MAIL_DAILY_CAP not configured: no daily send cap enforced');
   let daily = null;
   const loadDaily = async () => {
     if (!daily) {
@@ -14735,6 +14826,8 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
     if (!quietUntilCache.has(key)) quietUntilCache.set(key, (await afterQuiet(env, new Date(now), key === SMBHL_LEAGUE_ID ? null : key)).toISOString());
     return quietUntilCache.get(key);
   };
+  // Notre Ligue's sending guard (src/mail_guard.js): one billing-state cache per drain.
+  const guardCache = new Map();
   for (const m of due) {
     if (!m.quiet_exempt) {
       const until = await quietUntil(m.league_id);
@@ -14747,14 +14840,27 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
     }
     try {
       const payload = JSON.parse(m.payload || '{}');
+      // Held by a free league's daily limit (item 1b) and pointless now.
+      if (await pointlessAfterFreeCap(env, m)) {
+        await env.DB.prepare('UPDATE outbox SET cancelled = 1, error = ?, next_attempt_at = NULL WHERE id = ?')
+          .bind('not sent: held by the daily limit, and the game has started (or its sub call window closed)', m.id).run();
+        continue;
+      }
       // Pre-rendered mail (enqueuePrerenderedMail): the league product's
       // reminder waves and team-assigned follow-ups are rendered when
       // queued and sent exactly as stored.
       if (payload.prerendered) {
         const pm = payload.prerendered;
+        const g = pm.guard || {};
+        const allowed = await guardOutboxRow(env, m, {
+          leagueId: g.leagueId || m.league_id, kind: g.kind || m.kind, eventId: g.eventId || m.event_id, address: pm.to,
+          toPlayer: g.toPlayer != null ? !!g.toPlayer : !!m.player_id, subject: pm.subject, text: pm.text,
+          essential: isOperatorAddress(env, pm.to), cache: guardCache
+        });
+        if (!allowed) continue;
         if (!budget.take()) break;
         if (!(await claimOutboxRow(env.DB, m.id))) { budget.refund(); continue; } // another drain has it
-        await sendMail(env, pm.to, pm.subject, pm.text, pm.html, pm.attachments || null, pm.identity || null, { fromQueue: true });
+        await sendMail(env, pm.to, pm.subject, pm.text, pm.html, pm.attachments || null, pm.identity || null, { fromQueue: true, guard: allowed.record });
         if (daily) daily.sent++;
         await recordSendSuccess(env.DB, m.id);
         sent++;
@@ -14772,6 +14878,11 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
         sent++; continue;
       }
       const { to, msg, leagueCfg } = prep;
+      const allowed = await guardOutboxRow(env, m, {
+        leagueId: m.league_id, kind: m.kind, eventId: m.event_id, address: to, toPlayer: !!m.player_id,
+        subject: msg.subject, text: msg.text, essential: isOperatorAddress(env, to), cache: guardCache
+      });
+      if (!allowed) continue;
       // Sub calls only get what today's budget has left after reserving
       // room for roster mail; otherwise they wait for tomorrow -- queued,
       // never dropped. Everything else always sends.
@@ -14787,7 +14898,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       // after it stay queued, untouched, for the next pass.
       if (!budget.take()) break;
       if (!(await claimOutboxRow(env.DB, m.id))) { budget.refund(); continue; } // another drain has it
-      await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg, { subCall: m.kind === 'sub_call', fromQueue: true });
+      await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg, { subCall: m.kind === 'sub_call', fromQueue: true, guard: allowed.record });
       if (daily) { daily.sent++; if (m.kind === 'sub_call') daily.subCalls++; }
       // Resend accepted it: it is sent, whatever happens next. (The
       // sub-call bookkeeping below used to run BEFORE this, so a failure
@@ -14829,6 +14940,42 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
     }
   }
   return { due: due.length, sent, failed, retrying, deferred };
+}
+
+// The operator's own inboxes: never held (item 1e).
+function isOperatorAddress(env, to) {
+  const t = String(to || '').trim().toLowerCase();
+  return !!t && [OPS_DIGEST_TO, env.ADMIN_EMAIL || ADMIN_EMAIL, env.OPS_ALERT_EMAIL].filter(Boolean).some(a => String(a).trim().toLowerCase() === t);
+}
+
+// One outbox row through the sending guard (src/mail_guard.js). Returns
+// { record } when it may go out now (what sendMail records after it), or
+// null once the row was held, deferred to tomorrow or blocked.
+async function guardOutboxRow(env, m, ctx) {
+  if (!guardOn(env)) return { record: null };
+  const d = await checkSend(env, ctx);
+  if (d.action === 'send') return { record: { leagueId: ctx.leagueId, toPlayer: !!ctx.toPlayer, dupKey: d.dupKey } };
+  if (d.action === 'block') {
+    await env.DB.prepare('UPDATE outbox SET cancelled = 1, error = ?, next_attempt_at = NULL WHERE id = ?').bind(d.reason, m.id).run();
+  } else if (d.action === 'hold') {
+    await env.DB.prepare('UPDATE outbox SET next_attempt_at = ?, defer_reason = ? WHERE id = ?').bind(HELD_UNTIL, heldReason(d.scope), m.id).run();
+  } else if (d.action === 'defer') {
+    await deferToNextDay(env.DB, m.id, FREE_CAP_REASON, new Date(), await nextMontrealDayTarget(env, ctx.leagueId));
+  }
+  return null;
+}
+
+// A row held by a free league's daily limit (item 1b) that would be
+// pointless the next day: a reminder or a sub call for a game that has
+// started, or a sub call past its cutoff.
+const FREE_CAP_POINTLESS_KINDS = /^(reminder|logistics|lrem|sub_call|team_assigned)/;
+async function pointlessAfterFreeCap(env, m) {
+  if (m.defer_reason !== FREE_CAP_REASON || !FREE_CAP_POINTLESS_KINDS.test(m.kind || '')) return false;
+  const ev = await getEvent(env.DB, m.event_id);
+  const st = ev ? eventStart(ev) : null;
+  if (!st) return false;
+  const until = m.kind === 'sub_call' ? st.getTime() - CUTOFF_HOURS * 3600000 : st.getTime();
+  return Date.now() >= until;
 }
 
 // Room kept in today's send budget for roster mail still to come
@@ -23493,7 +23640,7 @@ async function sendLateReversalAdminAlert(env, leagueId, ev, contact, opts = {})
   const mail = renderLateReversalForLeague(env, leagueRow, ev, contact, opts);
   for (const admin of admins) {
     try {
-      await sendMail(env, admin.email, mail.subject, mail.text, mail.html);
+      await sendMail(env, admin.email, mail.subject, mail.text, mail.html, null, null, { leagueId, kind: 'late_reversal', eventId: ev.id });
     } catch (err) {
       console.error(`[league-reminders] failed to send late-reversal alert to ${admin.email}: ${err.message}`);
     }
@@ -33040,8 +33187,15 @@ async function runCronPass(env) {
     // with something to report. Silent unless it fails. HEALTH_ALERTS='off'
     // (the recorded-behaviour tests only) holds the digest back, like the
     // health alerts.
+    // The sending guard (src/mail_guard.js): bounces spiking (rule 2e, an
+    // alert at most once a Montreal day).
+    try { await checkBounces(env, new Date(), montrealMidnight(montrealDate(new Date())).toISOString()); }
+    catch (e) { console.error(`[mail-guard] bounce check: ${e.message}`); }
     try {
       const health = await runDailyLeagueHealth(env);
+      if (health.ran) {
+        try { await pruneGuardState(env); } catch (e) { console.error(`[mail-guard] upkeep: ${e.message}`); }
+      }
       if (env.HEALTH_ALERTS !== 'off') {
         if (health.ran) await prepareOpsDigest(env, health);
         await deliverOpsDigest(env, opsDigestHost(env));
@@ -33625,6 +33779,8 @@ async function handleFetch(req, env, ctx) {
       // Live-testing task (batch 4), Part 4: broadcast/compose, shared.
       if (url.pathname === '/league/comms/broadcast' && req.method === 'POST')
         return await handleLeagueCommsBroadcast(req, env, url);
+      if (url.pathname === '/league/mail/held/cancel' && req.method === 'POST' && env.LEAGUE_PRODUCT === 'true')
+        return await handleLeagueHeldMailCancel(req, env, url);
       // Email preview: what an email would look like now, sending nothing.
       if (url.pathname === '/league/comms/preview' && req.method === 'POST')
         return await handleLeagueCommsPreview(req, env, url);
@@ -33722,7 +33878,20 @@ async function handleFetch(req, env, ctx) {
         if (isDay(url.searchParams.get('from'))) period.from = url.searchParams.get('from');
         if (isDay(url.searchParams.get('to'))) period.to = url.searchParams.get('to');
         const attribution = allRows ? { ...period, rows: attributionSummary(allRows, period) } : undefined;
-        return Response.json({ ok: true, leagues: leagues.map(l => ({ ...l, billing: billing.get(l.id) || null })), ...(rows ? { rows } : {}), ...(attribution ? { attribution } : {}) });
+        // Caps batch, item 2: sending paused by a rule (src/mail_guard.js).
+        const pauses = env.LEAGUE_PRODUCT === 'true' ? await listPauses(env) : undefined;
+        return Response.json({ ok: true, leagues: leagues.map(l => ({ ...l, billing: billing.get(l.id) || null })), ...(rows ? { rows } : {}), ...(attribution ? { attribution } : {}), ...(pauses ? { pauses } : {}) });
+      }
+      // Caps batch, item 2: Release a paused scope, or cancel what it holds.
+      if ((url.pathname === '/super-admin/mail/release' || url.pathname === '/super-admin/mail/cancel') && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        if (env.LEAGUE_PRODUCT !== 'true') return new Response('Not found', { status: 404 });
+        const body = await req.json().catch(() => ({}));
+        const scope = String(body.scope || '');
+        if (!/^(global|league:[A-Za-z0-9-]{1,80}|addr:[0-9a-f]{24})$/.test(scope)) return Response.json({ ok: false, errorKey: 'BAD_SCOPE' }, { status: 400 });
+        if (url.pathname.endsWith('/release')) return Response.json({ ok: true, released: await releaseScope(env, scope) });
+        return Response.json({ ok: true, cancelled: await cancelScope(env, scope) });
       }
       // Billing: the Stripe configuration, read only (src/billing_check.js).
       if (url.pathname === '/super-admin/billing/check' && req.method === 'GET') {

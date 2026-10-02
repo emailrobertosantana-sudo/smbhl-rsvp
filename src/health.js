@@ -463,7 +463,8 @@ export async function notifyAlerts(env, host, alerts, now = new Date()) {
     let told = false;
     for (const admin of admins) {
       if (sentThisPass >= MAX_ADMIN_EMAILS_PER_PASS || !(await takeEmailAllowance(env, now))) break;
-      try { await host.sendMail(env, admin.email, mail.subject, mail.text, mail.html); told = true; }
+      // The league is named so Notre Ligue's sending guard (src/mail_guard.js) can hold it.
+      try { await host.sendMail(env, admin.email, mail.subject, mail.text, mail.html, null, null, { leagueId, kind: 'health_alert' }); told = true; }
       catch (e) { if (e && e.deferred) told = true; else console.error(`[health] admin alert to ${admin.email} failed: ${e.message}`); }
       sentThisPass++;
     }
