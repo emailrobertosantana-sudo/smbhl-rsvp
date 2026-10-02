@@ -84,7 +84,7 @@ describe('the daily digest', () => {
     expect(m.text).not.toContain('Ligue Ancienne');
     expect(m.text).toContain('https://rsvp.notreligue.example/super-admin/leagues');
     expect(m.html.indexOf('Nouvelles inscriptions')).toBeLessThan(m.html.indexOf('New sign-ups'));
-    for (const s of [m.subject, m.text, m.html]) expect(s).not.toContain('—');
+    for (const s of [m.subject, m.text, m.html]) expect(s).not.toContain(String.fromCharCode(0x2014));
     const row = await env.DB.prepare(`SELECT kind, league_id, event_id, sent_at FROM outbox WHERE kind = 'ops_digest'`).first();
     expect(row).toMatchObject({ kind: 'ops_digest', league_id: 'system', event_id: 'system' });
     expect(row.sent_at).toBeTruthy();
