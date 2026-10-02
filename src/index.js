@@ -6295,13 +6295,16 @@ async function handleLeagueBillingPage(req, env, url) {
   const bi = (line, tag = 'p', attrs = '') => (line ? `<${tag}${attrs} data-date-fr="${esc(line.fr)}" data-date-en="${esc(line.en)}">${esc(line[lang] || line.fr)}</${tag}>` : '');
   const paid = ['standard', 'plus'].includes(view.planTier);
   const st = view.state || {};
+  // Support mode (src/support_mode.js): every action shows disabled, like
+  // every other change there; the server refuses them anyway.
+  const dis = env.SUPPORT_MODE ? ' disabled' : '';
   let action = '';
   if (view.live && row.stripe_status === 'paused') {
     // Decision 3: Stripe paused it at the trial's end, for want of a card.
     // The portal adds one; the app then resumes the subscription.
     action = `${bi(L.plan)}
     <p class="bl-note" ${k('trialEndedCard')}</p>
-    ${ctx.isOwner ? `<div class="bl-actions"><button type="button" class="nl-btn nl-btn--primary" data-billing="portal" ${k('addCard')}</button></div>` : `<p class="nl-help" ${k('ownerOnly')}</p>`}`;
+    ${ctx.isOwner ? `<div class="bl-actions"><button type="button" class="nl-btn nl-btn--primary" data-billing="portal"${dis} ${k('addCard')}</button></div>` : `<p class="nl-help" ${k('ownerOnly')}</p>`}`;
   } else if (view.live) {
     const canPause = row.billing_interval === 'month' && row.status === 'active' && !row.cancel_at_period_end;
     // "Billing restarts today." is true only past the trial: in the trial,
@@ -6312,15 +6315,15 @@ async function handleLeagueBillingPage(req, env, url) {
     ${row.status === 'past_due' ? `<p class="bl-note" ${k('pastDue')}</p>` : ''}
     ${bi(L.state)}${bi(L.tierChange)}
     ${ctx.isOwner ? `<div class="bl-actions">
-      <button type="button" class="nl-btn nl-btn--primary" data-billing="portal" ${k('manage')}</button>
-      ${canPause ? `<button type="button" class="nl-btn nl-btn--secondary" id="bl-pause-ask" ${k('pause')}</button>` : ''}
-      ${row.status === 'paused' ? `<button type="button" class="nl-btn nl-btn--secondary" data-billing="resume" ${k('resume')}</button>` : ''}
+      <button type="button" class="nl-btn nl-btn--primary" data-billing="portal"${dis} ${k('manage')}</button>
+      ${canPause ? `<button type="button" class="nl-btn nl-btn--secondary" id="bl-pause-ask"${dis} ${k('pause')}</button>` : ''}
+      ${row.status === 'paused' ? `<button type="button" class="nl-btn nl-btn--secondary" data-billing="resume"${dis} ${k('resume')}</button>` : ''}
     </div>
     ${row.status === 'paused' && !inTrial ? `<p class="nl-help" ${k('resumeNote')}</p>` : ''}
     ${row.status === 'paused' && inTrial ? bi(L.resumeTrial, 'p', ' class="nl-help"') : ''}
     ${canPause ? `<div class="bl-confirm" id="bl-pause-confirm" hidden>
       <p ${k('pauseConfirm')}</p>
-      <div class="bl-actions"><button type="button" class="nl-btn nl-btn--secondary" data-billing="pause" ${k('pauseYes')}</button><button type="button" class="nl-btn nl-btn--ghost" id="bl-pause-no" ${k('cancelBtn')}</button></div>
+      <div class="bl-actions"><button type="button" class="nl-btn nl-btn--secondary" data-billing="pause"${dis} ${k('pauseYes')}</button><button type="button" class="nl-btn nl-btn--ghost" id="bl-pause-no" ${k('cancelBtn')}</button></div>
     </div>` : ''}` : `<p class="nl-help" ${k('ownerOnly')}</p>`}`;
   } else if (view.planTier === 'free') {
     action = `<p ${k('free')}</p>`;
@@ -6330,12 +6333,12 @@ async function handleLeagueBillingPage(req, env, url) {
     ${st.status === 'grace' && st.mailStopped ? `<p class="bl-note" ${k('emailsStopped')}</p>` : ''}
     ${bi(L.grace, 'p', ' class="bl-note"')}
     ${view.countTier === 'free' ? `<p ${k('secondLeague')}</p>` : ''}
-    <fieldset class="bl-choice"${ctx.isOwner ? '' : ' disabled'}>
+    <fieldset class="bl-choice"${ctx.isOwner && !dis ? '' : ' disabled'}>
       <label><input type="radio" name="bl-interval" value="month" checked> ${bi(L.monthly, 'span')}</label>
       <label><input type="radio" name="bl-interval" value="year"> ${bi(L.yearly, 'span')}</label>
     </fieldset>
     <p class="nl-help" ${k('taxNote')}</p>
-    ${ctx.isOwner ? `<div class="bl-actions"><button type="button" class="nl-btn nl-btn--primary" data-billing="checkout" ${k('subscribe')}</button></div>` : `<p class="nl-help" ${k('ownerOnly')}</p>`}`;
+    ${ctx.isOwner ? `<div class="bl-actions"><button type="button" class="nl-btn nl-btn--primary" data-billing="checkout"${dis} ${k('subscribe')}</button></div>` : `<p class="nl-help" ${k('ownerOnly')}</p>`}`;
   }
   const banner = status === 'success' ? `<p class="bl-banner bl-ok" role="status" ${k('success')}</p>`
     : status === 'cancel' ? `<p class="bl-banner" role="status" ${k('canceled')}</p>` : '';

@@ -14,11 +14,12 @@ import { startPublicPageWorker, launchChromium } from './support/public_page_har
 import { formatPageDate } from '../../src/date_format.js';
 
 let h, browser, owner, leagueId;
+const ADMIN_KEY = 'billing-states-admin-key';
 const DAY = 86400000;
 const iso = ms => new Date(Date.now() + ms).toISOString();
 
 beforeAll(async () => {
-  h = await startPublicPageWorker({ extraVars: { BILLING_LAUNCH_AT: '2026-10-01T00:00:00Z' } });
+  h = await startPublicPageWorker({ extraVars: { BILLING_LAUNCH_AT: '2026-10-01T00:00:00Z', ADMIN_KEY } });
   browser = await launchChromium();
   owner = await h.signup('rendered.billing.owner@example.com');
   leagueId = (await (await h.api('/leagues/create', { ...owner, body: { name: 'Billing States', teamNames: ['A', 'B'], tracksStats: false } })).json()).league.id;
@@ -73,9 +74,10 @@ function visibleMessages({ keys, dated }) {
   return out.sort();
 }
 
-async function openPage(query = '') {
+async function openPage(query = '', extraCookies = []) {
   const context = await browser.newContext({ locale: 'fr-CA', viewport: { width: 390, height: 900 } });
   await context.addCookies(owner.cookie.split('; ').map(c => { const i = c.indexOf('='); return { name: c.slice(0, i), value: c.slice(i + 1), url: h.baseUrl + '/' }; }));
+  if (extraCookies.length) await context.addCookies(extraCookies);
   const page = await context.newPage();
   const res = await page.goto(h.baseUrl + '/league/billing' + query);
   expect(res.status()).toBe(200);
@@ -168,6 +170,46 @@ describe('the billing page shows only the messages of its state', () => {
       await context.close();
     }
   }, 60000);
+
+  // Item D (2026-10-02): in support mode every action shows disabled, like
+  // every other change there (the server refuses them anyway).
+  it('support mode: Subscribe, Manage, Pause, Resume and Add a card show disabled', async () => {
+    const res = await fetch(h.baseUrl + '/super-admin/support/start', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin': ADMIN_KEY }, body: JSON.stringify({ leagueId }) });
+    expect(res.status).toBe(200);
+    const set = (res.headers.get('set-cookie') || '').split(';')[0];
+    const i = set.indexOf('=');
+    expect(set.slice(0, i)).toBe('nl_support');
+    const support = [{ name: 'nl_support', value: set.slice(i + 1), url: h.baseUrl + '/' }];
+    const buttons = page => page.evaluate(() => [...document.querySelectorAll('#bl-main [data-billing], #bl-main #bl-pause-ask')]
+      .map(b => [b.getAttribute('data-billing') || b.id, b.disabled]));
+    const cases = {
+      none: [['checkout', true]],
+      active: [['portal', true], ['bl-pause-ask', true], ['pause', true]],
+      paused: [['portal', true], ['resume', true]],
+      stripePaused: [['portal', true]]
+    };
+    try {
+      for (const [state, want] of Object.entries(cases)) {
+        await setState(state);
+        const { page, context } = await openPage('', support);
+        try {
+          expect(await page.locator('#nl-support-banner').count()).toBe(1);
+          expect(await buttons(page)).toEqual(want);
+          if (state === 'none') expect(await page.locator('#bl-main fieldset.bl-choice').evaluate(f => f.disabled)).toBe(true);
+          if (state === 'stripePaused') expect(await page.locator('#bl-main [data-i18n="addCard"]').isDisabled()).toBe(true);
+        } finally {
+          await context.close();
+        }
+      }
+      // Outside support mode, the same page: every action enabled.
+      await setState('active');
+      const { page, context } = await openPage();
+      try { expect(await buttons(page)).toEqual([['portal', false], ['bl-pause-ask', false], ['pause', false]]); }
+      finally { await context.close(); }
+    } finally {
+      await fetch(h.baseUrl + '/super-admin/support/exit', { method: 'POST', headers: { cookie: set }, redirect: 'manual' });
+    }
+  }, 120000);
 
   it('a failed resume shows the error, once it has failed', async () => {
     await setState('paused');
