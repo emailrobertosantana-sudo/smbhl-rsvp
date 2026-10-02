@@ -122,14 +122,16 @@ describe('item 3: the pricing section', () => {
       'Sur mesure', 'Plus de 100 joueurs', '<a href="mailto:bonjour@notreligue.ca" data-i18n="writeUs">Écris-nous</a>',
       'Prix avant taxes. Seuls les joueurs réguliers avec un courriel comptent. 2 mois gratuits pour chaque ligue, sans carte. Les forfaits mensuels peuvent être mis en pause pendant la saison morte.'
     ]) expect(sec).toContain(s);
-    expect(sec.match(/Facturation bientôt disponible/g)).toHaveLength(2);
+    // Billing is live (2026-10-02): no "coming soon" badge on the cards.
+    expect(sec).not.toMatch(/bientôt disponible|nl-badge/);
     expect(sec.match(/href="\/signup"/g)).toHaveLength(3);
     expect(sec).not.toMatch(/stripe|checkout|acheter maintenant|s'abonner/i);
     const en = await (await home('/?lang=en')).text();
     for (const s of ['>Pricing<', 'One flat monthly price.', 'No credits to buy, and nothing blocks your schedule.', 'Under 15 players', '$0',
       '$9.99 CAD per month, or $99.90 per year', '$19.99 CAD per month, or $199.90 per year', 'Custom', 'Over 100 players', '>Write to us</a>',
-      'Billing coming soon', 'Prices before tax. Only regular players with an email count. 2 months free for every league, no card. Monthly plans can pause for the off-season.'
+      'Prices before tax. Only regular players with an email count. 2 months free for every league, no card. Monthly plans can pause for the off-season.'
     ]) expect(en).toContain(s);
+    expect(en).not.toContain('Billing coming soon');
   });
 });
 

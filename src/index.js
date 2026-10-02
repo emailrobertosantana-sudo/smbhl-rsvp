@@ -535,7 +535,6 @@ const I18N_HOME = {
     t2Name: 'Standard', t2Range: '15 à 50 joueurs', t2Price: '9,99\u00a0$ CAD par mois, ou 99,90\u00a0$ par an',
     t3Name: 'Plus', t3Range: '51 à 100 joueurs', t3Price: '19,99\u00a0$ CAD par mois, ou 199,90\u00a0$ par an',
     t4Name: 'Sur mesure', t4Range: 'Plus de 100 joueurs', writeUs: 'Écris-nous',
-    soon: 'Facturation bientôt disponible',
     priceNote: 'Prix avant taxes. Seuls les joueurs réguliers avec un courriel comptent. 2 mois gratuits pour chaque ligue, sans carte. Les forfaits mensuels peuvent être mis en pause pendant la saison morte.',
     eyebrow2: 'Comment ça marche', heading2: 'Trois étapes, une fois. Ensuite ça roule tout seul.',
     s1Title: 'Créer ta ligue', s1Body: "Le nom, ta formule de jeu, l'adresse de ta page. Cinq minutes.",
@@ -566,7 +565,6 @@ const I18N_HOME = {
     t2Name: 'Standard', t2Range: '15 to 50 players', t2Price: '$9.99 CAD per month, or $99.90 per year',
     t3Name: 'Plus', t3Range: '51 to 100 players', t3Price: '$19.99 CAD per month, or $199.90 per year',
     t4Name: 'Custom', t4Range: 'Over 100 players', writeUs: 'Write to us',
-    soon: 'Billing coming soon',
     priceNote: 'Prices before tax. Only regular players with an email count. 2 months free for every league, no card. Monthly plans can pause for the off-season.',
     eyebrow2: 'How it works', heading2: 'Three steps, once. Then it runs itself.',
     s1Title: 'Create your league', s1Body: 'Name, how it runs, your page address. Five minutes.',
@@ -710,7 +708,6 @@ function renderMarketingHomepage(req, forcedLang = null) {
   .home-tier h3 { font: 700 20px/26px var(--font-display); font-stretch: 118%; }
   .home-tier .range { color: var(--ink-muted); font-size: 15px; }
   .home-tier .price { font-weight: 700; font-size: 17px; line-height: 24px; }
-  .home-tier .nl-badge { align-self: flex-start; }
   .home-tier .go { margin-top: auto; }
   .home-tier .go a { text-decoration: underline; font-weight: 600; color: var(--ink); }
   p.home-fine { margin-top: var(--space-5); color: var(--ink-muted); font-size: 13px; line-height: 19px; max-width: 760px; }
@@ -817,8 +814,8 @@ function renderMarketingHomepage(req, forcedLang = null) {
   <p class="home-sub" data-i18n="sublineP">${T.sublineP}</p>
   <div class="home-tiers">
     <div class="home-tier"><h3 data-i18n="t1Name">${T.t1Name}</h3><div class="range" data-i18n="t1Range">${T.t1Range}</div><div class="price" data-i18n="t1Price">${T.t1Price}</div><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
-    <div class="home-tier"><h3 data-i18n="t2Name">${T.t2Name}</h3><div class="range" data-i18n="t2Range">${T.t2Range}</div><div class="price" data-i18n="t2Price">${T.t2Price}</div><span class="nl-badge" data-i18n="soon">${T.soon}</span><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
-    <div class="home-tier"><h3 data-i18n="t3Name">${T.t3Name}</h3><div class="range" data-i18n="t3Range">${T.t3Range}</div><div class="price" data-i18n="t3Price">${T.t3Price}</div><span class="nl-badge" data-i18n="soon">${T.soon}</span><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t2Name">${T.t2Name}</h3><div class="range" data-i18n="t2Range">${T.t2Range}</div><div class="price" data-i18n="t2Price">${T.t2Price}</div><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t3Name">${T.t3Name}</h3><div class="range" data-i18n="t3Range">${T.t3Range}</div><div class="price" data-i18n="t3Price">${T.t3Price}</div><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
     <div class="home-tier"><h3 data-i18n="t4Name">${T.t4Name}</h3><div class="range" data-i18n="t4Range">${T.t4Range}</div><div class="go"><a href="mailto:bonjour@notreligue.ca" data-i18n="writeUs">${T.writeUs}</a></div></div>
   </div>
   <p class="home-fine" data-i18n="priceNote">${T.priceNote}</p>
