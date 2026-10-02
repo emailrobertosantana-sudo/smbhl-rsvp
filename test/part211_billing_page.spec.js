@@ -145,7 +145,7 @@ describe('the page and Checkout', () => {
     expect(y.locale).toBe('en');
   });
 
-  it('Plus prices above 50; free under 15 and custom above 100 have no Checkout', async () => {
+  it('Plus prices above 50 and above 100 (until a custom price is agreed); free under 15 has no Checkout', async () => {
     on(); stub();
     const plus = await league('plus', 60);
     const pt = text(await (await page(plus.owner)).text());
@@ -161,11 +161,16 @@ describe('the page and Checkout', () => {
     expect((await act(free.owner, 'checkout', { interval: 'month' })).status).toBe(409);
     const big = await league('big', 101);
     const bt = text(await (await page(big.owner)).text());
-    expect(bt).toContain('Plus de 100 joueurs réguliers\u00a0: écris-nous à bonjour@notreligue.ca pour un prix sur mesure.');
-    expect(bt).not.toContain("S'abonner");
+    expect(bt).toContain("Plus de 100 joueurs réguliers : écris-nous à bonjour@notreligue.ca pour un prix sur mesure. D'ici là, le forfait Plus s'applique.");
+    expect(bt).toContain('Ta ligue compte 101 joueurs réguliers : forfait Plus.');
+    expect(bt).toContain('Mensuel : 19,99 $ par mois');
+    expect(bt).toContain("S'abonner");
     const be = text(await (await page(big.owner, '', 'en')).text());
-    expect(be).toContain('More than 100 regular players: write to bonjour@notreligue.ca for a custom price.');
-    expect((await act(big.owner, 'checkout', { interval: 'month' })).status).toBe(409);
+    expect(be).toContain('More than 100 regular players: write to bonjour@notreligue.ca for a custom price. Until then, the Plus plan applies.');
+    expect(be).toContain('Subscribe');
+    calls = [];
+    expect((await act(big.owner, 'checkout', { interval: 'year' })).status).toBe(200);
+    expect(calls.find(x => x.path === '/checkout/sessions').form['line_items[0][price]']).toBe('price_plus_y');
     expect(text(await (await page(free.owner, '', 'en')).text())).toContain('Your league is free (fewer than 15 regular players).');
   });
 

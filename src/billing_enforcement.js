@@ -22,7 +22,7 @@
 //     days after the second.
 // Nothing at all while BILLING_LAUNCH_AT is unset: the first thing it does
 // is return. SMBHL is never read.
-import { billingEnabled, SMBHL_ID, classifyLeague, freeSlotsByOwner, isFreeEligible, addMonths, leagueStateFor, GRACE_DAYS, INACTIVE_DELETE_MONTHS } from './billing.js';
+import { billingEnabled, SMBHL_ID, planTierForCount, classifyLeague, freeSlotsByOwner, isFreeEligible, addMonths, leagueStateFor, GRACE_DAYS, INACTIVE_DELETE_MONTHS } from './billing.js';
 import { subscriptionHasCard, resumeIfCardAdded } from './stripe_webhook.js';
 import { renderBillingNotice, OWNER_NOTICES, BILLING_NOTICE_KIND } from './billing_notices.js';
 import { performLeagueHardDelete } from './hard_delete.js';
@@ -92,7 +92,7 @@ async function enforceLeague(env, host, league, row, freeEligible, now) {
   const left = state.trialEnd ? Date.parse(state.trialEnd) - nowMs : 0;
   const trialing = (state.status === 'trial' && !live) || (state.status === 'active' && live);
   if (trialing && left > 0 && left <= 7 * DAY) {
-    const needsPlan = live || (!(state.countTier === 'free' && freeEligible) && state.countTier !== 'custom');
+    const needsPlan = live || !(state.countTier === 'free' && freeEligible);
     const kind = left <= DAY ? 'trial_day' : 'trial_7d';
     if (needsPlan && !(await noticeSent(env, league.id, kind, state.trialEnd))) {
       // Subscribed: only when no card is on file (Stripe, asked once per notice).
@@ -117,10 +117,12 @@ async function enforceLeague(env, host, league, row, freeEligible, now) {
 
   // A paid league whose count belongs in the other paid tier: the change
   // applies at the next billing date (src/billing_actions.js runTierChanges).
+  // Over 100 counts as Plus (until a custom price is agreed).
+  const paidTier = planTierForCount(state.count);
   if (state.status === 'active' && live && !row.cancel_at_period_end && row.current_period_end
-      && ['standard', 'plus'].includes(state.countTier) && ['standard', 'plus'].includes(row.tier) && state.countTier !== row.tier) {
-    await send('tier_change', `${state.countTier}:${row.current_period_end}`, {
-      date: row.current_period_end, count: state.count, oldTier: row.tier, newTier: state.countTier, interval: row.billing_interval
+      && ['standard', 'plus'].includes(paidTier) && ['standard', 'plus'].includes(row.tier) && paidTier !== row.tier) {
+    await send('tier_change', `${paidTier}:${row.current_period_end}`, {
+      date: row.current_period_end, count: state.count, oldTier: row.tier, newTier: paidTier, interval: row.billing_interval
     });
   }
 
@@ -128,7 +130,8 @@ async function enforceLeague(env, host, league, row, freeEligible, now) {
   if (state.status === 'past_due') await send('payment_failed', (row && row.current_period_end) || 'unknown', {});
 
   // Above 100 regular players: once, to the owner (and the operator's digest,
-  // src/ops_digest.js, from this notice's record). No gating.
+  // src/ops_digest.js, from this notice's record). The league is otherwise
+  // treated like any other, and can subscribe to Plus.
   if (state.countTier === 'custom') await send('over_100', 'count', { count: state.count });
 
   // The 12-month clock.

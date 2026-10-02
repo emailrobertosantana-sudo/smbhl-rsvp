@@ -269,16 +269,38 @@ describe('a paid league', () => {
     expect((await row(id)).inactive_since).toBe(null);
   });
 
-  it('over 100 regular players: the owner once, the digest lists it, nothing gated', async () => {
+  it('over 100 regular players: the owner once (subscribe to Plus meanwhile), the digest lists it; treated like any other league', async () => {
     const id = await mkLeague('c1', { coAdmins: 1, billing: NO_SUB(120, -30 * DAY) });
     queued = [];
     await run(); await run(DAY);
-    expect(mailsFor(id).map(m => m.to)).toEqual(['u-c1@example.com']);
-    expect(mailsFor(id)[0].mail.text).toContain('Ligue c1 compte maintenant 120 joueurs réguliers.');
-    expect((await loadLeagueState(env, id, at(0)))).toMatchObject({ status: 'custom', readOnly: false, mailStopped: false });
+    const over = mailsFor(id).filter(m => /plus de 100/.test(m.mail.subject));
+    expect(over.map(m => m.to)).toEqual(['u-c1@example.com']);
+    expect(over[0].mail.text).toContain("Ligue c1 compte maintenant 120 joueurs réguliers. Au-delà de 100, le prix est établi sur mesure : écris-nous à bonjour@notreligue.ca. D'ici là, tu peux t'abonner au forfait Plus.");
+    expect(over[0].mail.text).toContain("Voir l'abonnement : https://rsvp.notreligue.example/league/billing?league_id=c1");
+    const en = noticeContent('over_100', { leagueName: 'Les Hiboux', count: 120 }).en;
+    expect(en.paragraphs).toEqual(['Les Hiboux now has 120 regular players. Above 100, the price is set case by case: write to bonjour@notreligue.ca. Until then, you can subscribe to the Plus plan.']);
+    expect(en.button).toBe('See the subscription');
+    // The trial ended unpaid: read-only like any other league, every admin told.
+    expect(mailsFor(id).filter(m => /lecture seule/.test(m.mail.subject)).map(m => m.to).sort()).toEqual(['u-c1-co1@example.com', 'u-c1@example.com']);
+    expect((await loadLeagueState(env, id, at(0)))).toMatchObject({ status: 'unpaid', readOnly: true, inactive: true });
+    expect((await row(id)).inactive_since).toBe(iso(-30 * DAY));
     const pending = await prepareOpsDigest(env, { day: '2026-10-03' }, at(DAY - 1000));
     expect(pending.items.custom.map(c => c.id)).toContain(id);
     expect(renderOpsDigest(pending).text).toContain('Ligue c1 : 120 joueurs réguliers');
+  });
+
+  it('over 100 on Standard: the plan changes to Plus at the next billing date', async () => {
+    const id = await mkLeague('c3', { billing: { ...NO_SUB(110, -30 * DAY), ...LIVE('c3'), status: 'active', stripe_status: 'active' } });
+    queued = [];
+    await run();
+    expect(mailsFor(id).map(m => m.mail.subject)).toContain(`Ligue c3 : ton forfait passe à Plus le ${noticeDate(iso(10 * DAY), 'fr')}`);
+  });
+
+  it('over 100 in its trial: the trial notices ask to subscribe', async () => {
+    const id = await mkLeague('c2', { billing: NO_SUB(130, 5 * DAY) });
+    queued = [];
+    await run();
+    expect(mailsFor(id).map(m => m.mail.subject).some(s => /ton essai gratuit se termine le/.test(s))).toBe(true);
   });
 });
 

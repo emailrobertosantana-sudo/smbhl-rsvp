@@ -206,18 +206,16 @@ export function noticeContent(kind, v) {
         fr: {
           subject: `${L}${NB}: plus de 100 joueurs réguliers`,
           paragraphs: [
-            `${L} compte maintenant ${N} joueurs réguliers. Au-delà de 100, le prix est établi sur mesure.`,
-            "Écris-nous à bonjour@notreligue.ca et nous te proposerons un prix. Rien ne change pour ta ligue d'ici là."
+            `${L} compte maintenant ${N} joueurs réguliers. Au-delà de 100, le prix est établi sur mesure${NB}: écris-nous à bonjour@notreligue.ca. D'ici là, tu peux t'abonner au forfait Plus.`
           ],
-          button: null
+          button: see.fr
         },
         en: {
           subject: `${L}: more than 100 regular players`,
           paragraphs: [
-            `${L} now has ${N} regular players. Above 100, the price is set case by case.`,
-            "Write to us at bonjour@notreligue.ca and we'll suggest a price. Nothing changes for your league until then."
+            `${L} now has ${N} regular players. Above 100, the price is set case by case: write to bonjour@notreligue.ca. Until then, you can subscribe to the Plus plan.`
           ],
-          button: null
+          button: see.en
         }
       };
     case 'deletion_30d':

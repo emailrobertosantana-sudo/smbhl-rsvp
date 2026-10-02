@@ -24,7 +24,7 @@
 //   at the new price.
 // Only the league's owner (leagues.created_by) acts; every admin sees the
 // page. SMBHL is never billed. Nothing happens while billing is off.
-import { billingEnabled, refreshRegularCount, tierForCount, trialWindow, leagueStateFor, SMBHL_ID } from './billing.js';
+import { billingEnabled, refreshRegularCount, tierForCount, planTierForCount, trialWindow, leagueStateFor, SMBHL_ID } from './billing.js';
 import { stripeRequest, stripeId } from './stripe.js';
 import { writeSubscription } from './stripe_webhook.js';
 
@@ -64,12 +64,14 @@ export async function billingView(env, leagueId, now = new Date()) {
   // keeps the free slot) needs the Standard plan.
   const state = await leagueStateFor(env, league, row, now);
   const freeEligible = !!(state && state.freeEligible);
-  const planTier = countTier === 'free' && !freeEligible ? 'standard' : countTier;
+  // Over 100: Plus through Checkout until a custom price is agreed.
+  const planTier = countTier === 'free' && !freeEligible ? 'standard' : planTierForCount(count);
+  const paidTier = planTierForCount(count);
   return {
     league, row, count, countTier, state, freeEligible, planTier,
     trial: trial ? { end: trial.end, daysLeft: trialLeftMs > 0 ? Math.ceil(trialLeftMs / DAY) : 0 } : null,
     live: hasLiveSubscription(row),
-    pendingTier: hasLiveSubscription(row) && ['standard', 'plus'].includes(countTier) && row.tier !== countTier ? countTier : null
+    pendingTier: hasLiveSubscription(row) && ['standard', 'plus'].includes(paidTier) && ['standard', 'plus'].includes(row.tier) && row.tier !== paidTier ? paidTier : null
   };
 }
 
@@ -193,20 +195,22 @@ export async function resumeSubscription(env, leagueId, now = new Date()) {
 // Once a day per league is enough, but it is cheap and idempotent, so the
 // cron calls it every pass. The price moves to the tier the count implies
 // within the last TIER_CHANGE_WINDOW_HOURS before the renewal, with no
-// proration: the renewal invoice is the first at the new price. Free and
-// custom counts are left for batch 3 (grace, a custom price by hand).
+// proration: the renewal invoice is the first at the new price. A count
+// over 100 is Plus (until a custom price is agreed); a subscription on a
+// custom price is never changed; free counts are left to the enforcement.
 export async function runTierChanges(env, now = new Date()) {
   if (!billingEnabled(env)) return 0;
   const until = new Date(now.getTime() + TIER_CHANGE_WINDOW_HOURS * 3600000).toISOString();
   const rows = (await env.DB.prepare(
     `SELECT * FROM league_billing
       WHERE stripe_subscription_id IS NOT NULL AND status = 'active' AND cancel_at_period_end = 0
-        AND count_tier IN ('standard', 'plus') AND tier IN ('standard', 'plus') AND count_tier != tier
+        AND count_tier IN ('standard', 'plus', 'custom') AND tier IN ('standard', 'plus')
+        AND (CASE WHEN count_tier = 'custom' THEN 'plus' ELSE count_tier END) != tier
         AND current_period_end IS NOT NULL AND current_period_end > ? AND current_period_end <= ?`
   ).bind(now.toISOString(), until).all()).results || [];
   let changed = 0;
   for (const row of rows) {
-    const price = priceIdFor(env, row.count_tier, row.billing_interval);
+    const price = priceIdFor(env, row.count_tier === 'custom' ? 'plus' : row.count_tier, row.billing_interval);
     if (!price) continue;
     const sub = await stripeRequest(env, 'GET', `/subscriptions/${stripeId(row.stripe_subscription_id)}`);
     const item = sub.items && sub.items.data && sub.items.data[0];

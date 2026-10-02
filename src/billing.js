@@ -46,6 +46,13 @@ export function tierForCount(n) {
   return 'custom';
 }
 
+// The paid plan a count needs: over 100 is Plus through Checkout until a
+// custom price is agreed (Roberto, 2026-10-02). Free stays free.
+export function planTierForCount(n) {
+  const t = tierForCount(n);
+  return t === 'custom' ? 'plus' : t;
+}
+
 // The launch date, or null when billing is off.
 export function billingLaunchAt(env) {
   const raw = env && env.BILLING_LAUNCH_AT;
@@ -185,7 +192,7 @@ const LIVE_STATUSES = ['active', 'past_due', 'paused'];
 
 // Batch 3: where a league stands, and what that means. Pure.
 //   status   exempt | off | trial | free | active | past_due | paused |
-//            grace | custom | unpaid
+//            grace | unpaid
 //   readOnly every change refused (src/write_guard.js mode 'billing'),
 //            automatic emails stopped; players still answer
 //   reason   trial_ended | trial_no_card | paused | payment_failed |
@@ -195,7 +202,9 @@ const LIVE_STATUSES = ['active', 'past_due', 'paused'];
 //   inactive the 12-month clock runs (trial ended unpaid, or cancelled)
 // A free league that reaches 15 (row.status 'free', written by the daily
 // job, src/billing_enforcement.js) is in its grace, never read-only.
-// Above 100 players nothing is gated (a custom price is agreed by hand).
+// Above 100 players a league is treated like any other (trial, read-only,
+// notices, the 12-month clock); it subscribes to Plus through Checkout until
+// a custom price is agreed (Roberto, 2026-10-02).
 // A live subscription decides before the trial: a league that subscribed
 // inside its trial is active, paused or past due as Stripe says.
 export function classifyLeague(env, league, row, { freeEligible = false, now = new Date() } = {}) {
@@ -219,7 +228,6 @@ export function classifyLeague(env, league, row, { freeEligible = false, now = n
   if (live && row.status === 'past_due') return { ...ro('payment_failed'), status: 'past_due' };
   if (trial && now.getTime() < Date.parse(trial.end)) return { ...s, status: 'trial' };
   if (countTier === 'free' && freeEligible) return { ...s, status: 'free' };
-  if (countTier === 'custom') return { ...s, status: 'custom' };
   if (row && (row.grace_ends_at || row.status === 'free')) {
     const ended = !!(row.grace_ends_at && now.getTime() >= Date.parse(row.grace_ends_at));
     return { ...s, status: 'grace', graceEndsAt: row.grace_ends_at || null, mailStopped: ended };

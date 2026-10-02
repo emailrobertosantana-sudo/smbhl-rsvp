@@ -115,8 +115,10 @@ describe('the state (classifyLeague)', () => {
     expect(st({ ...LIVE, ...PAST_TRIAL, status: 'past_due', stripe_status: 'past_due' })).toMatchObject({ status: 'past_due', readOnly: true, reason: 'payment_failed', inactive: false });
     expect(st({ ...LIVE, ...PAST_TRIAL, status: 'inactive', stripe_status: 'canceled', last_paid_at: iso(-40 * DAY) })).toMatchObject({ status: 'unpaid', readOnly: true, reason: 'cancelled', inactive: true });
     expect(st({ ...LIVE, ...PAST_TRIAL, status: 'active', stripe_status: 'active' })).toMatchObject({ status: 'active', readOnly: false });
-    // Above 100: no automatic gating.
-    expect(st({ ...NO_SUB, ...PAST_TRIAL, regular_count: 120 })).toMatchObject({ status: 'custom', readOnly: false, mailStopped: false });
+    // Above 100: like any other league (Roberto, 2026-10-02): read-only once the trial ends unpaid.
+    expect(st({ ...NO_SUB, ...PAST_TRIAL, regular_count: 120 })).toMatchObject({ status: 'unpaid', readOnly: true, reason: 'trial_ended', inactive: true });
+    expect(st({ ...NO_SUB, ...IN_TRIAL, regular_count: 120 })).toMatchObject({ status: 'trial', readOnly: false });
+    expect(st({ ...LIVE, ...PAST_TRIAL, regular_count: 120, status: 'active', stripe_status: 'active', tier: 'plus' })).toMatchObject({ status: 'active', readOnly: false });
     // Under 15 and the owner's free league.
     expect(st({ ...NO_SUB, ...PAST_TRIAL, regular_count: 10 }, { freeEligible: true })).toMatchObject({ status: 'free', readOnly: false });
     expect(st({ ...NO_SUB, ...PAST_TRIAL, regular_count: 10 }, { freeEligible: false })).toMatchObject({ status: 'unpaid', readOnly: true });

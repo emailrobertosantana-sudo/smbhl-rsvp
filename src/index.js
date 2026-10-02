@@ -6066,7 +6066,7 @@ const I18N_BILLING = {
     navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Paramètres',
     title: 'Abonnement',
     free: 'Ta ligue est gratuite (moins de 15 joueurs réguliers).',
-    custom: 'Plus de 100 joueurs réguliers : écris-nous à bonjour@notreligue.ca pour un prix sur mesure.',
+    custom: 'Plus de 100 joueurs réguliers : écris-nous à bonjour@notreligue.ca pour un prix sur mesure. D\'ici là, le forfait Plus s\'applique.',
     trialOver: 'Ton essai gratuit est terminé.',
     taxNote: 'Prix avant taxes.',
     subscribe: "S'abonner",
@@ -6089,7 +6089,7 @@ const I18N_BILLING = {
     navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Settings',
     title: 'Subscription',
     free: 'Your league is free (fewer than 15 regular players).',
-    custom: 'More than 100 regular players: write to bonjour@notreligue.ca for a custom price.',
+    custom: 'More than 100 regular players: write to bonjour@notreligue.ca for a custom price. Until then, the Plus plan applies.',
     trialOver: 'Your free trial has ended.',
     taxNote: 'Prices before tax.',
     subscribe: 'Subscribe',
@@ -6229,8 +6229,6 @@ async function handleLeagueBillingPage(req, env, url) {
     </div>` : ''}` : `<p class="nl-help" ${k('ownerOnly')}</p>`}`;
   } else if (view.planTier === 'free') {
     action = `<p ${k('free')}</p>`;
-  } else if (view.planTier === 'custom') {
-    action = `<p ${k('custom')}</p>`;
   } else if (paid) {
     action = `${!L.trial && view.trial ? `<p ${k('trialOver')}</p>` : ''}
     ${st.status === 'unpaid' ? `<p class="bl-note" ${k('readOnlyNote')}</p>` : ''}
@@ -6266,6 +6264,7 @@ async function handleLeagueBillingPage(req, env, url) {
   <section class="nl-card nl-card--pad-lg bl-card">
     ${bi(L.count)}
     ${view.live ? '' : bi(L.trial)}
+    ${view.countTier === 'custom' ? `<p ${k('custom')}</p>` : ''}
     ${action}
   </section>
 </main>
