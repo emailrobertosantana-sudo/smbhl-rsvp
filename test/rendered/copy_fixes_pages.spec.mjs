@@ -37,7 +37,7 @@ async function open(path, lang, cookies) {
 describe('5a: SMBHL people page counts', () => {
   it('French and English, one and many: no unfilled placeholder', async () => {
     const admin = [{ name: 'admin_key', value: ADMIN_KEY, url: h.baseUrl + '/' }];
-    for (const [lang, skaters, goalies] of [['fr', '3 joueurs disponibles', '1 gardien disponible'], ['en', '3 skaters available', '1 goalie available']]) {
+    for (const [lang, skaters, goalies] of [['fr', '3 joueurs disponibles', '1 gardien disponible'], ['en', '3 players available', '1 goalie available']]) {
       const { page, ctx } = await open('/admin/people', lang, admin);
       expect(await page.textContent('#sub-skater-desc')).toBe(skaters);
       expect(await page.textContent('#sub-goalie-desc')).toBe(goalies);

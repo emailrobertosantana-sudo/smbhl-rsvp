@@ -51,7 +51,7 @@ describe('The first add of regular players in a league: a notice, then never aga
     expect(r.json).toMatchObject({ ok: false, errorKey: 'ADD_NOTICE_REQUIRED', needsRegularNotice: true, regularCount: 1, teamlessCount: 0, addCount: 1 });
     expect(r.json.needsEmailChoice).toBeUndefined();
     // The game is 10 days away: the first ask is the 72 h reminder, not open yet.
-    expect(r.json.firstEmail).toEqual({ kind: 'reminder', hours: 72, soon: false, date: { fr: expect.stringMatching(/^\w+ \d+ \w+\.? · 19 h$/u), en: expect.stringMatching(/ · 7 PM$/) } });
+    expect(r.json.firstEmail).toEqual({ kind: 'reminder', hours: 72, soon: false, date: { fr: expect.stringMatching(/^\p{L}+ \d+ \p{L}+\.? à 19 h$/u), en: expect.stringMatching(/ at 7 PM$/) } });
     expect(await regularsOf(lg)).toEqual([]);
     expect(await outboxOf(lg)).toEqual([]);
     expect(mail.sent).toEqual([]);

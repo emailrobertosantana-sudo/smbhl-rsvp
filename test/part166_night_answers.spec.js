@@ -6,7 +6,7 @@
 // that follow each other take everyone. The 12h email's "can't make it" drops
 // the whole night.
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { admin, must, one, rows, mail, installMailCapture, removeMailCapture } from './support/league_season.js';
 import { hmac } from '../src/crypto_utils.js';
@@ -182,7 +182,15 @@ describe('The 12h email\'s "can\'t make it" drops the whole night', () => {
     expect(html).toContain('data-i18n="confirmAnswerOutNight"');
     const d = dictOf(html);
     expect([d.fr.confirmAnswerOutNight, d.en.confirmAnswerOutNight]).toEqual(['Tu vas répondre : je ne peux pas, pour toute la journée.', "You're about to answer: can't make it, for the whole day."]);
-    const post = await SELF.fetch(`http://example.com/league/rsvp/confirm?${await p.qs(A)}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'status=out&src=logistics12h', redirect: 'manual' });
+    // The alert fires only inside the details email's 12 hours (batch 7
+    // item 5g): the answer is sent 5 hours before the 19:00 game.
+    const qs = await p.qs(A);
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(`${DATE}T18:00:00Z`));
+    let post;
+    try {
+      post = await SELF.fetch(`http://example.com/league/rsvp/confirm?${qs}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'status=out&src=logistics12h', redirect: 'manual' });
+    } finally { vi.useRealTimers(); }
     expect(post.status).toBe(303);
     expect([await statusOf(A, p), await statusOf(B, p)]).toEqual(['out', 'out']);
     const alerts = mail.sent.filter(m => /dropped out/.test(m.subject));
