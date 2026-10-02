@@ -1,4 +1,5 @@
 import { adminName, adminHello } from './admin_greeting.js';
+import { HIDDEN_ATTR_CSS } from './design_system.js';
 import PostalMime from 'postal-mime';
 import { checkAdminAuth, adminPageHeaders, generateReviewToken } from './admin_auth.js';
 import { computeWeeklyRecap } from './highlights.js';
@@ -897,6 +898,7 @@ export function renderReviewPage(review, candidatePlayers = [], options = {}) {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+  ${HIDDEN_ATTR_CSS}
   :root {
     --ink: #16181d;
     --ink-soft: #5d636e;
@@ -2206,6 +2208,7 @@ export function renderReviewIndex(reviews = [], backups = [], showStatsTabs = tr
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+  ${HIDDEN_ATTR_CSS}
   :root {
     --ink: #16181d;
     --ink-soft: #5d636e;

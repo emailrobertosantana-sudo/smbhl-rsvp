@@ -579,6 +579,14 @@ export const NL_FONT_FACE_CSS = [
   ['archivo-latin.woff2', 'U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD']
 ].map(([file, range]) => `@font-face{font-family:'Archivo';font-style:normal;font-weight:400 800;font-stretch:62% 125%;font-display:swap;src:url(/fonts/${file}) format('woff2');unicode-range:${range};}`).join('');
 
+// The hidden attribute always hides. The browser's own [hidden] rule is
+// weaker than any class that sets display (.nl-error and .nl-btn in the
+// bundle, a page's flex box), so an element marked hidden showed anyway: the
+// billing page's error and pause confirmation, the second language's footer
+// on the availability page. Our own rule, not part of the bundle copy, on
+// every page shell (nlDocument, page() in src/index.js, src/review.js).
+export const HIDDEN_ATTR_CSS = '[hidden]{display:none !important}';
+
 export function nlDocument({ title, titles = null, description = '', bodyHtml, lang = 'fr', leagueColor = null }) {
   const shown = titles ? (lang === 'en' ? titles.en : titles.fr) : title;
   const titlesMeta = titles ? `<meta name="nl-titles" data-title-fr="${nlEmailEsc(titles.fr)}" data-title-en="${nlEmailEsc(titles.en)}">` : '';
@@ -588,7 +596,7 @@ ${CLIENT_ERROR_REPORTER}
 <title>${nlEmailEsc(shown)}</title>${titlesMeta}
 ${description ? `<meta name="description" content="${nlEmailEsc(description)}">` : ''}
 <link rel="icon" href="${NL_FAVICON_DATA_URI}" type="image/svg+xml">
-<style>${NL_FONT_FACE_CSS}${TOKENS_CSS}${BUNDLE_CSS}${leagueColor ? `:root{--league:${nlEmailEsc(leagueColor)};--on-league:#ffffff}` : ''}</style>
+<style>${NL_FONT_FACE_CSS}${TOKENS_CSS}${BUNDLE_CSS}${HIDDEN_ATTR_CSS}${leagueColor ? `:root{--league:${nlEmailEsc(leagueColor)};--on-league:#ffffff}` : ''}</style>
 </head><body class="nl">
 ${bodyHtml}
 <script>${BUNDLE_JS}</script>

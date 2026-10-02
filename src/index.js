@@ -15,7 +15,7 @@ import { legalRoute, nlLegalEmailWrap, legalLinksPageHtml, legalLinksEmailHtml, 
 import { TERMS_LABEL, getTermsAcceptance } from './terms.js';
 import { ARCHIVO_WOFF2 } from './fonts_archivo.js';
 import { PAYMENT_REMINDER_KIND, getPaymentInfo, savePaymentInfo, hasPaymentInfo, normalizePhone, formatPhone, paymentReminderLines, cleanNote, PAYMENT_PANEL_JS } from './payment_reminders.js';
-import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER } from './design_system.js';
+import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmailWrap, nlEmailButton, assembleBilingualEmail, nlSentByFooter, CLIENT_ERROR_REPORTER, HIDDEN_ATTR_CSS } from './design_system.js';
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime, formatPageDate, formatPageDateTime, PAGE_DATE_JS, endSentence, eventIso, sentenceDate, sentenceWhen, venueLine, delayText } from './date_format.js';
@@ -378,6 +378,7 @@ window.__csrfHeader = function() {
 ${ERROR_TEXT_JS}
 </script>
 <style>
+ ${HIDDEN_ATTR_CSS}
  :root{--ink:#16181d;--soft:#5d636e;--faint:#8b919b;--paper:#eef0f3;--card:#fff;
    --rule:#dde1e7;--rule2:#b9bec7;--red:#b3122c;--blue:#17457f;--green:#1c7a4a;--orange:#f2731f}
  *{box-sizing:border-box}
@@ -6159,6 +6160,9 @@ async function handleLeagueBillingPage(req, env, url) {
   let action = '';
   if (view.live) {
     const canPause = row.billing_interval === 'month' && row.status === 'active' && !row.cancel_at_period_end;
+    // "Billing restarts today." is true only past the trial: in the trial,
+    // resume keeps the first charge at the trial's end (resumeSubscription).
+    const inTrial = row.stripe_status === 'trialing' || !!(row.trial_ends_at && Date.parse(row.trial_ends_at) > Date.now());
     action = `${bi(L.plan)}
     ${row.status === 'paused' ? `<p class="bl-note" ${k('paused')}</p>` : ''}
     ${row.status === 'past_due' ? `<p class="bl-note" ${k('pastDue')}</p>` : ''}
@@ -6168,7 +6172,7 @@ async function handleLeagueBillingPage(req, env, url) {
       ${canPause ? `<button type="button" class="nl-btn nl-btn--secondary" id="bl-pause-ask" ${k('pause')}</button>` : ''}
       ${row.status === 'paused' ? `<button type="button" class="nl-btn nl-btn--secondary" data-billing="resume" ${k('resume')}</button>` : ''}
     </div>
-    ${row.status === 'paused' ? `<p class="nl-help" ${k('resumeNote')}</p>` : ''}
+    ${row.status === 'paused' && !inTrial ? `<p class="nl-help" ${k('resumeNote')}</p>` : ''}
     ${canPause ? `<div class="bl-confirm" id="bl-pause-confirm" hidden>
       <p ${k('pauseConfirm')}</p>
       <div class="bl-actions"><button type="button" class="nl-btn nl-btn--secondary" data-billing="pause" ${k('pauseYes')}</button><button type="button" class="nl-btn nl-btn--ghost" id="bl-pause-no" ${k('cancelBtn')}</button></div>
