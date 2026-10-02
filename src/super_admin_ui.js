@@ -198,7 +198,7 @@ function mtl(t, opts) {
 function day(isoText) {
   if (!isoText) return '';
   var s = String(isoText);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(s)) return s;
   var t = Date.parse(s);
   return isNaN(t) ? s.slice(0, 10) : (mtl(t, { year: 'numeric', month: '2-digit', day: '2-digit' }) || s.slice(0, 10));
 }
