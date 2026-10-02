@@ -14,7 +14,7 @@ import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { applyRealSchema, getRealMigrationQueries } from './support/real_schema.js';
 import { regularCount, refreshRegularCount, refreshDailyRegularCounts, tierForCount, billingSummary, freeSlotLeagueId, trialWindow, addMonths } from '../src/billing.js';
 import { stripeRequest, formEncode, StripeError } from '../src/stripe.js';
-import { verifyStripeSignature } from '../src/stripe_webhook.js';
+import { verifyStripeSignature, processPendingStripeEvents } from '../src/stripe_webhook.js';
 
 const WHSEC = 'whsec_test_p208';
 const LAUNCH = '2026-10-15T00:00:00Z';
@@ -242,12 +242,53 @@ describe('the webhook', () => {
   let n = 0;
   const event = (type, objectId, extra = {}) => ({ id: `evt_p208_${++n}`, type, livemode: true, created: 1790000000 + n, data: { object: { id: objectId } }, ...extra });
 
-  it('is not there while billing is off (404), and makes no Stripe call', async () => {
+  // Batch 8 item 3: before launch, recorded once, never processed.
+  it('before launch without the signing secret: 404, no Stripe call', async () => {
     stubStripe();
     const { raw, header } = await signed(event('customer.subscription.updated', 'sub_1'));
     env.LEAGUE_PRODUCT = 'true';
     expect((await hook(raw, header)).status).toBe(404);
     expect(stripeCalls).toHaveLength(0);
+  });
+
+  it('before launch with the secret: recorded once (200), not processed; a bad signature 400; a duplicate 200', async () => {
+    stubStripe();
+    env.LEAGUE_PRODUCT = 'true';
+    env.STRIPE_WEBHOOK_SECRET = WHSEC;
+    await league('lg-pre');
+    stripeObjects = { '/subscriptions/sub_pre': subscription('sub_pre', { metadata: { league_id: 'lg-pre' } }) };
+    const ev = event('customer.subscription.created', 'sub_pre', { created: 1700000001 });
+    const s = await signed(ev);
+    const first = await hook(s.raw, s.header);
+    expect(first.status).toBe(200);
+    expect((await first.json()).recorded).toBe(true);
+    const rec = await env.DB.prepare('SELECT type, object_id, processed_at, attempts FROM stripe_events WHERE id = ?').bind(ev.id).first();
+    expect(rec).toMatchObject({ type: 'customer.subscription.created', object_id: 'sub_pre', processed_at: null, attempts: 0 });
+    const again = await hook(s.raw, s.header);
+    expect(again.status).toBe(200);
+    expect((await again.json()).duplicate).toBe(true);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM stripe_events WHERE id = ?').bind(ev.id).first()).n).toBe(1);
+    const bad = await signed(ev, { secret: 'whsec_wrong' });
+    expect((await hook(bad.raw, bad.header)).status).toBe(400);
+    expect(stripeCalls).toHaveLength(0);
+    expect(await row('lg-pre')).toBeNull();
+    // Launch: the recorded events are processed once, oldest first.
+    const later = event('customer.subscription.updated', 'sub_pre', { created: 1700000002 });
+    const s2 = await signed(later);
+    await hook(s2.raw, s2.header);
+    billingOn();
+    const processed = await processPendingStripeEvents(env);
+    expect(processed).toBeGreaterThanOrEqual(2);
+    const order = (await env.DB.prepare(`SELECT id, processed_at FROM stripe_events WHERE id IN (?, ?) ORDER BY processed_at`).bind(ev.id, later.id).all()).results;
+    expect(order.every(r => r.processed_at)).toBe(true);
+    const subCalls = stripeCalls.filter(c => c.url.includes('/subscriptions/sub_pre')).length;
+    expect(subCalls).toBe(2);
+    expect(await row('lg-pre')).toMatchObject({ stripe_subscription_id: 'sub_pre', status: 'active' });
+    // Processed once: nothing left to do for them.
+    await processPendingStripeEvents(env);
+    expect(stripeCalls.filter(c => c.url.includes('/subscriptions/sub_pre')).length).toBe(2);
+    const dup = await hook(s.raw, s.header);
+    expect((await dup.json()).duplicate).toBe(true);
   });
 
   it('signature: invalid, expired and malformed answer 400; several v1 values, one right, pass', async () => {

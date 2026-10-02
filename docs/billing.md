@@ -8,7 +8,7 @@ Built in three batches. Batch 1 (this one) is the foundation and is invisible to
 
 - Nothing is gated and no notice is sent.
 - Stripe is never called: `src/stripe.js` refuses every request.
-- `POST /billing/stripe-webhook` answers 404.
+- `POST /billing/stripe-webhook` verifies the signature and records each event once in `stripe_events`, without processing it, and answers 200. Without `STRIPE_WEBHOOK_SECRET` it answers 404. Once `BILLING_LAUNCH_AT` is set, the recorded events are processed once, oldest first (next delivery, and the Notre Ligue cron).
 - The only thing kept is each league's regular-player count (`league_billing`), shown on the super-admin page.
 
 SMBHL is never counted or billed.

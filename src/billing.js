@@ -12,7 +12,8 @@
 // BILLING_LAUNCH_AT (wrangler.jsonc env.demo vars, an ISO date) is the
 // switch. Unset or not a date: billing is off. Nothing is gated, no notice
 // is sent, Stripe is never called (src/stripe.js refuses), the webhook
-// answers 404 (src/stripe_webhook.js). Only the count is kept, which no
+// only records Stripe's events (src/stripe_webhook.js; 404 without its
+// signing secret) for processing at launch. Only the count is kept, which no
 // page outside the super-admin one shows. SMBHL is never counted or
 // billed.
 //

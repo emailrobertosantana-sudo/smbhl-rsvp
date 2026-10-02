@@ -27,7 +27,7 @@ import { handleSignup, handleLogin, handleAcceptTerms, purgeRateLimitIps, handle
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, setFreeException } from './billing.js';
-import { handleStripeWebhook } from './stripe_webhook.js';
+import { handleStripeWebhook, processPendingStripeEvents } from './stripe_webhook.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
   cleanupOldReviews,
@@ -31723,6 +31723,9 @@ async function runCronPass(env) {
   // day. Notre Ligue only; silent unless it fails.
   if (env.LEAGUE_PRODUCT === 'true') {
     try { await refreshDailyRegularCounts(env); } catch (e) { console.error(`[billing] daily count: ${e.message}`); }
+    // Stripe events recorded before launch (src/stripe_webhook.js): processed
+    // once BILLING_LAUNCH_AT is set. Nothing while it is unset.
+    try { await processPendingStripeEvents(env); } catch (e) { console.error(`[billing] pending Stripe events: ${e.message}`); }
   }
   try { await recordHeartbeat(env, 'end', { ok: passOk, error: passError }); } catch (e) { console.error(`[health] heartbeat end: ${e.message}`); }
   await pingHeartbeatUrl(env, passOk);
@@ -31841,7 +31844,7 @@ async function handleFetch(req, env, ctx) {
       if (url.pathname === '/health/status' && (req.method === 'GET' || req.method === 'HEAD'))
         return headAware(req, await handleHealth(req, env));
       // Stripe's billing events (src/stripe_webhook.js): Notre Ligue only,
-      // 404 while billing is off.
+      // events recorded before launch, 404 without the signing secret.
       if (url.pathname === '/billing/stripe-webhook' && req.method === 'POST')
         return await handleStripeWebhook(req, env);
       if (url.pathname === '/health/client-error' && req.method === 'POST') {

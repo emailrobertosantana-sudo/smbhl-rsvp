@@ -1,8 +1,8 @@
 // POST /billing/stripe-webhook: Stripe's events for Notre Ligue billing
 // (batch 1 of 3, src/billing.js).
 //
-//   1. Only on the Notre Ligue worker, only while billing is on
-//      (BILLING_LAUNCH_AT) and the signing secret is set: 404 otherwise.
+//   1. Only on the Notre Ligue worker, and only when the signing secret
+//      (STRIPE_WEBHOOK_SECRET) is set: 404 otherwise.
 //   2. The signature: HMAC-SHA256 over "<t>.<raw body>" with
 //      STRIPE_WEBHOOK_SECRET, the full 64-character hex (crypto_utils.hmac
 //      cuts its digest to 32, so it is not used), any v1 value, compared in
@@ -14,6 +14,12 @@
 //      late or repeated event writes the same truth.
 //   5. A failure stores the error, counts the attempt and answers 500, so
 //      Stripe sends it again later.
+//   6. Before launch (BILLING_LAUNCH_AT unset): the event is verified and
+//      recorded once, never processed, and the answer is 200. No Stripe
+//      call, nothing gated. Once BILLING_LAUNCH_AT is set, every recorded
+//      event not yet processed is processed once, oldest first: on the next
+//      webhook delivery and from the Notre Ligue cron
+//      (processPendingStripeEvents).
 // Test-mode events (livemode false) are acknowledged and ignored: the app
 // uses live mode only.
 import { billingEnabled, SMBHL_ID } from './billing.js';
@@ -49,7 +55,7 @@ export async function verifyStripeSignature(raw, header, secret, nowSeconds = Ma
 }
 
 export async function handleStripeWebhook(req, env) {
-  if (env.LEAGUE_PRODUCT !== 'true' || !billingEnabled(env) || !env.STRIPE_WEBHOOK_SECRET)
+  if (env.LEAGUE_PRODUCT !== 'true' || !env.STRIPE_WEBHOOK_SECRET)
     return new Response('Not found', { status: 404 });
   const raw = await req.text();
   const check = await verifyStripeSignature(raw, req.headers.get('stripe-signature'), env.STRIPE_WEBHOOK_SECRET);
@@ -60,24 +66,53 @@ export async function handleStripeWebhook(req, env) {
     return Response.json({ ok: false, error: 'Bad payload.' }, { status: 400 });
   if (event.livemode !== true) return Response.json({ ok: true, ignored: 'test_mode' });
 
-  const now = new Date().toISOString();
-  await env.DB.prepare(
-    `INSERT INTO stripe_events (id, type, created, received_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`
-  ).bind(event.id, event.type, Number(event.created) || null, now).run();
-  const seen = await env.DB.prepare('SELECT processed_at FROM stripe_events WHERE id = ?').bind(event.id).first();
-  if (seen && seen.processed_at) return Response.json({ ok: true, duplicate: true });
-  try {
-    const r = await processStripeEvent(env, event);
+  const obj = (event.data && event.data.object) || {};
+  const objectId = typeof obj.id === 'string' && /^[A-Za-z0-9_]{3,255}$/.test(obj.id) ? obj.id : null;
+  const before = await env.DB.prepare('SELECT processed_at FROM stripe_events WHERE id = ?').bind(event.id).first();
+  if (before && before.processed_at) return Response.json({ ok: true, duplicate: true });
+  if (!before) {
     await env.DB.prepare(
-      `UPDATE stripe_events SET processed_at = ?, league_id = ?, object_id = ?, attempts = attempts + 1, error = NULL WHERE id = ?`
-    ).bind(new Date().toISOString(), r.leagueId || null, r.objectId || null, event.id).run();
-    return Response.json({ ok: true });
-  } catch (e) {
-    const msg = String((e && e.message) || e).slice(0, 300);
-    await env.DB.prepare('UPDATE stripe_events SET attempts = attempts + 1, error = ? WHERE id = ?').bind(msg, event.id).run();
-    console.error(`[billing] Stripe event ${event.id} (${event.type}) failed: ${msg}`);
-    return Response.json({ ok: false, error: 'Processing failed.' }, { status: 500 });
+      `INSERT INTO stripe_events (id, type, object_id, created, received_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`
+    ).bind(event.id, event.type, objectId, Number(event.created) || null, new Date().toISOString()).run();
   }
+  // Before launch: recorded, not processed.
+  if (!billingEnabled(env)) return Response.json({ ok: true, ...(before ? { duplicate: true } : { recorded: true }) });
+
+  await processPendingStripeEvents(env);
+  const row = await env.DB.prepare('SELECT processed_at FROM stripe_events WHERE id = ?').bind(event.id).first();
+  if (row && row.processed_at) return Response.json({ ok: true });
+  return Response.json({ ok: false, error: 'Processing failed.' }, { status: 500 });
+}
+
+// Every recorded event not processed yet, oldest first (Stripe's created
+// time, then arrival), each once. A failure is stored and counted and does
+// not hold up the others (each handler fetches the current state, so the
+// order is not load-bearing); an event is tried at most MAX_EVENT_ATTEMPTS
+// times. Only while billing is on.
+export const MAX_EVENT_ATTEMPTS = 5;
+export async function processPendingStripeEvents(env, limit = 25) {
+  if (!billingEnabled(env)) return 0;
+  const rows = (await env.DB.prepare(
+    `SELECT id, type, object_id, created FROM stripe_events
+      WHERE processed_at IS NULL AND attempts < ?
+      ORDER BY COALESCE(created, 0), received_at, id LIMIT ?`
+  ).bind(MAX_EVENT_ATTEMPTS, limit).all()).results || [];
+  let done = 0;
+  for (const r of rows) {
+    const event = { id: r.id, type: r.type, created: r.created, data: { object: { id: r.object_id } } };
+    try {
+      const out = await processStripeEvent(env, event);
+      await env.DB.prepare(
+        `UPDATE stripe_events SET processed_at = ?, league_id = ?, object_id = ?, attempts = attempts + 1, error = NULL WHERE id = ? AND processed_at IS NULL`
+      ).bind(new Date().toISOString(), out.leagueId || null, out.objectId || r.object_id || null, r.id).run();
+      done++;
+    } catch (e) {
+      const msg = String((e && e.message) || e).slice(0, 300);
+      await env.DB.prepare('UPDATE stripe_events SET attempts = attempts + 1, error = ? WHERE id = ?').bind(msg, r.id).run();
+      console.error(`[billing] Stripe event ${r.id} (${r.type}) failed: ${msg}`);
+    }
+  }
+  return done;
 }
 
 const SUBSCRIPTION_EVENTS = new Set([
