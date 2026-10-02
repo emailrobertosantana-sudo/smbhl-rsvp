@@ -70,6 +70,9 @@ Only once `BILLING_LAUNCH_AT` is set; SMBHL is never read. No migration: `league
 - Read-only still allows: deactivating or deleting the league, creating another league, accepting an admin invitation (`src/write_guard.js` mode `billing`).
 - A cancelled subscription makes a league that is not free read-only at the end of the paid period (Stripe ends it then), and starts its 12-month clock.
 - A trial that Stripe paused for want of a card counts as an unpaid trial: its 12-month clock runs, and its Stripe subscription is cancelled before the deletion. Only a pause the owner chose is never deleted.
+- Trials already running on demo when the Montreal-day rule shipped may end up to a day and a half later. Accepted.
+- The league broadcast footer reads « {L} : envoyé par l'administration de la ligue ». Accepted.
+- The add-a-card notice says « avant le {dernier jour} », the trial's last Montreal day. Accepted.
 
 ## Montreal time (Roberto, 2026-10-02)
 
