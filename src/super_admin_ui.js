@@ -50,7 +50,10 @@ export const LIST_I18N = {
     filterLabel: 'État', all: 'Toutes', searchLabel: 'Chercher', searchPh: 'Nom de la ligue',
     colLight: 'État', colName: 'Ligue', colOwner: 'Propriétaire', colSignup: 'Inscription', colPlayers: 'Joueurs réguliers (palier)',
     colBilling: 'Essai ou abonnement', colSignin: 'Dernière connexion admin', colAnswers: 'Réponses (14 jours)', colNext: 'Prochain match',
-    empty: 'Aucune ligue ne correspond.', liveMark: 'Calcul en direct, pas encore enregistré'
+    empty: 'Aucune ligue ne correspond.', liveMark: 'Calcul en direct, pas encore enregistré',
+    // Ad test item 3.
+    colAngle: 'Angle', colSource: 'Source', colCampaign: 'Campagne', colContent: 'Contenu',
+    colLeaguesCreated: 'Ligues créées', colFirstInvites: 'Premières invitations envoyées', periodLabel: 'Période'
   },
   en: {
     ...COMMON.en,
@@ -58,7 +61,9 @@ export const LIST_I18N = {
     filterLabel: 'State', all: 'All', searchLabel: 'Search', searchPh: 'League name',
     colLight: 'State', colName: 'League', colOwner: 'Owner', colSignup: 'Signed up', colPlayers: 'Regular players (tier)',
     colBilling: 'Trial or subscription', colSignin: 'Last admin sign-in', colAnswers: 'Answers (14 days)', colNext: 'Next game',
-    empty: 'No league matches.', liveMark: 'Computed live, not stored yet'
+    empty: 'No league matches.', liveMark: 'Computed live, not stored yet',
+    colAngle: 'Angle', colSource: 'Source', colCampaign: 'Campaign', colContent: 'Content',
+    colLeaguesCreated: 'Leagues created', colFirstInvites: 'First invites sent', periodLabel: 'Period'
   }
 };
 
@@ -148,6 +153,9 @@ const STYLE = `<style>
   .sa-timeline b { min-width: 230px; }
   .sa-flag { display: block; margin: 0 0 var(--space-1); }
   .sa-date { white-space: nowrap; }
+  .sa-period { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  .sa-period .nl-input { width: 170px; }
+  .sa-attr { margin: var(--space-3) 0 var(--space-5); max-width: 640px; }
   @media (max-width: 639px) { .sa-dl { grid-template-columns: 1fr; } .sa-timeline b { min-width: 0; } }
 </style>`;
 
@@ -276,22 +284,36 @@ function rowHtml(m) {
     '<td>' + dateHtml(m.lastAdminSignInAt ? day(m.lastAdminSignInAt) : T('never')) + '</td>' +
     '<td>' + esc(shareText(m)) + '</td>' +
     '<td>' + dateHtml(m.nextGame || T('none')) + '</td>' +
+    '<td>' + esc(m.angle || '–') + '</td>' +
+    '<td>' + esc(m.utmSource || '–') + '</td>' +
+    '<td>' + esc(m.utmCampaign || '–') + '</td>' +
+    '<td>' + esc(m.utmContent || '–') + '</td>' +
     '</tr>';
+}
+// Ad test item 3: leagues created and first invites sent, per utm_content.
+var attr = [];
+function attrHtml(a) {
+  return '<tr><td>' + esc(a.utmContent || '–') + '</td><td>' + a.leagues + '</td><td>' + a.firstInvites + '</td></tr>';
 }
 function render() {
   $('sa-tbody').innerHTML = rows.map(rowHtml).join('');
   $('sa-empty').hidden = rows.length > 0;
+  $('sa-attr-tbody').innerHTML = attr.map(attrHtml).join('');
 }
 function load() {
-  var q = new URLSearchParams({ status: $('sa-status').value, q: $('sa-q').value.trim() });
+  var q = new URLSearchParams({ status: $('sa-status').value, q: $('sa-q').value.trim(), from: $('sa-from').value, to: $('sa-to').value });
   return api('/super-admin/leagues/data?' + q.toString()).then(function(data) {
     rows = data.rows || [];
+    attr = (data.attribution && data.attribution.rows) || [];
+    if (data.attribution) { $('sa-from').value = data.attribution.from; $('sa-to').value = data.attribution.to; }
     $('sa-err').textContent = '';
     render();
   });
 }
 function reload() { load().catch(function(err) { $('sa-err').textContent = T('err') + err.message; }); }
 $('sa-status').addEventListener('change', reload);
+$('sa-from').addEventListener('change', reload);
+$('sa-to').addEventListener('change', reload);
 $('sa-q').addEventListener('input', function() { clearTimeout(timer); timer = setTimeout(reload, 250); });
 $('sa-tbody').addEventListener('click', function(e) {
   if (e.target.closest('a')) return;
@@ -304,7 +326,7 @@ if (K) { unlockWith(K, load); }
 else if (window.__saAuthed) { $('gate').hidden = true; $('sa-main').hidden = false; reload(); }
 `;
 
-export function superAdminListPage({ isAuthed = false, lang = 'fr', authScript }) {
+export function superAdminListPage({ isAuthed = false, lang = 'fr', authScript, period = { from: '', to: '' } }) {
   const T = LIST_I18N[lang === 'en' ? 'en' : 'fr'];
   const th = k => `<th scope="col" data-i18n="${k}">${esc(T[k])}</th>`;
   const opt = (v, k) => `<option value="${v}" data-i18n="${k}">${esc(T[k])}</option>`;
@@ -322,8 +344,16 @@ ${header()}
         <input id="sa-q" class="nl-input" type="search" autocomplete="off" data-i18n-ph="searchPh" placeholder="${esc(T.searchPh)}"></label>
     </div>
     <p class="sa-err" id="sa-err"></p>
+    <div class="sa-tools">
+      <label><span data-i18n="periodLabel">${esc(T.periodLabel)}</span>
+        <span class="sa-period"><input id="sa-from" class="nl-input" type="date" value="${esc(period.from)}"><span aria-hidden="true">–</span><input id="sa-to" class="nl-input" type="date" value="${esc(period.to)}"></span></label>
+    </div>
+    <div class="sa-scroll sa-attr"><table class="sa-table" id="sa-attr-table">
+      <thead><tr>${['colContent', 'colLeaguesCreated', 'colFirstInvites'].map(th).join('')}</tr></thead>
+      <tbody id="sa-attr-tbody"></tbody>
+    </table></div>
     <div class="sa-scroll"><table class="sa-table" id="sa-table">
-      <thead><tr>${['colLight', 'colName', 'colOwner', 'colSignup', 'colPlayers', 'colBilling', 'colSignin', 'colAnswers', 'colNext'].map(th).join('')}</tr></thead>
+      <thead><tr>${['colLight', 'colName', 'colOwner', 'colSignup', 'colPlayers', 'colBilling', 'colSignin', 'colAnswers', 'colNext', 'colAngle', 'colSource', 'colCampaign', 'colContent'].map(th).join('')}</tr></thead>
       <tbody id="sa-tbody"></tbody>
     </table></div>
     <p class="sa-muted" id="sa-empty" hidden data-i18n="empty">${esc(T.empty)}</p>

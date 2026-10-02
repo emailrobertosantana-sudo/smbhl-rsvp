@@ -142,7 +142,7 @@ export async function collectLeagueMetrics(env, now = new Date()) {
   const nowMs = now.getTime();
   const today = localParts(now).date;
   const localDay = offset => localParts(new Date(nowMs + offset * DAY_MS)).date;
-  const leagues = await all(db, 'SELECT id, name, slug, created_at, created_by, deactivated_at, plan_tier FROM leagues WHERE id != ? ORDER BY created_at DESC', SMBHL_LEAGUE_ID);
+  const leagues = await all(db, 'SELECT id, name, slug, created_at, created_by, deactivated_at, plan_tier, angle, utm_source, utm_campaign, utm_content FROM leagues WHERE id != ? ORDER BY created_at DESC', SMBHL_LEAGUE_ID);
   if (!leagues.length) return [];
   const owners = new Map((await all(db,
     `SELECT u.id, u.email FROM users u WHERE u.id IN (SELECT created_by FROM leagues WHERE id != ?)`, SMBHL_LEAGUE_ID)).map(r => [r.id, r.email]));
@@ -228,9 +228,39 @@ export async function collectLeagueMetrics(env, now = new Date()) {
       trialEndingNoSub: trialDaysLeft != null && trialDaysLeft <= 7,
       firstInvitationAt: firstAsk.get(l.id) || null,
       firstAnswerAt: firstAnswer.get(l.id) || null,
-      subscribed: !!(b && ['active', 'past_due', 'paused'].includes(b.status))
+      subscribed: !!(b && ['active', 'past_due', 'paused'].includes(b.status)),
+      // Ad test item 3: where the league came from (migrate-057.sql).
+      angle: l.angle || null,
+      utmSource: l.utm_source || null,
+      utmCampaign: l.utm_campaign || null,
+      utmContent: l.utm_content || null
     };
   });
+}
+
+// Ad test item 3: per utm_content value, the leagues created in a period
+// (their Montreal creation day, from and to included) and how many of them
+// have sent a first game invitation (firstInvitationAt: the first sent row
+// of an invitation kind, the same as the trial timeline's). Leagues with no
+// utm_content are one row of their own (utmContent null). Pure.
+export function attributionSummary(rows, { from = '', to = '' } = {}) {
+  const by = new Map();
+  for (const r of rows || []) {
+    const t = Date.parse(r.createdAt || '');
+    if (!Number.isFinite(t)) continue;
+    const d = localParts(new Date(t)).date;
+    if ((from && d < from) || (to && d > to)) continue;
+    const k = r.utmContent || null;
+    const e = by.get(k) || { utmContent: k, leagues: 0, firstInvites: 0 };
+    e.leagues += 1;
+    if (r.firstInvitationAt) e.firstInvites += 1;
+    by.set(k, e);
+  }
+  return [...by.values()].sort((a, b) => b.leagues - a.leagues || (a.utmContent === null) - (b.utmContent === null) || String(a.utmContent || '').localeCompare(String(b.utmContent || '')));
+}
+// The default period: the last 30 Montreal days, today included.
+export function defaultAttributionPeriod(now = new Date()) {
+  return { from: localParts(new Date(now.getTime() - 29 * DAY_MS)).date, to: localParts(now).date };
 }
 
 // Numbers plus the light, for every league (live, nothing stored).

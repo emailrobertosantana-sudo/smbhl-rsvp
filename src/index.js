@@ -46,7 +46,7 @@ import { BILLING_NOTICE_KIND } from './billing_notices.js';
 import { montrealDate } from './montreal_time.js';
 import { checkStripeConfig } from './billing_check.js';
 import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS, ownerOf } from './billing_actions.js';
-import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail } from './league_health.js';
+import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail, attributionSummary, defaultAttributionPeriod } from './league_health.js';
 import { readSupportSession, supportEnv, supportResponse, startSupport, endSupport, clearSupportCookieHeader, readSupportLog } from './support_mode.js';
 import { writeRefusal, isWriteRequest, writeAllowed } from './write_guard.js';
 import { superAdminListPage, superAdminLeaguePage, LEAGUE_PAGE_CONSTANTS } from './super_admin_ui.js';
@@ -33665,7 +33665,7 @@ async function handleFetch(req, env, ctx) {
         const isAuthed = checkAdminAuth(req, env) === 'ok';
         // Notre Ligue: its own pages, its branding (src/super_admin_ui.js).
         if (env.LEAGUE_PRODUCT === 'true') {
-          return new Response(superAdminListPage({ isAuthed, lang: resolveServerLang(req), authScript: nlAuthScript }), { headers: adminPageHeaders(isAuthed, env) });
+          return new Response(superAdminListPage({ isAuthed, lang: resolveServerLang(req), authScript: nlAuthScript, period: defaultAttributionPeriod() }), { headers: adminPageHeaders(isAuthed, env) });
         }
         return new Response(superAdminPage(isAuthed), { headers: adminPageHeaders(isAuthed, env) });
       }
@@ -33713,10 +33713,16 @@ async function handleFetch(req, env, ctx) {
         // Notre Ligue: rows, the list page's (src/league_health.js): one per
         // league with its light, filtered by ?status= and searched by ?q=.
         // SMBHL is not among them.
-        const rows = env.LEAGUE_PRODUCT === 'true'
-          ? filterLeagueRows(await leagueListRows(env), { status: url.searchParams.get('status') || '', q: url.searchParams.get('q') || '' })
-          : undefined;
-        return Response.json({ ok: true, leagues: leagues.map(l => ({ ...l, billing: billing.get(l.id) || null })), ...(rows ? { rows } : {}) });
+        const allRows = env.LEAGUE_PRODUCT === 'true' ? await leagueListRows(env) : null;
+        const rows = allRows ? filterLeagueRows(allRows, { status: url.searchParams.get('status') || '', q: url.searchParams.get('q') || '' }) : undefined;
+        // Ad test item 3: leagues created and first invites sent, per
+        // utm_content, over a period of creation days (default: the last 30).
+        const isDay = v => /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(v || ''));
+        const period = defaultAttributionPeriod();
+        if (isDay(url.searchParams.get('from'))) period.from = url.searchParams.get('from');
+        if (isDay(url.searchParams.get('to'))) period.to = url.searchParams.get('to');
+        const attribution = allRows ? { ...period, rows: attributionSummary(allRows, period) } : undefined;
+        return Response.json({ ok: true, leagues: leagues.map(l => ({ ...l, billing: billing.get(l.id) || null })), ...(rows ? { rows } : {}), ...(attribution ? { attribution } : {}) });
       }
       // Billing: the Stripe configuration, read only (src/billing_check.js).
       if (url.pathname === '/super-admin/billing/check' && req.method === 'GET') {
