@@ -14,8 +14,9 @@
 //   Portal: Stripe's Customer Portal, the account's default configuration.
 //   Pause: monthly only, pause_collection with behavior void (no invoice is
 //   collected while paused, for as long as it lasts). Resume: the pause is
-//   cleared and the billing cycle starts again that day
-//   (billing_cycle_anchor now, no proration).
+//   cleared and, past the trial, the billing cycle starts again that day
+//   (billing_cycle_anchor now, no proration); in the trial, only the pause
+//   is cleared (Stripe keeps a trialing subscription's anchor).
 //   Tier change: the price changes for the next billing date, never mid
 //   period: once a day, a subscription whose stored count belongs in the
 //   other paid tier gets the other price, with no proration, within the
@@ -133,6 +134,14 @@ export async function createPortal(env, leagueId, { origin, lang }) {
   return { ok: true, url: s.url };
 }
 
+// A Stripe subscription still in its trial: Stripe says trialing, or its
+// trial ends later than now.
+export function subscriptionInTrial(sub, now = new Date()) {
+  if (!sub) return false;
+  if (sub.status === 'trialing') return true;
+  return !!(sub.trial_end && Number(sub.trial_end) * 1000 > now.getTime());
+}
+
 async function liveRow(env, leagueId) {
   const row = await env.DB.prepare('SELECT * FROM league_billing WHERE league_id = ?').bind(leagueId).first();
   return hasLiveSubscription(row) ? row : null;
@@ -154,16 +163,23 @@ export async function pauseSubscription(env, leagueId, now = new Date()) {
   return { ok: true };
 }
 
-// The pause is cleared and billing restarts that day: a new billing cycle
-// from now, the full period invoiced today, no proration.
+// Past its trial, the pause is cleared and billing restarts that day: a new
+// billing cycle from now, the full period invoiced today, no proration.
+// Still in its trial, only the pause is cleared: Stripe refuses to move the
+// billing cycle anchor of a trialing subscription (400, billing_cycle_anchor),
+// and the first charge stays at the trial's end. The app maps Stripe's
+// trialing to active, so the live subscription is read first to tell.
 export async function resumeSubscription(env, leagueId, now = new Date()) {
   if (!billingEnabled(env)) return { ok: false, errorKey: 'BILLING_OFF', status: 404 };
   const row = await liveRow(env, leagueId);
   if (!row) return { ok: false, errorKey: 'BILLING_NO_SUBSCRIPTION', status: 409 };
   if (row.status !== 'paused') return { ok: true };
-  await stripeRequest(env, 'POST', `/subscriptions/${stripeId(row.stripe_subscription_id)}`,
-    { pause_collection: '', billing_cycle_anchor: 'now', proration_behavior: 'none' },
-    { idempotencyKey: `resume:${row.stripe_subscription_id}:${now.toISOString().slice(0, 10)}` });
+  const path = `/subscriptions/${stripeId(row.stripe_subscription_id)}`;
+  const live = await stripeRequest(env, 'GET', path);
+  const trialing = subscriptionInTrial(live, now);
+  await stripeRequest(env, 'POST', path,
+    trialing ? { pause_collection: '' } : { pause_collection: '', billing_cycle_anchor: 'now', proration_behavior: 'none' },
+    { idempotencyKey: `resume:${row.stripe_subscription_id}:${now.toISOString().slice(0, 10)}:${trialing ? 'trial' : 'cycle'}` });
   await writeSubscription(env, row.stripe_subscription_id, { leagueId });
   return { ok: true };
 }
