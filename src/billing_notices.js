@@ -71,7 +71,7 @@ export function noticeContent(kind, v) {
         fr: {
           subject: `${L}${NB}: ${last ? 'dernier rappel, ' : ''}ajoute une carte avant le ${D.fr}`,
           paragraphs: [
-            `L'essai gratuit de ${L} se termine le ${D.fr}. Ton abonnement est prêt, mais aucune carte n'est enregistrée.`,
+            `L'essai gratuit pour ${L} se termine le ${D.fr}. Ton abonnement est prêt, mais aucune carte n'est enregistrée.`,
             `Ajoute une carte avant cette date${NB}: sur la page Abonnement, choisis «${NB}Gérer mon abonnement${NB}». Sans carte, l'abonnement sera mis en pause et la ligue passera en lecture seule.`
           ],
           button: 'Ajouter une carte'
@@ -89,7 +89,7 @@ export function noticeContent(kind, v) {
         fr: {
           subject: `${L}${NB}: ${last ? 'dernier rappel, ' : ''}ton essai gratuit se termine le ${D.fr}`,
           paragraphs: [
-            `L'essai gratuit de ${L} se termine le ${D.fr}.`,
+            `L'essai gratuit pour ${L} se termine le ${D.fr}.`,
             "Abonne-toi avant cette date pour que la ligue reste active. Sans abonnement, elle passera en lecture seule et ses courriels automatiques s'arrêteront. Rien ne sera supprimé."
           ],
           button: "S'abonner"
@@ -109,7 +109,7 @@ export function noticeContent(kind, v) {
         fr: {
           subject: `${L}${NB}: la ligue est en lecture seule`,
           paragraphs: [
-            `L'essai gratuit de ${L} est terminé. La ligue est maintenant en lecture seule${NB}: tu peux tout consulter, mais rien modifier, et ses courriels automatiques sont arrêtés.`,
+            `L'essai gratuit pour ${L} est terminé. La ligue est maintenant en lecture seule${NB}: tu peux tout consulter, mais rien modifier, et ses courriels automatiques sont arrêtés.`,
             "Les joueurs peuvent encore répondre aux invitations déjà reçues. Rien n'est supprimé.",
             `${card ? 'Pour la réactiver, ajoute une carte depuis la page Abonnement.' : 'Pour la réactiver, abonne la ligue depuis la page Abonnement.'} ${onlyOwner.fr}`
           ],
@@ -185,9 +185,9 @@ export function noticeContent(kind, v) {
     case 'payment_failed':
       return {
         fr: {
-          subject: `${L}${NB}: le paiement n'a pas passé`,
+          subject: `${L}${NB}: le paiement n'est pas passé`,
           paragraphs: [
-            `Le dernier paiement de l'abonnement de ${L} n'a pas passé. La ligue est en lecture seule jusqu'au paiement.`,
+            `Le dernier paiement de l'abonnement pour ${L} n'est pas passé. La ligue est en lecture seule jusqu'au paiement.`,
             `Mets ta carte à jour sur la page Abonnement, avec «${NB}Gérer mon abonnement${NB}». Dès que le paiement passe, la ligue est débloquée.`
           ],
           button: 'Mettre ma carte à jour'
@@ -227,7 +227,7 @@ export function noticeContent(kind, v) {
           subject: `${L}${NB}: suppression prévue le ${D.fr}`,
           paragraphs: [
             `Aucun abonnement n'est actif pour ${L} depuis le ${S.fr} (essai non payé ou abonnement annulé). Comme le prévoit notre politique de confidentialité, une ligue inactive pendant 12 mois est supprimée définitivement.`,
-            `Toutes les données de ${L} seront supprimées le ${D.fr}${NB}: ses joueurs, son horaire et son historique. Cette suppression ne peut pas être annulée.`,
+            `Toutes les données de la ligue seront supprimées le ${D.fr}${NB}: ses joueurs, son horaire et son historique. Cette suppression ne peut pas être annulée.`,
             `Pour l'arrêter, abonne la ligue depuis la page Abonnement avant cette date. ${onlyOwner.fr}`
           ],
           button: see.fr

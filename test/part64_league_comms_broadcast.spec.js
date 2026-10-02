@@ -205,7 +205,8 @@ describe('Part 4 (live-testing task, batch 4): broadcast in the shared Comms mod
     const { sentMails } = await withMailMock(() => broadcast(cookie, csrfToken, { target: 'all', subject: 'Sujet', message: 'Corps du message unique' }));
     expect(sentMails.length).toBe(1);
     const mail = sentMails[0];
-    expect(mail.html).toContain('administration de');
+    expect(mail.html).toContain('administration de la ligue');
+    expect(mail.html).not.toMatch(/administration de (?!la ligue)/);
     expect(mail.html).not.toContain('administration</div>'); // no English footer leaking through
     // Message body appears exactly once, never duplicated.
     const occurrences = (mail.html.match(/Corps du message unique/g) || []).length;

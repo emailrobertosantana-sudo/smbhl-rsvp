@@ -5215,7 +5215,9 @@ function renderLeagueBroadcastEmail(leagueRow, subject, message) {
   const languageMode = leagueRow.language_mode || 'both';
   const barColor = leagueFillColor(leagueRow.color || '#b3122e');
   const bodyHtmlCore = `<div style="font-size:15px;color:#1e293b;line-height:1.6;margin-bottom:20px;white-space:pre-line;">${esc(message)}</div>`;
-  const frFooterText = `Envoyé par l'administration de ${leagueRow.name}`;
+  // Never « de » right before a league name (« de Les Hiboux »): the name
+  // leads, as a label.
+  const frFooterText = `${leagueRow.name} : envoyé par l'administration de la ligue`;
   const enFooterText = `Sent by ${leagueRow.name} administration`;
   const footerAssembled = assembleBilingualEmail(languageMode, {
     fr: { subject, text: frFooterText, html: `<div style="border-top:1px solid #e3e3e0;padding-top:12px;margin-top:16px;font-size:12px;color:#55585f;">${esc(frFooterText)}</div>` },
@@ -6072,7 +6074,7 @@ const I18N_BILLING = {
     pause: 'Mettre en pause', pauseConfirm: "Mettre l'abonnement en pause? Aucun paiement tant qu'il est en pause.", pauseYes: 'Oui, mettre en pause', cancelBtn: 'Annuler',
     resume: 'Reprendre', resumeNote: 'La facturation reprend aujourd’hui.',
     paused: 'Abonnement en pause. Ta ligue est en lecture seule.',
-    pastDue: "Le dernier paiement n'a pas passé. Mets ta carte à jour avec « Gérer mon abonnement ».",
+    pastDue: "Le dernier paiement n'est pas passé. Mets ta carte à jour avec « Gérer mon abonnement ».",
     ownerOnly: "Seul le propriétaire de la ligue peut gérer l'abonnement.",
     success: 'Merci! Ton abonnement est actif.',
     canceled: "L'abonnement n'a pas été complété.",

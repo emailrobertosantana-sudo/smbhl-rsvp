@@ -133,6 +133,17 @@ describe('the notices, as written', () => {
     expect(noticeDate('2026-12-02', 'en')).toBe('Wednesday, December 2, 2026');
     expect(noticeContent('grace_start', v).fr.paragraphs.join(' ')).toContain('remplaçants');
     expect(noticeContent('payment_failed', v).fr.paragraphs.join(' ')).toContain('« Gérer mon abonnement »');
+    // Never « de », « à » (or du, au, des, aux) right before the league name.
+    for (const kind of NOTICE_KINDS) for (const variant of ['subscribe', 'card']) {
+      const frm = renderBillingNotice(kind, { ...v, variant, languageMode: 'fr' });
+      expect(frm.subject + frm.text, kind).not.toMatch(/(^|\s)(de|à|du|au|des|aux) Les Hiboux/);
+    }
+    expect(noticeContent('trial_7d', v).fr.paragraphs[0]).toBe(`L'essai gratuit pour Les Hiboux se termine le ${noticeDate(v.date, 'fr')}.`);
+    expect(noticeContent('trial_end', v).fr.paragraphs[0]).toMatch(/^L'essai gratuit pour Les Hiboux est terminé\./);
+    expect(noticeContent('deletion_30d', v).fr.paragraphs[1]).toMatch(/^Toutes les données de la ligue seront supprimées le /);
+    const pf = noticeContent('payment_failed', v).fr;
+    expect(pf.subject).toBe("Les Hiboux : le paiement n'est pas passé");
+    expect(pf.paragraphs[0]).toBe("Le dernier paiement de l'abonnement pour Les Hiboux n'est pas passé. La ligue est en lecture seule jusqu'au paiement.");
     expect(noticeContent('trial_end', v).fr.subject).toBe('Les Hiboux : la ligue est en lecture seule');
   });
 });
@@ -253,7 +264,7 @@ describe('a paid league', () => {
     queued = [];
     await run(); await run(DAY);
     expect(mailsFor(id).map(m => m.to)).toEqual(['u-p1@example.com']);
-    expect(mailsFor(id)[0].mail.subject).toBe("Ligue p1 : le paiement n'a pas passé");
+    expect(mailsFor(id)[0].mail.subject).toBe("Ligue p1 : le paiement n'est pas passé");
     expect((await row(id)).read_only_since).toBeTruthy();
     expect((await row(id)).inactive_since).toBe(null);
   });
