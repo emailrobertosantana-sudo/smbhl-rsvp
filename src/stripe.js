@@ -45,11 +45,14 @@ export function stripeId(id) {
   return s;
 }
 
-export async function stripeRequest(env, method, path, params = null, { idempotencyKey = null } = {}) {
-  if (!billingEnabled(env)) throw new StripeError('Billing is off (BILLING_LAUNCH_AT is not set): no Stripe call.', 'billing_off');
+// readOnly: a GET allowed before launch (the super-admin configuration
+// check, src/billing_check.js). Anything else still refuses while billing
+// is off.
+export async function stripeRequest(env, method, path, params = null, { idempotencyKey = null, readOnly = false } = {}) {
+  const m = String(method || 'GET').toUpperCase();
+  if (!billingEnabled(env) && !(readOnly && m === 'GET')) throw new StripeError('Billing is off (BILLING_LAUNCH_AT is not set): no Stripe call.', 'billing_off');
   if (!env.STRIPE_SECRET_KEY) throw new StripeError('STRIPE_SECRET_KEY is not set.', 'no_key');
   if (!env.STRIPE_API_VERSION) throw new StripeError('STRIPE_API_VERSION is not set.', 'no_version');
-  const m = String(method || 'GET').toUpperCase();
   const body = params ? formEncode(params) : '';
   const url = `${STRIPE_API}${path}${m === 'GET' && body ? `?${body}` : ''}`;
   const headers = {

@@ -64,7 +64,17 @@
         // Email Sending here, via the send_email binding below. SMBHL mail,
         // and every environment without this var, stays on Resend. See
         // src/mail_provider.js and the README's "Mail provider" section.
-        "MAIL_PROVIDER": "cloudflare"
+        "MAIL_PROVIDER": "cloudflare",
+        // Notre Ligue billing (src/billing.js, docs/billing.md): the four
+        // prices (CAD, tax exclusive) and the pinned Stripe API version.
+        // Demo only: production gets none of these. The secrets
+        // STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set with
+        // wrangler secret put --env demo, never here.
+        "STRIPE_PRICE_STANDARD_MONTHLY": "price_1ULpndA7Yxc2R6KsFeFMuVwP",
+        "STRIPE_PRICE_STANDARD_YEARLY": "price_1ULpoZA7Yxc2R6KssVewqYes",
+        "STRIPE_PRICE_PLUS_MONTHLY": "price_1ULpriA7Yxc2R6Ks8ETGyZaI",
+        "STRIPE_PRICE_PLUS_YEARLY": "price_1ULpsiA7Yxc2R6KsSWuEJd5j",
+        "STRIPE_API_VERSION": "2026-08-26.dahlia"
       },
       "send_email": [
         { "name": "SEND_EMAIL" }

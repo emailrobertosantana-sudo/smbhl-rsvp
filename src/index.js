@@ -28,6 +28,7 @@ import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLea
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, setFreeException } from './billing.js';
 import { handleStripeWebhook, processPendingStripeEvents } from './stripe_webhook.js';
+import { checkStripeConfig } from './billing_check.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
   cleanupOldReviews,
@@ -32347,6 +32348,13 @@ async function handleFetch(req, env, ctx) {
         const owners = (await env.DB.prepare('SELECT id, created_by, created_at FROM leagues').all()).results || [];
         const billing = await billingSummaries(env, owners);
         return Response.json({ ok: true, leagues: leagues.map(l => ({ ...l, billing: billing.get(l.id) || null })) });
+      }
+      // Billing: the Stripe configuration, read only (src/billing_check.js).
+      if (url.pathname === '/super-admin/billing/check' && req.method === 'GET') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        if (env.LEAGUE_PRODUCT !== 'true') return new Response('Not found', { status: 404 });
+        return Response.json(await checkStripeConfig(env), { headers: { 'cache-control': 'no-store' } });
       }
       if (url.pathname === '/super-admin/leagues/update' && req.method === 'POST') {
         const auth = checkAdminAuth(req, env);

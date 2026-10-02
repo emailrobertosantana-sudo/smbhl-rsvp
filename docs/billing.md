@@ -63,10 +63,14 @@ Restricted key permissions (live mode):
 | Prices | Read |
 | Products | Read |
 | Invoices | Read |
-| Charges | Read |
+| Charges and Refunds | Read |
 | Events | Read (optional) |
-| Refunds, Coupons, Promotion codes, Webhook endpoints | None |
+| Coupons, Promotion codes, Webhook endpoints | None |
 | Everything else | None |
+
+In this Stripe account refunds share one permission with charges ("Charges and Refunds"). Read is needed to check a charge for a full refund; it cannot create a refund. Refunds are made by Roberto in the Dashboard.
+
+`GET /super-admin/billing/check` (admin key, Notre Ligue only) reads the four prices and their products and reports amount, currency, interval, tax behaviour and tier, plus whether the key can read refunds. Read only, no customer data.
 
 ## Production
 
