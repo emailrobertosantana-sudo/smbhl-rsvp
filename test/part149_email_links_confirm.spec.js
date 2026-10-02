@@ -100,7 +100,7 @@ describe('Sub call link (/avail ?a=yes|no)', () => {
     expect(html).not.toContain('Tu joues avec');
     const { finalHtml } = await answerViaEmailLink(f, link);
     expect((await env.DB.prepare('SELECT status FROM availability WHERE event_id = ? AND player_id = ?').bind(SM, 'S1').first()).status).toBe('yes');
-    expect(finalHtml).toContain('Tu joues avec');
+    expect(finalHtml).toContain("Tu es dans l&#39;équipe");
   });
 
   it('NO: the same -- nothing on open, recorded by the button', async () => {

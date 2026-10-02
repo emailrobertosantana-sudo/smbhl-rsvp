@@ -85,8 +85,8 @@ async function withMailMock(fn) {
 // equivalent string overlap, and likewise for English -- avoids false
 // positives from words that are identical or embedded in both (e.g.
 // "email", team names).
-const FR_MARKERS = ['Réinitialise ton mot de passe', 'co-administrer', 'cherche un', 'gardien', 'joueur', 'Non, pas cette fois'];
-const EN_MARKERS = ['Reset your password', 'co-admin', 'needs a', 'goalie', 'No, not this time'];
+const FR_MARKERS = ['Réinitialise ton mot de passe', 'co-administrer', 'a besoin d', 'gardien', 'remplaçant', 'Pas cette fois'];
+const EN_MARKERS = ['Reset your password', 'co-admin', 'needs a', 'goalie', 'Not this time'];
 function hasAny(haystack, markers) {
   return markers.some(m => haystack.includes(m));
 }
@@ -113,7 +113,7 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
       const mail = body('sub_call', baseArgs('fr'));
       expect(hasAny(mail.html, FR_MARKERS)).toBe(true);
       expect(hasAny(mail.html, EN_MARKERS)).toBe(false);
-      expect(mail.text).not.toContain('No, not this time');
+      expect(mail.text).not.toContain('Not this time');
       expect(mail.subject).not.toContain('/');
     });
 
@@ -121,15 +121,15 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
       const mail = body('sub_call', baseArgs('en'));
       expect(hasAny(mail.html, EN_MARKERS)).toBe(true);
       expect(hasAny(mail.html, FR_MARKERS)).toBe(false);
-      expect(mail.text).not.toContain('Non, pas cette fois');
+      expect(mail.text).not.toContain('Pas cette fois');
     });
 
     it("languageMode 'both' renders genuinely bilingual content", () => {
       const mail = body('sub_call', baseArgs('both'));
-      expect(mail.html).toContain('Non, pas cette fois');
-      expect(mail.html).toContain('No, not this time');
-      expect(mail.text).toContain('Non, pas cette fois');
-      expect(mail.text).toContain('No, not this time');
+      expect(mail.html).toContain('Pas cette fois');
+      expect(mail.html).toContain('Not this time');
+      expect(mail.text).toContain('Pas cette fois');
+      expect(mail.text).toContain('Not this time');
     });
 
     it("SMBHL (no leagueCfg -- DEFAULT_SEASON_CONFIG.league, languageMode 'both') is completely unaffected: still stacks both languages unconditionally", () => {
@@ -141,10 +141,10 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
         payload: { need: 'goalie', yes: 'https://smbhl.com/y', no: 'https://smbhl.com/n' },
         leagueCfg: null
       });
-      expect(mail.html).toContain('Non, pas cette fois');
-      expect(mail.html).toContain('No, not this time');
+      expect(mail.html).toContain('Pas cette fois');
+      expect(mail.html).toContain('Not this time');
       // Decided (sub-call bilingual fix): "FR / EN", like every other bilingual SMBHL email.
-      expect(mail.subject).toBe('Rouge cherche un gardien / Red needs a goalie');
+      expect(mail.subject).toBe("Rouge a besoin d'un gardien dimanche 1 nov. / Red needs a goalie on Sunday, Nov 1");
     });
   });
 

@@ -46,7 +46,7 @@ describe('the sub call closing line and footer', () => {
     const m = await deliver('lg191:2099-03-07', 'lg191:S1', 'lg191');
     for (const body of [m.text, visibleText(m.html)]) {
       expect(body).toContain('Tu ne veux plus être sur la liste des remplaçants? Réponds à ce courriel.');
-      expect(body).toContain('Want off the subs list? Just reply to this email.');
+      expect(body).toContain('Want off the sub list? Just reply to this email.');
       expect(body).not.toMatch(/substitut|Sunday Morning|Ball Hockey League/i);
     }
     expect(visibleText(m.html)).toMatch(/Ligue du mercredi · rsvp\.notreligue\.ca/);

@@ -67,17 +67,17 @@ async function deliverCall(pid) {
 describe('The invite', () => {
   it('a sub with no preference gets a generic call -- no team named', async () => {
     const m = await deliverCall('SNONE');
-    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a player');
-    expect(m.text).toContain("L'équipe n'est pas encore décidée : si tu es disponible, on te place dans une équipe, et tu reçois ton équipe finale avant le match.");
+    expect(m.subject).toBe("SMBHL a besoin d'un substitut dimanche 4 oct. / SMBHL needs a sub on Sunday, Oct 4");
+    expect(m.text).not.toContain("L'équipe n'est pas encore décidée");
     expect(m.text).not.toMatch(/Bleu|Blue/);
   });
   it('a sub whose preferred team is the one short gets that team\'s call', async () => {
     const m = await deliverCall('SBLUE');
-    expect(m.subject).toBe('Bleu cherche un joueur / Blue needs a player');
+    expect(m.subject).toBe("Bleu a besoin d'un substitut dimanche 4 oct. / Blue needs a sub on Sunday, Oct 4");
   });
   it('a sub whose preferred team is NOT short gets the generic call, not a false "Red is looking"', async () => {
     const m = await deliverCall('SRED');
-    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a player');
+    expect(m.subject).toBe("SMBHL a besoin d'un substitut dimanche 4 oct. / SMBHL needs a sub on Sunday, Oct 4");
   });
 });
 
@@ -88,10 +88,10 @@ describe('Accepting, more than 24 h out', () => {
     const row = await env.DB.prepare('SELECT team, role, status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(FAR, 'SA').first();
     expect(row.role).toBe('sub');
     expect(row.team).not.toBe('Red'); // Red was full
-    expect(html).toContain('Tu joues avec');
+    expect(html).toMatch(/C(&#39;|')est noté!/);
     const e = t => t.replace(/'/g, '&#39;');
-    expect(html).toContain(e("Ton équipe peut encore changer d'ici le match. Tu recevras ton équipe finale par courriel 24 h avant."));
-    expect(html).toContain(e("Your team may still change before the game. You'll get your final team by email 24 hours before."));
+    expect(html).toContain(e(", sous réserve de changement. Tu recevras ton équipe finale avant le match."));
+    expect(html).toContain(e(", subject to change. You'll get your final team before the game."));
     expect(to('SA')).toEqual([]);
     // The same caveat on their own RSVP page.
     const t = await hmac(env.RSVP_SECRET, `p:${FAR}:SA:s`);

@@ -44,33 +44,36 @@ describe('5a: the sub call', () => {
 
   it('SMBHL: the sentence, the venue, the buttons, the wait and off lines, both languages', () => {
     const m = call(SMBHL_EV, 'skater');
-    expect(m.text).toContain('SMBHL cherche un joueur pour dimanche 11 janv., 10 h 30.\nLieu : Aréna Golden');
-    expect(m.text).toContain('SMBHL needs a player on Sunday, Jan 11, 10:30 AM.\nVenue: Aréna Golden');
-    expect(m.text).toContain("L'équipe n'est pas encore décidée : si tu es disponible, on te place dans une équipe, et tu reçois ton équipe finale avant le match.");
-    expect(m.text).toContain("The team isn't decided yet: if you're available, we place you on a team, and you get your final team before the game.");
-    for (const b of ['✅ Oui, je suis disponible', '❌ Non, pas cette fois', '✅ Yes, I', '❌ No, not this time']) {
+    // Batch 8 item 1c: the short call.
+    expect(m.text).toContain("SMBHL a besoin d'un substitut dimanche 11 janv. à 10 h 30. Tu embarques?\nLieu : Aréna Golden");
+    expect(m.text).toContain('SMBHL needs a sub on Sunday, Jan 11 at 10:30 AM. Are you in?\nVenue: Aréna Golden');
+    for (const b of ['✅ J', '❌ Pas cette fois', '✅ I', '❌ Not this time']) {
       expect(m.text).toContain(b);
       expect(m.html).toContain(b);
     }
-    expect(m.text).toContain("Si toutes les places sont prises, tu restes sur la liste d'attente.");
-    expect(m.text).toContain('If every spot is taken, you stay on the waitlist.');
+    expect(m.text).toContain("✅ J'embarque : https://x/yes");
+    expect(m.text).toContain("✅ I'm in: https://x/yes");
     expect(m.text).toContain('Tu ne veux plus être sur la liste de substituts? Réponds à ce courriel.');
     expect(m.text).toContain('Want off the sub list? Just reply to this email.');
-    expect(m.text + m.html).not.toMatch(/Disponible\?|Available\?/);
-    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a player');
+    expect(m.text + m.html).not.toMatch(/décidée|decided yet|liste d'attente|waitlist|Disponible\?|Available\?/);
+    expect(m.subject).toBe("SMBHL a besoin d'un substitut dimanche 11 janv. / SMBHL needs a sub on Sunday, Jan 11");
   });
 
   it('a goalie call says « un gardien » / "a goalie"', () => {
     const m = call(SMBHL_EV, 'goalie');
-    expect(m.text).toContain('SMBHL cherche un gardien pour dimanche 11 janv., 10 h 30.');
-    expect(m.text).toContain('SMBHL needs a goalie on Sunday, Jan 11, 10:30 AM.');
+    expect(m.text).toContain("SMBHL a besoin d'un gardien dimanche 11 janv. à 10 h 30. Tu embarques?");
+    expect(m.text).toContain('SMBHL needs a goalie on Sunday, Jan 11 at 10:30 AM. Are you in?');
+    const team = body('sub_call', { ev: SMBHL_EV, name: 'Sam', team: 'Red', payload: { need: 'goalie', yes: 'y', no: 'n' } });
+    expect(team.text).toContain("Rouge a besoin d'un gardien dimanche 11 janv. à 10 h 30. Tu embarques?");
+    expect(team.text).toContain('Red needs a goalie on Sunday, Jan 11 at 10:30 AM. Are you in?');
   });
 
   it('Notre Ligue: the same pattern, with the league name, « remplaçants »', () => {
     const leagueCfg = { name: 'Ligue du mercredi', tagline: '', siteUrl: 'https://rsvp.notreligue.ca', languageMode: 'both' };
     const m = call(LEAGUE_EV, 'skater', { leagueCfg });
-    expect(m.text).toContain('Ligue du mercredi cherche un joueur pour dimanche 15 nov., 19 h 30.\nLieu : Aréna Saint-Michel');
-    expect(m.text).toContain('Ligue du mercredi needs a player on Sunday, Nov 15, 7:30 PM.\nVenue: Aréna Saint-Michel');
+    expect(m.text).toContain("Ligue du mercredi a besoin d'un remplaçant dimanche 15 nov. à 19 h 30. Tu embarques?\nLieu : Aréna Saint-Michel");
+    expect(m.text).toContain('Ligue du mercredi needs a sub on Sunday, Nov 15 at 7:30 PM. Are you in?\nVenue: Aréna Saint-Michel');
+    expect(m.text).toContain('Tu ne veux plus être sur la liste des remplaçants? Réponds à ce courriel.');
     expect(m.text).not.toMatch(/\(lieu|\(venue/);
   });
 });

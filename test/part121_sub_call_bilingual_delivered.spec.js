@@ -41,24 +41,24 @@ async function deliver(payload, dedup) {
 describe('SMBHL sub call, as delivered to Resend', () => {
   it('subject is "FR / EN"; the text AND the HTML part carry the whole English half after the French', async () => {
     const m = await deliver({ need: 'skater' }, 'p121-call');
-    expect(m.subject).toBe('SMBHL cherche un joueur / SMBHL needs a player');
+    expect(m.subject).toBe('SMBHL a besoin d\'un substitut dimanche 27 sept. / SMBHL needs a sub on Sunday, Sep 27');
     for (const [part, body] of [['text', m.text], ['html', visibleText(m.html)]]) {
-      const fr = body.indexOf('SMBHL cherche un joueur'), en = body.indexOf('SMBHL needs a player');
+      const fr = body.indexOf('SMBHL a besoin d'), en = body.indexOf('SMBHL needs a sub on');
       expect(fr, `${part}: French`).toBeGreaterThanOrEqual(0);
       expect(en, `${part}: English after French`).toBeGreaterThan(fr);
-      expect(body, `${part}: English team line`).toMatch(/The team isn.t decided yet: if you.re available, we place you on a team, and you get your final team before the game\./);
-      expect(body, `${part}: English waitlist line`).toContain('If every spot is taken, you stay on the waitlist.');
+      expect(body, `${part}: English question`).toMatch(/SMBHL needs a sub on Sunday, Sep 27 at 10:30 AM\. Are you in\?/);
+      expect(body, `${part}: no team or waitlist line`).not.toMatch(/isn.t decided|waitlist/);
       expect(body, `${part}: no team named`).not.toContain('Blue');
       expect(body, `${part}: English opt-out line`).toContain('Want off the sub list? Just reply to this email.');
     }
     const html = visibleText(m.html);
-    expect(html).toContain('✅ Oui, je suis disponible');
-    expect(html).toContain('❌ No, not this time');
+    expect(html).toMatch(/✅ J.embarque/);
+    expect(html).toContain('❌ Not this time');
   });
 
   it('the reminder too: "(rappel) / (reminder)" and both languages', async () => {
     const m = await deliver({ need: 'skater', reminder: true }, 'p121-remind');
-    expect(m.subject).toBe('SMBHL cherche un joueur (rappel) / SMBHL needs a player (reminder)');
-    expect(visibleText(m.html)).toContain('SMBHL needs a player');
+    expect(m.subject).toBe("SMBHL a besoin d'un substitut dimanche 27 sept. (rappel) / SMBHL needs a sub on Sunday, Sep 27 (reminder)");
+    expect(visibleText(m.html)).toContain('SMBHL needs a sub on');
   });
 });

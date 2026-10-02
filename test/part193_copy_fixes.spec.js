@@ -23,8 +23,8 @@ afterEach(() => { vi.useRealTimers(); });
 describe('SMBHL emails', () => {
   it('5c and 5e (batch 7 item 5a): the sub call names the date and time, then the venue on its own line', () => {
     const m = body('sub_call', { ev: SMBHL_EV, name: 'Sam', team: null, payload: { need: 'skater', yes: 'https://x/yes', no: 'https://x/no' } });
-    expect(m.text).toContain('SMBHL cherche un joueur pour dimanche 15 nov., 10 h 30.\nLieu : Aréna Golden');
-    expect(m.text).toContain('SMBHL needs a player on Sunday, Nov 15, 10:30 AM.\nVenue: Aréna Golden');
+    expect(m.text).toContain("SMBHL a besoin d'un substitut dimanche 15 nov. à 10 h 30. Tu embarques?\nLieu : Aréna Golden");
+    expect(m.text).toContain('SMBHL needs a sub on Sunday, Nov 15 at 10:30 AM. Are you in?\nVenue: Aréna Golden');
     expect(m.text).not.toMatch(/ au Aréna| at Aréna/);
   });
 
@@ -63,9 +63,9 @@ describe('Notre Ligue emails', () => {
 
   it('5m and 5c (batch 7 item 5a): the sub call sentence, then the venue on its own line', () => {
     const m = body('sub_call', { ev: LEAGUE_EV, name: 'Sam', team: null, leagueCfg, payload: { need: 'skater', yes: 'y', no: 'n' } });
-    expect(m.text).toContain('Ligue du mercredi cherche un joueur pour dimanche 15 nov., 19 h 30.\nLieu : Aréna Saint-Michel');
-    expect(m.text).toContain('Ligue du mercredi needs a player on Sunday, Nov 15, 7:30 PM.\nVenue: Aréna Saint-Michel');
-    expect(m.html).toContain('cherche un joueur pour <b>dimanche 15 nov., 19 h 30</b>.<br>Lieu : Aréna Saint-Michel');
+    expect(m.text).toContain("Ligue du mercredi a besoin d'un remplaçant dimanche 15 nov. à 19 h 30. Tu embarques?\nLieu : Aréna Saint-Michel");
+    expect(m.text).toContain('Ligue du mercredi needs a sub on Sunday, Nov 15 at 7:30 PM. Are you in?\nVenue: Aréna Saint-Michel');
+    expect(m.html).toContain('Ligue du mercredi a besoin d&#39;un remplaçant dimanche 15 nov. à 19 h 30. Tu embarques?<br>Lieu : Aréna Saint-Michel');
   });
 
   it('5k and 5h: the late drop-out alert says the time actually left, neutrally', () => {

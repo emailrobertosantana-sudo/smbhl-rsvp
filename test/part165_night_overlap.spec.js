@@ -88,7 +88,7 @@ describe('Subs: a call, an acceptance, the waitlist', () => {
     const accept = async ev => SELF.fetch(await availUrl(ev), { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'a=yes' });
 
     const inA = await (await accept(A)).text();
-    expect(inA).toMatch(/Tu joues avec/);
+    expect(inA).toMatch(/Tu es dans l(&#39;|')équipe/);
     expect((await one('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?', A.id, sub.player_id)).status).toBe('in');
 
     // The call for B goes to the free sub only.

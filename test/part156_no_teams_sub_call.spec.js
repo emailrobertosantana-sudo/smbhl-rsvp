@@ -45,13 +45,14 @@ describe('The no-teams sub call', () => {
       expect(part).not.toContain('The team isn&#39;t decided yet');
       expect(part).not.toMatch(/place (you on|dans) une? (team|équipe)/);
     }
-    expect(m.text).toContain('P156 noteams cherche un joueur');
-    expect(m.text).toContain('P156 noteams needs a player');
+    expect(m.text).toContain("P156 noteams a besoin d'un remplaçant");
+    expect(m.text).toContain('P156 noteams needs a sub on');
   });
 
   it('a fixed-teams league\'s generic call keeps it', async () => {
     const m = await subCallText('fixed', 'fixed', { teamNames: ['Red', 'Blue'] });
-    expect(m.text).toContain("L'équipe n'est pas encore décidée : si tu es disponible, on te place dans une équipe, et tu reçois ton équipe finale avant le match.");
-    expect(m.text).toContain("The team isn't decided yet: if you're available, we place you on a team, and you get your final team before the game.");
+    // Batch 8 item 1c: no team sentence in any call; the answer page says the team.
+    expect(m.text).not.toContain("L'équipe n'est pas encore décidée");
+    expect(m.text).not.toContain("The team isn't decided yet");
   });
 });

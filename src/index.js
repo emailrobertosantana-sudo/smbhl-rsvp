@@ -12845,75 +12845,62 @@ We no longer need you with ${team} for the game on ${w.en}. Sorry for the back a
       const generic = !team;
       const who = { fr: generic ? league.name : tFR(team), en: generic ? league.name : team };
 
-      const subjFr = `${who.fr} cherche ${g ? 'un gardien' : 'un joueur'}${again}`;
-      const subjEn = `${who.en} needs ${g ? 'a goalie' : 'a player'}${payload.reminder ? ' (reminder)' : ''}`;
-      // A league with no teams has no team to decide: no team sentence at all.
-      const teamNoteFr = generic && !teamless
-        ? "L'équipe n'est pas encore décidée : si tu es disponible, on te place dans une équipe, et tu reçois ton équipe finale avant le match."
-        : '';
-      const teamNoteEn = generic && !teamless
-        ? "The team isn't decided yet: if you're available, we place you on a team, and you get your final team before the game."
-        : '';
-      const waitFr = generic ? "Si toutes les places sont prises, tu restes sur la liste d'attente." : "Si la place est déjà prise, tu restes sur la liste d'attente pour les autres équipes.";
-      const waitEn = generic ? 'If every spot is taken, you stay on the waitlist.' : 'If the spot is taken you stay on the waitlist for the other teams.';
       // The way off the list: SMBHL calls them substituts; Notre Ligue says
       // remplaçants (a league event has a league_id other than SMBHL's).
       const leagueEvent = !!ev.league_id && ev.league_id !== SMBHL_LEAGUE_ID;
+      // Short (batch 8 item 1c): « SMBHL a besoin d'un substitut dimanche 15
+      // nov. à 10 h 30. Tu embarques? », the venue on its own line, the two
+      // buttons, the way off the list. Which team they play for is decided
+      // when they accept (acceptAvailability) and shown on the answer page.
+      const subFr = leagueEvent ? 'un remplaçant' : 'un substitut';
+      const needFr = g ? 'un gardien' : subFr;
+      const needEn = g ? 'a goalie' : 'a sub';
+      const day = { fr: isoW ? sentenceDate(isoW, 'fr') : w.fr, en: isoW ? sentenceDate(isoW, 'en') : w.en };
+      const callWhen = { fr: isoW ? sentenceWhen(isoW, ev.start_time, 'fr') : w.fr, en: isoW ? sentenceWhen(isoW, ev.start_time, 'en') : w.en };
+      const subjFr = `${who.fr} a besoin d'${needFr} ${day.fr}${again}`;
+      const subjEn = `${who.en} needs ${needEn} on ${day.en}${payload.reminder ? ' (reminder)' : ''}`;
       const offFr = leagueEvent
         ? 'Tu ne veux plus être sur la liste des remplaçants? Réponds à ce courriel.'
         : 'Tu ne veux plus être sur la liste de substituts? Réponds à ce courriel.';
-      const offEn = leagueEvent ? 'Want off the subs list? Just reply to this email.' : 'Want off the sub list? Just reply to this email.';
-
-      // « SMBHL cherche un joueur pour dimanche 11 janv., 10 h 30. » /
-      // "SMBHL needs a player on Sunday, Jan 11, 10:30 AM.", the venue on
-      // its own line, then the team note, the two buttons and the rest.
-      const callWhen = { fr: isoW ? sentenceWhen(isoW, ev.start_time, 'fr', ', ') : w.fr, en: isoW ? sentenceWhen(isoW, ev.start_time, 'en', ', ') : w.en };
+      const offEn = 'Want off the sub list? Just reply to this email.';
       const btn = {
-        fr: { yes: '✅ Oui, je suis disponible', no: '❌ Non, pas cette fois' },
-        en: { yes: "✅ Yes, I'm available", no: '❌ No, not this time' }
+        fr: { yes: "✅ J'embarque", no: '❌ Pas cette fois' },
+        en: { yes: "✅ I'm in", no: '❌ Not this time' }
       };
+      const askFr = `${who.fr} a besoin d'${needFr} ${callWhen.fr}. Tu embarques?`;
+      const askEn = `${who.en} needs ${needEn} on ${callWhen.en}. Are you in?`;
       const textFr =
-`${who.fr} cherche ${g ? 'un gardien' : 'un joueur'} pour ${callWhen.fr}.${vt('fr')}${teamNoteFr ? '\n' + teamNoteFr : ''}
+`${askFr}${vt('fr')}
 
 ${btn.fr.yes} : ${payload.yes}
 ${btn.fr.no} : ${payload.no}
 
-${waitFr}
 ${offFr}`;
       const textEn =
-`${who.en} needs ${g ? 'a goalie' : 'a player'} on ${callWhen.en}.${vt('en')}${teamNoteEn ? '\n' + teamNoteEn : ''}
+`${askEn}${vt('en')}
 
 ${btn.en.yes}: ${payload.yes}
 ${btn.en.no}: ${payload.no}
 
-${waitEn}
 ${offEn}`;
 
       const htmlFr = `<p style="font-size:16px; margin:0 0 16px;">
-          <b>${esc(who.fr)}</b> cherche ${g ? 'un gardien' : 'un joueur'} pour <b>${esc(callWhen.fr)}</b>.${vh('fr')}
+          ${esc(askFr)}${vh('fr')}
         </p>
-        ${teamNoteFr ? `<p style="font-size:14px; margin:0 0 16px;">${esc(teamNoteFr)}</p>` : ''}
         <div style="margin:0 0 20px;">
           ${emailBtn(payload.yes, btn.fr.yes, '#15803d', '#ffffff')}
           ${emailBtn(payload.no, btn.fr.no, '#f1f5f9', '#475569', '1px solid #cbd5e1')}
         </div>
-        <p style="font-size:13px; color:#64748b; margin:0 0 4px;">
-          ${esc(waitFr)}
-        </p>
         <p style="font-size:12px; color:#94a3b8; margin:0 0 16px;">
           ${esc(offFr)}
         </p>`;
       const htmlEn = `<p style="font-size:15px; margin:0 0 16px; color:#334155;">
-          <b>${esc(who.en)}</b> needs ${g ? 'a goalie' : 'a player'} on <b>${esc(callWhen.en)}</b>.${vh('en')}
+          ${esc(askEn)}${vh('en')}
         </p>
-        ${teamNoteEn ? `<p style="font-size:14px; margin:0 0 16px; color:#334155;">${esc(teamNoteEn)}</p>` : ''}
         <div style="margin:0 0 20px;">
           ${emailBtn(payload.yes, btn.en.yes, '#15803d', '#ffffff')}
           ${emailBtn(payload.no, btn.en.no, '#f1f5f9', '#475569', '1px solid #cbd5e1')}
         </div>
-        <p style="font-size:13px; color:#64748b; margin:0 0 4px;">
-          ${esc(waitEn)}
-        </p>
         <p style="font-size:12px; color:#94a3b8; margin:0;">
           ${esc(offEn)}
         </p>`;
@@ -16477,21 +16464,37 @@ function leagueAvailResultPage(L, need, r) {
       en: { title: "You're already playing at that time", body: `You're in another game at the same time (${leagueAvailWhen(r.overlap, 'en')}). We can't put you in both.` }
     };
   } else if (r.pool) {
-    T = { fr: { title: 'Ta place est réservée pour ce match', body: 'Les équipes sont formées avant le match : on te dit dans quelle équipe tu joues avant le match.' }, en: { title: "You're in for this game", body: "Teams are made before the game: we'll tell you your team before the game." } };
+    T = SUB_ANSWER.pool;
   } else if (r.placed) {
-    T = {
-      fr: { title: `Tu joues avec ${r.placed}`, body: g ? 'Tu es dans les buts pour ce match.' : 'Merci de dépanner.' },
-      en: { title: `You're with ${r.placed}`, body: g ? "You're in goal for this game." : 'Thanks for filling in.' }
-    };
+    T = SUB_ANSWER.placed(r.placed, r.placed);
   } else {
-    T = { fr: { title: "Sur la liste d'attente", body: "La place est comblée. Si une autre équipe a besoin de toi avant le match, on te place automatiquement et on t'écrit." }, en: { title: 'On the waitlist', body: 'That spot is filled. If another team needs you before the game, we place you automatically and email you.' } };
+    T = SUB_ANSWER.waitlist;
   }
-  const caveat = r.placed && hoursOut(ev) > 24 ? SUB_TEAM_CAVEAT : null;
+  // The placed text says the team may change: no second caveat.
+  const caveat = null;
   return leagueAvailDoc(L, { fr: T.fr.title, en: T.en.title }, l => `<h1 class="av-q">${esc(T[l].title)}</h1>
     ${leagueAvailMeta(ev, l)}
     ${caveat ? `<p class="nl-help" id="sub_team_caveat" style="margin:0">${esc(caveat[l])}</p>` : ''}
     <p style="margin:0">${esc(T[l].body)}</p>`);
 }
+
+// After « J'embarque » / "I'm in" (batch 8 item 1d): placed on a team now
+// (acceptAvailability places at once), in a pickup pool whose teams are
+// drawn later, or on the waitlist.
+const SUB_ANSWER = {
+  placed: (teamFr, teamEn) => ({
+    fr: { title: "C'est noté!", body: `Tu es dans l'équipe ${teamFr}, sous réserve de changement. Tu recevras ton équipe finale avant le match.` },
+    en: { title: "You're in!", body: `You've been placed on Team ${teamEn}, subject to change. You'll get your final team before the game.` }
+  }),
+  pool: {
+    fr: { title: "C'est noté!", body: 'Tu recevras ton équipe avant le match.' },
+    en: { title: "You're in!", body: "You'll get your team before the game." }
+  },
+  waitlist: {
+    fr: { title: 'Merci!', body: "Toutes les places sont prises pour l'instant : tu es sur la liste d'attente, et on t'écrit si une place se libère." },
+    en: { title: 'Thanks!', body: "All spots are taken for now: you're on the waitlist, and we'll email you if a spot opens up." }
+  }
+};
 
 // Wherever a sub sees their team before the game: more than 24 h out a
 // placement is provisional (reshuffles send no email), so say so. Inside
@@ -16561,30 +16564,21 @@ async function availRoute(req, env, url) {
       <span class="en">You're already playing at that time</span></h1>
       <div class="card"><p>Tu es inscrit \u00e0 un autre match qui se joue en m\u00eame temps (${esc(o.fr)}). On ne peut pas te mettre dans les deux.<span class="en">You're in another game at the same time (${esc(o.en)}). We can't put you in both.</span></p></div>`, logoTooltip);
   }
-  if (r.pool) {
-    // A pickup game before its draw: in, team to come.
-    return page('Confirmé', `<h1>Tu es inscrit pour ce match
-      <span class="en">You're in for this game</span></h1>
+  const answered = (T, extra = '') => page(T.fr.title, `<h1>${esc(T.fr.title)}
+      <span class="en">${esc(T.en.title)}</span></h1>
       <p class="when">${esc(w.fr)}</p>${ev && ev.venue ? `<p class="when">${esc(venueLine(ev.venue, 'fr'))}</p>` : ''}
-      <div class="card"><p>Les équipes sont tirées avant le match : on t'envoie ton équipe avant le match.<span class="en">Teams are drawn before the game: we'll send you your team before the game.</span></p></div>`, logoTooltip);
-  }
+      <div class="card"><p>${esc(T.fr.body)}<span class="en">${esc(T.en.body)}</span></p></div>${extra}`, logoTooltip);
+  // A pickup game before its draw: in, team to come.
+  if (r.pool) return answered(SUB_ANSWER.pool);
   if (r.placed) {
     const shirt = need === 'goalie'
       ? { fr: 'Pas besoin de chandail d\u2019équipe.', en: 'No team shirt needed.' }
       : { fr: `Apporte un chandail ${SHIRT_FR[r.placed] || r.placed.toLowerCase()}.`,
           en: `Bring a ${r.placed.toLowerCase()} shirt.` };
-    return page('Confirmé', `<h1>Tu joues avec ${esc(TEAM_FR[r.placed] || r.placed)}
-      <span class="en">You are with ${esc(r.placed)}</span></h1>
-      <p class="when">${esc(w.fr)}</p>${ev && ev.venue ? `<p class="when">${esc(venueLine(ev.venue, 'fr'))}</p>` : ''}
-      ${subTeamCaveatHtml(ev)}
-      <div class="card"><p>${shirt.fr}<span class="en">${shirt.en}</span></p></div>`, logoTooltip);
+    return answered(SUB_ANSWER.placed(TEAM_FR[r.placed] || r.placed, r.placed),
+      `<div class="card"><p>${shirt.fr}<span class="en">${shirt.en}</span></p></div>`);
   }
-  return page('Liste d\u2019attente', `<h1>Sur la liste d'attente
-    <span class="en">On the waitlist</span></h1>
-    <div class="card"><p>La place est comblée, mais si une autre équipe a besoin
-    de toi d'ici ${esc(w.fr)}, on te place automatiquement et on t'écrit.
-    <span class="en">That spot is filled. If another team needs you before the
-    game we place you automatically and email you.</span></p></div>`, logoTooltip);
+  return answered(SUB_ANSWER.waitlist);
 }
 
 // Resolves whether the CURRENT season tracks stats, for hiding stats-only admin

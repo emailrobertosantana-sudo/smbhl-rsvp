@@ -52,7 +52,7 @@ describe('A short pickup game calls subs on headcount, before the draw', () => {
     await drain(env);
     const m = mail.sent.find(x => x.to === 'short.sub0@example.com');
     expect(m.subject).toContain('P158 short');
-    expect(m.text).toContain("The team isn't decided yet");
+    expect(m.text).toContain("P158 short needs a sub on");
   });
 
   it('a full pool calls nobody', async () => {
@@ -65,9 +65,9 @@ describe('A short pickup game calls subs on headcount, before the draw', () => {
     await callSubsForShortfall(env, ev);
     // The league's /avail page (neutral French, apostrophes escaped as &#39;).
     const page = (await (await accept(await availLink(ev, subIds[0]))).text()).replace(/&#39;/g, "'");
-    expect(page).toContain("Ta place est réservée pour ce match");
-    expect(page).toContain("You're in for this game");
-    expect(page).toContain("Teams are made before the game: we'll tell you your team before the game.");
+    expect(page).toMatch(/C(&#39;|&#x27;|')est noté!/);
+    expect(page).toMatch(/You(&#39;|&#x27;|')re in!/);
+    expect(page).toMatch(/You(&#39;|&#x27;|')ll get your team before the game\./);
     let row = await one('SELECT team, status, role FROM rsvp WHERE event_id = ? AND player_id = ?', ev.id, subIds[0]);
     expect(row).toEqual({ team: null, status: 'in', role: 'sub' });
     expect((await a.post('/league/events/random-assign', { event_id: ev.id })).status).toBe(200);
@@ -94,6 +94,6 @@ describe('A short pickup game calls subs on headcount, before the draw', () => {
     expect(await pending()).toBe(0); // 4 of 4: the pool is full, the waves stop
     // A later yes waits.
     const late = await (await accept(await availLink(ev, subIds[2]))).text();
-    expect(late).toContain("Sur la liste d'attente");
+    expect(late).toMatch(/tu es sur la liste d(&#39;|&#x27;|')attente, et on t(&#39;|&#x27;|')écrit si une place se libère\./);
   });
 });
