@@ -34,6 +34,7 @@ import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail } 
 import { readSupportSession, supportEnv, supportResponse, startSupport, endSupport, clearSupportCookieHeader, readSupportLog } from './support_mode.js';
 import { writeRefusal } from './write_guard.js';
 import { superAdminListPage, superAdminLeaguePage, LEAGUE_PAGE_CONSTANTS } from './super_admin_ui.js';
+import { prepareOpsDigest, deliverOpsDigest, OPS_DIGEST_TO, OPS_DIGEST_KIND } from './ops_digest.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
   cleanupOldReviews,
@@ -32007,6 +32008,16 @@ installEmailPreviewHost({
   leagueBroadcastRecipients, renderLeagueBroadcastEmail
 });
 
+// What src/ops_digest.js needs from this file: the day's budget left
+// beyond the payment reminder reserve, the outbox, the system drain.
+function opsDigestHost(env) {
+  return {
+    budgetLeft: () => paymentReminderBudget(env),
+    enqueue: (mail, dedupKey) => enqueuePrerenderedMail(env, { kind: OPS_DIGEST_KIND, leagueId: 'system', eventId: 'system', dedupKey, to: OPS_DIGEST_TO, mail }),
+    drainSystem: () => drain(env, MAIL_SENDS_PER_INVOCATION, null, 'system')
+  };
+}
+
 /* ---------- failure alerting (src/health.js) ---------- */
 
 // What src/health.js needs from this file to tell people.
@@ -32095,8 +32106,17 @@ async function runCronPass(env) {
     // price for its next billing date (src/billing_actions.js).
     try { await runTierChanges(env); } catch (e) { console.error(`[billing] tier changes: ${e.message}`); }
     // Each league's health for the super-admin (src/league_health.js), once a
-    // day, stored. Silent unless it fails.
-    try { await runDailyLeagueHealth(env); } catch (e) { console.error(`[health] daily league health: ${e.message}`); }
+    // day, stored; then the operator's digest (src/ops_digest.js), on days
+    // with something to report. Silent unless it fails. HEALTH_ALERTS='off'
+    // (the recorded-behaviour tests only) holds the digest back, like the
+    // health alerts.
+    try {
+      const health = await runDailyLeagueHealth(env);
+      if (env.HEALTH_ALERTS !== 'off') {
+        if (health.ran) await prepareOpsDigest(env, health);
+        await deliverOpsDigest(env, opsDigestHost(env));
+      }
+    } catch (e) { console.error(`[health] daily league health or digest: ${e.message}`); }
   }
   try { await recordHeartbeat(env, 'end', { ok: passOk, error: passError }); } catch (e) { console.error(`[health] heartbeat end: ${e.message}`); }
   await pingHeartbeatUrl(env, passOk);
