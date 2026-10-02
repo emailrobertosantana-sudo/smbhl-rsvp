@@ -111,6 +111,7 @@ beforeAll(async () => {
     ['league comms', '/league/comms', 'session'],
     ['league finances', '/league/finances', 'session'],
     ['super admin', '/super-admin/leagues', 'admin'],
+    ['super admin league', `/super-admin/league?id=${q(seeded.league.id)}`, 'admin'],
     ['admin board', '/admin/board', 'admin'],
     ['admin subs', '/admin/subs', 'admin'],
     ['admin review list', '/admin/review', 'admin'],

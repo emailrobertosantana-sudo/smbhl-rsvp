@@ -28,6 +28,7 @@ import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail, nl
 import { nlLegalEmailWrap } from './legal.js';
 import { recordTermsAcceptance, acceptsTerms, TERMS_REFUSAL } from './terms.js';
 import { hasCapability } from './super_admin.js';
+import { readSupportSession } from './support_mode.js';
 import { recordAdminSeen } from './league_health.js';
 import { applyReminderWindowSkipRule } from './reminder_scheduling.js';
 import { usesAdvancedReminders, getEmailSettings, emailSettingsKey } from './reminders.js';
@@ -54,6 +55,9 @@ export async function checkLeagueAccess(req, env, leagueId) {
   const session = await checkUserSession(req, env);
   if (!session) return 'unauthenticated';
 
+  // Support mode (src/support_mode.js): only the league being supported.
+  if (session.support && session.support.leagueId !== leagueId) return 'forbidden';
+
   const link = await env.DB.prepare(
     'SELECT 1 FROM league_admins WHERE user_id = ? AND league_id = ?'
   ).bind(session.userId, leagueId).first();
@@ -69,8 +73,8 @@ export async function checkLeagueAccess(req, env, leagueId) {
   if (league && league.deactivated_at) return 'deactivated';
 
   // The super-admin's league health (src/league_health.js): the last day an
-  // admin used the league's pages.
-  await recordAdminSeen(env, leagueId);
+  // admin used the league's pages. Never in support mode.
+  if (!session.support) await recordAdminSeen(env, leagueId);
   return 'ok';
 }
 
@@ -109,6 +113,9 @@ function chosenLeagueCookie(req) {
 }
 
 export async function resolveSessionLeagueId(req, env, url) {
+  // Support mode (src/support_mode.js): always the league being supported.
+  const sup = await readSupportSession(req, env);
+  if (sup) return sup.leagueId;
   const explicit = url.searchParams.get('league_id');
   if (explicit) return explicit;
 

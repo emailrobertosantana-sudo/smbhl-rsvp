@@ -30,7 +30,10 @@ import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, se
 import { handleStripeWebhook, processPendingStripeEvents } from './stripe_webhook.js';
 import { checkStripeConfig } from './billing_check.js';
 import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS } from './billing_actions.js';
-import { runDailyLeagueHealth, leagueListRows, filterLeagueRows } from './league_health.js';
+import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail } from './league_health.js';
+import { readSupportSession, supportEnv, supportResponse, startSupport, endSupport, clearSupportCookieHeader, readSupportLog } from './support_mode.js';
+import { writeRefusal } from './write_guard.js';
+import { superAdminListPage, superAdminLeaguePage, LEAGUE_PAGE_CONSTANTS } from './super_admin_ui.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
   cleanupOldReviews,
@@ -12298,6 +12301,8 @@ function extractEmailAddress(fromValue) {
 // is thrown so no caller can mistake it for a send. opts.fromQueue: the
 // drain's own sends -- the drain defers its rows itself.
 async function sendMail(env, to, subject, text, html = null, attachments = null, leagueCfg = null, opts = {}) {
+  // Support mode (src/support_mode.js): no email can be sent.
+  if (env && env.SUPPORT_MODE) throw new Error('support mode: read-only, no email is sent');
   try {
     // A hard daily cap (demo): every kind counts; reached, the email waits
     // for tomorrow like a Resend quota refusal (src/mail_queue.js).
@@ -12459,6 +12464,7 @@ async function sendMailViaCloudflare(env, to, subject, text, html = null, attach
 // SMBHL's settings, exactly as before (src/reminders.js).
 async function enqueue(env, { kind, event_id, player_id = null, team = null,
                               dedup_key = null, payload = {}, delayMin = 0, league_id = SMBHL_LEAGUE_ID, skipQuietHours = false, quietLeagueId = null }) {
+  if (env && env.SUPPORT_MODE) throw new Error('support mode: read-only, no email is queued');
   const now = new Date();
   const target = new Date(now.getTime() + delayMin * 60000);
   const after = (skipQuietHours ? target : await afterQuiet(env, target, quietLeagueId)).toISOString();
@@ -17167,6 +17173,29 @@ if (K) {
 }
 </script>
   `);
+}
+
+// GET /super-admin/league/data?id=: one Notre Ligue league for its
+// super-admin page (src/super_admin_ui.js).
+async function superAdminLeagueData(env, leagueId) {
+  const detail = await leagueDetail(env, leagueId);
+  if (!detail) return Response.json({ ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' }, { status: 404 });
+  const meta = (await listLeaguesWithMetadata(env)).find(l => l.id === leagueId) || null;
+  const snap = detail.snapshot;
+  const health = snap && snap.light
+    ? { light: snap.light, signals: snap.signals, metrics: snap.metrics, computedAt: snap.computedAt, live: false }
+    : { light: detail.league.light, signals: detail.league.signals, metrics: detail.league, computedAt: null, live: true };
+  return Response.json({
+    ok: true,
+    league: detail.league,
+    health,
+    rules: detail.rules,
+    timeline: detail.timeline,
+    settings: meta ? { slug: meta.slug, adminCount: meta.adminCount, publicPageEnabled: meta.publicPageEnabled, deactivatedAt: meta.deactivatedAt, planTier: meta.planTier, flags: meta.flags } : null,
+    planTiers: LEAGUE_PAGE_CONSTANTS.planTiers,
+    flagKeys: LEAGUE_PAGE_CONSTANTS.flagKeys,
+    supportLog: await readSupportLog(env.DB, leagueId)
+  }, { headers: { 'cache-control': 'no-store' } });
 }
 
 async function boardPage(env = null, isAuthed = false) {
@@ -32151,13 +32180,34 @@ export default {
       const u = new URL(req.url);
       return new Response(null, { status: 301, headers: { location: `https://notreligue.ca${u.pathname}${u.search}` } });
     }
-    const resp = await handleFetch(req, env, ctx);
+    // Support mode (src/support_mode.js, Notre Ligue only): writes refused
+    // before routing (src/write_guard.js), the request on a read-only env,
+    // no Set-Cookie back, the banner on every page. The super-admin's own
+    // routes are never in support mode.
+    const sup = await supportSessionFor(req, env);
+    let resp;
+    if (sup) {
+      resp = writeRefusal(req, new URL(req.url), 'support') || await handleFetch(req, supportEnv(env, sup), ctx);
+      let name = null;
+      try { const row = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(sup.leagueId).first(); name = row && row.name; } catch (_) {}
+      resp = supportResponse(resp, name);
+    } else {
+      resp = await handleFetch(req, env, ctx);
+    }
     if (env.DEMO_ENV !== 'true') return resp;
     const headers = new Headers(resp.headers);
     headers.set('X-Robots-Tag', 'noindex, nofollow');
     return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
   }
 };
+
+// The request's support session, or null: Notre Ligue only, never on the
+// super-admin's own routes.
+async function supportSessionFor(req, env) {
+  if (env.LEAGUE_PRODUCT !== 'true') return null;
+  if (new URL(req.url).pathname.startsWith('/super-admin')) return null;
+  return readSupportSession(req, env);
+}
 
 async function handleFetch(req, env, ctx) {
     const url = new URL(req.url);
@@ -32581,7 +32631,45 @@ async function handleFetch(req, env, ctx) {
         return Response.redirect(url.origin + '/super-admin/leagues', 302);
       if ((url.pathname === '/super-admin/leagues' || url.pathname === '/super-admin/leagues/') && req.method === 'GET') {
         const isAuthed = checkAdminAuth(req, env) === 'ok';
+        // Notre Ligue: its own pages, its branding (src/super_admin_ui.js).
+        if (env.LEAGUE_PRODUCT === 'true') {
+          return new Response(superAdminListPage({ isAuthed, lang: resolveServerLang(req), authScript: nlAuthScript }), { headers: adminPageHeaders(isAuthed, env) });
+        }
         return new Response(superAdminPage(isAuthed), { headers: adminPageHeaders(isAuthed, env) });
+      }
+      // One league (Notre Ligue only): health, trial timeline, billing,
+      // support access log, "view as admin".
+      if ((url.pathname === '/super-admin/league' || url.pathname === '/super-admin/league/') && req.method === 'GET') {
+        if (env.LEAGUE_PRODUCT !== 'true') return new Response('Not found', { status: 404 });
+        const isAuthed = checkAdminAuth(req, env) === 'ok';
+        let leagueName = '';
+        if (isAuthed) {
+          const row = await env.DB.prepare('SELECT name FROM leagues WHERE id = ? AND id != ?').bind(url.searchParams.get('id') || '', SMBHL_LEAGUE_ID).first();
+          leagueName = (row && row.name) || '';
+        }
+        return new Response(superAdminLeaguePage({ isAuthed, lang: resolveServerLang(req), authScript: nlAuthScript, leagueName }), { headers: adminPageHeaders(isAuthed, env) });
+      }
+      if (url.pathname === '/super-admin/league/data' && req.method === 'GET') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        if (env.LEAGUE_PRODUCT !== 'true') return new Response('Not found', { status: 404 });
+        return await superAdminLeagueData(env, url.searchParams.get('id') || '');
+      }
+      // Support mode (src/support_mode.js): entered from the league page with
+      // the admin key; left from the banner (no key needed to leave).
+      if (url.pathname === '/super-admin/support/start' && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        const body = await req.json().catch(() => ({}));
+        const r = await startSupport(env, req, String(body.leagueId || ''));
+        if (!r.ok) return Response.json({ ok: false, error: r.error, errorKey: r.errorKey }, { status: r.status });
+        return Response.json({ ok: true, redirect: r.redirect }, { headers: { 'set-cookie': r.cookie, 'cache-control': 'no-store' } });
+      }
+      if (url.pathname === '/super-admin/support/exit' && req.method === 'POST') {
+        const sup = await readSupportSession(req, env);
+        if (sup) await endSupport(env, sup);
+        const back = sup ? `/super-admin/league?id=${encodeURIComponent(sup.leagueId)}` : '/super-admin/leagues';
+        return new Response(null, { status: 303, headers: { location: back, 'set-cookie': clearSupportCookieHeader(), 'cache-control': 'no-store' } });
       }
       if (url.pathname === '/super-admin/leagues/data' && req.method === 'GET') {
         const auth = checkAdminAuth(req, env);

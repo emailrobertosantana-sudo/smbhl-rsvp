@@ -16,6 +16,7 @@ import { nlLegalEmailWrap } from './legal.js';
 import { recordTermsAcceptance, getTermsAcceptance, acceptsTerms, TERMS_REFUSAL } from './terms.js';
 import { ERROR_I18N } from './error_i18n.js';
 import { nextQuery } from './next_path.js';
+import { readSupportSession, supportUserSession } from './support_mode.js';
 
 /* ---------- password hashing ---------- */
 //
@@ -140,6 +141,11 @@ export function clearSessionCookie() {
 // Returns { userId } on success, or null — never throws.
 export async function checkUserSession(req, env) {
   try {
+    // Support mode (src/support_mode.js, Notre Ligue only): the super-admin
+    // sees the league as its admin does, read-only. The browser's own
+    // session cookie, if any, is left as it is.
+    const sup = await readSupportSession(req, env);
+    if (sup) return await supportUserSession(env, sup);
     const cookie = req.headers.get('cookie') || '';
     const m = cookie.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`));
     if (!m) return null;

@@ -101,6 +101,8 @@ export const ERROR_I18N = {
   DUAL_TEAM_NOT_SHORT: { fr: "Cette équipe ne manque pas de gardien.", en: 'This team is not short a goalie.' },
   DUAL_PLAYER_NOT_AVAILABLE: { fr: 'Ce joueur ne peut pas être mis dans les buts pour ce match.', en: 'This player cannot be put in goal for this game.' },
   DUAL_ACTION_UNKNOWN: { fr: 'Action inconnue.', en: 'Unknown action.' },
+  // Support mode (src/support_mode.js): the super-admin views a league read-only.
+  SUPPORT_READ_ONLY: { fr: 'Mode soutien, lecture seule : rien ne peut être modifié.', en: 'Support mode, read-only: nothing can be changed.' },
   // Terms acceptance (src/terms.js).
   TERMS_NOT_ACCEPTED: { fr: 'Coche la case pour accepter les conditions et la politique de confidentialité.', en: 'Check the box to accept the terms and the privacy policy.' },
   // Payment reminders (src/payment_reminders.js).
