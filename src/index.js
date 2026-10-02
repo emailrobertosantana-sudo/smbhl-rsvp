@@ -26,9 +26,10 @@ import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation, claimO
 import { handleSignup, handleLogin, handleAcceptTerms, purgeRateLimitIps, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
-import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, setFreeException } from './billing.js';
+import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, setFreeException, billingEnabled } from './billing.js';
 import { handleStripeWebhook, processPendingStripeEvents } from './stripe_webhook.js';
 import { checkStripeConfig } from './billing_check.js';
+import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS } from './billing_actions.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
   cleanupOldReviews,
@@ -6044,6 +6045,230 @@ async function handleLeagueEventNoShow(req, env, url) {
   return Response.json({ ok: true, event_id: ev.id, player_id: String(b.player_id), no_show: !!b.no_show });
 }
 
+// ---- Billing page (/league/billing) ----
+// Every admin of a Notre Ligue league sees it once billing is on; only the
+// owner (leagues.created_by) subscribes, opens the portal, pauses or
+// resumes (src/billing_actions.js). Checkout and the portal are Stripe's
+// hosted pages: a redirect, no Stripe script on our pages. Lines with
+// numbers or dates carry both languages (data-date-fr/en) for the toggle.
+const BILLING_PLAN = { fr: { free: 'Gratuit', standard: 'Standard', plus: 'Plus', custom: 'Sur mesure' }, en: { free: 'Free', standard: 'Standard', plus: 'Plus', custom: 'Custom' } };
+const I18N_BILLING = {
+  fr: {
+    navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Paramètres',
+    title: 'Abonnement',
+    free: 'Ta ligue est gratuite (moins de 15 joueurs réguliers).',
+    custom: 'Plus de 100 joueurs réguliers : écris-nous à bonjour@notreligue.ca pour un prix sur mesure.',
+    trialOver: 'Ton essai gratuit est terminé.',
+    taxNote: 'Prix avant taxes.',
+    subscribe: "S'abonner",
+    manage: 'Gérer mon abonnement',
+    pause: 'Mettre en pause', pauseConfirm: "Mettre l'abonnement en pause? Aucun paiement tant qu'il est en pause.", pauseYes: 'Oui, mettre en pause', cancelBtn: 'Annuler',
+    resume: 'Reprendre', resumeNote: 'La facturation reprend aujourd’hui.',
+    paused: 'Abonnement en pause. Ta ligue est en lecture seule.',
+    pastDue: "Le dernier paiement n'a pas passé. Mets ta carte à jour avec « Gérer mon abonnement ».",
+    ownerOnly: "Seul le propriétaire de la ligue peut gérer l'abonnement.",
+    success: 'Merci! Ton abonnement est actif.',
+    canceled: "L'abonnement n'a pas été complété.",
+    error: 'Une erreur est survenue. Réessaie.'
+  },
+  en: {
+    navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Settings',
+    title: 'Subscription',
+    free: 'Your league is free (fewer than 15 regular players).',
+    custom: 'More than 100 regular players: write to bonjour@notreligue.ca for a custom price.',
+    trialOver: 'Your free trial has ended.',
+    taxNote: 'Prices before tax.',
+    subscribe: 'Subscribe',
+    manage: 'Manage my subscription',
+    pause: 'Pause', pauseConfirm: 'Pause the subscription? No payment while it is paused.', pauseYes: 'Yes, pause', cancelBtn: 'Cancel',
+    resume: 'Resume', resumeNote: 'Billing restarts today.',
+    paused: 'Subscription paused. Your league is read-only.',
+    pastDue: "The last payment didn't go through. Update your card with “Manage my subscription”.",
+    ownerOnly: 'Only the league owner can manage the subscription.',
+    success: 'Thanks! Your subscription is active.',
+    canceled: 'The subscription was not completed.',
+    error: 'Something went wrong. Try again.'
+  }
+};
+// The lines with numbers or dates, in both languages.
+function billingLines(view) {
+  const d = (iso, l) => (iso ? formatPageDate(String(iso).slice(0, 10), l, 'long') : '');
+  const plan = (k, l) => BILLING_PLAN[l][k] || k;
+  const row = view.row || {};
+  const L = {};
+  L.count = {
+    fr: `Ta ligue compte ${pluralText('{n|# joueur régulier|# joueurs réguliers}', { n: view.count }, 'fr')} : forfait ${plan(view.countTier, 'fr')}.`,
+    en: `Your league has ${pluralText('{n|# regular player|# regular players}', { n: view.count }, 'en')}: ${plan(view.countTier, 'en')} plan.`
+  };
+  if (view.trial && view.trial.daysLeft > 0) L.trial = {
+    fr: `Essai gratuit : ${pluralText('{n|il reste # jour|il reste # jours}', { n: view.trial.daysLeft }, 'fr')}.`,
+    en: `Free trial: ${pluralText('{n|# day|# days}', { n: view.trial.daysLeft }, 'en')} left.`
+  };
+  if (['standard', 'plus'].includes(view.countTier)) {
+    const c = PRICE_CENTS[view.countTier];
+    L.monthly = { fr: `Mensuel : ${money(c.month, 'fr')} par mois`, en: `Monthly: ${money(c.month, 'en')} per month` };
+    L.yearly = { fr: `Annuel : ${money(c.year, 'fr')} par année (2 mois gratuits)`, en: `Yearly: ${money(c.year, 'en')} per year (2 months free)` };
+  }
+  if (view.live) {
+    const monthly = row.billing_interval === 'month';
+    L.plan = { fr: `Forfait ${plan(row.tier, 'fr')}, ${monthly ? 'mensuel' : 'annuel'}.`, en: `${plan(row.tier, 'en')} plan, ${monthly ? 'monthly' : 'yearly'}.` };
+    const trialEnd = row.trial_ends_at && Date.parse(row.trial_ends_at) > Date.now() ? row.trial_ends_at : null;
+    if (row.status === 'paused') L.state = null;
+    else if (row.cancel_at_period_end && row.current_period_end) L.state = { fr: `Ton abonnement prend fin le ${d(row.current_period_end, 'fr')}.`, en: `Your subscription ends on ${d(row.current_period_end, 'en')}.` };
+    else if (row.status === 'past_due') L.state = null;
+    else if (trialEnd) L.state = { fr: `Premier paiement le ${d(trialEnd, 'fr')}, à la fin de ton essai.`, en: `First payment on ${d(trialEnd, 'en')}, when your trial ends.` };
+    else if (row.current_period_end) L.state = { fr: `Prochain paiement le ${d(row.current_period_end, 'fr')}.`, en: `Next payment on ${d(row.current_period_end, 'en')}.` };
+    if (view.pendingTier && row.current_period_end && !row.cancel_at_period_end) L.tierChange = {
+      fr: `Ton forfait passera à ${plan(view.pendingTier, 'fr')} le ${d(row.current_period_end, 'fr')}.`,
+      en: `Your plan changes to ${plan(view.pendingTier, 'en')} on ${d(row.current_period_end, 'en')}.`
+    };
+  }
+  return L;
+}
+
+async function billingContext(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return { redirect: loginUrlFor(url) };
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId || leagueId === SMBHL_LEAGUE_ID) return { redirect: url.origin + '/dashboard' };
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return { redirect: url.origin + '/dashboard' };
+  const owner = await env.DB.prepare('SELECT created_by FROM leagues WHERE id = ?').bind(leagueId).first();
+  return { session, leagueId, isOwner: !!(owner && owner.created_by === session.userId) };
+}
+
+async function handleLeagueBillingPage(req, env, url) {
+  const lang = resolveServerLang(req);
+  const ctx = await billingContext(req, env, url);
+  if (ctx.redirect) return Response.redirect(ctx.redirect, 302);
+  if (!billingEnabled(env) || env.LEAGUE_PRODUCT !== 'true') return Response.redirect(url.origin + '/league/settings', 302);
+  const status = url.searchParams.get('status');
+  if (status === 'success' && url.searchParams.get('session_id')) {
+    try { await syncAfterCheckout(env, ctx.leagueId, url.searchParams.get('session_id')); }
+    catch (e) { console.error(`[billing] after Checkout for ${ctx.leagueId}: ${e.message}`); }
+  }
+  const view = await billingView(env, ctx.leagueId);
+  const leagueRow = view.league;
+  const t = I18N_BILLING[lang] || I18N_BILLING.fr;
+  const { header, tabbar } = dashChrome(leagueRow.name, 'settings');
+  const L = billingLines(view);
+  const row = view.row || {};
+  const k = key => `data-i18n="${key}">${esc(t[key])}`;
+  const bi = (line, tag = 'p', attrs = '') => (line ? `<${tag}${attrs} data-date-fr="${esc(line.fr)}" data-date-en="${esc(line.en)}">${esc(line[lang] || line.fr)}</${tag}>` : '');
+  const paid = ['standard', 'plus'].includes(view.countTier);
+  let action = '';
+  if (view.live) {
+    const canPause = row.billing_interval === 'month' && row.status === 'active' && !row.cancel_at_period_end;
+    action = `${bi(L.plan)}
+    ${row.status === 'paused' ? `<p class="bl-note" ${k('paused')}</p>` : ''}
+    ${row.status === 'past_due' ? `<p class="bl-note" ${k('pastDue')}</p>` : ''}
+    ${bi(L.state)}${bi(L.tierChange)}
+    ${ctx.isOwner ? `<div class="bl-actions">
+      <button type="button" class="nl-btn nl-btn--primary" data-billing="portal" ${k('manage')}</button>
+      ${canPause ? `<button type="button" class="nl-btn nl-btn--secondary" id="bl-pause-ask" ${k('pause')}</button>` : ''}
+      ${row.status === 'paused' ? `<button type="button" class="nl-btn nl-btn--secondary" data-billing="resume" ${k('resume')}</button>` : ''}
+    </div>
+    ${row.status === 'paused' ? `<p class="nl-help" ${k('resumeNote')}</p>` : ''}
+    ${canPause ? `<div class="bl-confirm" id="bl-pause-confirm" hidden>
+      <p ${k('pauseConfirm')}</p>
+      <div class="bl-actions"><button type="button" class="nl-btn nl-btn--secondary" data-billing="pause" ${k('pauseYes')}</button><button type="button" class="nl-btn nl-btn--ghost" id="bl-pause-no" ${k('cancelBtn')}</button></div>
+    </div>` : ''}` : `<p class="nl-help" ${k('ownerOnly')}</p>`}`;
+  } else if (view.countTier === 'free') {
+    action = `<p ${k('free')}</p>`;
+  } else if (view.countTier === 'custom') {
+    action = `<p ${k('custom')}</p>`;
+  } else if (paid) {
+    action = `${!L.trial && view.trial ? `<p ${k('trialOver')}</p>` : ''}
+    <fieldset class="bl-choice"${ctx.isOwner ? '' : ' disabled'}>
+      <label><input type="radio" name="bl-interval" value="month" checked> ${bi(L.monthly, 'span')}</label>
+      <label><input type="radio" name="bl-interval" value="year"> ${bi(L.yearly, 'span')}</label>
+    </fieldset>
+    <p class="nl-help" ${k('taxNote')}</p>
+    ${ctx.isOwner ? `<div class="bl-actions"><button type="button" class="nl-btn nl-btn--primary" data-billing="checkout" ${k('subscribe')}</button></div>` : `<p class="nl-help" ${k('ownerOnly')}</p>`}`;
+  }
+  const banner = status === 'success' ? `<p class="bl-banner bl-ok" role="status" ${k('success')}</p>`
+    : status === 'cancel' ? `<p class="bl-banner" role="status" ${k('canceled')}</p>` : '';
+  const bodyHtml = `${dashStyles()}${header}
+<style>
+  .bl-card { display: flex; flex-direction: column; gap: var(--space-3); }
+  .bl-card p { margin: 0; }
+  .bl-choice { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .bl-choice label { display: flex; gap: 10px; align-items: center; min-height: 44px; font-size: 16px; }
+  .bl-actions { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+  .bl-banner { padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--surface-sunken); margin: 0 0 var(--space-4); }
+  .bl-ok { background: var(--success-tint, var(--surface-sunken)); }
+  .bl-note { font-weight: 600; }
+  .bl-confirm { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+  @media (max-width: 479px) { .bl-actions .nl-btn { width: 100%; } }
+</style>
+<main class="dash-main" id="bl-main">
+  <h1 ${k('title')}</h1>
+  ${banner}
+  <p class="nl-error" id="bl-err" role="alert" hidden ${k('error')}</p>
+  <section class="nl-card nl-card--pad-lg bl-card">
+    ${bi(L.count)}
+    ${view.live ? '' : bi(L.trial)}
+    ${action}
+  </section>
+</main>
+${tabbar}`;
+  const script = `
+${nlAuthScript(I18N_BILLING)}
+(function() {
+  var err = document.getElementById('bl-err');
+  var ask = document.getElementById('bl-pause-ask'), box = document.getElementById('bl-pause-confirm'), no = document.getElementById('bl-pause-no');
+  if (ask && box) ask.addEventListener('click', function() { box.hidden = false; ask.hidden = true; });
+  if (no && box) no.addEventListener('click', function() { box.hidden = true; if (ask) ask.hidden = false; });
+  document.querySelectorAll('[data-billing]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var action = btn.getAttribute('data-billing');
+      var picked = document.querySelector('input[name="bl-interval"]:checked');
+      btn.disabled = true; err.hidden = true;
+      fetch('/league/billing/' + action, {
+        method: 'POST', credentials: 'same-origin',
+        headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+        body: JSON.stringify({ interval: picked ? picked.value : null, lang: window.__currentLang })
+      }).then(function(r) { return r.json().catch(function() { return {}; }); }).then(function(d) {
+        if (d && d.ok && d.url) { location.href = d.url; return; }
+        if (d && d.ok) { location.reload(); return; }
+        btn.disabled = false; err.hidden = false;
+      }).catch(function() { btn.disabled = false; err.hidden = false; });
+    });
+  });
+})();
+`;
+  return new Response(nlDocument({ title: `${t.title} | ${leagueRow.name}`, titles: { fr: `${I18N_BILLING.fr.title} | ${leagueRow.name}`, en: `${I18N_BILLING.en.title} | ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
+// POST /league/billing/{checkout|portal|pause|resume}: session, CSRF,
+// league access, the owner only. Answers { ok, url? }.
+async function handleLeagueBillingAction(req, env, url, action) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  if (env.LEAGUE_PRODUCT !== 'true' || !billingEnabled(env)) return Response.json({ ok: false, errorKey: 'BILLING_OFF' }, { status: 404 });
+  const ctx = await billingContext(req, env, url);
+  if (ctx.redirect) return Response.json({ ok: false, errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  if (!ctx.isOwner) return Response.json({ ok: false, error: 'Only the league owner can manage the subscription.', errorKey: 'BILLING_OWNER_ONLY' }, { status: 403 });
+  const body = await req.json().catch(() => ({}));
+  const lang = body.lang === 'en' || body.lang === 'fr' ? body.lang : resolveServerLang(req);
+  let r;
+  try {
+    if (action === 'checkout') r = await createCheckout(env, ctx.leagueId, body.interval, { origin: url.origin, lang });
+    else if (action === 'portal') r = await createPortal(env, ctx.leagueId, { origin: url.origin, lang });
+    else if (action === 'pause') r = await pauseSubscription(env, ctx.leagueId);
+    else if (action === 'resume') r = await resumeSubscription(env, ctx.leagueId);
+    else return Response.json({ ok: false, errorKey: 'NOT_FOUND' }, { status: 404 });
+  } catch (e) {
+    console.error(`[billing] ${action} for ${ctx.leagueId} failed: ${e.message}`);
+    return Response.json({ ok: false, errorKey: 'BILLING_STRIPE_ERROR' }, { status: 502 });
+  }
+  if (!r.ok) return Response.json({ ok: false, errorKey: r.errorKey }, { status: r.status || 400 });
+  return Response.json({ ok: true, ...(r.url ? { url: r.url } : {}) });
+}
+
 async function handleLeagueFinancesPage(req, env, url) {
   const lang = resolveServerLang(req);
   const session = await checkUserSession(req, env);
@@ -6428,7 +6653,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       // G1 (settings polish task): left-hand section nav labels -- short
       // on purpose, the section's own h3 carries the full label.
       navIdentity: 'Identité', navVenues: 'Lieux', navTeams: 'Équipes', navStructure: 'Structure',
-      navLanguage: 'Langue', navReminders: 'Rappels', navAutoDraw: 'Tirage auto', navAdmins: 'Co-admins', navDeactivate: 'Désactiver',
+      navLanguage: 'Langue', navReminders: 'Rappels', navAutoDraw: 'Tirage auto', navAdmins: 'Co-admins', navDeactivate: 'Désactiver', navBilling: 'Abonnement',
       identityTitle: 'Identité de la ligue', lblLeagueName: 'Nom de la ligue',
       lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée. Ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
       lblColor: 'Couleur de la ligue', save: 'Enregistrer', saved: 'Enregistré!',
@@ -6588,7 +6813,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
       title: 'Settings',
       navIdentity: 'Identity', navVenues: 'Venues', navTeams: 'Teams', navStructure: 'Structure',
-      navLanguage: 'Language', navReminders: 'Reminders', navAutoDraw: 'Auto-draw', navAdmins: 'Co-admins', navDeactivate: 'Deactivate',
+      navLanguage: 'Language', navReminders: 'Reminders', navAutoDraw: 'Auto-draw', navAdmins: 'Co-admins', navDeactivate: 'Deactivate', navBilling: 'Subscription',
       identityTitle: 'League identity', lblLeagueName: 'League name',
       lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed. That guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
       lblColor: 'League colour', save: 'Save', saved: 'Saved!',
@@ -6775,6 +7000,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       ${teamStructure === 'weekly_draw' ? `<a href="#section-autodraw" data-i18n="navAutoDraw">Tirage auto</a>` : ''}
       <a href="#section-admins" data-i18n="navAdmins">Co-admins</a>
       <a href="#section-deactivate" data-i18n="navDeactivate">Désactiver</a>
+      ${billingEnabled(env) ? '<a href="/league/billing" data-i18n="navBilling">Abonnement</a>' : ''}
     </nav>
     <div class="se-content">
 
@@ -31831,6 +32057,9 @@ async function runCronPass(env) {
     // Stripe events recorded before launch (src/stripe_webhook.js): processed
     // once BILLING_LAUNCH_AT is set. Nothing while it is unset.
     try { await processPendingStripeEvents(env); } catch (e) { console.error(`[billing] pending Stripe events: ${e.message}`); }
+    // A subscription whose count belongs in the other paid tier gets that
+    // price for its next billing date (src/billing_actions.js).
+    try { await runTierChanges(env); } catch (e) { console.error(`[billing] tier changes: ${e.message}`); }
   }
   try { await recordHeartbeat(env, 'end', { ok: passOk, error: passError }); } catch (e) { console.error(`[health] heartbeat end: ${e.message}`); }
   await pingHeartbeatUrl(env, passOk);
@@ -32272,6 +32501,12 @@ async function handleFetch(req, env, ctx) {
       // league, no capability-flag gate.
       // League finance: the Finances page and its routes (session + league
       // access; never SMBHL, whose page is /admin/finances).
+      // Billing (src/billing_actions.js): the page every admin sees, and the
+      // owner's actions. Never SMBHL; nothing while billing is off.
+      if ((url.pathname === '/league/billing' || url.pathname === '/league/billing/') && req.method === 'GET')
+        return await handleLeagueBillingPage(req, env, url);
+      if (url.pathname.startsWith('/league/billing/') && req.method === 'POST')
+        return await handleLeagueBillingAction(req, env, url, url.pathname.slice('/league/billing/'.length));
       if ((url.pathname === '/league/finances' || url.pathname === '/league/finances/') && req.method === 'GET')
         return await handleLeagueFinancesPage(req, env, url);
       if (url.pathname === '/league/finances/data' && req.method === 'GET')

@@ -160,10 +160,31 @@ export async function processStripeEvent(env, event) {
     return { leagueId, objectId: obj.id };
   }
   if (type === 'charge.refunded') {
-    // Batch 2: a full refund cancels the subscription at once. Batch 1
-    // fetches the charge and records which league it is about.
+    // A full refund of a subscription payment ends that subscription at
+    // once (Roberto's rule); a partial refund changes nothing. The refund
+    // itself is made in the Stripe Dashboard.
     const charge = await stripeRequest(env, 'GET', `/charges/${stripeId(obj.id)}`);
-    return { leagueId: await leagueByStripe(env, { customerId: idOf(charge.customer) }), objectId: charge.id };
+    const customerId = idOf(charge.customer);
+    const leagueId = await leagueByStripe(env, { customerId });
+    const full = charge.refunded === true && Number(charge.amount_refunded) >= Number(charge.amount) && Number(charge.amount) > 0;
+    if (!full || !leagueId) return { leagueId, objectId: charge.id };
+    // The subscription the payment was for: the charge's invoice when the
+    // API version still links it, otherwise the league's own subscription.
+    let subId = null;
+    const invoiceId = idOf(charge.invoice);
+    if (invoiceId) subId = invoiceSubscriptionId(await stripeRequest(env, 'GET', `/invoices/${stripeId(invoiceId)}`));
+    if (!subId) {
+      const row = await env.DB.prepare('SELECT stripe_subscription_id FROM league_billing WHERE league_id = ?').bind(leagueId).first();
+      subId = row && row.stripe_subscription_id;
+    }
+    if (!subId) return { leagueId, objectId: charge.id };
+    const sub = await stripeRequest(env, 'GET', `/subscriptions/${stripeId(subId)}`);
+    if (!['canceled', 'incomplete_expired'].includes(sub.status)) {
+      // A DELETE is idempotent on Stripe's side: no key needed.
+      await stripeRequest(env, 'DELETE', `/subscriptions/${stripeId(subId)}`);
+    }
+    await writeSubscription(env, subId, { leagueId, customerId, created });
+    return { leagueId, objectId: charge.id };
   }
   return { leagueId: null, objectId: obj.id || null };
 }
@@ -265,5 +286,17 @@ export async function writeSubscription(env, subId, { leagueId = null, customerI
     status, now, status, now, created, now,
     tier, status, status, now, status, now, status, status, status, status
   ).run();
-  return { leagueId: league, status };
+  // The subscription's own trial (a league that subscribed inside its trial
+  // keeps it: Checkout sets the same end) and a cancellation scheduled from
+  // the portal: cancel_at (newer API versions) or cancel_at_period_end; the
+  // end date shown is then current_period_end.
+  const cancelAt = sub.cancel_at ? iso(sub.cancel_at) : null;
+  await env.DB.prepare(
+    `UPDATE league_billing SET
+       trial_started_at = COALESCE(?, trial_started_at), trial_ends_at = COALESCE(?, trial_ends_at),
+       cancel_at_period_end = ?, current_period_end = COALESCE(?, current_period_end)
+     WHERE league_id = ?`
+  ).bind(sub.trial_start ? iso(sub.trial_start) : null, sub.trial_end ? iso(sub.trial_end) : null,
+    (sub.cancel_at_period_end || cancelAt) ? 1 : 0, cancelAt, league).run();
+  return { leagueId: league, status, subscription: sub };
 }
