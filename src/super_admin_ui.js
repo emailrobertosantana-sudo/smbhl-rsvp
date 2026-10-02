@@ -189,7 +189,7 @@ var K = (function() {
 function $(id) { return document.getElementById(id); }
 function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function T(k) { var d = window.__pageDict(); return d[k] != null ? d[k] : k; }
-function fill(s, vars) { return String(s).replace(/\{(\w+)\}/g, function(m, k) { return vars[k] != null ? vars[k] : m; }); }
+function fill(s, vars) { return String(s).replace(/[{]([A-Za-z0-9_]+)[}]/g,function(m, k) { return vars[k] != null ? vars[k] : m; }); }
 function day(isoText) { return isoText ? String(isoText).slice(0, 10) : ''; }
 function lightHtml(light) {
   if (!light) return '<span class="sa-light sa-light--off"><i></i>' + esc(T('deactivated')) + '</span>';

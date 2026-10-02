@@ -11,10 +11,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startPublicPageWorker, seedPopulatedLeague, seedBareLeague, launchChromium } from './support/public_page_harness.mjs';
 
 const ADMIN_KEY = 'super-admin-nl-key';
+// Billing launched yesterday: both leagues are in their trial, so the list's
+// "Trial or subscription" column shows the filled « {n} jours restants ».
+const BILLING_LAUNCH_AT = new Date(Date.now() - 86400000).toISOString();
 let h, browser, populated, bare;
 
 beforeAll(async () => {
-  h = await startPublicPageWorker({ extraVars: { ADMIN_KEY } });
+  h = await startPublicPageWorker({ extraVars: { ADMIN_KEY, BILLING_LAUNCH_AT } });
   populated = await seedPopulatedLeague(h, { email: 'owner@sa-nl.example', name: 'Les Castors', teamNames: ['Loutres', 'Ours'], playerName: 'Lea Player', goalieName: 'Luc Goalie' });
   bare = await seedBareLeague(h, { email: 'bare@sa-nl.example', name: 'Ligue Aurore' });
   browser = await launchChromium();
@@ -45,6 +48,11 @@ describe('the super-admin on Notre Ligue', () => {
     const names = await page.$$eval('tr.sa-row td:nth-child(2)', tds => tds.map(td => td.textContent));
     expect(names.sort()).toEqual(['Les Castors', 'Ligue Aurore']);
     expect(await page.$$eval('#sa-table th', ths => ths.map(t => t.textContent))).toEqual(['État', 'Ligue', 'Propriétaire', 'Inscription', 'Joueurs réguliers (palier)', 'Essai ou abonnement', 'Dernière connexion admin', 'Réponses (14 jours)', 'Prochain match']);
+    // The trial placeholder is filled in, in the page the browser runs.
+    const trialFr = await page.$$eval('tr.sa-row td:nth-child(6)', tds => tds.map(td => td.textContent));
+    expect(trialFr.length).toBe(2);
+    for (const t of trialFr) expect(t).toMatch(/^Essai : [0-9]+ jours restants$/);
+    expect(await page.innerText('body')).not.toMatch(/[{}]/);
     // Search, then a filter no league matches.
     await page.fill('#sa-q', 'aurore');
     await page.waitForFunction(() => document.querySelectorAll('tr.sa-row').length === 1);
@@ -56,6 +64,12 @@ describe('the super-admin on Notre Ligue', () => {
     await page.click('#btn-lang-en');
     expect(await page.textContent('h1')).toBe('Leagues');
     expect(await page.textContent('#sa-empty')).toBe('No league matches.');
+    await page.fill('#sa-q', '');
+    await page.selectOption('#sa-status', '');
+    await page.waitForFunction(() => document.querySelectorAll('tr.sa-row').length === 2);
+    const trialEn = await page.$$eval('tr.sa-row td:nth-child(6)', tds => tds.map(td => td.textContent));
+    for (const t of trialEn) expect(t).toMatch(/^Trial: [0-9]+ days left$/);
+    expect(await page.innerText('body')).not.toMatch(/[{}]/);
     expect(errors).toEqual([]);
     await context.close();
   }, 120000);

@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { hmac } from '../src/crypto_utils.js';
 import { drain } from '../src/index.js';
+import { sentenceDate } from '../src/date_format.js';
 
 const SEASON = 'Fall 2099';
 let sent = [], originalFetch;
@@ -64,20 +65,27 @@ async function deliverCall(pid) {
   return to(pid)[0];
 }
 
+// The far game's date in words, computed from the same ISO date the game
+// was created with, so the subject check holds on any day.
+const subject = (fr, en) => {
+  const iso = FAR.slice('smbhl:'.length);
+  return fr + ' ' + sentenceDate(iso, 'fr') + ' / ' + en + ' ' + sentenceDate(iso, 'en');
+};
+
 describe('The invite', () => {
   it('a sub with no preference gets a generic call -- no team named', async () => {
     const m = await deliverCall('SNONE');
-    expect(m.subject).toBe("SMBHL a besoin d'un substitut dimanche 4 oct. / SMBHL needs a sub on Sunday, Oct 4");
+    expect(m.subject).toBe(subject("SMBHL a besoin d'un substitut", 'SMBHL needs a sub on'));
     expect(m.text).not.toContain("L'équipe n'est pas encore décidée");
     expect(m.text).not.toMatch(/Bleu|Blue/);
   });
   it('a sub whose preferred team is the one short gets that team\'s call', async () => {
     const m = await deliverCall('SBLUE');
-    expect(m.subject).toBe("Bleu a besoin d'un substitut dimanche 4 oct. / Blue needs a sub on Sunday, Oct 4");
+    expect(m.subject).toBe(subject("Bleu a besoin d'un substitut", 'Blue needs a sub on'));
   });
   it('a sub whose preferred team is NOT short gets the generic call, not a false "Red is looking"', async () => {
     const m = await deliverCall('SRED');
-    expect(m.subject).toBe("SMBHL a besoin d'un substitut dimanche 4 oct. / SMBHL needs a sub on Sunday, Oct 4");
+    expect(m.subject).toBe(subject("SMBHL a besoin d'un substitut", 'SMBHL needs a sub on'));
   });
 });
 

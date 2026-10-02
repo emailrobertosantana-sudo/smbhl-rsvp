@@ -21,6 +21,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { H, DAY, local, mail, installMailCapture, removeMailCapture, linksIn, admin, must, pass, answer, rows, one } from './support/league_season.js';
 import { withGameTimes } from './support/game_times.js';
+import { OPS_DIGEST_TO } from '../src/ops_digest.js';
 
 const START = Date.UTC(2026, 9, 5, 16, 0); // Mon 2026-10-05 12:00 Toronto
 
@@ -368,8 +369,10 @@ describe('Leagues unlike SMBHL, a whole season each', () => {
     // Players get nothing -- no reminders, no details, and no sub calls
     // (unanswered players count as available). The admin may still be told
     // a game is short (D3: this league has no goalie, and no goalie sub).
-    expect(r.sent.filter(m => !m.to.startsWith('admin.'))).toEqual([]);
-    expect(r.sent.every(m => /Short of players/.test(m.subject))).toBe(true);
+    // The daily ops digest to the Notre Ligue inbox is not league mail.
+    const sent = r.sent.filter(m => m.to !== OPS_DIGEST_TO);
+    expect(sent.filter(m => !m.to.startsWith('admin.'))).toEqual([]);
+    expect(sent.every(m => /Short of players/.test(m.subject))).toBe(true);
     for (const g of r.games) expect(g.ev.home_score).toBe(3);
   }, 900000);
 
