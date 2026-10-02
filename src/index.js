@@ -30,6 +30,7 @@ import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, se
 import { handleStripeWebhook, processPendingStripeEvents, resumeIfCardAdded } from './stripe_webhook.js';
 import { runBillingEnforcement } from './billing_enforcement.js';
 import { BILLING_NOTICE_KIND } from './billing_notices.js';
+import { montrealDate } from './montreal_time.js';
 import { checkStripeConfig } from './billing_check.js';
 import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS, ownerOf } from './billing_actions.js';
 import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail } from './league_health.js';
@@ -6111,7 +6112,8 @@ const I18N_BILLING = {
 };
 // The lines with numbers or dates, in both languages.
 function billingLines(view) {
-  const d = (iso, l) => (iso ? formatPageDate(String(iso).slice(0, 10), l, 'long') : '');
+  // Montreal days (src/montreal_time.js), never the UTC date of an instant.
+  const d = (iso, l) => (iso ? formatPageDate(montrealDate(String(iso)), l, 'long') : '');
   const plan = (k, l) => BILLING_PLAN[l][k] || k;
   const row = view.row || {};
   const L = {};

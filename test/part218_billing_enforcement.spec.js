@@ -23,6 +23,7 @@ import { renderBillingNotice, noticeContent, noticeDate, NOTICE_KINDS, OWNER_NOT
 import { leagueAutoMailStopped, loadLeagueState } from '../src/billing.js';
 import { processStripeEvent } from '../src/stripe_webhook.js';
 import { prepareOpsDigest, renderOpsDigest } from '../src/ops_digest.js';
+import { montrealDate, montrealMidnight, addDays } from '../src/montreal_time.js';
 
 const VARS = {
   BILLING_LAUNCH_AT: '2026-10-01T00:00:00Z',
@@ -150,19 +151,27 @@ describe('the notices, as written', () => {
 
 describe('the trial: 7 days before, and on the day (the owner only)', () => {
   it('not subscribed: subscribe before the date; once each', async () => {
-    const id = await mkLeague('t1', { coAdmins: 1, billing: NO_SUB(20, 6 * DAY) });
+    // A trial ending at 00:00 Montreal, 7 days from today (Montreal): its
+    // last day is 6 days from today, the date the notices show; "on the
+    // day" is that Montreal day (billing fixes, item 4).
+    const endMs = montrealMidnight(addDays(montrealDate(at(0)), 7)).getTime() - T0;
+    const lastDay = addDays(montrealDate(at(0)), 6);
+    const id = await mkLeague('t1', { coAdmins: 1, billing: NO_SUB(20, endMs) });
     queued = [];
     await run();
     expect(mailsFor(id).map(m => m.to)).toEqual(['u-t1@example.com']);
     const m = mailsFor(id)[0].mail;
-    expect(m.subject).toBe(`Ligue t1 : ton essai gratuit se termine le ${noticeDate(iso(6 * DAY), 'fr')}`);
+    expect(m.subject).toBe(`Ligue t1 : ton essai gratuit se termine le ${noticeDate(lastDay, 'fr')}`);
     expect(m.text).toContain("S'abonner : https://rsvp.notreligue.example/league/billing?league_id=t1");
     await run(); await run(DAY);
     expect(mailsFor(id)).toHaveLength(1);
-    await run(5.5 * DAY);
+    // The day before the last day (36 hours before the end): not yet.
+    await run(endMs - 36 * 3600000);
+    expect(mailsFor(id)).toHaveLength(1);
+    await run(endMs - 12 * 3600000);
     expect(mailsFor(id)).toHaveLength(2);
-    expect(mailsFor(id)[1].mail.subject).toContain('dernier rappel, ton essai gratuit se termine le');
-    await run(5.7 * DAY);
+    expect(mailsFor(id)[1].mail.subject).toBe(`Ligue t1 : dernier rappel, ton essai gratuit se termine le ${noticeDate(lastDay, 'fr')}`);
+    await run(endMs - 3600000);
     expect(mailsFor(id)).toHaveLength(2);
     expect((await notices(id)).map(n => n.kind)).toEqual(['trial_7d', 'trial_day']);
   });

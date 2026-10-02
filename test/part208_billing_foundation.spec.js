@@ -182,7 +182,10 @@ describe('the super-admin summary', () => {
   it('with billing on: trial from the launch (or the creation, if later) for 2 months, then free or no subscription', () => {
     billingOn();
     const l = { id: 'lg-s', created_at: '2026-09-01T00:00:00Z' };
-    expect(trialWindow(env, l, null)).toEqual({ start: '2026-10-15T00:00:00.000Z', end: '2026-12-15T00:00:00.000Z' });
+    // Montreal days (billing fixes, item 4): the launch is October 14 at
+    // 20:00 in Montreal, so the last day is December 14 and the trial ends
+    // at 00:00 Montreal on December 15 (05:00 UTC).
+    expect(trialWindow(env, l, null)).toEqual({ start: '2026-10-15T00:00:00.000Z', end: '2026-12-15T05:00:00.000Z' });
     expect(billingSummary(env, l, { regular_count: 30 }, { now: new Date('2026-11-01') }).status).toBe('trial');
     expect(billingSummary(env, l, { regular_count: 30 }, { now: new Date('2027-01-01') }).status).toBe('unpaid');
     expect(billingSummary(env, l, { regular_count: 5 }, { freeSlot: 'lg-s', now: new Date('2027-01-01') }).status).toBe('free');

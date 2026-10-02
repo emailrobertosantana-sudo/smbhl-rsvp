@@ -114,7 +114,8 @@ describe('the health rules', () => {
     expect([m.get('lg-nogame').light, broken(m.get('lg-nogame'))]).toEqual(['yellow', ['game_window']]);
     expect([m.get('lg-answers').light, broken(m.get('lg-answers'))]).toEqual(['yellow', ['answers_half']]);
     expect([m.get('lg-trial').light, broken(m.get('lg-trial'))]).toEqual(['yellow', ['trial_not_ending']]);
-    expect(m.get('lg-trial').trialDaysLeft).toBeLessThanOrEqual(4);
+    // Montreal days, today included (billing fixes, item 4): 4 or 5.
+    expect(m.get('lg-trial').trialDaysLeft).toBeLessThanOrEqual(5);
     expect([m.get('lg-mail').light, broken(m.get('lg-mail'))]).toEqual(['yellow', ['mail_ok']]);
   });
 

@@ -32,6 +32,8 @@
 // Batch 3 added the state (classifyLeague, below): read-only, grace, the
 // free slot, the 12-month clock; src/billing_enforcement.js acts on it.
 
+import { montrealDate, montrealMidnight, addDays, addCalendarMonths } from './montreal_time.js';
+
 export const SMBHL_ID = 'smbhl';
 export const TRIAL_MONTHS = 2;
 // Regular players with an email: under 15 free, 15 to 50 Standard, 51 to
@@ -57,6 +59,8 @@ export function planTierForCount(n) {
 export function billingLaunchAt(env) {
   const raw = env && env.BILLING_LAUNCH_AT;
   if (!raw || typeof raw !== 'string') return null;
+  // A bare date ('2026-10-02', as on demo) is that Montreal day's start.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) return montrealMidnight(raw.trim());
   const t = Date.parse(raw.trim());
   return Number.isFinite(t) ? new Date(t) : null;
 }
@@ -137,15 +141,24 @@ export function addMonths(date, months) {
 }
 
 // The trial: from the league's creation or the launch, whichever is later,
-// for TRIAL_MONTHS. A league's own row wins once it has dates. Null while
-// billing is off.
+// for TRIAL_MONTHS. A league's own row wins once it has dates (a
+// subscription's trial, as Stripe keeps it). Null while billing is off.
+//
+// Montreal time (Roberto, 2026-10-02): the trial covers whole Montreal
+// days. Its last day is the start's Montreal day plus TRIAL_MONTHS calendar
+// months, and it ends at 00:00 Montreal the day after: a league created on
+// October 5 (any hour, Montreal) has its last day on December 5 and is
+// read-only (or first charged, the trial_end sent to Checkout) from 00:00 on
+// December 6. Notices and pages show the last day as the day the trial
+// ends, and that next day as the first payment.
 export function trialWindow(env, league, row) {
   if (row && row.trial_started_at && row.trial_ends_at) return { start: row.trial_started_at, end: row.trial_ends_at };
   const launch = billingLaunchAt(env);
   if (!launch) return null;
   const created = Date.parse((league && league.created_at) || '');
   const start = new Date(Math.max(launch.getTime(), Number.isFinite(created) ? created : 0));
-  return { start: start.toISOString(), end: addMonths(start, TRIAL_MONTHS).toISOString() };
+  const lastDay = addCalendarMonths(montrealDate(start), TRIAL_MONTHS);
+  return { start: start.toISOString(), end: montrealMidnight(addDays(lastDay, 1)).toISOString() };
 }
 
 // The oldest league keeps the free slot: among one owner's leagues whose

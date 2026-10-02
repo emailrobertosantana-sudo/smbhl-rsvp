@@ -26,6 +26,7 @@
 // page. SMBHL is never billed. Nothing happens while billing is off.
 import { billingEnabled, refreshRegularCount, tierForCount, planTierForCount, trialWindow, leagueStateFor, SMBHL_ID } from './billing.js';
 import { stripeRequest, stripeId } from './stripe.js';
+import { montrealDate, dayDiff, lastDayBefore } from './montreal_time.js';
 import { writeSubscription } from './stripe_webhook.js';
 
 export const PRICE_CENTS = { standard: { month: 999, year: 9990 }, plus: { month: 1999, year: 19990 } };
@@ -69,7 +70,8 @@ export async function billingView(env, leagueId, now = new Date()) {
   const paidTier = planTierForCount(count);
   return {
     league, row, count, countTier, state, freeEligible, planTier,
-    trial: trial ? { end: trial.end, daysLeft: trialLeftMs > 0 ? Math.ceil(trialLeftMs / DAY) : 0 } : null,
+    // Days left, Montreal days, today included: 1 on the trial's last day.
+    trial: trial ? { end: trial.end, lastDay: lastDayBefore(trial.end), daysLeft: trialLeftMs > 0 ? Math.max(1, dayDiff(montrealDate(now), lastDayBefore(trial.end)) + 1) : 0 } : null,
     live: hasLiveSubscription(row),
     pendingTier: hasLiveSubscription(row) && ['standard', 'plus'].includes(paidTier) && ['standard', 'plus'].includes(row.tier) && row.tier !== paidTier ? paidTier : null
   };

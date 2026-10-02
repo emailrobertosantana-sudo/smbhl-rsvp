@@ -13,6 +13,7 @@
 import { assembleBilingualEmail, nlEmailButton } from './design_system.js';
 import { nlLegalEmailWrap } from './legal.js';
 import { PRICE_CENTS, money } from './billing_actions.js';
+import { montrealDate } from './montreal_time.js';
 
 export const NOTICE_KINDS = ['trial_7d', 'trial_day', 'trial_end', 'grace_start', 'grace_end', 'tier_change', 'free_drop', 'payment_failed', 'over_100', 'deletion_30d', 'deletion_7d'];
 export const OWNER_NOTICES = new Set(['trial_7d', 'trial_day', 'grace_start', 'tier_change', 'free_drop', 'payment_failed', 'over_100']);
@@ -26,11 +27,11 @@ const MONTH = {
 };
 const PLAN = { fr: { free: 'Gratuit', standard: 'Standard', plus: 'Plus', custom: 'Sur mesure' }, en: { free: 'Free', standard: 'Standard', plus: 'Plus', custom: 'Custom' } };
 
-// The date in words, from the ISO date (UTC, as the billing page shows it):
-// « mercredi 2 décembre 2026 », « mardi 1er décembre 2026 » / "Wednesday,
-// December 2, 2026".
+// The date in words, the Montreal day (src/montreal_time.js) of an instant,
+// or a bare date as it is: « mercredi 2 décembre 2026 », « mardi 1er
+// décembre 2026 » / "Wednesday, December 2, 2026".
 export function noticeDate(iso, lang) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(montrealDate(String(iso || '')));
   if (!m) return '';
   const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
   const dow = new Date(Date.UTC(y, mo - 1, d)).getUTCDay();

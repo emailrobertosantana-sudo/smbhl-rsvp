@@ -23,6 +23,7 @@ import { SMBHL_LEAGUE_ID } from './league_ids.js';
 import { maskEmail } from './contact_name.js';
 import { getSetting, putSetting } from './league_health.js';
 import { nlEmailWrap } from './design_system.js';
+import { montrealDate, lastDayBefore } from './montreal_time.js';
 
 export const OPS_DIGEST_TO = 'bonjour@notreligue.ca';
 export const OPS_DIGEST_KIND = 'ops_digest';
@@ -69,14 +70,15 @@ export async function prepareOpsDigest(env, health, now = new Date()) {
   if (!digestHasItems(items)) return pending && digestHasItems(pending.items) ? pending : null;
   const merged = pending && pending.items ? pending : { since: cutoff, items: emptyItems() };
   for (const k of Object.keys(items)) merged.items[k] = [...(merged.items[k] || []), ...items[k]];
-  merged.day = (health && health.day) || nowIso.slice(0, 10);
+  merged.day = (health && health.day) || montrealDate(now);
   merged.preparedAt = nowIso;
   await putSetting(db, DIGEST_PENDING_KEY, merged);
   return merged;
 }
 
 const LIGHT = { fr: { red: 'rouge', yellow: 'jaune', green: 'vert' }, en: { red: 'red', yellow: 'yellow', green: 'green' } };
-const day = s => String(s || '').slice(0, 10);
+// Montreal days (src/montreal_time.js), never the UTC date of an instant.
+const day = s => montrealDate(String(s || ''));
 
 // The email: French, then English. Pure.
 export function renderOpsDigest(pending, publicUrl = '') {
@@ -95,7 +97,7 @@ export function renderOpsDigest(pending, publicUrl = '') {
     });
     if (it.trials.length) out.push({
       title: fr ? "Essais qui finissent dans 7 jours ou moins, sans abonnement" : 'Trials ending within 7 days, without a subscription',
-      lines: it.trials.map(t => fr ? `${t.name} : fin de l'essai le ${day(t.trialEndsAt)}` : `${t.name}: trial ends on ${day(t.trialEndsAt)}`)
+      lines: it.trials.map(t => fr ? `${t.name} : fin de l'essai le ${lastDayBefore(t.trialEndsAt)}` : `${t.name}: trial ends on ${lastDayBefore(t.trialEndsAt)}`)
     });
     if ((it.custom || []).length) out.push({
       title: fr ? 'Plus de 100 joueurs réguliers (prix sur mesure)' : 'More than 100 regular players (custom price)',

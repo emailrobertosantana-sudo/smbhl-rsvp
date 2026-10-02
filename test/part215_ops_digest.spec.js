@@ -145,8 +145,22 @@ describe('the daily digest', () => {
   });
 
   it('a trial entering its last 7 days, in both languages', () => {
-    const m = renderOpsDigest({ day: '2026-11-09', items: { signups: [], worsened: [], payments: [], trials: [{ id: 'a', name: 'Les Hiboux', trialEndsAt: '2026-11-15T00:00:00.000Z' }] } }, 'https://x.example');
+    // Montreal days (billing fixes, item 4): a trial ending at 00:00 Montreal
+    // on November 16 has November 15 as its last day.
+    const m = renderOpsDigest({ day: '2026-11-09', items: { signups: [], worsened: [], payments: [], trials: [{ id: 'a', name: 'Les Hiboux', trialEndsAt: '2026-11-16T05:00:00.000Z' }] } }, 'https://x.example');
     expect(m.text).toContain("Essais qui finissent dans 7 jours ou moins, sans abonnement\n- Les Hiboux : fin de l'essai le 2026-11-15");
     expect(m.text).toContain('Trials ending within 7 days, without a subscription\n- Les Hiboux: trial ends on 2026-11-15');
+  });
+
+  it('Montreal days, not UTC ones: around midnight UTC and midnight Montreal', () => {
+    const m = renderOpsDigest({ day: '2026-11-09', items: {
+      signups: [{ id: 's1', name: 'Ligue Soir', at: '2026-11-04T02:00:00.000Z' }, { id: 's2', name: 'Ligue Matin', at: '2026-11-04T05:30:00.000Z' }],
+      worsened: [], payments: [{ id: 'p', name: 'Ligue Paie', at: '2026-11-01T03:30:00.000Z' }],
+      trials: [{ id: 't', name: 'Ligue Essai', trialEndsAt: '2026-11-15T00:00:00.000Z' }]
+    } }, 'https://x.example');
+    expect(m.text).toContain('Ligue Soir : inscrite le 2026-11-03');
+    expect(m.text).toContain('Ligue Matin : inscrite le 2026-11-04');
+    expect(m.text).toContain('Ligue Paie : le 2026-10-31');
+    expect(m.text).toContain("Ligue Essai : fin de l'essai le 2026-11-14");
   });
 });

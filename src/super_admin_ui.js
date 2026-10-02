@@ -190,7 +190,21 @@ function $(id) { return document.getElementById(id); }
 function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function T(k) { var d = window.__pageDict(); return d[k] != null ? d[k] : k; }
 function fill(s, vars) { return String(s).replace(/[{]([A-Za-z0-9_]+)[}]/g,function(m, k) { return vars[k] != null ? vars[k] : m; }); }
-function day(isoText) { return isoText ? String(isoText).slice(0, 10) : ''; }
+// Montreal time (America/Toronto) for every date and time shown, never UTC.
+function mtl(t, opts) {
+  try { return new Intl.DateTimeFormat('en-CA', Object.assign({ timeZone: 'America/Toronto' }, opts)).format(new Date(t)); }
+  catch (e) { return ''; }
+}
+function day(isoText) {
+  if (!isoText) return '';
+  var s = String(isoText);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  var t = Date.parse(s);
+  return isNaN(t) ? s.slice(0, 10) : (mtl(t, { year: 'numeric', month: '2-digit', day: '2-digit' }) || s.slice(0, 10));
+}
+// A trial ending at 00:00 on a day: its last day is the day before.
+function lastDay(isoText) { var t = Date.parse(String(isoText || '')); return isNaN(t) ? day(isoText) : day(new Date(t - 1).toISOString()); }
+function hm(isoText) { var t = Date.parse(String(isoText || '')); return isNaN(t) ? '' : mtl(t, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); }
 function lightHtml(light) {
   if (!light) return '<span class="sa-light sa-light--off"><i></i>' + esc(T('deactivated')) + '</span>';
   return '<span class="sa-light sa-light--' + light + '"><i></i>' + esc(T(light)) + '</span>';
@@ -322,7 +336,7 @@ function valueFor(key, m) {
   if (key === 'admin_signin_7' || key === 'admin_signin_21') return m.lastAdminSignInAt ? day(m.lastAdminSignInAt) : T('never');
   if (key === 'game_window') return m.nextGame || T('none');
   if (key === 'answers_half') return shareText(m);
-  if (key === 'trial_not_ending') return m.trialEndsAt && m.billingStatus === 'trial' ? day(m.trialEndsAt) : T('v_noTrial');
+  if (key === 'trial_not_ending') return m.trialEndsAt && m.billingStatus === 'trial' ? lastDay(m.trialEndsAt) : T('v_noTrial');
   if (key === 'mail_ok') return fill(T('v_failures'), { n: m.mailFailures7 || 0 });
   if (key === 'setup_done') return fill(T('v_players_games'), { p: m.players || 0, g: m.games || 0 });
   if (key === 'payment_ok') return statusText(m);
@@ -347,9 +361,9 @@ function renderLog() {
   if (!D.supportLog.length) return '<p class="sa-muted">' + esc(T('logEmpty')) + '</p>';
   var now = Date.now();
   var rowsHtml = D.supportLog.slice().reverse().map(function(e) {
-    var end = e.endedAt ? day(e.endedAt) + ' ' + String(e.endedAt).slice(11, 16) + ' UTC'
+    var end = e.endedAt ? day(e.endedAt) + ' ' + hm(e.endedAt)
       : (e.expiresAt && Date.parse(e.expiresAt) < now ? T('logExpired') : T('logOpen'));
-    return '<tr><td>' + esc(day(e.startedAt) + ' ' + String(e.startedAt).slice(11, 16) + ' UTC') + '</td><td>' + esc(end) + '</td>' +
+    return '<tr><td>' + esc(day(e.startedAt) + ' ' + hm(e.startedAt)) + '</td><td>' + esc(end) + '</td>' +
       '<td>' + esc(T('who_' + String(e.who || '').replace('-', '_'))) + '</td><td>' + esc(e.browser || '') + '</td><td><code>' + esc(e.sid) + '</code></td></tr>';
   }).join('');
   return '<div class="sa-scroll"><table class="sa-table"><thead><tr><th>' + esc(T('logStarted')) + '</th><th>' + esc(T('logEnded')) + '</th><th>' + esc(T('logWho')) + '</th><th>' + esc(T('logBrowser')) + '</th><th>' + esc(T('logSession')) + '</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
@@ -383,7 +397,7 @@ function render() {
     '<dt>' + esc(T('bCountTier')) + '</dt><dd>' + esc(tierText(m.countTier)) + '</dd>' +
     '<dt>' + esc(T('bStatus')) + '</dt><dd>' + esc(statusText(m)) + '</dd>' +
     '<dt>' + esc(T('bTier')) + '</dt><dd>' + esc(tierText(m.billedTier)) + '</dd>' +
-    '<dt>' + esc(T('bTrialEnd')) + '</dt><dd>' + esc(day(m.trialEndsAt)) + '</dd>' +
+    '<dt>' + esc(T('bTrialEnd')) + '</dt><dd>' + esc(lastDay(m.trialEndsAt)) + '</dd>' +
     '<dt><label for="sa-free">' + esc(T('bFree')) + '</label></dt><dd><input type="checkbox" id="sa-free"' + (m.freeException ? ' checked' : '') + '> <span class="sa-muted">' + esc(T('bFreeHelp')) + '</span></dd>' +
     '</dl>';
   $('sa-settings').innerHTML = renderSettings();

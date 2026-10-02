@@ -27,6 +27,7 @@ import { subscriptionHasCard, resumeIfCardAdded, writeSubscription } from './str
 import { renderBillingNotice, OWNER_NOTICES, BILLING_NOTICE_KIND } from './billing_notices.js';
 import { performLeagueHardDelete } from './hard_delete.js';
 import { stripeRequest, stripeId } from './stripe.js';
+import { montrealDate, dayDiff, lastDayBefore } from './montreal_time.js';
 
 const DAY = 86400000;
 const iso = ms => new Date(ms).toISOString();
@@ -100,22 +101,26 @@ async function enforceLeague(env, host, league, row, freeEligible, now) {
   }
   const becomesFree = state.countTier === 'free' && freeEligible;
 
-  // The trial ends in 7 days, and on the day (within its last 24 hours):
-  // to the owner, unless the league will be free or is above 100. Subscribed
-  // with a card: nothing to do. Subscribed without one: add a card.
-  // (A league that subscribed inside its trial is 'active' and keeps its
-  // trial: the subscription's own trial end.)
+  // The trial ends in 7 days, and on the day: to the owner, unless the
+  // league will be free. Subscribed with a card: nothing to do. Subscribed
+  // without one: add a card. (A league that subscribed inside its trial is
+  // 'active' and keeps its trial: the subscription's own trial end.)
+  // Montreal days (src/montreal_time.js): "on the day" is the trial's last
+  // Montreal day, the 7-day notice from 6 days before it (7 days before the
+  // trial ends at 00:00 the day after). The date shown is that last day.
   const left = state.trialEnd ? Date.parse(state.trialEnd) - nowMs : 0;
+  const lastDay = state.trialEnd ? lastDayBefore(state.trialEnd) : '';
+  const toLast = lastDay ? dayDiff(montrealDate(now), lastDay) : NaN;
   const trialing = (state.status === 'trial' && !live) || (state.status === 'active' && live);
-  if (trialing && left > 0 && left <= 7 * DAY) {
+  if (trialing && left > 0 && toLast <= 6) {
     // A subscription set to end because the league is free again needs
     // nothing more.
     const needsPlan = !becomesFree || (live && !row.cancel_at_period_end);
-    const kind = left <= DAY ? 'trial_day' : 'trial_7d';
+    const kind = toLast <= 0 ? 'trial_day' : 'trial_7d';
     if (needsPlan && !(await noticeSent(env, league.id, kind, state.trialEnd))) {
       // Subscribed: only when no card is on file (Stripe, asked once per notice).
       if (live && await subscriptionHasCard(env, row)) await recordNotice(env, league.id, kind, state.trialEnd, now);
-      else await send(kind, state.trialEnd, { date: state.trialEnd, variant: live ? 'card' : 'subscribe' });
+      else await send(kind, state.trialEnd, { date: lastDay, variant: live ? 'card' : 'subscribe' });
     }
   }
 

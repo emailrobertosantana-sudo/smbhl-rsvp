@@ -20,7 +20,7 @@ SMBHL is never counted or billed.
   - The count: regular players (`role = 'roster'`, active, not opted out) with a non-empty email, each lowercase address once.
   - The tier it implies: under 15 free, 15 to 50 Standard, 51 to 100 Plus, over 100 custom.
   - When the count is refreshed: after `POST /league/contacts`, `/league/contacts/bulk`, `/league/contacts/update`, `/league/contacts/active` and `/league/season/rollover-import`, and once a day from the Notre Ligue cron.
-  - The trial: 2 months from the league's creation or the launch, whichever is later.
+  - The trial: 2 months from the league's creation or the launch, whichever is later, in whole Montreal days (see Montreal time below).
   - The super-admin summary.
 - `src/stripe.js`: plain `fetch`, form encoded, `Stripe-Version` pinned by `STRIPE_API_VERSION`, `Idempotency-Key` on marked POSTs. Errors never include the key or Stripe's own message.
 - `src/stripe_webhook.js`:
@@ -70,6 +70,17 @@ Only once `BILLING_LAUNCH_AT` is set; SMBHL is never read. No migration: `league
 - Read-only still allows: deactivating or deleting the league, creating another league, accepting an admin invitation (`src/write_guard.js` mode `billing`).
 - A cancelled subscription makes a league that is not free read-only at the end of the paid period (Stripe ends it then), and starts its 12-month clock.
 - A trial that Stripe paused for want of a card counts as an unpaid trial: its 12-month clock runs, and its Stripe subscription is cancelled before the deletion. Only a pause the owner chose is never deleted.
+
+## Montreal time (Roberto, 2026-10-02)
+
+Every date or "today" a person sees is a Montreal day (America/Toronto, `src/montreal_time.js`), never a UTC one: the billing page, the notices and their "on the day" timing, trial ends, the super-admin pages (dates and support log times) and the operator's digest. Timestamps are stored in UTC as before.
+
+- The trial covers whole Montreal days. Its last day is the Montreal day of its start (the league's creation or the launch, whichever is later) plus 2 calendar months; it ends at 00:00 Montreal the next day. That instant is the stored and computed trial end, the `subscription_data[trial_end]` sent to Checkout, and when the league turns read-only or is first charged. Notices and the super-admin show the last day as the day the trial ends; the billing page shows the next day as the first payment. Example: created October 5 (any hour, Montreal), last day December 5, read-only or first charge from 00:00 on December 6.
+- A bare `BILLING_LAUNCH_AT` date (`2026-10-02` on demo) is 00:00 Montreal that day.
+- Before: the trial ended at the same UTC time of day two UTC months after the start, and dates were the UTC date of an instant. An admin in Montreal could see « se termine le 5 décembre » for a trial that ended on December 4 at 22:30 Montreal time.
+- Trials already in Stripe (a subscription's own `trial_end`) are left as they are. Trials computed from the launch or the creation (no subscription yet) move to the new rule: their end moves later by at most a day and a few hours.
+- "On the day": `trial_day` goes on the trial's last Montreal day, `trial_7d` from 6 days before it. The days left on the billing page and the super-admin count Montreal days, today included.
+- Other dates (grace end, deletion, next billing date, cancellation) show the Montreal day of the instant the change happens.
 
 ## Batch 2: secrets, variables, key
 

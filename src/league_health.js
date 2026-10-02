@@ -28,6 +28,7 @@
 // Nothing here sends mail or writes a log line. SMBHL is never included.
 import { SMBHL_LEAGUE_ID, localParts } from './league_ids.js';
 import { billingSummaries } from './billing.js';
+import { dayDiff, lastDayBefore } from './montreal_time.js';
 import { maskEmail } from './contact_name.js';
 
 const DAY_MS = 86400000;
@@ -192,7 +193,9 @@ export async function collectLeagueMetrics(env, now = new Date()) {
     const a = asks.get(l.id) || {};
     const b = billing.get(l.id) || null;
     const trialEnd = b && b.trialEndsAt ? parse(b.trialEndsAt) : null;
-    const trialDaysLeft = b && b.status === 'trial' && trialEnd != null ? Math.max(0, Math.ceil(daysBetween(nowMs, trialEnd))) : null;
+    // Montreal days, today included (1 on the trial's last day), as the
+    // billing page counts them.
+    const trialDaysLeft = b && b.status === 'trial' && trialEnd != null ? Math.max(0, dayDiff(today, lastDayBefore(b.trialEndsAt)) + 1) : null;
     const inv = Number(a.inv) || 0;
     const ans = Number(a.ans) || 0;
     return {
@@ -222,7 +225,7 @@ export async function collectLeagueMetrics(env, now = new Date()) {
       answeredShare: inv ? ans / inv : null,
       mailFailures7: failures.get(l.id) || 0,
       paymentFailed: !!(b && b.status === 'past_due') || lastInvoice.get(l.id) === 'invoice.payment_failed',
-      trialEndingNoSub: trialDaysLeft != null && trialEnd - nowMs <= 7 * DAY_MS,
+      trialEndingNoSub: trialDaysLeft != null && trialDaysLeft <= 7,
       firstInvitationAt: firstAsk.get(l.id) || null,
       firstAnswerAt: firstAnswer.get(l.id) || null,
       subscribed: !!(b && ['active', 'past_due', 'paused'].includes(b.status))
