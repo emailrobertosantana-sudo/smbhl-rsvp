@@ -61,7 +61,10 @@ export const LEAGUE_SCOPED_TABLES = [
   'season_costs', 'season_pricing', 'player_dues', 'planned_absences',
   'poll_votes', 'polls', 'events', 'contacts', 'settings',
   'league_reminder_log', 'league_auto_draw_log', 'league_capability_flags',
-  'venues', 'league_mail_failure_log', 'player_game_stats'
+  'venues', 'league_mail_failure_log', 'player_game_stats',
+  // Billing (migrate-056). stripe_events is kept: it holds no personal
+  // data, only Stripe's event ids and types.
+  'league_billing', 'billing_notices'
 ];
 
 // Rows keyed by one of this league's events, deleted by event_id as well

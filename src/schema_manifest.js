@@ -1,7 +1,7 @@
 // GENERATED FILE -- do not hand-edit.
 // Produced by scripts/generate_schema_manifest.js from
 // test/support/base_schema_v1.sql +
-// all migrate-*.sql files (55 files parsed, as of this
+// all migrate-*.sql files (56 files parsed, as of this
 // generation). Re-run that script after adding a new migration, then
 // run the full test suite -- test/schema_manifest.spec.js fails loudly
 // if this file and the real migrated schema disagree.
@@ -11,7 +11,7 @@
 // this list against a real database's actual PRAGMA table_info output.
 // This is the single source of truth both share.
 //
-// 28 tables, 259 columns tracked.
+// 31 tables, 299 columns tracked.
 export const SCHEMA_MANIFEST = {
   "availability": [
     "answered_at",
@@ -20,6 +20,12 @@ export const SCHEMA_MANIFEST = {
     "need",
     "player_id",
     "status"
+  ],
+  "billing_notices": [
+    "kind",
+    "league_id",
+    "period_key",
+    "sent_at"
   ],
   "contacts": [
     "answered_ever",
@@ -83,6 +89,35 @@ export const SCHEMA_MANIFEST = {
     "drawn_at",
     "event_id",
     "league_id"
+  ],
+  "league_billing": [
+    "billing_exempt",
+    "billing_interval",
+    "cancel_at_period_end",
+    "count_tier",
+    "current_period_end",
+    "emails_paused_since",
+    "free_exception",
+    "grace_ends_at",
+    "inactive_since",
+    "last_paid_at",
+    "last_stripe_event_at",
+    "league_id",
+    "owner_user_id",
+    "paused_at",
+    "pending_tier",
+    "read_only_since",
+    "regular_count",
+    "regular_count_at",
+    "status",
+    "stripe_customer_id",
+    "stripe_price_id",
+    "stripe_status",
+    "stripe_subscription_id",
+    "tier",
+    "trial_ends_at",
+    "trial_started_at",
+    "updated_at"
   ],
   "league_capability_flags": [
     "enabled",
@@ -299,6 +334,17 @@ export const SCHEMA_MANIFEST = {
     "count",
     "ip",
     "window_start"
+  ],
+  "stripe_events": [
+    "attempts",
+    "created",
+    "error",
+    "id",
+    "league_id",
+    "object_id",
+    "processed_at",
+    "received_at",
+    "type"
   ],
   "team_messages": [
     "created_at",

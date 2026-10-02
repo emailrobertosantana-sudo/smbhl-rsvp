@@ -1,0 +1,234 @@
+// POST /billing/stripe-webhook: Stripe's events for Notre Ligue billing
+// (batch 1 of 3, src/billing.js).
+//
+//   1. Only on the Notre Ligue worker, only while billing is on
+//      (BILLING_LAUNCH_AT) and the signing secret is set: 404 otherwise.
+//   2. The signature: HMAC-SHA256 over "<t>.<raw body>" with
+//      STRIPE_WEBHOOK_SECRET, the full 64-character hex (crypto_utils.hmac
+//      cuts its digest to 32, so it is not used), any v1 value, compared in
+//      constant time, the timestamp within 300 seconds. 400 when it fails.
+//   3. Each event once: stripe_events by event id. A processed event
+//      answers 200 again and does nothing.
+//   4. The event's embedded object is never applied: the handler fetches
+//      the current object from Stripe and writes the whole state, so a
+//      late or repeated event writes the same truth.
+//   5. A failure stores the error, counts the attempt and answers 500, so
+//      Stripe sends it again later.
+// Test-mode events (livemode false) are acknowledged and ignored: the app
+// uses live mode only.
+import { billingEnabled, SMBHL_ID } from './billing.js';
+import { stripeRequest, stripeId } from './stripe.js';
+import { same } from './crypto_utils.js';
+
+export const SIGNATURE_TOLERANCE_SECONDS = 300;
+const enc = new TextEncoder();
+
+async function hmacHex(secret, message) {
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Stripe-Signature: t=<unix seconds>,v1=<hex>[,v1=<hex>][,v0=...]
+export async function verifyStripeSignature(raw, header, secret, nowSeconds = Math.floor(Date.now() / 1000), tolerance = SIGNATURE_TOLERANCE_SECONDS) {
+  if (!secret || !header) return { ok: false, reason: 'missing' };
+  let t = null;
+  const v1 = [];
+  for (const part of String(header).split(',')) {
+    const i = part.indexOf('=');
+    if (i < 1) continue;
+    const k = part.slice(0, i).trim(), v = part.slice(i + 1).trim();
+    if (k === 't') t = v;
+    else if (k === 'v1') v1.push(v.toLowerCase());
+  }
+  if (!t || !/^\d+$/.test(t) || !v1.length) return { ok: false, reason: 'malformed' };
+  if (Math.abs(nowSeconds - Number(t)) > tolerance) return { ok: false, reason: 'expired' };
+  const expected = await hmacHex(secret, `${t}.${raw}`);
+  if (!v1.some(s => same(s, expected))) return { ok: false, reason: 'mismatch' };
+  return { ok: true, timestamp: Number(t) };
+}
+
+export async function handleStripeWebhook(req, env) {
+  if (env.LEAGUE_PRODUCT !== 'true' || !billingEnabled(env) || !env.STRIPE_WEBHOOK_SECRET)
+    return new Response('Not found', { status: 404 });
+  const raw = await req.text();
+  const check = await verifyStripeSignature(raw, req.headers.get('stripe-signature'), env.STRIPE_WEBHOOK_SECRET);
+  if (!check.ok) return Response.json({ ok: false, error: 'Bad signature.' }, { status: 400 });
+  let event;
+  try { event = JSON.parse(raw); } catch (_) { return Response.json({ ok: false, error: 'Bad payload.' }, { status: 400 }); }
+  if (!event || typeof event.id !== 'string' || !/^evt_[A-Za-z0-9_]+$/.test(event.id) || typeof event.type !== 'string')
+    return Response.json({ ok: false, error: 'Bad payload.' }, { status: 400 });
+  if (event.livemode !== true) return Response.json({ ok: true, ignored: 'test_mode' });
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO stripe_events (id, type, created, received_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`
+  ).bind(event.id, event.type, Number(event.created) || null, now).run();
+  const seen = await env.DB.prepare('SELECT processed_at FROM stripe_events WHERE id = ?').bind(event.id).first();
+  if (seen && seen.processed_at) return Response.json({ ok: true, duplicate: true });
+  try {
+    const r = await processStripeEvent(env, event);
+    await env.DB.prepare(
+      `UPDATE stripe_events SET processed_at = ?, league_id = ?, object_id = ?, attempts = attempts + 1, error = NULL WHERE id = ?`
+    ).bind(new Date().toISOString(), r.leagueId || null, r.objectId || null, event.id).run();
+    return Response.json({ ok: true });
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 300);
+    await env.DB.prepare('UPDATE stripe_events SET attempts = attempts + 1, error = ? WHERE id = ?').bind(msg, event.id).run();
+    console.error(`[billing] Stripe event ${event.id} (${event.type}) failed: ${msg}`);
+    return Response.json({ ok: false, error: 'Processing failed.' }, { status: 500 });
+  }
+}
+
+const SUBSCRIPTION_EVENTS = new Set([
+  'customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted',
+  'customer.subscription.paused', 'customer.subscription.resumed'
+]);
+
+// Returns { leagueId, objectId }.
+export async function processStripeEvent(env, event) {
+  const obj = (event.data && event.data.object) || {};
+  const type = event.type;
+  const created = Number(event.created) || null;
+  if (type === 'checkout.session.completed') {
+    const session = await stripeRequest(env, 'GET', `/checkout/sessions/${stripeId(obj.id)}`);
+    const leagueId = session.client_reference_id || (session.metadata && session.metadata.league_id) || null;
+    const subId = idOf(session.subscription);
+    if (!subId) return { leagueId, objectId: session.id };
+    const r = await writeSubscription(env, subId, { leagueId, customerId: idOf(session.customer), created });
+    return { leagueId: r.leagueId, objectId: session.id };
+  }
+  if (SUBSCRIPTION_EVENTS.has(type)) {
+    const r = await writeSubscription(env, stripeId(obj.id), { created });
+    return { leagueId: r.leagueId, objectId: obj.id };
+  }
+  if (type === 'invoice.paid' || type === 'invoice.payment_failed') {
+    const inv = await stripeRequest(env, 'GET', `/invoices/${stripeId(obj.id)}`);
+    const subId = invoiceSubscriptionId(inv);
+    let leagueId = null;
+    if (subId) leagueId = (await writeSubscription(env, subId, { customerId: idOf(inv.customer), created })).leagueId;
+    else leagueId = await leagueByStripe(env, { customerId: idOf(inv.customer) });
+    if (leagueId && type === 'invoice.paid' && Number(inv.amount_paid) > 0) {
+      const paidAt = inv.status_transitions && inv.status_transitions.paid_at ? new Date(inv.status_transitions.paid_at * 1000).toISOString() : new Date().toISOString();
+      await env.DB.prepare('UPDATE league_billing SET last_paid_at = ?, updated_at = ? WHERE league_id = ?').bind(paidAt, new Date().toISOString(), leagueId).run();
+    }
+    return { leagueId, objectId: inv.id };
+  }
+  if (type === 'customer.deleted') {
+    const customer = await stripeRequest(env, 'GET', `/customers/${stripeId(obj.id)}`);
+    const leagueId = await leagueByStripe(env, { customerId: obj.id });
+    if (customer && customer.deleted && leagueId) {
+      await env.DB.prepare(
+        `UPDATE league_billing SET stripe_customer_id = NULL, stripe_subscription_id = NULL, stripe_price_id = NULL, updated_at = ? WHERE league_id = ?`
+      ).bind(new Date().toISOString(), leagueId).run();
+    }
+    return { leagueId, objectId: obj.id };
+  }
+  if (type === 'charge.refunded') {
+    // Batch 2: a full refund cancels the subscription at once. Batch 1
+    // fetches the charge and records which league it is about.
+    const charge = await stripeRequest(env, 'GET', `/charges/${stripeId(obj.id)}`);
+    return { leagueId: await leagueByStripe(env, { customerId: idOf(charge.customer) }), objectId: charge.id };
+  }
+  return { leagueId: null, objectId: obj.id || null };
+}
+
+function idOf(v) {
+  if (!v) return null;
+  if (typeof v === 'string') return v;
+  return typeof v.id === 'string' ? v.id : null;
+}
+
+// An invoice's subscription: invoice.subscription (older API versions) or
+// invoice.parent.subscription_details.subscription (newer ones).
+function invoiceSubscriptionId(inv) {
+  if (!inv) return null;
+  return idOf(inv.subscription)
+    || idOf(inv.parent && inv.parent.subscription_details && inv.parent.subscription_details.subscription)
+    || null;
+}
+
+async function leagueByStripe(env, { subscriptionId = null, customerId = null }) {
+  if (subscriptionId) {
+    const r = await env.DB.prepare('SELECT league_id FROM league_billing WHERE stripe_subscription_id = ?').bind(subscriptionId).first();
+    if (r) return r.league_id;
+  }
+  if (customerId) {
+    const r = await env.DB.prepare('SELECT league_id FROM league_billing WHERE stripe_customer_id = ? ORDER BY updated_at DESC LIMIT 1').bind(customerId).first();
+    if (r) return r.league_id;
+  }
+  return null;
+}
+
+// The price's tier: one of the four configured price ids, or the price's
+// (or its product's) metadata.tier.
+export function tierForPrice(env, price) {
+  if (!price) return null;
+  const id = price.id;
+  if (id && (id === env.STRIPE_PRICE_STANDARD_MONTHLY || id === env.STRIPE_PRICE_STANDARD_YEARLY)) return 'standard';
+  if (id && (id === env.STRIPE_PRICE_PLUS_MONTHLY || id === env.STRIPE_PRICE_PLUS_YEARLY)) return 'plus';
+  const meta = (price.metadata && price.metadata.tier) || (price.product && typeof price.product === 'object' && price.product.metadata && price.product.metadata.tier);
+  return ['standard', 'plus', 'custom'].includes(meta) ? meta : null;
+}
+
+// Stripe's status to the app's: subscribed (active), behind on payment,
+// paused by the app (monthly pause_collection) or by Stripe, or over.
+export function appStatusFor(sub) {
+  const s = sub && sub.status;
+  if (s === 'active' || s === 'trialing') return sub.pause_collection ? 'paused' : 'active';
+  if (s === 'past_due') return 'past_due';
+  if (s === 'paused') return 'paused';
+  if (s === 'unpaid' || s === 'canceled' || s === 'incomplete_expired') return 'inactive';
+  return null; // incomplete: nothing settled yet
+}
+
+const iso = secs => (secs ? new Date(Number(secs) * 1000).toISOString() : null);
+
+// Fetches the subscription and writes its whole current state to the
+// league's row. The league: the subscription's metadata.league_id, the one
+// the caller knows (checkout), or the row that already holds this
+// subscription or customer. SMBHL and unknown leagues are left alone.
+export async function writeSubscription(env, subId, { leagueId = null, customerId = null, created = null } = {}) {
+  const sub = await stripeRequest(env, 'GET', `/subscriptions/${stripeId(subId)}`);
+  const customer = idOf(sub.customer) || customerId;
+  const league = (sub.metadata && sub.metadata.league_id) || leagueId
+    || await leagueByStripe(env, { subscriptionId: sub.id, customerId: customer });
+  if (!league || league === SMBHL_ID) return { leagueId: null };
+  const row = await env.DB.prepare('SELECT id, created_by FROM leagues WHERE id = ?').bind(league).first();
+  if (!row) return { leagueId: null };
+  const item = sub.items && Array.isArray(sub.items.data) ? sub.items.data[0] : null;
+  const price = item && item.price;
+  const tier = tierForPrice(env, price);
+  const status = appStatusFor(sub);
+  const now = new Date().toISOString();
+  const periodEnd = iso(sub.current_period_end || (item && item.current_period_end));
+  await env.DB.prepare(
+    `INSERT INTO league_billing (league_id, owner_user_id, stripe_customer_id, stripe_subscription_id, stripe_price_id, tier,
+       billing_interval, stripe_status, status, current_period_end, cancel_at_period_end, paused_at, inactive_since, last_stripe_event_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, COALESCE(?, 'free'), ?, ?, COALESCE(?, 'trial'), ?, ?, CASE WHEN ? = 'paused' THEN ? END, CASE WHEN ? = 'inactive' THEN ? END, ?, ?)
+     ON CONFLICT(league_id) DO UPDATE SET
+       owner_user_id = COALESCE(league_billing.owner_user_id, excluded.owner_user_id),
+       stripe_customer_id = excluded.stripe_customer_id,
+       stripe_subscription_id = excluded.stripe_subscription_id,
+       stripe_price_id = excluded.stripe_price_id,
+       tier = COALESCE(?, league_billing.tier),
+       billing_interval = excluded.billing_interval,
+       stripe_status = excluded.stripe_status,
+       status = COALESCE(?, league_billing.status),
+       current_period_end = excluded.current_period_end,
+       cancel_at_period_end = excluded.cancel_at_period_end,
+       paused_at = CASE WHEN ? = 'paused' THEN COALESCE(league_billing.paused_at, ?) ELSE NULL END,
+       inactive_since = CASE WHEN ? = 'inactive' THEN COALESCE(league_billing.inactive_since, ?) WHEN ? IN ('active', 'paused') THEN NULL ELSE league_billing.inactive_since END,
+       read_only_since = CASE WHEN ? = 'active' THEN NULL ELSE league_billing.read_only_since END,
+       emails_paused_since = CASE WHEN ? = 'active' THEN NULL ELSE league_billing.emails_paused_since END,
+       grace_ends_at = CASE WHEN ? = 'active' THEN NULL ELSE league_billing.grace_ends_at END,
+       last_stripe_event_at = COALESCE(excluded.last_stripe_event_at, league_billing.last_stripe_event_at),
+       updated_at = excluded.updated_at`
+  ).bind(
+    league, row.created_by || null, customer, sub.id, (price && price.id) || null, tier,
+    (price && price.recurring && price.recurring.interval) || null, sub.status || null, status, periodEnd, sub.cancel_at_period_end ? 1 : 0,
+    status, now, status, now, created, now,
+    tier, status, status, now, status, now, status, status, status, status
+  ).run();
+  return { leagueId: league, status };
+}

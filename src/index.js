@@ -26,6 +26,8 @@ import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation, claimO
 import { handleSignup, handleLogin, handleAcceptTerms, purgeRateLimitIps, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
+import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, setFreeException } from './billing.js';
+import { handleStripeWebhook } from './stripe_webhook.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
   cleanupOldReviews,
@@ -14499,6 +14501,19 @@ async function callSubsForShortfallAfterSubAdded(env, leagueId) {
 // contacted immediately. Idempotent (already-invited subs are skipped).
 // Never lets a failure here turn the admin's successful write into an
 // error.
+// After a roster write route answered 200: the league's regular-player
+// count for billing (src/billing.js). Never changes the response.
+async function withRosterCount(req, env, url, res) {
+  if (!res || res.status !== 200) return res;
+  try {
+    const leagueId = await resolveSessionLeagueId(req, env, url);
+    if (leagueId) await afterRosterCountChange(env, leagueId);
+  } catch (e) {
+    console.error(`[billing] count after a roster change failed: ${e.message}`);
+  }
+  return res;
+}
+
 async function afterLeagueRosterOrScheduleChange(req, env, url, res) {
   if (!res || res.status !== 200) return res;
   try {
@@ -16647,6 +16662,10 @@ function superAdminPage(isAuthed = false) {
           <th style="padding:8px 6px">Admins</th>
           <th style="padding:8px 6px">Page publique</th>
           <th style="padding:8px 6px">Palier / Tier</th>
+          <th style="padding:8px 6px">Joueurs réguliers / Regular players</th>
+          <th style="padding:8px 6px">Facturation / Billing</th>
+          <th style="padding:8px 6px">Fin de l'essai / Trial end</th>
+          <th style="padding:8px 6px">Exception gratuite / Free exception</th>
           <th style="padding:8px 6px">Indicateurs / Flags</th>
           <th style="padding:8px 6px">Suppression / Deletion</th>
         </tr>
@@ -16678,9 +16697,23 @@ function renderRow(l) {
     '<td style="padding:8px 6px">' + esc(l.adminCount) + '</td>' +
     '<td style="padding:8px 6px">' + (l.publicPageEnabled ? 'Oui / Yes' : 'Non / No') + (l.deactivatedAt ? ' (désactivée / deactivated)' : '') + '</td>' +
     '<td style="padding:8px 6px"><select class="sa-tier" data-league="' + l.id + '">' + planTierOptionsHtml(l.planTier) + '</select></td>' +
+    billingCells(l) +
     '<td style="padding:8px 6px">' + flagsHtml + '</td>' +
     '<td style="padding:8px 6px">' + (l.id === 'smbhl' ? '' : '<button type="button" class="sa-harddelete" data-league="' + l.id + '" data-name="' + esc(l.name).replace(/"/g, '&quot;') + '" style="color:var(--danger,#b3122e)">Supprimer / Delete</button>') + '</td>' +
     '</tr>';
+}
+
+// Billing (src/billing.js), read only but for the free exception: the
+// regular players with an email and the tier they imply, the billed tier
+// and status, the trial end. "off" while BILLING_LAUNCH_AT is unset.
+const BILLING_STATUS = { exempt: 'Exemptée / Exempt', off: 'Désactivée / Off', trial: 'Essai / Trial', free: 'Gratuite / Free', active: 'Abonnée / Active', past_due: 'Paiement en retard / Past due', paused: 'En pause / Paused', inactive: 'Inactive', unpaid: 'Sans abonnement / No subscription' };
+function billingCells(l) {
+  const b = l.billing || {};
+  const td = h => '<td style="padding:8px 6px">' + h + '</td>';
+  const count = b.count == null ? '' : esc(b.count) + ' (' + esc(b.countTier) + ')';
+  const status = esc(b.tier || '') + (b.status ? ' · ' + esc(BILLING_STATUS[b.status] || b.status) : '');
+  const free = l.id === 'smbhl' ? '' : '<label style="font-size:13px;white-space:nowrap"><input type="checkbox" class="sa-free" data-league="' + l.id + '"' + (b.freeException ? ' checked' : '') + '> Oui / Yes</label>';
+  return td(count) + td(status) + td(esc((b.trialEndsAt || '').slice(0, 10))) + td(free);
 }
 
 function render() {
@@ -16727,6 +16760,21 @@ $('sa-tbody').addEventListener('change', async e => {
       const res = await fetch('/super-admin/leagues/update', {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-admin': K },
         body: JSON.stringify({ leagueId, planTier })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      $('sa-err').textContent = '';
+    } catch (err) {
+      $('sa-err').textContent = 'Erreur / Error: ' + err.message;
+      await load();
+    }
+    return;
+  }
+  const freeBox = e.target.closest('.sa-free');
+  if (freeBox) {
+    try {
+      const res = await fetch('/super-admin/leagues/update', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-admin': K },
+        body: JSON.stringify({ leagueId: freeBox.dataset.league, freeException: freeBox.checked })
       });
       if (!res.ok) throw new Error(await res.text());
       $('sa-err').textContent = '';
@@ -31676,6 +31724,11 @@ async function runCronPass(env) {
   }
   // The rate limits' IP addresses, kept 24 hours (src/auth.js).
   try { await purgeRateLimitIps(env); } catch (e) { console.error(`[auth] IP purge: ${e.message}`); }
+  // Billing (src/billing.js): each league's regular-player count, once a
+  // day. Notre Ligue only; silent unless it fails.
+  if (env.LEAGUE_PRODUCT === 'true') {
+    try { await refreshDailyRegularCounts(env); } catch (e) { console.error(`[billing] daily count: ${e.message}`); }
+  }
   try { await recordHeartbeat(env, 'end', { ok: passOk, error: passError }); } catch (e) { console.error(`[health] heartbeat end: ${e.message}`); }
   await pingHeartbeatUrl(env, passOk);
 }
@@ -31792,6 +31845,10 @@ async function handleFetch(req, env, ctx) {
       // stays the plain liveness 'ok' it always was.)
       if (url.pathname === '/health/status' && (req.method === 'GET' || req.method === 'HEAD'))
         return headAware(req, await handleHealth(req, env));
+      // Stripe's billing events (src/stripe_webhook.js): Notre Ligue only,
+      // 404 while billing is off.
+      if (url.pathname === '/billing/stripe-webhook' && req.method === 'POST')
+        return await handleStripeWebhook(req, env);
       if (url.pathname === '/health/client-error' && req.method === 'POST') {
         const text = (await req.text()).slice(0, 2000);
         let body = null; try { body = JSON.parse(text); } catch (_) {}
@@ -31973,9 +32030,9 @@ async function handleFetch(req, env, ctx) {
       // session+checkLeagueAccess-gated ONLY, no ADMIN_KEY path at all —
       // these must never become a new door into SMBHL's data.
       if (url.pathname === '/league/contacts' && req.method === 'POST')
-        return await addContactsWithEmailChoice(req, env, url, handleLeagueContactCreate);
+        return await withRosterCount(req, env, url, await addContactsWithEmailChoice(req, env, url, handleLeagueContactCreate));
       if (url.pathname === '/league/contacts/bulk' && req.method === 'POST')
-        return await addContactsWithEmailChoice(req, env, url, handleLeagueContactsBulkCreate);
+        return await withRosterCount(req, env, url, await addContactsWithEmailChoice(req, env, url, handleLeagueContactsBulkCreate));
       if (url.pathname === '/league/settings/add-emails' && req.method === 'POST')
         return await handleLeagueAddEmailsSetting(req, env, url);
       if (url.pathname === '/league/events/dual-goalie' && req.method === 'POST')
@@ -31986,13 +32043,13 @@ async function handleFetch(req, env, ctx) {
       // on the roster list -- see handleLeagueContactUpdate's own
       // comment (leagues.js).
       if (url.pathname === '/league/contacts/update' && req.method === 'POST')
-        return await updateContactWithEmailChoice(req, env, url);
+        return await withRosterCount(req, env, url, await updateContactWithEmailChoice(req, env, url));
       // Item 3 (players polish task): inactive players.
       if (url.pathname === '/league/contacts/active' && req.method === 'POST')
-        return await handleLeagueContactSetActive(req, env, url);
+        return await withRosterCount(req, env, url, await handleLeagueContactSetActive(req, env, url));
       // Item 4 (season-rollover polish task): import players.
       if (url.pathname === '/league/season/rollover-import' && req.method === 'POST')
-        return await handleLeagueSeasonRolloverImport(req, env, url);
+        return await withRosterCount(req, env, url, await handleLeagueSeasonRolloverImport(req, env, url));
       // E2 (season-model polish task): move a closing season's future
       // events onto the new current one, part of the rollover flow.
       if (url.pathname === '/league/season/move-events' && req.method === 'POST')
@@ -32184,7 +32241,10 @@ async function handleFetch(req, env, ctx) {
         const auth = checkAdminAuth(req, env);
         if (auth !== 'ok') return adminAuthResponse(auth);
         const leagues = await listLeaguesWithMetadata(env);
-        return Response.json({ ok: true, leagues });
+        // Billing (src/billing.js): count, tiers, status, trial end, free exception.
+        const owners = (await env.DB.prepare('SELECT id, created_by, created_at FROM leagues').all()).results || [];
+        const billing = await billingSummaries(env, owners);
+        return Response.json({ ok: true, leagues: leagues.map(l => ({ ...l, billing: billing.get(l.id) || null })) });
       }
       if (url.pathname === '/super-admin/leagues/update' && req.method === 'POST') {
         const auth = checkAdminAuth(req, env);
@@ -32194,6 +32254,10 @@ async function handleFetch(req, env, ctx) {
         if (!leagueId) return Response.json({ ok: false, error: 'leagueId is required.', errorKey: 'LEAGUE_ID_REQUIRED' }, { status: 400 });
         if (typeof body.planTier === 'string') {
           const result = await updateLeaguePlanTier(env, leagueId, body.planTier);
+          if (!result.ok) return Response.json(result, { status: result.errorKey === 'LEAGUE_NOT_FOUND' ? 404 : 400 });
+        }
+        if (typeof body.freeException === 'boolean') {
+          const result = await setFreeException(env, leagueId, body.freeException);
           if (!result.ok) return Response.json(result, { status: result.errorKey === 'LEAGUE_NOT_FOUND' ? 404 : 400 });
         }
         if (body.flags && typeof body.flags === 'object') {
