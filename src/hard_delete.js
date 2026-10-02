@@ -82,6 +82,7 @@ export const EVENT_KEYED_TABLES = [
 // settings rows whose KEY names this league or one of its events.
 function leagueSettingsKeys(leagueId, eventIds) {
   return [`email_cadence_settings:${leagueId}`, `league_add_emails:${leagueId}`, `league_sub_calls:${leagueId}`, `payment_info:${leagueId}`,
+    `onboarding_skipped:${leagueId}`, `onboarding_done:${leagueId}`, `setup_card_dismissed:${leagueId}`,
     ...eventIds.map(id => `league_message:${id}`), ...eventIds.map(id => `dual_goalie_alert:${id}`)];
 }
 

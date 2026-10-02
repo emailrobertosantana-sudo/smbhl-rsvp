@@ -893,8 +893,8 @@ ${nlAuthScript(I18N_HOME)}
 const I18N_SIGNUP = {
   fr: {
     // Onboarding item 1: steps 1 and 2 come before the team structure is
-    // chosen, and the real total depends on it (8 fixed, 6 pickup, 5 no
-    // teams) -- so no total until it is known.
+    // chosen, and the real total depends on it (10 fixed teams, 7 for the
+    // others, FLOW_TOTAL_STEPS) -- so no total until it is known.
     step1: 'Étape 1', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.', termsAccept: TERMS_LABEL.fr,
     lblEmail: 'Courriel', lblPassword: 'Mot de passe', showPw: 'Afficher', hidePw: 'Cacher',
     pwHelp: '8 caractères minimum.', continueBtn: 'Continuer', alreadySignedUp: 'Déjà inscrit?', login: 'Se connecter',
@@ -926,8 +926,8 @@ const I18N_SIGNUP = {
     // label apart from pickup's "Sans équipes fixes".
     structureMyTeamTitle: 'Juste mon équipe', structureMyTeamDesc: "Une seule équipe qui joue dans une autre ligue, celle d'une ville par exemple : présences et remplaçants, sans classement.",
     structureHeadcountTitle: 'Drop-in, sans équipes attitrées', structureHeadcountDesc: 'Juste la liste des présents. Tu formes les équipes sur place.',
-    back: 'Retour',
-    step3: 'Étape 3 sur 8', title3: "Combien d'équipes?",
+    back: 'Retour', cancelNew: 'Annuler',
+    step3:'Étape 3 sur 10', title3: "Combien d'équipes?",
     teamCountGroupAria: "Nombre d'équipes", decreaseTeamsAria: 'Moins', increaseTeamsAria: 'Plus',
     teamPlaceholder: 'Équipe ',
     teamCountHelp: 'Tu nommeras tes équipes pendant la configuration de ta ligue.',
@@ -974,8 +974,8 @@ const I18N_SIGNUP = {
     structureWeeklyTitle: 'Pickup with teams', structureWeeklyDesc: 'Pickup, but split into teams each game, drawn automatically or set by you.',
     structureMyTeamTitle: 'Just my team', structureMyTeamDesc: "One team playing in someone else's league, a city or rec league for example: attendance and subs, no standings.",
     structureHeadcountTitle: 'Drop-in, no fixed teams', structureHeadcountDesc: "Just a list of who's in. You sort out sides at the venue.",
-    back: 'Back',
-    step3: 'Step 3 of 8', title3: 'How many teams?',
+    back: 'Back', cancelNew: 'Cancel',
+    step3:'Step 3 of 10', title3: 'How many teams?',
     teamCountGroupAria: 'Number of teams', decreaseTeamsAria: 'Decrease', increaseTeamsAria: 'Increase',
     teamPlaceholder: 'Team ',
     teamCountHelp: "You'll name your teams while setting up your league.",
@@ -1333,7 +1333,7 @@ async function submitStep1() {
   return nlDocument({ ...signupDoc(langParam), bodyHtml });
 }
 
-function renderSignupStep2(langParam) {
+function renderSignupStep2(langParam, another = false) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
@@ -1374,7 +1374,10 @@ function renderSignupStep2(langParam) {
 </main>
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="continueBtn" onclick="submitStep2()">Continuer</button>
-  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="window.__navWithLang('/signup?step=1')">Retour</button>
+  <!-- Onboarding batch: the account exists by now, so there is no going
+       back to it (step 1 sends a signed-in admin here). A second league
+       ("Créer une autre ligue") can be cancelled, back to the dashboard. -->
+  ${another ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--block" id="su_cancel" data-i18n="cancelNew" onclick="window.__navWithLang('/dashboard')">Annuler</button>` : ''}
 </div>
 ${signupFooter()}
 <script>
@@ -1453,20 +1456,20 @@ async function submitStep2() {
     return;
   }
   try { sessionStorage.setItem('nl_signup_league', JSON.stringify({ name: name, slug: slug, tracksStats: tracksStats, teamStructure: teamStructure })); } catch (e) {}
-  window.__navWithLang('/signup?step=3');
+  window.__navWithLang('/signup?step=3${another ? '&new=1' : ''}');
 }
 </script>`;
   return nlDocument({ ...signupDoc(langParam), bodyHtml });
 }
 
-function renderSignupStep3(langParam) {
+function renderSignupStep3(langParam, another = false) {
   const lang = langParam === 'en' ? 'en' : 'fr';
   const i18nStep3 = I18N_SIGNUP[lang];
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" id="su_step3_label" data-i18n="step3">Étape 3 sur 8</div>
-    <div id="su_step3_prog">${flowStepper(3, 8)}</div>
+    <div class="overline" id="su_step3_label" data-i18n="step3">Étape 3 sur ${FLOW_TOTAL_STEPS.fixed}</div>
+    <div id="su_step3_prog">${flowStepper(3, FLOW_TOTAL_STEPS.fixed)}</div>
   </div>
   <div class="su-title"><h1 id="su_step3_title" data-i18n="title3">Combien d'équipes?</h1></div>
   <div id="formErr" class="nl-error" style="display:none"></div>
@@ -1488,7 +1491,7 @@ function renderSignupStep3(langParam) {
 </main>
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="createLeague" onclick="submitStep3()">Créer la ligue</button>
-  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="window.__navWithLang('/signup?step=2')">Retour</button>
+  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="window.__navWithLang('/signup?step=2${another ? '&new=1' : ''}')">Retour</button>
 </div>
 ${signupFooter()}
 <script>
@@ -1587,7 +1590,10 @@ function renderSignupDone(league, langParam) {
        "Lancer ma saison", a different verb than the "Créer la saison"
        action/checklist item this button actually leads to) is the one
        real next action. -->
-  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="startMySeason" onclick="location.href='/dashboard'">Créer ma saison</button>
+  <!-- Onboarding batch: the season is the wizard's next screen
+       (/onboarding/season, which asks for it while there is none), not a
+       form on the busy dashboard. -->
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" data-i18n="startMySeason" onclick="window.__navWithLang('/onboarding/season')">Créer ma saison</button>
 </div>
 ${signupFooter()}
 <script>
@@ -1623,6 +1629,16 @@ async function renderSignupPage(req, env, url) {
   // nl_lang cookie) when the URL has no ?lang= -- steps 2/3/done came up
   // French otherwise. Redirects still carry only an explicit ?lang=.
   const renderLang = (langParam === 'fr' || langParam === 'en') ? langParam : resolveServerLang(req);
+  // Onboarding batch: ?new=1 is "Créer une autre ligue" (the dashboard's
+  // link): a signed-in admin who already has a league gets the league form
+  // instead of being sent to that league's onboarding.
+  const another = url.searchParams.get('new') === '1';
+  // Onboarding batch: the account step is behind a signed-in admin (the
+  // browser's back button after it): straight on to the league form, never
+  // the account form again (its email is already taken, by them).
+  if (step !== '2' && step !== '3' && step !== 'done' && (await checkUserSession(req, env))) {
+    return Response.redirect(`${url.origin}/signup?step=2${langQS}`, 302);
+  }
   if (step === '2' || step === '3' || step === 'done') {
     const session = await checkUserSession(req, env);
     if (!session) return Response.redirect(`${url.origin}/signup?step=1${langQS}`, 302);
@@ -1649,9 +1665,9 @@ async function renderSignupPage(req, env, url) {
     // knows how to pick up wherever THAT league's own setup left off)
     // instead of ever re-rendering the pre-league wizard for a session
     // that has moved past it.
-    if (newest) return Response.redirect(`${url.origin}/onboarding/season${langQS.replace('&', '?')}`, 302);
-    if (step === '3') return new Response(renderSignupStep3(renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
-    return new Response(renderSignupStep2(renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    if (newest && !another) return Response.redirect(`${url.origin}/onboarding/season${langQS.replace('&', '?')}`, 302);
+    if (step === '3') return new Response(renderSignupStep3(renderLang, another), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    return new Response(renderSignupStep2(renderLang, another), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
   return new Response(renderSignupStep1(renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
@@ -1975,6 +1991,35 @@ async function pendingSkippedSteps(env, leagueRow) {
     .filter(k => items[k] && steps.includes(k) && !(k === 'reminders' && remindersOn))
     .map(k => ({ key: items[k][0], fr: items[k][1], href: `/onboarding/season?step=${steps.indexOf(k) + 1}` }));
 }
+// Onboarding batch: the steps an admin answered (saved, or "Non" on the
+// finance question), kept in settings onboarding_done:<league>. The row
+// exists from the season screen on, so a league whose onboarding started
+// there can be resumed where it was left; a league from before has no row
+// and is never told to finish a setup it went through some other way.
+const onboardingDoneKey = leagueId => `onboarding_done:${leagueId}`;
+async function readOnboardingDone(env, leagueId) {
+  const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(onboardingDoneKey(leagueId)).first();
+  if (!row) return null;
+  try { const v = JSON.parse(row.value || '[]'); return Array.isArray(v) ? v : []; } catch (_) { return []; }
+}
+// The first onboarding step neither answered nor skipped, as its ?step=
+// number; 0 once every step has been seen; null for a league with no record.
+async function firstOpenOnboardingStep(env, leagueRow) {
+  const done = await readOnboardingDone(env, leagueRow.id);
+  if (!done) return null;
+  const skipped = await readOnboardingSkips(env, leagueRow.id);
+  const steps = onboardingStepsFor(leagueRow.team_structure || 'fixed');
+  const i = steps.findIndex(k => !done.includes(k) && !skipped.includes(k));
+  return i === -1 ? 0 : i + 1;
+}
+// Onboarding batch: regular players of a fixed-teams league who are on no
+// team get no reminder (the add-players notice says so): one more thing
+// to do before the league is ready. Other structures have no teams to join.
+async function teamlessRegularCount(env, leagueRow) {
+  if ((leagueRow.team_structure || 'fixed') !== 'fixed') return 0;
+  const r = await env.DB.prepare(`SELECT COUNT(*) AS c FROM contacts WHERE league_id = ? AND is_active = 1 AND role = 'roster' AND (preferred_team IS NULL OR preferred_team = '')`).bind(leagueRow.id).first();
+  return Number(r && r.c) || 0;
+}
 async function handleOnboardingStepMark(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return leagueAccessResponse('unauthenticated');
@@ -1987,10 +2032,12 @@ async function handleOnboardingStepMark(req, env, url) {
   if (access !== 'ok') return leagueAccessResponse(access);
   const body = await req.json().catch(() => ({}));
   const step = String(body.step || '');
-  if (!['roster', 'teams', 'playoffs', 'reminders', 'stats'].includes(step)) return Response.json({ ok: false, error: 'Unknown step.', errorKey: 'ONBOARDING_STEP_UNKNOWN' }, { status: 400 });
+  if (!['season', 'roster', 'teams', 'playoffs', 'reminders', 'stats', 'finance'].includes(step)) return Response.json({ ok: false, error: 'Unknown step.', errorKey: 'ONBOARDING_STEP_UNKNOWN' }, { status: 400 });
   const skipped = new Set(await readOnboardingSkips(env, leagueId));
-  if (body.action === 'skip') skipped.add(step); else skipped.delete(step);
+  const done = new Set((await readOnboardingDone(env, leagueId)) || []);
+  if (body.action === 'skip') { skipped.add(step); done.delete(step); } else { skipped.delete(step); done.add(step); }
   await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(onboardingSkipKey(leagueId), JSON.stringify([...skipped])).run();
+  await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(onboardingDoneKey(leagueId), JSON.stringify([...done])).run();
   return Response.json({ ok: true, skipped: [...skipped] });
 }
 
@@ -2005,6 +2052,10 @@ async function leagueSetupComplete(env, leagueRow) {
   let teamNames = [];
   try { teamNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
   const defaultNames = (leagueRow.team_structure || 'fixed') === 'fixed' && teamNames.length > 0 && teamNames.every(t => /^(Équipe|Team) \d+$/.test(t));
+  // Onboarding batch: also every onboarding step seen, and no regular
+  // player of a fixed-teams league left without a team (no reminder).
+  if (await firstOpenOnboardingStep(env, leagueRow)) return false;
+  if (await teamlessRegularCount(env, leagueRow)) return false;
   return !!anyEvent && Number(players && players.c) > 0 && !defaultNames && leagueRow.min_players != null && leagueRow.max_players != null;
 }
 const setupCardDismissKey = leagueId => `setup_card_dismissed:${leagueId}`;
@@ -2017,7 +2068,9 @@ async function setupCompleteCardHtml(env, url, leagueRow) {
   const today = new Date().toISOString().slice(0, 10);
   const next = await env.DB.prepare(`SELECT id FROM events WHERE league_id = ? AND state != 'cancelled' AND date >= ? ORDER BY date ASC LIMIT 1`).bind(leagueRow.id, today).first();
   const remindersOn = !!(leagueRow.reminder_72h_enabled || leagueRow.reminder_24h_enabled || leagueRow.reminder_12h_enabled);
-  const link = (href, key, extra = '') => `<a class="nl-btn nl-btn--secondary nl-btn--sm" href="${esc(href)}"${extra} data-i18n="${key}">${esc(fr[key])}</a>`;
+  // Onboarding batch: a long label ("La configurer (thème, mot de
+  // l'organisateur)") wraps instead of running past the card at 390 px.
+  const link = (href, key, extra = '') => `<a class="nl-btn nl-btn--secondary nl-btn--sm" style="white-space:normal;text-align:center;height:auto;min-height:36px;padding-top:6px;padding-bottom:6px" href="${esc(href)}"${extra} data-i18n="${key}">${esc(fr[key])}</a>`;
   return `<section class="nl-card nl-card--pad-lg" id="setup_done_card" style="border-color:var(--primary)">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
       <h2 data-i18n="setupDoneTitle">${esc(fr.setupDoneTitle)}</h2>
@@ -2102,7 +2155,9 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // naturally disappears once each is genuinely addressed.
       healthTitle: "Quelque chose n'a pas fonctionné", healthTold: "L'équipe Notre Ligue a été avertie.",
       healthCronLate: 'Les envois automatiques sont en retard.',
-      nextStepsTitle: 'Prochaines étapes', nsCreateSchedule: "Créer l'horaire", nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif", nsReminders: 'Choisir tes rappels', nsStats: 'Choisir les statistiques', nsPlayoffs: 'Configurer les séries'
+      nextStepsTitle: 'Prochaines étapes', nsCreateSchedule: "Créer l'horaire", nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif", nsReminders: 'Choisir tes rappels', nsStats: 'Choisir les statistiques', nsPlayoffs: 'Configurer les séries',
+      nsFinishSetup: 'Terminer la configuration de ta ligue', nsAssignTeams: 'Placer tes joueurs dans une équipe',
+      leagueSwitchLabel: 'Ligue', createAnotherLeague: 'Créer une autre ligue'
       // Live-testing task (batch 5), Part 7: coAdmins/invite*/
       // deactivate*/hardDelete* used to live here too -- moved to
       // I18N_SETTINGS alongside the sections that use them (see
@@ -2123,7 +2178,9 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
       healthTitle: "Something didn't work", healthTold: 'The Notre Ligue team has been notified.',
       healthCronLate: 'Automatic sends are running late.',
-      nextStepsTitle: 'Next steps', nsCreateSchedule: 'Create the schedule', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size', nsReminders: 'Choose your reminders', nsStats: 'Choose what to track', nsPlayoffs: 'Set up playoffs'
+      nextStepsTitle: 'Next steps', nsCreateSchedule: 'Create the schedule', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size', nsReminders: 'Choose your reminders', nsStats: 'Choose what to track', nsPlayoffs: 'Set up playoffs',
+      nsFinishSetup: 'Finish setting up your league', nsAssignTeams: 'Put your players on a team',
+      leagueSwitchLabel: 'League', createAnotherLeague: 'Create another league'
     });
     if (needsSeason) {
       Object.assign(fr, {
@@ -2445,6 +2502,19 @@ async function handleDashboardPage(req, env, url) {
   } else {
     const { header, tabbar } = dashChrome(leagueRow.name, 'home');
     const needsSeason = !currentSeason;
+    // Onboarding batch: an admin of several leagues picks the one shown
+    // (the same ?league_id= a league's alert email links to, which makes it
+    // the current league). Not in support mode: one league only there.
+    const myLeagues = env.SUPPORT_MODE || env.LEAGUE_PRODUCT !== 'true' ? [] : ((await env.DB.prepare(
+      `SELECT l.id, l.name FROM league_admins la JOIN leagues l ON l.id = la.league_id
+        WHERE la.user_id = ? AND l.deactivated_at IS NULL ORDER BY l.created_at`
+    ).bind(session.userId).all()).results || []);
+    const leagueSwitchHtml = myLeagues.length > 1 ? `<div class="nl-field" style="margin:0;min-width:200px">
+      <label class="nl-label" for="dash_league" data-i18n="leagueSwitchLabel">Ligue</label>
+      <select class="nl-select" id="dash_league" onchange="location.href='/dashboard?league_id=' + encodeURIComponent(this.value)">
+        ${myLeagues.map(l => `<option value="${esc(l.id)}"${l.id === leagueRow.id ? ' selected' : ''}>${esc(l.name)}</option>`).join('')}
+      </select>
+    </div>` : '';
 
     // Live-testing task (batch 6), Part 8: "current-week status" --
     // SMBHL's own /admin/board is this product's admin home page,
@@ -2607,8 +2677,12 @@ async function handleDashboardPage(req, env, url) {
       // B3: folded in from the old, separately-carded "Create the
       // schedule" prompt (weekStatusHtml's own comment) -- one
       // checklist, not two cards both claiming to be "next."
+      // Onboarding batch: left half-way, the setup picks up at the first
+      // step not answered yet.
+      ...(await (async () => { const open = await firstOpenOnboardingStep(env, leagueRow); return open ? [{ key: 'nsFinishSetup', href: `/onboarding/season?step=${open}`, fr: 'Terminer la configuration de ta ligue' }] : []; })()),
       !hasAnyEvents ? { key: 'nsCreateSchedule', href: '/league/schedule', fr: "Créer l'horaire" } : null,
       playerCount === 0 ? { key: 'nsAddPlayers', href: '/league/roster', fr: 'Ajouter des joueurs' } : null,
+      playerCount > 0 && (await teamlessRegularCount(env, leagueRow)) > 0 ? { key: 'nsAssignTeams', href: '/league/roster', fr: 'Placer tes joueurs dans une équipe' } : null,
       stillDefaultTeamNames ? { key: 'nsNameTeams', href: '/onboarding/season?step=2', fr: 'Nommer tes équipes' } : null,
       !dashHasRosterLimits ? { key: 'nsRosterLimits', href: '/onboarding/season?step=1', fr: "Définir l'effectif" } : null,
       ...(await pendingSkippedSteps(env, leagueRow))
@@ -2659,6 +2733,7 @@ async function handleDashboardPage(req, env, url) {
         ${needsSeason ? '' : `<span>${dashIsHeadcount ? '' : `${teamNames.length} <span data-i18n="teamsLabel">équipes</span> · `}${playerCount} <span data-i18n="playersLabel">joueurs</span></span>`}
       </div>
     </div>
+    ${leagueSwitchHtml}
   </div>
   ${!verified ? `
   <section class="nl-card nl-card--pad-lg">
@@ -2717,6 +2792,7 @@ async function handleDashboardPage(req, env, url) {
     </div>
     <p class="nl-help" style="margin-top:12px;"><span data-i18n="tracksResultsLabel">Résultats suivis :</span> <b data-i18n="${leagueRow.tracks_results ? 'yes' : 'no'}">${leagueRow.tracks_results ? 'Oui' : 'Non'}</b> · <span data-i18n="tracksPlayerStatsLabel">Statistiques des joueurs suivies :</span> <b data-i18n="${leagueRow.tracks_player_stats ? 'yes' : 'no'}">${leagueRow.tracks_player_stats ? 'Oui' : 'Non'}</b></p>
   </section>
+  ${env.SUPPORT_MODE || env.LEAGUE_PRODUCT !== 'true' ? '' : `<p style="text-align:center;margin:0"><a href="/signup?step=2&amp;new=1" id="dash_new_league" data-i18n="createAnotherLeague">Créer une autre ligue</a></p>`}
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>
 ${tabbar}`;
@@ -2875,10 +2951,13 @@ if (document.getElementById('hardDeleteStatus')) {
 // no team concept at all -- so neither ever sees it), inserted right
 // after 'teams' since the playoff questions reference the team count
 // just confirmed.
+// Onboarding batch: a last, optional 'finance' step for every structure
+// (does the league charge players; fees and Interac details), then the
+// summary screen (?step=summary, not a step: no number, no form).
 function onboardingStepsFor(teamStructure) {
-  if (teamStructure === 'headcount') return ['roster', 'reminders', 'stats'];
-  if (teamStructure === 'weekly_draw') return ['roster', 'reminders', 'stats']; // item 4: no team-names step for pickup
-  return ['roster', 'teams', 'playoffs', 'reminders', 'stats'];
+  if (teamStructure === 'headcount') return ['roster', 'reminders', 'stats', 'finance'];
+  if (teamStructure === 'weekly_draw') return ['roster', 'reminders', 'stats', 'finance']; // item 4: no team-names step for pickup
+  return ['roster', 'teams', 'playoffs', 'reminders', 'stats', 'finance'];
 }
 
 // B1 (onboarding polish task): ONE continuous step count spanning the
@@ -2901,11 +2980,16 @@ function onboardingStepsFor(teamStructure) {
 // 'teams' and 'reminders') -- fixed's total goes from 7 to 8;
 // headcount/weekly_draw are completely untouched (neither structure
 // ever sees a playoffs step, so neither total number changes).
-const FLOW_TOTAL_STEPS = { fixed: 8, headcount: 5, weekly_draw: 5 };
+// Onboarding batch: the season (asked on the dashboard before) is now the
+// wizard's own screen right after sign-up, and the finance step comes last:
+//   fixed:       signup 1,2,3 + season + roster,teams,playoffs,reminders,stats,finance = 10
+//   headcount:   signup 1,2   + season + roster,reminders,stats,finance               = 7
+//   weekly_draw: signup 1,2   + season + roster,reminders,stats,finance               = 7
+const FLOW_TOTAL_STEPS = { fixed: 10, headcount: 7, weekly_draw: 7 };
 const FLOW_STEP_NUMBER = {
-  fixed: { signup3: 3, roster: 4, teams: 5, playoffs: 6, reminders: 7, stats: 8 },
-  headcount: { roster: 3, reminders: 4, stats: 5 },
-  weekly_draw: { roster: 3, reminders: 4, stats: 5 }
+  fixed: { signup3: 3, season: 4, roster: 5, teams: 6, playoffs: 7, reminders: 8, stats: 9, finance: 10 },
+  headcount: { season: 3, roster: 4, reminders: 5, stats: 6, finance: 7 },
+  weekly_draw: { season: 3, roster: 4, reminders: 5, stats: 6, finance: 7 }
 };
 function flowStepLabel(lang, current, total) {
   return lang === 'en' ? `Step ${current} of ${total}` : `Étape ${current} sur ${total}`;
@@ -2966,7 +3050,26 @@ function buildOnboardingI18n() {
     playoffTeamsLabel: "Combien d'équipes participent aux séries?",
     byeNote: "Avec un nombre impair d'équipes, au moins une équipe passe la première ronde (bye). Un bye n'est pas un match : il n'utilise aucun créneau.",
     thirdPlaceLabel: 'Match pour la 3e place?',
-    reservedSlotsLabel: 'Combien de matchs faut-il réserver?'
+    reservedSlotsLabel: 'Combien de matchs faut-il réserver?',
+    // Onboarding batch: the way back, the season screen (moved in from the
+    // dashboard), the finance step (item 3) and the closing summary (item 2).
+    back: 'Retour',
+    seasonTitle: 'Lance ta première saison', seasonSub: 'Donne un nom à ta saison. Tes matchs et tes joueurs y seront rattachés.',
+    seasonNameLabel: 'Nom de la saison', seasonNamePh: 'Ex. Automne 2026', seasonCreate: 'Créer la saison',
+    financeTitle: 'Est-ce que ta ligue fait payer les joueurs?',
+    financeSub: 'Rien ici n’est obligatoire. Tu pourras tout changer plus tard dans la page Finances.',
+    financeYes: 'Oui', financeNo: 'Non', skipFinance: 'Passer cette étape',
+    financeFeesLabel: 'Comment les joueurs paient',
+    modeSeason: 'Frais de saison pour les réguliers, par match pour les remplaçants', modePerGame: 'Par match pour tout le monde',
+    lblPricePlayer: 'Frais de saison (joueur)', lblPriceGoalie: 'Frais de saison (gardien)',
+    lblGamePlayer: 'Par match (joueur)', lblGameGoalie: 'Par match (gardien)',
+    financePayLabel: 'Virement Interac',
+    payHelp: 'Affiché dans les rappels de paiement. Laisse vide pour masquer.',
+    payEmailLabel: 'Courriel pour virement Interac', payPhoneLabel: 'Cellulaire pour virement Interac',
+    sumTitle: "Ta ligue en un coup d'œil", sumSub: 'Voici où en est ta ligue. Tu peux tout changer plus tard.',
+    sumStructure: 'Structure', sumPlayers: 'Joueurs', sumGames: 'Matchs', sumBilling: 'Abonnement', sumFirstGame: 'Premier match :',
+    actSchedule: 'Créer ton horaire', actSeeSchedule: 'Voir ton horaire', actPlayers: 'Ajouter tes joueurs', actSeePlayers: 'Voir tes joueurs',
+    actTeams: 'Placer tes joueurs dans une équipe', actBilling: "Voir l'abonnement", actPublic: 'Voir ta page publique'
   };
   const en = {
     skip: 'Skip for now', next: 'Continue', finish: 'Go to dashboard', saveErr: 'Something went wrong. Please try again.',
@@ -2996,9 +3099,178 @@ function buildOnboardingI18n() {
     playoffTeamsLabel: 'How many teams make the playoffs?',
     byeNote: 'With an odd number of teams, at least one team skips the first round (a bye). A bye is not a game: it uses no slot.',
     thirdPlaceLabel: 'Third-place game?',
-    reservedSlotsLabel: 'How many games do you need to reserve?'
+    reservedSlotsLabel: 'How many games do you need to reserve?',
+    back: 'Back',
+    seasonTitle: 'Start your first season', seasonSub: 'Name your season. Your games and players will belong to it.',
+    seasonNameLabel: 'Season name', seasonNamePh: 'E.g. Fall 2026', seasonCreate: 'Create the season',
+    financeTitle: 'Does your league charge players?',
+    financeSub: 'Nothing here is required. You can change all of it later on the Finances page.',
+    financeYes: 'Yes', financeNo: 'No', skipFinance: 'Skip this step',
+    financeFeesLabel: 'How players pay',
+    modeSeason: 'Season fee for regulars, per game for subs', modePerGame: 'Per game for everyone',
+    lblPricePlayer: 'Season fee (player)', lblPriceGoalie: 'Season fee (goalie)',
+    lblGamePlayer: 'Per game (player)', lblGameGoalie: 'Per game (goalie)',
+    financePayLabel: 'Interac e-Transfer',
+    payHelp: 'Shown in payment reminders. Leave empty to hide.',
+    payEmailLabel: 'e-Transfer email', payPhoneLabel: 'e-Transfer mobile number',
+    sumTitle: 'Your league at a glance', sumSub: "Here's where your league stands. You can change all of it later.",
+    sumStructure: 'Structure', sumPlayers: 'Players', sumGames: 'Games', sumBilling: 'Subscription', sumFirstGame: 'First game:',
+    actSchedule: 'Create your schedule', actSeeSchedule: 'See your schedule', actPlayers: 'Add your players', actSeePlayers: 'See your players',
+    actTeams: 'Put your players on a team', actBilling: 'See the subscription', actPublic: 'See your public page'
   };
   return { fr, en };
+}
+
+// Onboarding batch: the wizard's own season screen, while the league has
+// none (it was a form on the dashboard, outside the flow). The same route
+// as before (/league/season/publish); then the first onboarding step.
+function onboardingSeasonScreen(leagueRow, teamStructure, lang, { fr, en }, showFlow) {
+  const flowTotal = FLOW_TOTAL_STEPS[teamStructure] || FLOW_TOTAL_STEPS.fixed;
+  const flowStep = (FLOW_STEP_NUMBER[teamStructure] || FLOW_STEP_NUMBER.fixed).season;
+  const t = lang === 'en' ? en : fr;
+  const bodyHtml = `${signupStyles()}${signupHeader(leagueRow.name)}
+<main class="su-body">
+  ${showFlow ? `<div class="su-prog">
+    <div class="overline" data-i18n="flowStepLabel">${esc(flowStepLabel(lang, flowStep, flowTotal))}</div>
+    ${flowStepper(flowStep, flowTotal)}
+  </div>` : ''}
+  <div class="su-title">
+    <h1 data-i18n="seasonTitle">${esc(t.seasonTitle)}</h1>
+    <p class="nl-help" data-i18n="seasonSub">${esc(t.seasonSub)}</p>
+  </div>
+  <div id="formErr" class="nl-error" role="alert" style="display:none"></div>
+  <div class="nl-field">
+    <label class="nl-label" for="ob_season_name" data-i18n="seasonNameLabel">${esc(t.seasonNameLabel)}</label>
+    <input class="nl-input" id="ob_season_name" type="text" maxlength="80" data-i18n-ph="seasonNamePh" placeholder="${esc(t.seasonNamePh)}">
+  </div>
+</main>
+<div class="su-bottom">
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="ob_submit" data-i18n="seasonCreate" onclick="obCreateSeason()">${esc(t.seasonCreate)}</button>
+</div>`;
+  const flowI18n = showFlow ? {
+    fr: { ...fr, flowStepLabel: flowStepLabel('fr', flowStep, flowTotal) },
+    en: { ...en, flowStepLabel: flowStepLabel('en', flowStep, flowTotal) }
+  } : { fr, en };
+  const script = `
+${nlAuthScript(flowI18n)}
+async function obCreateSeason() {
+  var err = document.getElementById('formErr');
+  err.style.display = 'none';
+  var name = document.getElementById('ob_season_name').value.trim();
+  if (!name) { err.textContent = window.__errorText('SEASON_NAME_REQUIRED_CLIENT'); err.style.display = 'block'; return; }
+  var btn = document.getElementById('ob_submit');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/season/publish', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ season_name: name })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    await fetch('/league/onboarding/step', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ step: 'season', action: 'done' })
+    }).catch(function() {});
+    window.location.href = '/onboarding/season?step=1';
+  } catch (e) {
+    err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
+  }
+}
+document.getElementById('ob_season_name').addEventListener('keydown', function(e) { if (e.key === 'Enter') obCreateSeason(); });`;
+  return new Response(nlDocument({ titles: { fr: `Bienvenue | ${leagueRow.name}`, en: `Welcome | ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
+
+// Onboarding batch, item 2: where the league stands at the end of the
+// flow -- its structure, its players, its first games and its billing
+// status -- with links to what is left to do. Every line carries both
+// languages (data-date-fr/en) for the toggle.
+async function onboardingSummaryScreen(env, url, leagueRow, season, lang, { fr, en }) {
+  const t = lang === 'en' ? en : fr;
+  const structure = leagueRow.team_structure || 'fixed';
+  let teamNames = [];
+  try { teamNames = JSON.parse(leagueRow.team_names || '[]').filter(Boolean); } catch (_) {}
+  const structLine = structure === 'fixed'
+    ? { fr: `Équipes fixes : ${teamNames.length} équipes (${teamNames.join(', ')}).`, en: `Fixed teams: ${teamNames.length} teams (${teamNames.join(', ')}).` }
+    : structure === 'weekly_draw'
+      ? { fr: 'Sans équipes fixes : les équipes sont refaites à chaque match.', en: 'Pickup with teams: teams are made fresh every game.' }
+      : { fr: 'Sans équipes : une seule liste de joueurs.', en: 'No teams: one list of players.' };
+  const players = Number(((await env.DB.prepare('SELECT COUNT(*) AS c FROM contacts WHERE league_id = ? AND is_active = 1').bind(leagueRow.id).first()) || {}).c) || 0;
+  const teamless = players ? await teamlessRegularCount(env, leagueRow) : 0;
+  const playersLine = players
+    ? {
+        fr: pluralText('{n|# joueur|# joueurs}', { n: players }, 'fr') + (teamless ? ', dont ' + pluralText('{n|# sans équipe|# sans équipe}', { n: teamless }, 'fr') : '') + '.',
+        en: pluralText('{n|# player|# players}', { n: players }, 'en') + (teamless ? ', ' + pluralText('{n|# without a team|# without a team}', { n: teamless }, 'en') : '') + '.'
+      }
+    : { fr: "Aucun joueur pour l'instant.", en: 'No players yet.' };
+  const games = Number(((await env.DB.prepare(`SELECT COUNT(*) AS c FROM events WHERE league_id = ? AND season = ? AND state != 'cancelled'`).bind(leagueRow.id, season).first()) || {}).c) || 0;
+  const today = new Date().toISOString().slice(0, 10);
+  const first = games ? await env.DB.prepare(`SELECT date, start_time, venue FROM events WHERE league_id = ? AND season = ? AND state != 'cancelled' AND date >= ? ORDER BY date ASC, start_time ASC LIMIT 1`).bind(leagueRow.id, season, today).first() : null;
+  const gamesLine = games
+    ? { fr: pluralText("{n|# match|# matchs} à l'horaire.", { n: games }, 'fr'), en: pluralText('{n|# game|# games} on the schedule.', { n: games }, 'en') }
+    : { fr: "Aucun match pour l'instant.", en: 'No games yet.' };
+  // Billing (Notre Ligue, billing on): free; in the trial (a second league
+  // under 15 also told it needs a plan); or a plan needed.
+  let billingLines = null;
+  if (env.LEAGUE_PRODUCT === 'true' && billingEnabled(env)) {
+    try {
+      const v = await billingView(env, leagueRow.id);
+      if (v) {
+        const trialLine = v.trial && v.trial.daysLeft > 0
+          ? { fr: `Essai gratuit : ${pluralText('{n|il reste # jour|il reste # jours}', { n: v.trial.daysLeft }, 'fr')}.`, en: `Free trial: ${pluralText('{n|# day|# days}', { n: v.trial.daysLeft }, 'en')} left.` } : null;
+        const needsPlan = { fr: 'Cette ligue demande un forfait.', en: 'This league needs a plan.' };
+        if (v.live) billingLines = [{ fr: 'Ton abonnement est actif.', en: 'Your subscription is active.' }];
+        else if (v.planTier === 'free') billingLines = [{ fr: 'Ta ligue est gratuite.', en: 'Your league is free.' }];
+        else if (trialLine) billingLines = v.countTier === 'free' ? [needsPlan, trialLine] : [trialLine];
+        else billingLines = [needsPlan];
+      }
+    } catch (e) {
+      console.error(`[onboarding] billing summary for ${leagueRow.id}: ${e.message}`);
+    }
+  }
+  const slug = await getOrCreateLeagueSlug(env, leagueRow);
+  const publicUrl = slug ? `${url.origin}/${slug}` : `${url.origin}/league/public?league=${encodeURIComponent(leagueRow.id)}`;
+  const bi = (line, tag = 'span') => `<${tag} data-date-fr="${esc(line.fr)}" data-date-en="${esc(line.en)}">${esc(line[lang] || line.fr)}</${tag}>`;
+  const row = (key, inner) => `<div class="ob-sum-row"><dt class="overline" data-i18n="${key}">${esc(t[key])}</dt><dd>${inner}</dd></div>`;
+  const act = (href, key, extra = '') => `<a class="nl-btn nl-btn--secondary nl-btn--sm" href="${esc(href)}"${extra} data-i18n="${key}">${esc(t[key])}</a>`;
+  const bodyHtml = `${signupStyles()}${signupHeader(leagueRow.name)}
+<style>
+  .ob-sum { margin: 0; display: flex; flex-direction: column; }
+  .ob-sum-row { display: flex; flex-direction: column; gap: 4px; padding: var(--space-3) 0; border-top: 1px solid var(--line); }
+  .ob-sum-row dd { margin: 0; font-size: 16px; line-height: 24px; }
+  .ob-sum-row dd span { display: inline; }
+  .ob-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .ob-acts .nl-btn { white-space: normal; text-align: center; }
+</style>
+<main class="su-body">
+  <div class="su-title">
+    <h1 data-i18n="sumTitle">${esc(t.sumTitle)}</h1>
+    <p class="nl-help" data-i18n="sumSub">${esc(t.sumSub)}</p>
+  </div>
+  <dl class="ob-sum" id="ob_summary">
+    ${row('sumStructure', bi(structLine))}
+    ${row('sumPlayers', bi(playersLine))}
+    ${row('sumGames', bi(gamesLine) + (first ? ` <span data-i18n="sumFirstGame">${esc(t.sumFirstGame)}</span> ${dateTimeSpanHtml('span', first.date, first.start_time, 'long')}${first.venue ? `, ${esc(first.venue)}` : ''}.` : ''))}
+    ${billingLines ? row('sumBilling', billingLines.map(l => bi(l)).join(' ')) : ''}
+  </dl>
+  <div class="ob-acts">
+    ${games ? act('/league/schedule', 'actSeeSchedule') : act('/league/schedule', 'actSchedule')}
+    ${players ? act('/league/roster', 'actSeePlayers') : act('/league/roster', 'actPlayers')}
+    ${teamless ? act('/league/roster', 'actTeams') : ''}
+    ${billingLines ? act('/league/billing', 'actBilling') : ''}
+    ${leagueRow.public_page_enabled ? act(publicUrl, 'actPublic', ' target="_blank" rel="noopener"') : ''}
+  </div>
+</main>
+<div class="su-bottom">
+  <a class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="ob_finish" href="/dashboard" data-i18n="finish">${esc(t.finish)}</a>
+</div>`;
+  const script = `${nlAuthScript({ fr, en })}`;
+  return new Response(nlDocument({ titles: { fr: `Bienvenue | ${leagueRow.name}`, en: `Welcome | ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+  });
 }
 
 async function handleOnboardingSeasonPage(req, env, url) {
@@ -3006,20 +3278,29 @@ async function handleOnboardingSeasonPage(req, env, url) {
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(loginUrlFor(url), 302);
 
-  // The newest league, through the shared access check (in support mode,
-  // only the league being supported); a deactivated one goes to the
-  // dashboard.
-  const newestId = await newestSessionLeagueId(req, env, session);
-  const leagueRow = newestId && (await checkLeagueAccess(req, env, newestId)) === 'ok'
-    ? await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(newestId).first() : null;
+  // The current league (resolveSessionLeagueId: the nl_league cookie a new
+  // league sets, then the newest), through the shared access check (in
+  // support mode, only the league being supported); a deactivated one goes
+  // to the dashboard. Onboarding batch: the current league, not always the
+  // newest -- an owner of two leagues working on the older one (its
+  // "Nommer tes équipes" link) used to land in the newer one's setup.
+  const currentId = await resolveSessionLeagueId(req, env, url);
+  const leagueId = currentId && (await checkLeagueAccess(req, env, currentId)) === 'ok' ? currentId : await newestSessionLeagueId(req, env, session);
+  const leagueRow = leagueId && (await checkLeagueAccess(req, env, leagueId)) === 'ok'
+    ? await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first() : null;
   if (!leagueRow) return Response.redirect(url.origin + '/dashboard', 302);
 
   const leagueData = await getLeagueDataJson(env, leagueRow.id);
   const currentSeason = leagueData ? leagueData.current_season : null;
-  // This screen only makes sense right after a season exists -- with
-  // no season yet, send the admin back to the real first step
-  // (creating one) instead of a confusing empty onboarding shell.
-  if (!currentSeason) return Response.redirect(url.origin + '/dashboard', 302);
+  const teamStructure = leagueRow.team_structure || 'fixed';
+  // Onboarding batch: the step counter is the creator's own journey from
+  // sign-up; a co-admin opening a step from the dashboard's checklist is
+  // not in it, so no "Étape 5 sur 10" for them.
+  const showFlow = leagueRow.created_by === session.userId;
+  const { fr, en } = buildOnboardingI18n();
+  // Onboarding batch: no season yet -- the season is this wizard's own
+  // screen (it was a form on the dashboard, outside the flow).
+  if (!currentSeason) return onboardingSeasonScreen(leagueRow, teamStructure, lang, { fr, en }, showFlow);
 
   // Safety guard: republishing a season (handleLeagueSeasonPublish's
   // own "edit in place" behavior, reused by the roster/teams steps
@@ -3035,16 +3316,24 @@ async function handleOnboardingSeasonPage(req, env, url) {
     ? leagueData.seasons.find(s => s && s.name === currentSeason) : null;
   const seasonHasGames = !!(currentSeasonEntry && Number(currentSeasonEntry.games) > 0);
 
-  const teamStructure = leagueRow.team_structure || 'fixed';
   const steps = onboardingStepsFor(teamStructure);
-  const requested = Number(url.searchParams.get('step')) || 1;
+  const stepParam = url.searchParams.get('step');
+  // Onboarding batch: the summary closes the flow.
+  if (stepParam === 'summary') return onboardingSummaryScreen(env, url, leagueRow, currentSeason, lang, { fr, en });
+  // Onboarding batch: with no ?step=, picks up at the first step not
+  // answered yet (left half-way and back); every step seen: the summary.
+  let requested = Number(stepParam) || 0;
+  if (!requested) {
+    const open = await firstOpenOnboardingStep(env, leagueRow);
+    if (open === 0) return onboardingSummaryScreen(env, url, leagueRow, currentSeason, lang, { fr, en });
+    requested = open || 1;
+  }
   const stepIndex = Math.min(Math.max(requested, 1), steps.length) - 1;
   const step = steps[stepIndex];
   const stepNum = stepIndex + 1;
   const isLast = stepNum === steps.length;
   const nextStepNum = stepNum + 1;
 
-  const { fr, en } = buildOnboardingI18n();
   let teamNames = [];
   try { teamNames = JSON.parse(leagueRow.team_names || '[]'); } catch (_) {}
 
@@ -3199,6 +3488,49 @@ async function handleOnboardingSeasonPage(req, env, url) {
     <div><div class="nl-label" data-i18n="lblTracksPlayerStats">Statistiques des joueurs</div><p class="nl-help" data-i18n="lblTracksPlayerStatsDesc" style="margin:2px 0 0">Buts et passes par joueur, par match.</p></div>
     <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_player_stats ? 'true' : 'false'}" id="ob_tracks_player_stats" onclick="obToggle(this)"></button>
   </div>`;
+  } else if (step === 'finance') {
+    // Onboarding batch, item 3: optional. "Non" moves on; "Oui" opens the
+    // season's fees (the Finances page's own fields, saved through its own
+    // route) and the Interac details (the Payment settings card's fields,
+    // saved through its route, with its validation). Nothing is required.
+    const pricing = await getSeasonPricing(env.DB, leagueRow.id, currentSeason);
+    const pay = await getPaymentInfo(env.DB, leagueRow.id);
+    const charges = !!((pricing && (Number(pricing.price_player) || Number(pricing.price_goalie) || Number(pricing.price_sub_player) || Number(pricing.price_sub_goalie))) || (pay && (pay.email || pay.phone)));
+    const perGame = !!(pricing && pricing.pricing_mode === 'per_game');
+    const val = k => (pricing && Number(pricing[k]) ? esc(String(pricing[k])) : '');
+    stepHtml = `
+  <div class="su-title">
+    <h1 data-i18n="financeTitle">${esc(fr.financeTitle)}</h1>
+    <p class="nl-help" data-i18n="financeSub">${esc(fr.financeSub)}</p>
+  </div>
+  <div id="formErr" class="nl-error" role="alert" style="display:none"></div>
+  <div class="su-structure" id="ob_finance_choice" role="radiogroup" data-i18n-aria="financeTitle" aria-label="${esc(fr.financeTitle)}">
+    <label class="su-structure-opt${charges ? ' on' : ''}"><input type="radio" name="ob_finance" id="ob_finance_yes" value="yes"${charges ? ' checked' : ''}><span class="t" data-i18n="financeYes">Oui</span></label>
+    <label class="su-structure-opt${charges ? '' : ' on'}"><input type="radio" name="ob_finance" id="ob_finance_no" value="no"${charges ? '' : ' checked'}><span class="t" data-i18n="financeNo">Non</span></label>
+  </div>
+  <div id="ob_finance_detail" style="display:${charges ? 'flex' : 'none'};flex-direction:column;gap:var(--space-4);">
+    <div class="nl-field">
+      <span class="nl-label" data-i18n="financeFeesLabel">${esc(fr.financeFeesLabel)}</span>
+      <div class="su-structure" role="radiogroup">
+        <label class="su-structure-opt${perGame ? '' : ' on'}"><input type="radio" name="ob_fin_mode" value="season"${perGame ? '' : ' checked'}><span class="t" data-i18n="modeSeason">${esc(fr.modeSeason)}</span></label>
+        <label class="su-structure-opt${perGame ? ' on' : ''}"><input type="radio" name="ob_fin_mode" value="per_game"${perGame ? ' checked' : ''}><span class="t" data-i18n="modePerGame">${esc(fr.modePerGame)}</span></label>
+      </div>
+    </div>
+    <div class="su-two" data-fin-season${perGame ? ' style="display:none"' : ''}>
+      <div class="nl-field"><label class="nl-label" for="ob_price_player" data-i18n="lblPricePlayer">${esc(fr.lblPricePlayer)}</label><input class="nl-input" id="ob_price_player" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_player')}"></div>
+      <div class="nl-field"><label class="nl-label" for="ob_price_goalie" data-i18n="lblPriceGoalie">${esc(fr.lblPriceGoalie)}</label><input class="nl-input" id="ob_price_goalie" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_goalie')}"></div>
+    </div>
+    <div class="su-two">
+      <div class="nl-field"><label class="nl-label" for="ob_game_player" data-i18n="lblGamePlayer">${esc(fr.lblGamePlayer)}</label><input class="nl-input" id="ob_game_player" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_sub_player')}"></div>
+      <div class="nl-field"><label class="nl-label" for="ob_game_goalie" data-i18n="lblGameGoalie">${esc(fr.lblGameGoalie)}</label><input class="nl-input" id="ob_game_goalie" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_sub_goalie')}"></div>
+    </div>
+    <div class="nl-field">
+      <span class="nl-label" data-i18n="financePayLabel">${esc(fr.financePayLabel)}</span>
+      <p class="nl-help" style="margin:0" data-i18n="payHelp">${esc(fr.payHelp)}</p>
+    </div>
+    <div class="nl-field"><label class="nl-label" for="ob_pay_email" data-i18n="payEmailLabel">${esc(fr.payEmailLabel)}</label><input class="nl-input" id="ob_pay_email" type="email" autocomplete="email" maxlength="254" value="${esc((pay && pay.email) || '')}"></div>
+    <div class="nl-field"><label class="nl-label" for="ob_pay_phone" data-i18n="payPhoneLabel">${esc(fr.payPhoneLabel)}</label><input class="nl-input" id="ob_pay_phone" type="tel" autocomplete="tel" maxlength="20" placeholder="514-555-1234" value="${esc(formatPhone(pay && pay.phone))}"></div>
+  </div>`;
   }
 
   // B1 (onboarding polish task): absolute step number/total across the
@@ -3206,16 +3538,20 @@ async function handleOnboardingSeasonPage(req, env, url) {
   // see FLOW_STEP_NUMBER/FLOW_TOTAL_STEPS's own comment.
   const flowTotal = FLOW_TOTAL_STEPS[teamStructure] || FLOW_TOTAL_STEPS.fixed;
   const flowStep = (FLOW_STEP_NUMBER[teamStructure] || FLOW_STEP_NUMBER.fixed)[step] || stepNum;
+  const summaryUrl = '/onboarding/season?step=summary';
   const bodyHtml = `${signupStyles()}${signupHeader(leagueRow.name)}
 <main class="su-body">
-  <div class="su-prog">
+  ${showFlow ? `<div class="su-prog">
     <div class="overline" data-i18n="flowStepLabel">${esc(flowStepLabel(lang, flowStep, flowTotal))}</div>
     ${flowStepper(flowStep, flowTotal)}
-  </div>
+  </div>` : ''}
   ${stepHtml}
 </main>
 <div class="su-bottom">
-  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="ob_submit" data-i18n="${isLast ? 'finish' : 'next'}" onclick="obSubmit()">${isLast ? 'Aller au tableau de bord' : 'Continuer'}</button>
+  <!-- Onboarding batch: the last step now leads to the summary, not the
+       dashboard; every step after the first has a way back. -->
+  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="ob_submit" data-i18n="next" onclick="obSubmit()">Continuer</button>
+  ${stepNum > 1 ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--block" id="ob_back" data-i18n="back" onclick="location.href='/onboarding/season?step=${stepNum - 1}'">Retour</button>` : ''}
   <!-- B2 (onboarding polish task): was a full-width .nl-btn--ghost.nl-btn--block,
        the same width/shape as the primary above it -- visually competing
        with it rather than reading as the lower-priority escape hatch it
@@ -3227,22 +3563,22 @@ async function handleOnboardingSeasonPage(req, env, url) {
   <!-- Onboarding item 3: Skip moves on to the next step (it used to leave
        onboarding for the dashboard); the step is remembered as skipped and
        shows on the dashboard checklist until done. -->
-  <p class="su-center"><a href="${isLast ? '/dashboard' : `/onboarding/season?step=${nextStepNum}`}" id="ob_skip" data-i18n="skip" onclick="return obSkip()">Passer pour l'instant</a></p>
+  <p class="su-center"><a href="${isLast ? summaryUrl : `/onboarding/season?step=${nextStepNum}`}" id="ob_skip" data-i18n="${step === 'finance' ? 'skipFinance' : 'skip'}" onclick="return obSkip()">${step === 'finance' ? 'Passer cette étape' : "Passer pour l'instant"}</a></p>
 </div>`;
 
   // B1: the step label text is computed per-request (structure/step
   // dependent), not a fixed dict string -- overridden onto a copy of
   // the shared dict just before embedding, so a client-side FR/EN
   // toggle still re-renders it correctly (same number, right language).
-  const flowI18n = {
+  const flowI18n = showFlow ? {
     fr: { ...fr, flowStepLabel: flowStepLabel('fr', flowStep, flowTotal) },
     en: { ...en, flowStepLabel: flowStepLabel('en', flowStep, flowTotal) }
-  };
+  } : { fr, en };
   const script = `
 ${nlAuthScript(flowI18n)}
 var OB_STEP = ${JSON.stringify(step)};
 var OB_IS_LAST = ${isLast ? 'true' : 'false'};
-var OB_NEXT_URL = ${isLast ? 'null' : JSON.stringify(`/onboarding/season?step=${nextStepNum}`)};
+var OB_NEXT_URL = ${JSON.stringify(isLast ? summaryUrl : `/onboarding/season?step=${nextStepNum}`)};
 var OB_SEASON_NAME = ${JSON.stringify(currentSeason)};
 var OB_SEASON_HAS_GAMES = ${seasonHasGames ? 'true' : 'false'};
 // Live-testing task (batch 6), Part 3: this used to send the SAME
@@ -3293,8 +3629,19 @@ async function obSave(path, payload) {
     body: JSON.stringify(payload)
   });
   var data = await res.json().catch(function() { return {}; });
-  if (!res.ok || !data.ok) throw new Error((data && data.error) || 'save failed');
+  if (!res.ok || !data.ok) { var err = new Error((data && data.error) || 'save failed'); err.key = data && data.errorKey; throw err; }
 }
+// Onboarding batch, item 3: the finance step's "Oui / Non" and its two
+// ways to charge (the season fee fields only for a season fee).
+function obFinanceUpdate() {
+  var yes = document.getElementById('ob_finance_yes');
+  if (!yes) return;
+  document.getElementById('ob_finance_detail').style.display = yes.checked ? 'flex' : 'none';
+  var mode = document.querySelector('input[name="ob_fin_mode"]:checked');
+  document.querySelectorAll('[data-fin-season]').forEach(function(el) { el.style.display = mode && mode.value === 'per_game' ? 'none' : ''; });
+  document.querySelectorAll('.su-structure-opt').forEach(function(opt) { var r = opt.querySelector('input'); opt.classList.toggle('on', !!(r && r.checked)); });
+}
+document.querySelectorAll('input[name="ob_finance"], input[name="ob_fin_mode"]').forEach(function(r) { r.addEventListener('change', obFinanceUpdate); });
 async function obSubmit() {
   document.getElementById('formErr').style.display = 'none';
   var btn = document.getElementById('ob_submit');
@@ -3384,11 +3731,28 @@ async function obSubmit() {
       var payload = { tracksPlayerStats: document.getElementById('ob_tracks_player_stats').getAttribute('aria-checked') === 'true' };
       if (resultsEl) payload.tracksResults = resultsEl.getAttribute('aria-checked') === 'true';
       await obSave('/league/settings/identity', payload);
+    } else if (OB_STEP === 'finance') {
+      // Onboarding batch, item 3: "Non" saves nothing. "Oui": the Interac
+      // details first (the Payment settings card's route and validation:
+      // a bad email or number stops here, nothing saved), then the fees
+      // (the Finances page's route), only when one was entered.
+      if (document.getElementById('ob_finance_yes').checked) {
+        await obSave('/league/settings/payment', { email: document.getElementById('ob_pay_email').value.trim(), phone: document.getElementById('ob_pay_phone').value.trim() });
+        var feeIds = ['ob_price_player', 'ob_price_goalie', 'ob_game_player', 'ob_game_goalie'];
+        var fees = feeIds.map(function(id) { return document.getElementById(id).value.trim(); });
+        var finMode = document.querySelector('input[name="ob_fin_mode"]:checked').value;
+        if (finMode === 'per_game') { fees[0] = ''; fees[1] = ''; }
+        if (fees.some(function(v) { return v !== ''; })) {
+          await obSave('/league/finances/pricing', { season: OB_SEASON_NAME, mode: finMode, price_player: fees[0] || 0, price_goalie: fees[1] || 0, price_game_player: fees[2] || 0, price_game_goalie: fees[3] || 0 });
+        }
+      }
     }
     await obMark('done');
-    window.location.href = OB_IS_LAST ? '/dashboard' : OB_NEXT_URL;
+    window.location.href = OB_NEXT_URL;
   } catch (e) {
-    showErr(window.__pageDict().saveErr);
+    // A refusal with its own message (the finance step's Interac email or
+    // number) says what to fix; anything else, the general message.
+    showErr(e && e.key && e.key !== 'CSRF_INVALID' ? window.__errorText(e.key, e.message) : window.__pageDict().saveErr);
     btn.disabled = false;
   }
 }
@@ -3429,7 +3793,97 @@ function obSkip() {
 // one of three states -- expired/invalid link, "log in as X to accept"
 // for an existing account, or a real signup form for a brand-new one --
 // rather than a single generic form that can't tell them apart.
+// Onboarding batch: a co-admin's invitation, on Notre Ligue, in Notre
+// Ligue's own sign-up look (it showed SMBHL's header, logo and footer).
+// The same three cases and the same routes; SMBHL's page is unchanged.
+const I18N_ADMIN_ACCEPT = {
+  fr: {
+    invalidTitle: 'Invitation invalide ou expirée', invalidBody: "Demande à l'administrateur de la ligue de t'envoyer une nouvelle invitation.",
+    goneTitle: "Cette ligue n'existe plus",
+    lblPassword: 'Mot de passe', pwHelp: '8 caractères minimum.', termsAccept: TERMS_LABEL.fr,
+    createBtn: 'Créer mon compte', acceptBtn: "Accepter l'invitation", loginBtn: 'Se connecter'
+  },
+  en: {
+    invalidTitle: 'Invalid or expired invitation', invalidBody: 'Ask the league admin to send you a new invitation.',
+    goneTitle: 'This league no longer exists',
+    lblPassword: 'Password', pwHelp: '8 characters minimum.', termsAccept: TERMS_LABEL.en,
+    createBtn: 'Create my account', acceptBtn: 'Accept the invitation', loginBtn: 'Log in'
+  }
+};
+async function renderNlAdminAcceptPage(req, env, url) {
+  const lang = resolveServerLang(req);
+  const t = I18N_ADMIN_ACCEPT[lang] || I18N_ADMIN_ACCEPT.fr;
+  const token = url.searchParams.get('token') || '';
+  const result = await verifyInviteToken(env, token);
+  const dict = { fr: { ...I18N_ADMIN_ACCEPT.fr, ...LEGAL_I18N.fr }, en: { ...I18N_ADMIN_ACCEPT.en, ...LEGAL_I18N.en } };
+  const bi = (line, tag = 'p', attrs = '') => `<${tag}${attrs} data-date-fr="${esc(line.fr)}" data-date-en="${esc(line.en)}">${esc(line[lang] || line.fr)}</${tag}>`;
+  const docFor = (body, status, script = '') => new Response(nlDocument({
+    titles: status === 200 ? { fr: 'Rejoindre une ligue | Notre Ligue', en: 'Join a league | Notre Ligue' } : { fr: 'Invitation invalide | Notre Ligue', en: 'Invalid invitation | Notre Ligue' },
+    description: '', lang,
+    bodyHtml: `${signupStyles()}${signupHeader()}${body}${signupFooter()}<script>${nlAuthScript(dict)}${script}</script>`
+  }), { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  if (!result.ok) {
+    return docFor(`<main class="su-body"><div class="su-title"><h1 data-i18n="invalidTitle">${esc(t.invalidTitle)}</h1><p class="nl-help" data-i18n="invalidBody">${esc(t.invalidBody)}</p></div></main>`, result.error === 'expired' ? 410 : 400);
+  }
+  const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(result.leagueId).first();
+  if (!leagueRow) return docFor(`<main class="su-body"><div class="su-title"><h1 data-i18n="goneTitle">${esc(t.goneTitle)}</h1></div></main>`, 404);
+  const existingUser = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(result.email).first();
+  const session = await checkUserSession(req, env);
+  const title = bi({ fr: `Rejoindre ${leagueRow.name}`, en: `Join ${leagueRow.name}` }, 'h1');
+  const submitJs = body => `
+async function submitAccept() {
+  var el = document.getElementById('formErr');
+  el.style.display = 'none';
+  ${body}
+  var btn = document.getElementById('accept_submit');
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/admins/accept', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { el.textContent = window.__errorText(data.errorKey, data.error, data.errorVars); el.style.display = 'block'; btn.disabled = false; return; }
+    window.location.href = '/dashboard';
+  } catch (e) { el.textContent = window.__errorText('NETWORK_ERROR'); el.style.display = 'block'; btn.disabled = false; }
+}`;
+  if (existingUser && session && session.userId === existingUser.id) {
+    return docFor(`<main class="su-body">
+  <div class="su-title">${title}${bi({ fr: `Accepter l'invitation à co-administrer cette ligue avec le compte ${result.email}?`, en: `Accept the invitation to co-admin this league with the account ${result.email}?` }, 'p', ' class="nl-help"')}</div>
+  <div id="formErr" class="nl-error" role="alert" style="display:none"></div>
+</main>
+<div class="su-bottom"><button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="accept_submit" data-i18n="acceptBtn" onclick="submitAccept()">${esc(t.acceptBtn)}</button></div>`, 200,
+    submitJs(`var payload = { token: ${JSON.stringify(token)} };`));
+  }
+  if (existingUser) {
+    return docFor(`<main class="su-body">
+  <div class="su-title">${title}${bi({ fr: `Un compte existe déjà pour ${result.email}. Connecte-toi avec ce compte, puis reviens sur ce lien pour accepter.`, en: `An account already exists for ${result.email}. Log in with that account, then come back to this link to accept.` }, 'p', ' class="nl-help"')}</div>
+</main>
+<div class="su-bottom"><a class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" href="/login${nextQuery(`/league/admins/accept?token=${encodeURIComponent(token)}`)}" data-i18n="loginBtn">${esc(t.loginBtn)}</a></div>`, 200);
+  }
+  return docFor(`<main class="su-body">
+  <div class="su-title">${title}${bi({ fr: `Crée ton mot de passe pour co-administrer cette ligue en tant que ${result.email}.`, en: `Create your password to co-admin this league as ${result.email}.` }, 'p', ' class="nl-help"')}</div>
+  <div id="formErr" class="nl-error" role="alert" style="display:none"></div>
+  <div class="nl-field">
+    <label class="nl-label" for="accept_password" data-i18n="lblPassword">${esc(t.lblPassword)}</label>
+    <input class="nl-input" id="accept_password" type="password" autocomplete="new-password" minlength="8" required>
+    <p class="nl-help" data-i18n="pwHelp">${esc(t.pwHelp)}</p>
+  </div>
+  <label style="display:flex;gap:10px;align-items:flex-start;font-size:15px;line-height:1.45;">
+    <input type="checkbox" id="accept_terms" style="margin-top:3px;width:18px;height:18px;flex:none">
+    <span data-i18n="termsAccept">${t.termsAccept}</span>
+  </label>
+</main>
+<div class="su-bottom"><button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="accept_submit" data-i18n="createBtn" onclick="submitAccept()">${esc(t.createBtn)}</button></div>`, 200,
+    submitJs(`var password = document.getElementById('accept_password').value;
+  if (password.length < 8) { el.textContent = window.__errorText('WEAK_PASSWORD'); el.style.display = 'block'; return; }
+  if (!document.getElementById('accept_terms').checked) { el.textContent = window.__errorText('TERMS_NOT_ACCEPTED'); el.style.display = 'block'; return; }
+  var payload = { accept_terms: true, token: ${JSON.stringify(token)}, password: password };`));
+}
+
 async function handleLeagueAdminAcceptPage(req, env, url) {
+  if (env.LEAGUE_PRODUCT === 'true') return renderNlAdminAcceptPage(req, env, url);
   const token = url.searchParams.get('token') || '';
   const result = await verifyInviteToken(env, token);
 
@@ -6356,7 +6810,7 @@ async function handleLeagueBillingPage(req, env, url) {
   <p class="nl-error" id="bl-err" role="alert" hidden ${k('error')}</p>
   <section class="nl-card nl-card--pad-lg bl-card">
     ${bi(L.count)}
-    ${view.live ? '' : bi(L.trial)}
+    ${view.live || view.planTier === 'free' ? '' : bi(L.trial)}
     ${view.countTier === 'custom' ? `<p ${k('custom')}</p>` : ''}
     ${action}
   </section>
@@ -8637,7 +9091,7 @@ async function handleLeagueRosterPage(req, env, url) {
       // The warning before an add or an import that emails someone (its own
       // step, not a field of the form). addEmails*: every player added would
       // be emailed; addEmailsSome*: only some of them (the substitutes).
-      addEmailsTitle: "Courriels d'invitation",
+      addEmailsTitle: "Courriels d'invitation", addNoticeTitle: "Avant d'ajouter tes joueurs",
       addEmailsOne: 'Ajouter ce joueur lui enverra un courriel tout de suite.',
       addEmailsMany: 'Ajouter ces {n} joueurs enverra un courriel à chacun d\'eux tout de suite.',
       addEmailsSome: '{n|# des joueurs que tu ajoutes recevra un courriel tout de suite|# des joueurs que tu ajoutes recevront un courriel tout de suite}.',
@@ -8708,7 +9162,7 @@ async function handleLeagueRosterPage(req, env, url) {
       canAlsoGoalie: 'Can also play goalie',
       goalieBadge: 'G',
       bulkImport: 'Import from spreadsheet', bulkImportTitle: 'Import players',
-      addEmailsTitle: 'Invitation emails',
+      addEmailsTitle: 'Invitation emails', addNoticeTitle: 'Before you add your players',
       addEmailsOne: 'Adding this player will email them right away.',
       addEmailsMany: 'Adding these {n} players will email each of them right away.',
       addEmailsSome: '{n|# of the players you are adding will be emailed right away|# of the players you are adding will be emailed right away}.',
@@ -9554,6 +10008,11 @@ function addNoticeText(data, d) {
 function openAddEmailsDialog(data, retry) {
   var d = window.__pageDict();
   var notice = !!data.needsRegularNotice, choice = !!data.needsEmailChoice;
+  // Onboarding batch: "Courriels d'invitation" topped a notice that says
+  // nobody is emailed now; the notice alone has its own title.
+  var titleEl = document.getElementById('add_emails_title');
+  titleEl.setAttribute('data-i18n', choice ? 'addEmailsTitle' : 'addNoticeTitle');
+  titleEl.textContent = choice ? d.addEmailsTitle : d.addNoticeTitle;
   document.getElementById('add_notice_part').style.display = notice ? 'flex' : 'none';
   document.getElementById('add_emails_part').style.display = choice ? 'flex' : 'none';
   document.getElementById('add_notice_ok').style.display = choice ? 'none' : '';
@@ -10992,6 +11451,20 @@ async function dashboardInAdminsLeague(req, env, url) {
   const res = await handleDashboardPage(req, env, url);
   const out = new Response(res.body, res);
   out.headers.append('set-cookie', `nl_league=${encodeURIComponent(wanted)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${url.protocol === 'https:' ? '; Secure' : ''}`);
+  return out;
+}
+
+// Onboarding batch: a league just created becomes the current one (the
+// nl_league cookie), so an owner's second league is the one its onboarding,
+// dashboard and every page act on, whatever league was current before.
+// Notre Ligue only; a failed creation is answered as it was.
+async function withNewLeagueCurrent(res, env, url) {
+  if (env.LEAGUE_PRODUCT !== 'true' || res.status !== 200) return res;
+  const data = await res.clone().json().catch(() => null);
+  const id = data && data.league && data.league.id;
+  if (!id) return res;
+  const out = new Response(res.body, res);
+  out.headers.append('set-cookie', `nl_league=${encodeURIComponent(id)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${url.protocol === 'https:' ? '; Secure' : ''}`);
   return out;
 }
 
@@ -32670,7 +33143,7 @@ async function handleFetch(req, env, ctx) {
       // Rows in the shared DB, scoped by league_id; see leagues.js's header
       // comment for the architecture decision behind that.
       if (url.pathname === '/leagues/create' && req.method === 'POST')
-        return await handleLeagueCreate(req, env);
+        return await withNewLeagueCurrent(await handleLeagueCreate(req, env), env, url);
       // Proof-of-concept league-scoped route (leagues.js's checkLeagueAccess)
       // — NOT part of the legacy ADMIN_KEY-gated surface below. See the
       // task report for what this proves and what's still needed before any
