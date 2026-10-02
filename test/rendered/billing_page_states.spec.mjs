@@ -44,7 +44,12 @@ const STATES = {
   paused: { ...LIVE, ...PAST_TRIAL, status: 'paused', stripe_status: 'active', current_period_end: iso(20 * DAY) },
   pausedInTrial: { ...LIVE, ...IN_TRIAL, status: 'paused', stripe_status: 'trialing', current_period_end: iso(20 * DAY) },
   ending: { ...LIVE, ...PAST_TRIAL, status: 'active', stripe_status: 'active', cancel_at_period_end: 1, current_period_end: iso(12 * DAY) },
-  pastDue: { ...LIVE, ...PAST_TRIAL, status: 'past_due', stripe_status: 'past_due', current_period_end: iso(-2 * DAY) }
+  pastDue: { ...LIVE, ...PAST_TRIAL, status: 'past_due', stripe_status: 'past_due', current_period_end: iso(-2 * DAY) },
+  // Billing batch 3, decision 3: Stripe paused it at the trial's end, for
+  // want of a card (Stripe's own status 'paused').
+  stripePaused: { ...LIVE, ...PAST_TRIAL, status: 'paused', stripe_status: 'paused', current_period_end: iso(-10 * DAY) },
+  // Billing batch 3: the trial ended without a subscription (read-only).
+  readOnly: { status: 'trial', stripe_status: null, stripe_customer_id: null, stripe_subscription_id: null, tier: 'free', billing_interval: null, cancel_at_period_end: 0, current_period_end: null, ...PAST_TRIAL }
 };
 async function setState(name) {
   const s = STATES[name];
@@ -56,7 +61,7 @@ async function setState(name) {
 
 // Every message the page can show: data-i18n keys, and the lines with a
 // date, found by the start of their French text.
-const KEYS = ['success', 'canceled', 'error', 'pause', 'pauseConfirm', 'pauseYes', 'cancelBtn', 'resume', 'resumeNote', 'paused', 'pastDue', 'subscribe', 'trialOver', 'manage', 'ownerOnly'];
+const KEYS = ['success', 'canceled', 'error', 'pause', 'pauseConfirm', 'pauseYes', 'cancelBtn', 'resume', 'resumeNote', 'paused', 'pastDue', 'subscribe', 'trialOver', 'manage', 'ownerOnly', 'addCard', 'trialEndedCard', 'readOnlyNote', 'secondLeague', 'emailsStopped'];
 const DATED = { firstPayment: 'Premier paiement', nextPayment: 'Prochain paiement', ends: 'Ton abonnement prend fin', trialContinues: 'Ton essai continue' };
 const ALL = [...KEYS, ...Object.keys(DATED)];
 
@@ -85,7 +90,9 @@ const EXPECTED = {
   paused: ['manage', 'paused', 'resume', 'resumeNote'],
   pausedInTrial: ['manage', 'paused', 'resume', 'trialContinues'],
   ending: ['ends', 'manage'],
-  pastDue: ['manage', 'pastDue']
+  pastDue: ['manage', 'pastDue'],
+  stripePaused: ['addCard', 'trialEndedCard'],
+  readOnly: ['readOnlyNote', 'subscribe', 'trialOver']
 };
 
 describe('the billing page shows only the messages of its state', () => {
@@ -138,6 +145,25 @@ describe('the billing page shows only the messages of its state', () => {
       expect(await shown()).toEqual(['cancelBtn', 'manage', 'nextPayment', 'pauseConfirm', 'pauseYes']);
       await page.click('#bl-pause-no');
       expect(await shown()).toEqual(['manage', 'nextPayment', 'pause']);
+    } finally {
+      await context.close();
+    }
+  }, 60000);
+
+  it('Stripe paused it for want of a card: « Ajouter une carte » asks for the portal, never Resume', async () => {
+    await setState('stripePaused');
+    const { page, context } = await openPage();
+    try {
+      expect(await page.locator('#bl-main [data-i18n="trialEndedCard"]').textContent()).toBe('Ton essai est terminé. Ajoute une carte pour réactiver ton abonnement.');
+      const btn = page.locator('#bl-main [data-i18n="addCard"]');
+      expect(await btn.textContent()).toBe('Ajouter une carte');
+      expect(await btn.getAttribute('data-billing')).toBe('portal');
+      expect(await page.locator('#bl-main [data-billing="resume"]').count()).toBe(0);
+      let asked = null;
+      await page.route('**/league/billing/portal', route => { asked = route.request().method(); return route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ ok: false, errorKey: 'BILLING_STRIPE_ERROR' }) }); });
+      await btn.click();
+      await page.waitForFunction(() => document.getElementById('bl-err').checkVisibility());
+      expect(asked).toBe('POST');
     } finally {
       await context.close();
     }

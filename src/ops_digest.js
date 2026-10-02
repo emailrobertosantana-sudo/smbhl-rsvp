@@ -7,7 +7,9 @@
 //   - leagues that turned yellow or red (the daily health, src/league_health.js);
 //   - trials that entered their last 7 days without a subscription (once,
 //     the day they enter);
-//   - failed payments (Stripe's invoice.payment_failed events).
+//   - failed payments (Stripe's invoice.payment_failed events);
+//   - leagues that went above 100 regular players (billing batch 3: the
+//     owner's notice to write for a custom price, src/billing_enforcement.js).
 //
 // When: right after the daily health run (prepareOpsDigest stores what is
 // to be told, settings key ops_digest:pending, no migration), and sent by
@@ -29,8 +31,8 @@ export const DIGEST_CUTOFF_KEY = 'ops_digest:cutoff';
 export const DIGEST_LAST_KEY = 'ops_digest:last';
 
 const parseJson = v => { try { return JSON.parse(v); } catch (_) { return null; } };
-const emptyItems = () => ({ signups: [], worsened: [], trials: [], payments: [] });
-export const digestHasItems = items => !!items && ['signups', 'worsened', 'trials', 'payments'].some(k => (items[k] || []).length > 0);
+const emptyItems = () => ({ signups: [], worsened: [], trials: [], payments: [], custom: [] });
+export const digestHasItems = items => !!items && ['signups', 'worsened', 'trials', 'payments', 'custom'].some(k => (items[k] || []).length > 0);
 
 // After the daily health run: what happened since the last cutoff, added to
 // any digest still waiting. Returns the pending digest, or null.
@@ -53,6 +55,14 @@ export async function prepareOpsDigest(env, health, now = new Date()) {
         ORDER BY e.processed_at`
     ).bind(cutoff, nowIso).all()).results || [];
     for (const f of failed) items.payments.push({ id: f.league_id, name: f.name || f.league_id, at: f.created ? new Date(Number(f.created) * 1000).toISOString() : f.processed_at });
+  } catch (_) {}
+  try {
+    const big = (await db.prepare(
+      `SELECT n.league_id, n.sent_at, l.name, b.regular_count FROM billing_notices n
+         LEFT JOIN leagues l ON l.id = n.league_id LEFT JOIN league_billing b ON b.league_id = n.league_id
+        WHERE n.kind = 'over_100' AND n.sent_at > ? AND n.sent_at <= ? ORDER BY n.sent_at`
+    ).bind(cutoff, nowIso).all()).results || [];
+    for (const g of big) items.custom.push({ id: g.league_id, name: g.name || g.league_id, count: Number(g.regular_count) || null });
   } catch (_) {}
   await putSetting(db, DIGEST_CUTOFF_KEY, nowIso);
   const pending = parseJson(await getSetting(db, DIGEST_PENDING_KEY));
@@ -86,6 +96,10 @@ export function renderOpsDigest(pending, publicUrl = '') {
     if (it.trials.length) out.push({
       title: fr ? "Essais qui finissent dans 7 jours ou moins, sans abonnement" : 'Trials ending within 7 days, without a subscription',
       lines: it.trials.map(t => fr ? `${t.name} : fin de l'essai le ${day(t.trialEndsAt)}` : `${t.name}: trial ends on ${day(t.trialEndsAt)}`)
+    });
+    if ((it.custom || []).length) out.push({
+      title: fr ? 'Plus de 100 joueurs réguliers (prix sur mesure)' : 'More than 100 regular players (custom price)',
+      lines: it.custom.map(c => fr ? `${c.name} : ${c.count || '100+'} joueurs réguliers` : `${c.name}: ${c.count || '100+'} regular players`)
     });
     if (it.payments.length) out.push({
       title: fr ? 'Paiements en échec' : 'Failed payments',

@@ -147,6 +147,12 @@ export async function processStripeEvent(env, event) {
       const paidAt = inv.status_transitions && inv.status_transitions.paid_at ? new Date(inv.status_transitions.paid_at * 1000).toISOString() : new Date().toISOString();
       await env.DB.prepare('UPDATE league_billing SET last_paid_at = ?, updated_at = ? WHERE league_id = ?').bind(paidAt, new Date().toISOString(), leagueId).run();
     }
+    // Decision 3 (batch 3): a subscription Stripe paused at its trial's end
+    // is resumed once a card is on file. Never fails the event.
+    if (leagueId && type === 'invoice.paid') {
+      try { await resumeIfCardAdded(env, leagueId); }
+      catch (e) { console.error(`[billing] resume after invoice.paid for ${leagueId}: ${e.message}`); }
+    }
     return { leagueId, objectId: inv.id };
   }
   if (type === 'customer.deleted') {
@@ -299,4 +305,45 @@ export async function writeSubscription(env, subId, { leagueId = null, customerI
   ).bind(sub.trial_start ? iso(sub.trial_start) : null, sub.trial_end ? iso(sub.trial_end) : null,
     (sub.cancel_at_period_end || cancelAt) ? 1 : 0, cancelAt, league).run();
   return { leagueId: league, status, subscription: sub };
+}
+
+// Batch 3: whether the subscription can be charged: a default payment
+// method (or source) on the subscription, or on its customer
+// (invoice_settings.default_payment_method, where the Customer Portal puts
+// a card it adds). sub: the subscription already fetched, or null.
+export async function subscriptionHasCard(env, row, sub = null) {
+  if (!sub) sub = await stripeRequest(env, 'GET', `/subscriptions/${stripeId(row.stripe_subscription_id)}`);
+  if (sub.default_payment_method || sub.default_source) return true;
+  const cus = idOf(sub.customer) || (row && row.stripe_customer_id) || null;
+  if (!cus) return false;
+  const c = await stripeRequest(env, 'GET', `/customers/${stripeId(cus)}`);
+  return !!(c && !c.deleted && ((c.invoice_settings && c.invoice_settings.default_payment_method) || c.default_source));
+}
+
+// Decision 3 (Roberto, batch 3): Stripe pauses a subscription whose trial
+// ends with no card (trial_settings end_behavior missing_payment_method
+// pause; Stripe's own status 'paused', not the app's pause_collection).
+// Adding a card in the Customer Portal does not resume it by itself: the
+// app does, with POST /subscriptions/{id}/resume (a new cycle from today,
+// billing_cycle_anchor now, no proration: the first period is invoiced now
+// and charged to the card). Asked back from the portal (the billing page
+// load), on invoice.paid and by the daily job (src/billing_enforcement.js).
+// Does nothing unless the league's subscription is paused by Stripe and a
+// card is on file. The new state is written at once, so a payment that goes
+// through unlocks the league.
+export async function resumeIfCardAdded(env, leagueId, now = new Date()) {
+  if (!billingEnabled(env) || !leagueId || leagueId === SMBHL_ID) return { resumed: false };
+  const row = await env.DB.prepare('SELECT * FROM league_billing WHERE league_id = ?').bind(leagueId).first();
+  if (!row || !row.stripe_subscription_id || row.stripe_status !== 'paused') return { resumed: false };
+  const path = `/subscriptions/${stripeId(row.stripe_subscription_id)}`;
+  const sub = await stripeRequest(env, 'GET', path);
+  if (sub.status !== 'paused') {
+    await writeSubscription(env, row.stripe_subscription_id, { leagueId });
+    return { resumed: false, synced: true };
+  }
+  if (!(await subscriptionHasCard(env, row, sub))) return { resumed: false, noCard: true };
+  await stripeRequest(env, 'POST', `${path}/resume`, { billing_cycle_anchor: 'now', proration_behavior: 'none' },
+    { idempotencyKey: `resume-paused:${row.stripe_subscription_id}:${now.toISOString().slice(0, 10)}` });
+  await writeSubscription(env, row.stripe_subscription_id, { leagueId });
+  return { resumed: true };
 }

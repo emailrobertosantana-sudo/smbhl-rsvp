@@ -27,9 +27,11 @@ import { handleSignup, handleLogin, handleAcceptTerms, purgeRateLimitIps, handle
 import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, newestSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, setFreeException, billingEnabled, loadLeagueState, leagueAutoMailStopped } from './billing.js';
-import { handleStripeWebhook, processPendingStripeEvents } from './stripe_webhook.js';
+import { handleStripeWebhook, processPendingStripeEvents, resumeIfCardAdded } from './stripe_webhook.js';
+import { runBillingEnforcement } from './billing_enforcement.js';
+import { BILLING_NOTICE_KIND } from './billing_notices.js';
 import { checkStripeConfig } from './billing_check.js';
-import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS } from './billing_actions.js';
+import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS, ownerOf } from './billing_actions.js';
 import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail } from './league_health.js';
 import { readSupportSession, supportEnv, supportResponse, startSupport, endSupport, clearSupportCookieHeader, readSupportLog } from './support_mode.js';
 import { writeRefusal, isWriteRequest, writeAllowed } from './write_guard.js';
@@ -5263,7 +5265,7 @@ async function handleLeagueCommsPage(req, env, url) {
       // drift apart.
       cadTeamAssigned: 'Équipe assignée (tirage tardif)',
       cadShortAlert: 'Manque de joueurs (admin)',
-      cadGameCancelled: 'Match annulé', cadNightMoved: "Changement d'horaire",
+      cadGameCancelled: 'Match annulé', cadNightMoved: "Changement d'horaire", cadBillingNotice: "Avis d'abonnement",
       cadAutoDraw: 'Tirage automatique des équipes',
       btnPreview: 'Aperçu', cadSubCall: 'Appel aux remplaçants', cadLateReversal: 'Alerte de désistement tardif (admin)',
       toggleAria: 'Activer ou désactiver', toggleSaved: 'Enregistré.',
@@ -5307,7 +5309,7 @@ async function handleLeagueCommsPage(req, env, url) {
       cad72: '72h reminder (no reply)', cad24: '24h reminder (no reply)', cad12: '12h details (confirmed)',
       cadTeamAssigned: 'Team assigned (late draw)',
       cadShortAlert: 'Short of players (admin)',
-      cadGameCancelled: 'Game cancelled', cadNightMoved: 'Schedule changed',
+      cadGameCancelled: 'Game cancelled', cadNightMoved: 'Schedule changed', cadBillingNotice: 'Subscription notice',
       cadAutoDraw: 'Automatic team draw',
       btnPreview: 'Preview', cadSubCall: 'Sub call', cadLateReversal: 'Late dropout alert (admin)',
       toggleAria: 'Turn on or off', toggleSaved: 'Saved.',
@@ -5421,7 +5423,7 @@ const STATUS_COLOR = { sent: '#0e7a4f', failed: '#c4153a', retrying: '#c4153a', 
 // own wording. Built from the current dict each render, not module-
 // level, so a language switch re-labels it correctly.
 function activityKindLabel(d, kind) {
-  var KIND_LABEL = { reminder_72h: d.cad72, reminder_24h: d.cad24, logistics_12h: d.cad12, team_assigned: d.cadTeamAssigned, short_alert: d.cadShortAlert, game_cancelled: d.cadGameCancelled, night_moved: d.cadNightMoved };
+  var KIND_LABEL = { reminder_72h: d.cad72, reminder_24h: d.cad24, logistics_12h: d.cad12, team_assigned: d.cadTeamAssigned, short_alert: d.cadShortAlert, game_cancelled: d.cadGameCancelled, night_moved: d.cadNightMoved, billing_notice: d.cadBillingNotice };
   return KIND_LABEL[kind] || kind;
 }
 function renderStats(stats) {
@@ -6177,6 +6179,14 @@ async function handleLeagueBillingPage(req, env, url) {
   if (status === 'success' && url.searchParams.get('session_id')) {
     try { await syncAfterCheckout(env, ctx.leagueId, url.searchParams.get('session_id')); }
     catch (e) { console.error(`[billing] after Checkout for ${ctx.leagueId}: ${e.message}`); }
+  }
+  // Decision 3 (billing batch 3): a subscription Stripe paused at the end
+  // of its trial (no card) is resumed by the app once a card is on file:
+  // back from the portal, this page checks and resumes it (also from the
+  // cron and on invoice.paid, src/stripe_webhook.js resumeIfCardAdded).
+  if (!env.SUPPORT_MODE && env.STRIPE_SECRET_KEY) {
+    try { await resumeIfCardAdded(env, ctx.leagueId); }
+    catch (e) { console.error(`[billing] resume after a card for ${ctx.leagueId}: ${e.message}`); }
   }
   const view = await billingView(env, ctx.leagueId);
   const leagueRow = view.league;
@@ -32065,6 +32075,19 @@ function opsDigestHost(env) {
   };
 }
 
+// What src/billing_enforcement.js needs from this file: the outbox (the
+// notices are the league's own rows, so a league's deletion removes them
+// too), the league's drain, its admins and its owner.
+function billingEnforcementHost(env) {
+  return {
+    enqueue: ({ leagueId, to, mail, dedupKey }) => enqueuePrerenderedMail(env, { kind: BILLING_NOTICE_KIND, leagueId, eventId: 'system', dedupKey, to, mail, quietHours: true }),
+    drainLeague: leagueId => drain(env, MAIL_SENDS_PER_INVOCATION, null, leagueId),
+    adminEmails: leagueId => leagueAdminEmails(env, leagueId),
+    ownerEmail: async leagueId => { const o = await ownerOf(env, leagueId); return (o && o.email) || null; },
+    publicUrl: env.PUBLIC_URL || ''
+  };
+}
+
 /* ---------- failure alerting (src/health.js) ---------- */
 
 // What src/health.js needs from this file to tell people.
@@ -32153,6 +32176,9 @@ async function runCronPass(env) {
     // A subscription whose count belongs in the other paid tier gets that
     // price for its next billing date (src/billing_actions.js).
     try { await runTierChanges(env); } catch (e) { console.error(`[billing] tier changes: ${e.message}`); }
+    // Billing batch 3 (src/billing_enforcement.js): read-only, grace, the
+    // notices, the 12-month deletion. Nothing while BILLING_LAUNCH_AT is unset.
+    try { await runBillingEnforcement(env, billingEnforcementHost(env)); } catch (e) { console.error(`[billing] enforcement: ${e.message}`); }
     // Each league's health for the super-admin (src/league_health.js), once a
     // day, stored; then the operator's digest (src/ops_digest.js), on days
     // with something to report. Silent unless it fails. HEALTH_ALERTS='off'
