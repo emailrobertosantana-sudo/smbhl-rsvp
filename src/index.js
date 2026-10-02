@@ -9953,7 +9953,9 @@ function parseBulkText(text) {
     for (var k = 0; k < remaining.length; k++) { if (isPhoneField(remaining[k])) { phoneIdx = k; break; } }
     var phone = phoneIdx !== -1 ? remaining.splice(phoneIdx, 1)[0] : '';
     var name = remaining.join(' ').replace(/\\s+/g, ' ').trim();
-    rows.push({ name: name, email: email, phone: phone, team: team });
+    var parsed = { name: name, email: email, phone: phone };
+    if (team) parsed.team = team;
+    rows.push(parsed);
   }
   return rows;
 }

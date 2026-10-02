@@ -129,11 +129,15 @@ describe('Part 2: signup wizard, step-by-step', () => {
 
     const htmlFr = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
     expect(htmlFr).toContain("Devient permanente à la création de ta ligue. Ça garantit que les liens que tu partages continuent toujours de fonctionner.");
-    expect(htmlFr).not.toContain('Tu peux la changer');
+    // The address's own help never says it can be changed. (Onboarding batch
+    // 2: the league's language, a separate question, can be: « Tu peux la
+    // changer plus tard dans les Paramètres. »)
+    expect(htmlFr.match(/data-i18n="slugHelp">[^<]*</)[0]).not.toContain('Tu peux la changer');
 
     const htmlEn = await (await SELF.fetch('http://example.com/signup?step=2&lang=en', { headers: { cookie } })).text();
     expect(htmlEn).toContain("Becomes permanent once your league is created. That guarantees the links you share always keep working.");
-    expect(htmlEn).not.toContain('You can change it');
+    expect(htmlEn.match(/data-i18n="slugHelp">[^<]*</)[0]).not.toContain('You can change it');
+    expect(htmlEn).not.toMatch(/"slugHelp":"[^"]*You can change it/);
 
     // Live preview: su_league_name's own input listener still writes
     // into su_slug via slugify() as the admin types.
