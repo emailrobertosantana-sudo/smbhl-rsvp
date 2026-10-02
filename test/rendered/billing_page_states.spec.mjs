@@ -11,6 +11,7 @@
 // by the worker.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startPublicPageWorker, launchChromium } from './support/public_page_harness.mjs';
+import { formatPageDate } from '../../src/date_format.js';
 
 let h, browser, owner, leagueId;
 const DAY = 86400000;
@@ -56,7 +57,7 @@ async function setState(name) {
 // Every message the page can show: data-i18n keys, and the lines with a
 // date, found by the start of their French text.
 const KEYS = ['success', 'canceled', 'error', 'pause', 'pauseConfirm', 'pauseYes', 'cancelBtn', 'resume', 'resumeNote', 'paused', 'pastDue', 'subscribe', 'trialOver', 'manage', 'ownerOnly'];
-const DATED = { firstPayment: 'Premier paiement', nextPayment: 'Prochain paiement', ends: 'Ton abonnement prend fin' };
+const DATED = { firstPayment: 'Premier paiement', nextPayment: 'Prochain paiement', ends: 'Ton abonnement prend fin', trialContinues: 'Ton essai continue' };
 const ALL = [...KEYS, ...Object.keys(DATED)];
 
 function visibleMessages({ keys, dated }) {
@@ -82,7 +83,7 @@ const EXPECTED = {
   active: ['manage', 'nextPayment', 'pause'],
   trialing: ['firstPayment', 'manage', 'pause'],
   paused: ['manage', 'paused', 'resume', 'resumeNote'],
-  pausedInTrial: ['manage', 'paused', 'resume'],
+  pausedInTrial: ['manage', 'paused', 'resume', 'trialContinues'],
   ending: ['ends', 'manage'],
   pastDue: ['manage', 'pastDue']
 };
@@ -100,6 +101,25 @@ describe('the billing page shows only the messages of its state', () => {
       }
     }, 60000);
   }
+
+  it('paused in the trial: the first payment at the trial end, in words, FR and EN; never "Billing restarts today."', async () => {
+    await setState('pausedInTrial');
+    const end = STATES.pausedInTrial.trial_ends_at.slice(0, 10);
+    const { page, context } = await openPage();
+    try {
+      const fr = 'Ton essai continue : premier paiement le ' + formatPageDate(end, 'fr', 'long') + '.';
+      const en = 'Your trial continues: first payment on ' + formatPageDate(end, 'en', 'long') + '.';
+      const line = page.locator('#bl-main [data-date-fr^="Ton essai continue"]');
+      expect(await line.textContent()).toBe(fr);
+      expect(await line.getAttribute('data-date-en')).toBe(en);
+      expect(fr).not.toMatch(/[0-9]{4}-[0-9]{2}/);
+      const text = await page.innerText('#bl-main');
+      expect(text).not.toContain('La facturation reprend');
+      expect(text).not.toContain('Billing restarts today');
+    } finally {
+      await context.close();
+    }
+  }, 60000);
 
   it('back from Checkout: the thanks, without the error; a cancelled Checkout: its own line only', async () => {
     await setState('active');

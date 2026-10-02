@@ -6124,6 +6124,15 @@ function billingLines(view) {
     else if (row.status === 'past_due') L.state = null;
     else if (trialEnd) L.state = { fr: `Premier paiement le ${d(trialEnd, 'fr')}, à la fin de ton essai.`, en: `First payment on ${d(trialEnd, 'en')}, when your trial ends.` };
     else if (row.current_period_end) L.state = { fr: `Prochain paiement le ${d(row.current_period_end, 'fr')}.`, en: `Next payment on ${d(row.current_period_end, 'en')}.` };
+    // Paused in the trial: resume keeps the first charge at the trial's end
+    // (resumeSubscription), so the page says so instead of "Billing restarts
+    // today.". Stripe's trial ends with the first period.
+    const trialing = row.stripe_status === 'trialing' || !!trialEnd;
+    const firstCharge = trialEnd || (row.stripe_status === 'trialing' ? row.current_period_end : null);
+    if (row.status === 'paused' && trialing && firstCharge) L.resumeTrial = {
+      fr: `Ton essai continue : premier paiement le ${d(firstCharge, 'fr')}.`,
+      en: `Your trial continues: first payment on ${d(firstCharge, 'en')}.`
+    };
     if (view.pendingTier && row.current_period_end && !row.cancel_at_period_end) L.tierChange = {
       fr: `Ton forfait passera à ${plan(view.pendingTier, 'fr')} le ${d(row.current_period_end, 'fr')}.`,
       en: `Your plan changes to ${plan(view.pendingTier, 'en')} on ${d(row.current_period_end, 'en')}.`
@@ -6178,6 +6187,7 @@ async function handleLeagueBillingPage(req, env, url) {
       ${row.status === 'paused' ? `<button type="button" class="nl-btn nl-btn--secondary" data-billing="resume" ${k('resume')}</button>` : ''}
     </div>
     ${row.status === 'paused' && !inTrial ? `<p class="nl-help" ${k('resumeNote')}</p>` : ''}
+    ${row.status === 'paused' && inTrial ? bi(L.resumeTrial, 'p', ' class="nl-help"') : ''}
     ${canPause ? `<div class="bl-confirm" id="bl-pause-confirm" hidden>
       <p ${k('pauseConfirm')}</p>
       <div class="bl-actions"><button type="button" class="nl-btn nl-btn--secondary" data-billing="pause" ${k('pauseYes')}</button><button type="button" class="nl-btn nl-btn--ghost" id="bl-pause-no" ${k('cancelBtn')}</button></div>
