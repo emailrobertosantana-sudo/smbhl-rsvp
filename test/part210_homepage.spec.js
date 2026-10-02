@@ -133,6 +133,27 @@ describe('item 3: the pricing section', () => {
   });
 });
 
+describe('batch 3, item 2: dark mode', () => {
+  it('no hard-coded hex or rgb color in the sections added in batch 1', async () => {
+    const html = await (await home('/?lang=fr')).text();
+    const css = html.slice(html.indexOf('<body')).match(/<style>([\s\S]*?)<\/style>/)[1].replace(/\/\*[\s\S]*?\*\//g, '');
+    const scoped = /\.home-(feats|feat|ico|tiers|tier|beta-note|fine|sub|trust|trust-text|sign|final|final-cta|footer|operator|proof|beta|mock)\b/;
+    const hard = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i;
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(m => ({ sel: m[1].trim(), decl: m[2] }));
+    const scopedRules = rules.filter(r => scoped.test(r.sel) || /^\.nl$/.test(r.sel));
+    expect(scopedRules.length).toBeGreaterThan(20);
+    for (const r of scopedRules) expect(r.decl, r.sel).not.toMatch(hard);
+    // Inline styles inside those sections.
+    const body = html.slice(html.indexOf('class="home-mock"'), html.indexOf('</footer>'));
+    for (const m of body.matchAll(/style="([^"]*)"/g)) expect(m[1]).not.toMatch(hard);
+    // The icon tiles swap with the scheme: a dark tile with a yellow glyph
+    // in light, a yellow tile with a dark glyph in dark.
+    expect(css).toContain('.home-ico { background: var(--home-tile); color: var(--home-glyph); }');
+    expect(css).toContain('.nl { --home-tile: var(--surface-hero); --home-glyph: var(--yellow);');
+    expect(css).toContain('@media (prefers-color-scheme: dark) { .nl { --home-tile: var(--yellow); --home-glyph: var(--on-yellow);');
+  });
+});
+
 describe('item 4: trust block, closing call to action, footer', () => {
   it('French and English, in page order, every href kept', async () => {
     const fr = await (await home('/', { 'accept-language': 'fr-CA' })).text();

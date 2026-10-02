@@ -595,19 +595,27 @@ function renderMarketingHomepage(req) {
   .home-hero p { font-size: 20px; line-height: 30px; color: #c9cbd1; margin-top: 20px; max-width: 520px; }
   .home-cta { display: flex; gap: var(--space-3); margin-top: var(--space-6); }
   .home-hero .nl-btn--primary { background: var(--yellow); color: var(--on-yellow) !important; }
-  .home-proof { margin-top: 20px; font-size: 14px; color: #a3a6ad; }
+  .home-proof { margin-top: 20px; font-size: 14px; color: var(--ink-inverse); }
+  /* Colors that differ by scheme, as aliases of design-system tokens: the
+     icon tile is a dark tile with a yellow glyph in light, a yellow tile with
+     a dark glyph in dark; the mockup cards take a visible edge in dark. */
+  .nl { --home-tile: var(--surface-hero); --home-glyph: var(--yellow); --home-mock-edge: var(--line); }
+  @media (prefers-color-scheme: dark) { .nl { --home-tile: var(--yellow); --home-glyph: var(--on-yellow); --home-mock-edge: var(--line-strong); } }
   .home-mock { position: relative; height: 420px; }
-  .home-mock .card { position: absolute; background: #ffffff; color: #16181d; border-radius: 6px; padding: 20px; width: 300px; box-shadow: var(--shadow-sheet); }
+  .home-mock .card { position: absolute; background: var(--surface-raised); color: var(--ink); border: 1px solid var(--home-mock-edge); border-radius: 6px; padding: 20px; width: 300px; box-shadow: var(--shadow-sheet); }
   .home-mock .a { left: 0; top: 0; } .home-mock .b { right: 0; bottom: 0; width: 280px; }
   .home-mock .blk1 { position: absolute; right: 24px; top: 24px; width: 120px; height: 120px; background: var(--yellow); border-radius: 3px; }
   .home-mock .blk2 { position: absolute; left: 48px; bottom: 24px; width: 96px; height: 96px; background: var(--league); border-radius: 3px; }
-  .home-mock h3 { font: 800 21px/25px var(--font-display); font-stretch: 118%; color: #16181d; }
-  .home-mock .ov { font: 700 11px/16px var(--font-sans); letter-spacing: .08em; text-transform: uppercase; color: #55585f; margin-bottom: 8px; }
+  .home-mock h3 { font: 800 21px/25px var(--font-display); font-stretch: 118%; color: var(--ink); }
+  .home-mock .ov { font: 700 11px/16px var(--font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 8px; }
   .home-mock .btn { display: flex; align-items: center; justify-content: center; height: 44px; border-radius: 4px; font: 600 15px/1 var(--font-sans); margin-top: 10px; }
-  .home-mock .p { background: var(--league); color: #fff; }
+  .home-mock .p { background: var(--league); color: var(--on-league); }
   .home-mock .lg { border-left: 4px solid var(--league); padding-left: 8px; }
-  .home-mock .s { border: 1.5px solid #8a8d94; }
-  .home-mock .row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid #e3e3e0; font-size: 14px; }
+  .home-mock .s { border: 1.5px solid var(--line-strong); }
+  .home-mock .row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .home-mock .ok { color: var(--success); font-weight: 600; }
+  .home-mock .short { background: var(--yellow); color: var(--on-yellow); padding: 2px 6px; border-radius: var(--radius-sm); font-weight: 700; }
+  .home-mock .muted { color: var(--ink-muted); }
   .home-mock .row:first-of-type { border-top: 0; }
   .home-band { padding: var(--space-9) 0; }
   .home-eyebrow { font: 700 12px/16px var(--font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
@@ -615,14 +623,14 @@ function renderMarketingHomepage(req) {
   .home-feats { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-5); margin-top: var(--space-6); }
   .home-ico { width: 40px; height: 40px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; }
   .home-ico svg { width: 22px; height: 22px; }
-  .home-ico { background: var(--primary); color: var(--yellow); }
-  .home-feat { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+  .home-ico { background: var(--home-tile); color: var(--home-glyph); }
+  .home-feat { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); }
   .home-feat h3 { font: 600 18px/24px var(--font-display); font-stretch: 118%; }
   .home-feat p { color: var(--ink-muted); font-size: 15px; line-height: 23px; }
   .home-how { background: var(--surface-sunken); }
   .home-sub { color: var(--ink-muted); font-size: 17px; line-height: 26px; margin-top: calc(-1 * var(--space-5)); max-width: 640px; }
   .home-tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-5); margin-top: var(--space-6); }
-  .home-tier { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+  .home-tier { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); }
   .home-tier h3 { font: 700 20px/26px var(--font-display); font-stretch: 118%; }
   .home-tier .range { color: var(--ink-muted); font-size: 15px; }
   .home-tier .price { font-weight: 700; font-size: 17px; line-height: 24px; }
@@ -636,9 +644,10 @@ function renderMarketingHomepage(req) {
   .home-step h3 { font: 600 20px/26px var(--font-display); font-stretch: 118%; }
   .home-step p { color: var(--ink-muted); }
   .home-step { display: flex; flex-direction: column; gap: 10px; }
-  .home-final { background: #16181d; color: #f4f4f2; padding: 80px 0; }
+  .home-final { background: var(--surface-hero); color: var(--ink-inverse); padding: 80px 0; }
+  .home-final :focus-visible { outline-color: var(--yellow); }
   .home-final .home-in { display: flex; justify-content: space-between; align-items: center; gap: var(--space-6); flex-wrap: wrap; }
-  .home-final h2 { font: 800 38px/44px var(--font-display); font-stretch: 118%; color: #f4f4f2; max-width: 620px; }
+  .home-final h2 { font: 800 38px/44px var(--font-display); font-stretch: 118%; color: var(--ink-inverse); max-width: 620px; }
   .home-final .nl-btn--primary { background: var(--yellow); color: var(--on-yellow) !important; }
   .home-trust-text { font: 600 22px/32px var(--font-sans); max-width: 760px; text-wrap: pretty; }
   .home-sign { margin-top: var(--space-4); color: var(--ink-muted); }
@@ -704,9 +713,9 @@ function renderMarketingHomepage(req) {
       <div class="blk1"></div><div class="blk2"></div>
       <div class="card a"><div class="ov lg" data-i18n="mockLeagueName">${T.mockLeagueName}</div><div class="ov" data-i18n="mockDayTime">${T.mockDayTime}</div><h3 data-i18n="mockQuestion">${T.mockQuestion}</h3><div class="btn p" data-i18n="mockBtnIn">${T.mockBtnIn}</div><div class="btn s" data-i18n="mockBtnOut">${T.mockBtnOut}</div></div>
       <div class="card b"><div class="ov" data-i18n="mockDayTime">${T.mockDayTime}</div>
-        <div class="row"><b>Les Castors</b><span style="color:#0e7a4f;font-weight:600">✓ 10/10</span></div>
-        <div class="row"><b>Les Aurores</b><span style="background:#ffd23f;padding:2px 6px;border-radius:3px;font-weight:700" data-i18n="mockShort">${T.mockShort}</span></div>
-        <div class="row"><span style="color:#55585f" data-i18n="mockSubsInvited">${T.mockSubsInvited}</span></div>
+        <div class="row"><b>Les Castors</b><span class="ok">✓ 10/10</span></div>
+        <div class="row"><b>Les Aurores</b><span class="short" data-i18n="mockShort">${T.mockShort}</span></div>
+        <div class="row"><span class="muted" data-i18n="mockSubsInvited">${T.mockSubsInvited}</span></div>
       </div>
     </div>
   </div>
