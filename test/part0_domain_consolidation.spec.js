@@ -62,11 +62,13 @@ describe('Part 0: domain-aware GET /', () => {
     expect(html).toContain('Créer ma ligue'); // French-default copy
   });
 
-  it("rsvp.notreligue.ca hitting root also shows the marketing homepage, not smbhl.com", async () => {
+  // notreligue.ca is the one canonical address for the public pages
+  // (test/part221_canonical_host_share.spec.js): rsvp.notreligue.ca's root
+  // sends there, never to smbhl.com.
+  it("rsvp.notreligue.ca hitting root goes to the homepage on notreligue.ca, not smbhl.com", async () => {
     const res = await SELF.fetch('https://rsvp.notreligue.ca/', { redirect: 'manual' });
-    expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain('Notre Ligue');
+    expect(res.status).toBe(301);
+    expect(res.headers.get('location')).toBe('https://notreligue.ca/');
   });
 
   it("a brand-new, never-configured league domain works correctly out of the box, with zero PUBLIC_URL reconfiguration needed", async () => {
