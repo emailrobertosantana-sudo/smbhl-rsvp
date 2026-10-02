@@ -10,6 +10,7 @@ import { getAddEmails, saveAddEmails } from './add_emails.js';
 import { chooseMailProvider, parseAddress } from './mail_provider.js';
 import { contactDisplayName, rosterNameMap } from './contact_name.js';
 import { passCached } from './pass_cache.js';
+import { attributionFrom, attributionQuery, hasAttribution } from './attribution.js';
 import { getSubCallHours, saveSubCallHours, subCallWindowText, SUB_CALL_HOURS_CHOICES } from './sub_call_window.js';
 import { legalRoute, nlLegalEmailWrap, legalLinksPageHtml, legalLinksEmailHtml, LEGAL_I18N } from './legal.js';
 import { TERMS_LABEL, getTermsAcceptance, termsAcceptanceCurrent } from './terms.js';
@@ -679,6 +680,9 @@ function renderMarketingHomepage(req, forcedLang = null) {
   const angle = homeAngle(reqUrl);
   const HOME = angle ? { fr: { ...I18N_HOME.fr, ...HOME_ANGLES[angle].fr }, en: { ...I18N_HOME.en, ...HOME_ANGLES[angle].en } } : I18N_HOME;
   const T = HOME[lang];
+  // Ad test item 2: every sign-up link carries the page's attribution
+  // parameters (and its language), when the URL has some.
+  const signupHref = '/signup' + attributionQuery(reqUrl.searchParams, lang);
   const bodyHtml = `
 <style>
   .nl-hero .nl-header { background: transparent; border-bottom-color: #2a2e36; max-width: var(--content-wide); margin: 0 auto; padding: 0 var(--space-6); }
@@ -806,7 +810,7 @@ function renderMarketingHomepage(req, forcedLang = null) {
     <div>
       <h1 data-i18n="heroTitle">${T.heroTitle}</h1>
       <p data-i18n="heroBody">${T.heroBody}</p>
-      <div class="home-cta"><a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">${T.cta}</a></div>
+      <div class="home-cta"><a class="nl-btn nl-btn--primary nl-btn--lg" href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a></div>
       <div class="home-proof" data-i18n="proof">${T.proof}</div>
     </div>
     <div class="home-mock" aria-hidden="true">
@@ -839,9 +843,9 @@ function renderMarketingHomepage(req, forcedLang = null) {
   <h2 class="home-sec-h" data-i18n="headingP">${T.headingP}</h2>
   <p class="home-sub" data-i18n="sublineP">${T.sublineP}</p>
   <div class="home-tiers">
-    <div class="home-tier"><h3 data-i18n="t1Name">${T.t1Name}</h3><div class="range" data-i18n="t1Range">${T.t1Range}</div><div class="price" data-i18n="t1Price">${T.t1Price}</div><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
-    <div class="home-tier"><h3 data-i18n="t2Name">${T.t2Name}</h3><div class="range" data-i18n="t2Range">${T.t2Range}</div><div class="price" data-i18n="t2Price">${T.t2Price}</div><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
-    <div class="home-tier"><h3 data-i18n="t3Name">${T.t3Name}</h3><div class="range" data-i18n="t3Range">${T.t3Range}</div><div class="price" data-i18n="t3Price">${T.t3Price}</div><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t1Name">${T.t1Name}</h3><div class="range" data-i18n="t1Range">${T.t1Range}</div><div class="price" data-i18n="t1Price">${T.t1Price}</div><div class="go"><a href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t2Name">${T.t2Name}</h3><div class="range" data-i18n="t2Range">${T.t2Range}</div><div class="price" data-i18n="t2Price">${T.t2Price}</div><div class="go"><a href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t3Name">${T.t3Name}</h3><div class="range" data-i18n="t3Range">${T.t3Range}</div><div class="price" data-i18n="t3Price">${T.t3Price}</div><div class="go"><a href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a></div></div>
     <div class="home-tier"><h3 data-i18n="t4Name">${T.t4Name}</h3><div class="range" data-i18n="t4Range">${T.t4Range}</div><div class="go"><a href="mailto:bonjour@notreligue.ca" data-i18n="writeUs">${T.writeUs}</a></div></div>
   </div>
   <p class="home-fine" data-i18n="priceNote">${T.priceNote}</p>
@@ -865,7 +869,7 @@ function renderMarketingHomepage(req, forcedLang = null) {
 <section class="home-final"><div class="home-in">
   <h2 data-i18n="finalTitle">${T.finalTitle}</h2>
   <div class="home-final-cta">
-    <a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">${T.cta}</a>
+    <a class="nl-btn nl-btn--primary nl-btn--lg" href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a>
     <div class="home-proof" data-i18n="finalOffer">${T.finalOffer}</div>
   </div>
 </div></section>
@@ -1286,7 +1290,7 @@ function signupFooter() {
   return `<p class="nl-help" style="text-align:center;margin:var(--space-5) 0 var(--space-4);font-size:13px">${legalLinksPageHtml('fr')}</p>`;
 }
 
-function renderSignupStep1(langParam) {
+function renderSignupStep1(langParam, attrQS = '') {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
@@ -1360,7 +1364,7 @@ async function submitStep1() {
       btn.disabled = false;
       return;
     }
-    window.__navWithLang('/signup?step=2');
+    window.__navWithLang('/signup?step=2${attrQS}');
   } catch (e) {
     showError(window.__errorText('NETWORK_ERROR'));
     btn.disabled = false;
@@ -1370,7 +1374,7 @@ async function submitStep1() {
   return nlDocument({ ...signupDoc(langParam), bodyHtml });
 }
 
-function renderSignupStep2(langParam, another = false) {
+function renderSignupStep2(langParam, another = false, attrQS = '', attr = {}) {
   const stepLang = langParam === 'en' ? 'en' : 'fr';
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
@@ -1465,10 +1469,14 @@ window.addEventListener('nl_lang_changed', function(e) {
   document.querySelectorAll('#su_lang_radio .su-structure-opt').forEach(function(opt) { opt.classList.remove('on'); });
   r.closest('.su-structure-opt').classList.add('on');
 });
+// Ad test item 2: where this sign-up came from (the homepage link's
+// parameters, already cleaned server-side), sent with the new league.
+var NL_ATTR = ${JSON.stringify(attr)};
 function signupChoices() {
   return {
     languageMode: document.querySelector('#su_lang_radio input:checked').value,
-    hasGoalies: document.querySelector('#su_goalies_radio input:checked').value === 'yes'
+    hasGoalies: document.querySelector('#su_goalies_radio input:checked').value === 'yes',
+    attribution: NL_ATTR
   };
 }
 async function submitStep2() {
@@ -1532,13 +1540,13 @@ async function submitStep2() {
     return;
   }
   try { sessionStorage.setItem('nl_signup_league', JSON.stringify(Object.assign({ name: name, slug: slug, tracksStats: tracksStats, teamStructure: teamStructure }, signupChoices()))); } catch (e) {}
-  window.__navWithLang('/signup?step=3${another ? '&new=1' : ''}');
+  window.__navWithLang('/signup?step=3${another ? '&new=1' : ''}${attrQS}');
 }
 </script>`;
   return nlDocument({ ...signupDoc(langParam), bodyHtml });
 }
 
-function renderSignupStep3(langParam, another = false) {
+function renderSignupStep3(langParam, another = false, attrQS = '', attr = {}) {
   const lang = langParam === 'en' ? 'en' : 'fr';
   const i18nStep3 = I18N_SIGNUP[lang];
   const bodyHtml = `${signupStyles()}${signupHeader()}
@@ -1567,7 +1575,7 @@ function renderSignupStep3(langParam, another = false) {
 </main>
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="createLeague" onclick="submitStep3()">Créer la ligue</button>
-  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="window.__navWithLang('/signup?step=2${another ? '&new=1' : ''}')">Retour</button>
+  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" data-i18n="back" onclick="window.__navWithLang('/signup?step=2${another ? '&new=1' : ''}${attrQS}')">Retour</button>
 </div>
 ${signupFooter()}
 <script>
@@ -1591,7 +1599,7 @@ function clearError() { document.getElementById('formErr').style.display = 'none
 async function submitStep3() {
   clearError();
   if (!leagueDraft) { window.__navWithLang('/signup?step=2'); return; }
-  var payload = { name: leagueDraft.name, tracksStats: leagueDraft.tracksStats, slug: leagueDraft.slug || undefined, teamStructure: leagueDraft.teamStructure, languageMode: leagueDraft.languageMode, hasGoalies: leagueDraft.hasGoalies };
+  var payload = { name: leagueDraft.name, tracksStats: leagueDraft.tracksStats, slug: leagueDraft.slug || undefined, teamStructure: leagueDraft.teamStructure, languageMode: leagueDraft.languageMode, hasGoalies: leagueDraft.hasGoalies, attribution: ${JSON.stringify(attr)} };
   {
     // Onboarding polish task (B1): this step only ever asks for the
     // COUNT now (see su_teams_section's own comment) -- real names are
@@ -1709,11 +1717,15 @@ async function renderSignupPage(req, env, url) {
   // link): a signed-in admin who already has a league gets the league form
   // instead of being sent to that league's onboarding.
   const another = url.searchParams.get('new') === '1';
+  // Ad test item 2: the homepage link's attribution, cleaned, carried from
+  // step to step in the URL (attrQS) and sent with the new league (attr).
+  const attr = attributionFrom(url.searchParams);
+  const attrQS = hasAttribution(attr) ? '&' + new URLSearchParams(attr).toString() : '';
   // Onboarding batch: the account step is behind a signed-in admin (the
   // browser's back button after it): straight on to the league form, never
   // the account form again (its email is already taken, by them).
   if (step !== '2' && step !== '3' && step !== 'done' && (await checkUserSession(req, env))) {
-    return Response.redirect(`${url.origin}/signup?step=2${langQS}`, 302);
+    return Response.redirect(`${url.origin}/signup?step=2${langQS}${attrQS}`, 302);
   }
   if (step === '2' || step === '3' || step === 'done') {
     const session = await checkUserSession(req, env);
@@ -1742,10 +1754,10 @@ async function renderSignupPage(req, env, url) {
     // instead of ever re-rendering the pre-league wizard for a session
     // that has moved past it.
     if (newest && !another) return Response.redirect(`${url.origin}/onboarding/season${langQS.replace('&', '?')}`, 302);
-    if (step === '3') return new Response(renderSignupStep3(renderLang, another), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
-    return new Response(renderSignupStep2(renderLang, another), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    if (step === '3') return new Response(renderSignupStep3(renderLang, another, attrQS, attr), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    return new Response(renderSignupStep2(renderLang, another, attrQS, attr), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
-  return new Response(renderSignupStep1(renderLang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  return new Response(renderSignupStep1(renderLang, attrQS), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
 // Login / forgot-password / reset-password (design system Part 2).

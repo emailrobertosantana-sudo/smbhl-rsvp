@@ -24,6 +24,7 @@ import { validateBulkEvents, BULK_INTERVAL_DAYS } from './bulk_events_validation
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS, eventHasStarted } from './league_ids.js';
 import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie, generateRoundRobinRounds, NO_GOALIE_SPORT } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
+import { attributionColumns } from './attribution.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
 import { nlLegalEmailWrap } from './legal.js';
 import { recordTermsAcceptance, acceptsTerms, TERMS_REFUSAL } from './terms.js';
@@ -3573,6 +3574,15 @@ export async function handleLeagueCreate(req, env) {
     if (body.hasGoalies === false) {
       await saveLeagueHasGoalies(env, leagueId, false);
       minGoalies = 0;
+    }
+    // Ad test item 2: where the league came from (the homepage link's
+    // parameters, carried through sign-up), cleaned again here. None: all
+    // seven columns stay null.
+    const attr = attributionColumns(body.attribution);
+    if (attr) {
+      await env.DB.prepare(
+        'UPDATE leagues SET angle = ?, utm_source = ?, utm_medium = ?, utm_campaign = ?, utm_content = ?, landing_language = ?, attributed_at = ? WHERE id = ?'
+      ).bind(attr.angle, attr.utm_source, attr.utm_medium, attr.utm_campaign, attr.utm_content, attr.landing_language, attr.attributed_at, leagueId).run();
     }
 
     return Response.json({
