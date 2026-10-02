@@ -67,7 +67,8 @@ describe('the hero for each angle, in both languages', () => {
   it('everything else on the page is the same', async () => {
     const plain = (await get('/fr')).html;
     const variant = (await get('/fr?a=prix')).html;
-    const cut = s => s.replace(/<h1 data-i18n="heroTitle">[^<]*<\/h1>/, '').replace(/<p data-i18n="heroBody">[^<]*<\/p>/, '').replace(/<script>[\s\S]*?<\/script>/g, '').replace(/<meta name="robots"[^>]*>\n?/, '');
+    // The sign-up links carry the a parameter (ad test item 2): set aside.
+    const cut = s => s.replace(/<h1 data-i18n="heroTitle">[^<]*<\/h1>/, '').replace(/<p data-i18n="heroBody">[^<]*<\/p>/, '').replace(/<script>[\s\S]*?<\/script>/g, '').replace(/<meta name="robots"[^>]*>\n?/, '').replace(/href="\/signup[^"]*"/g, 'href="/signup"');
     expect(cut(variant)).toBe(cut(plain));
   });
 });
