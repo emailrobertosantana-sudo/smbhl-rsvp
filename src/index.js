@@ -509,12 +509,12 @@ const notice = (fr, en, logoTooltip = '') => page(fr, `<h1>${esc(fr)}<span class
 const I18N_HOME = {
   fr: {
     navFeatures: 'Fonctionnalités', navHow: 'Comment ça marche', navPricing: 'Tarifs', login: 'Se connecter',
-    heroTitle: 'Ta ligue, sans la <u>paperasse</u>.',
-    heroBody: "Notre Ligue invite tes joueurs, compte qui sera là et trouve des remplaçants quand il manque du monde. Toi, tu joues.",
+    heroTitle: 'Tes joueurs répondent sans compte et sans application.',
+    heroBody: 'Chaque semaine, Notre Ligue demande qui joue, compte les réponses et trouve des remplaçants quand il manque du monde. Toi, tu joues.',
     cta: 'Créer ma ligue', proof: 'Prêt en 5 minutes. 2 mois gratuits, sans carte. Gratuit sous 15 joueurs.',
     beta: 'Ligues bêta\u00a0: ton essai de 2 mois commence le jour du lancement de la facturation.',
     eyebrow1: 'Ce qu\'on prend en charge', heading1: "Le travail ennuyeux d'une ligue, fait automatiquement.",
-    f1Title: 'Présence en un clic', f1Body: 'Chaque semaine, tes joueurs reçoivent un message. Un clic pour dire oui ou non. Aucune application à installer.',
+    f1Title: 'Présence en un clic', f1Body: "Chaque semaine, tes joueurs reçoivent un message et répondent oui ou non d'un clic.",
     f2Title: 'Remplaçants automatiques', f2Body: "Il manque du monde? On invite ta liste de remplaçants à un rythme raisonnable, avec une liste d'attente.",
     f3Title: 'Ta formule, ton choix', f3Body: 'Équipes fixes, tirage de la semaine ou sans équipes. Un joueur peut aussi être gardien.',
     f4Title: 'Calendrier et séries', f4Body: 'Matchs, séries éliminatoires et rappels automatiques, sans rien relancer à la main.',
@@ -541,12 +541,12 @@ const I18N_HOME = {
   },
   en: {
     navFeatures: 'Features', navHow: 'How it works', navPricing: 'Pricing', login: 'Log in',
-    heroTitle: 'Your league, without the <u>paperwork</u>.',
-    heroBody: "Notre Ligue messages your players, counts who's in and finds subs when you're short. You just play.",
+    heroTitle: 'Your players answer without an account or an app.',
+    heroBody: "Every week, Notre Ligue asks who's playing, counts the answers and finds subs when you're short. You just play.",
     cta: 'Create my league', proof: 'Ready in 5 minutes. 2 months free, no card. Free under 15 players.',
     beta: 'Beta leagues: your 2-month trial starts the day billing launches.',
     eyebrow1: 'What we handle for you', heading1: 'The boring league work, done automatically.',
-    f1Title: 'Attendance in one tap', f1Body: 'Every week, players get a message. One tap to say yes or no. No app to install.',
+    f1Title: 'Attendance in one tap', f1Body: 'Every week, players get a message and answer yes or no with one tap.',
     f2Title: 'Automatic subs', f2Body: 'Short on players? We invite your sub list at a steady pace, with a waitlist.',
     f3Title: 'Your format, your choice', f3Body: 'Fixed teams, weekly draw or no teams. A player can also play goalie.',
     f4Title: 'Schedule and playoffs', f4Body: 'Games, playoffs and automatic reminders, with no chasing by hand.',
@@ -654,6 +654,9 @@ function renderMarketingHomepage(req) {
   @media (max-width: 900px) { .home-hero { grid-template-columns: 1fr; } .home-mock { display: none; } .home-feats, .home-tiers { grid-template-columns: 1fr 1fr; } .home-steps { grid-template-columns: 1fr; } }
   @media (max-width: 639px) { .home-feats, .home-tiers { grid-template-columns: 1fr; } }
   @media (max-width: 560px) { .home-hero h1 { font-size: 34px; line-height: 36px; } }
+  /* Two-column hero: the longer H1 at 52px left one word alone on its last
+     line, so it takes the type scale's 40px (stat) size there. */
+  @media (min-width: 901px) { .home-hero h1 { font-size: 40px; line-height: 44px; } }
   /* The browser's 8px body margin framed the dark hero in white and ate
      the phone gutter. */
   body.nl { margin: 0; }

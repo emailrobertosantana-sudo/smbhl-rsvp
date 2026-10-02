@@ -30,8 +30,8 @@ describe('item 1: the language default', () => {
       const html = await res.text();
       expect(langOf(html)).toBe(want === 'en' ? 'en-CA' : 'fr-CA');
       expect(html).toContain(`window.__nlServerLang = '${want}';`);
-      if (want === 'en') expect(html).toContain('<h1 data-i18n="heroTitle">Your league, without the <u>paperwork</u>.</h1>');
-      else expect(html).toContain('<h1 data-i18n="heroTitle">Ta ligue, sans la <u>paperasse</u>.</h1>');
+      if (want === 'en') expect(html).toContain('<h1 data-i18n="heroTitle">Your players answer without an account or an app.</h1>');
+      else expect(html).toContain('<h1 data-i18n="heroTitle">Tes joueurs répondent sans compte et sans application.</h1>');
     });
   }
 
@@ -49,7 +49,7 @@ describe('item 1: the copy', () => {
       '<a href="#fonctionnalites" data-i18n="navFeatures">Fonctionnalités</a>',
       '<a href="#comment-ca-marche" data-i18n="navHow">Comment ça marche</a>',
       '<a href="#pricing" data-i18n="navPricing">Tarifs</a>',
-      'Notre Ligue invite tes joueurs, compte qui sera là et trouve des remplaçants quand il manque du monde. Toi, tu joues.',
+      'Chaque semaine, Notre Ligue demande qui joue, compte les réponses et trouve des remplaçants quand il manque du monde. Toi, tu joues.',
       'href="/signup" data-i18n="cta">Créer ma ligue</a>',
       'Prêt en 5 minutes. 2 mois gratuits, sans carte. Gratuit sous 15 joueurs.',
       'Ligues bêta : ton essai de 2 mois commence le jour du lancement de la facturation.',
@@ -64,7 +64,7 @@ describe('item 1: the copy', () => {
     const html = await (await home('/?lang=en')).text();
     for (const s of [
       '>Features</a>', '>How it works</a>', '<a href="#pricing" data-i18n="navPricing">Pricing</a>', '>Log in</a>',
-      "Notre Ligue messages your players, counts who's in and finds subs when you're short. You just play.",
+      "Every week, Notre Ligue asks who's playing, counts the answers and finds subs when you're short. You just play.",
       '>Create my league</a>',
       'Ready in 5 minutes. 2 months free, no card. Free under 15 players.',
       'Beta leagues: your 2-month trial starts the day billing launches.',
@@ -81,7 +81,7 @@ describe('item 2: six feature cards', () => {
     const fr = await (await home('/', { 'accept-language': 'fr-CA' })).text();
     for (const s of [
       "Ce qu'on prend en charge", "Le travail ennuyeux d'une ligue, fait automatiquement.",
-      'Présence en un clic', 'Chaque semaine, tes joueurs reçoivent un message. Un clic pour dire oui ou non. Aucune application à installer.',
+      'Présence en un clic', "Chaque semaine, tes joueurs reçoivent un message et répondent oui ou non d'un clic.",
       'Remplaçants automatiques', "Il manque du monde? On invite ta liste de remplaçants à un rythme raisonnable, avec une liste d'attente.",
       'Ta formule, ton choix', 'Équipes fixes, tirage de la semaine ou sans équipes. Un joueur peut aussi être gardien.',
       'Calendrier et séries', 'Matchs, séries éliminatoires et rappels automatiques, sans rien relancer à la main.',
@@ -96,7 +96,7 @@ describe('item 2: six feature cards', () => {
     const en = await (await home('/?lang=en')).text();
     for (const s of [
       'What we handle for you', 'The boring league work, done automatically.',
-      'Every week, players get a message. One tap to say yes or no. No app to install.',
+      'Every week, players get a message and answer yes or no with one tap.',
       'Short on players? We invite your sub list at a steady pace, with a waitlist.',
       'Your format, your choice', 'Fixed teams, weekly draw or no teams. A player can also play goalie.',
       'Schedule and playoffs', 'Games, playoffs and automatic reminders, with no chasing by hand.',

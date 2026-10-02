@@ -24,7 +24,23 @@ function measure() {
   const box = el => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height, left: r.left, right: r.right }; };
   const ctas = [...document.querySelectorAll('.home-cta .nl-btn, .home-final-cta .nl-btn')].map(box);
   const header = document.querySelector('.nl-hero .nl-header');
+  // The hero H1, word by word: the top of each word's box gives its line.
+  const h1 = document.querySelector('.home-hero h1');
+  const h1Lines = [];
+  const walker = document.createTreeWalker(h1, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const re = /\S+/g;
+    for (let m = re.exec(n.data); m; m = re.exec(n.data)) {
+      const r = document.createRange();
+      r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length);
+      const top = Math.round(r.getBoundingClientRect().top);
+      const line = h1Lines.find(l => Math.abs(l.top - top) < 4);
+      if (line) line.words.push(m[0]); else h1Lines.push({ top, words: [m[0]] });
+    }
+  }
   return {
+    h1Lines: h1Lines.map(l => l.words.join(' ')),
+    h1Right: box(h1).right,
     vw: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth,
     navVisible: vis(document.querySelector('.nl-hero .nl-nav')),
@@ -51,6 +67,9 @@ describe('the homepage at phone, tablet and desktop widths', () => {
           expect(m.lang).toBe(lang === 'en' ? 'en-CA' : 'fr-CA');
           expect(m.scrollWidth).toBeLessThanOrEqual(m.vw);
           expect(m.headerRight).toBeLessThanOrEqual(m.vw + 0.5);
+          // Batch 3, item 1: the longer H1 wraps cleanly, no word alone on its last line.
+          expect(m.h1Right).toBeLessThanOrEqual(m.vw);
+          if (m.h1Lines.length > 1) expect(m.h1Lines[m.h1Lines.length - 1].split(' ').length, JSON.stringify(m.h1Lines)).toBeGreaterThanOrEqual(2);
           expect(m.loginVisible).toBe(true);
           expect(m.toggleVisible).toBe(true);
           expect(m.loginH).toBeGreaterThanOrEqual(40);
