@@ -155,7 +155,9 @@ export const RESERVED_SLUGS = new Set([
   'admin', 'api', 'auth', 'avail', 'dashboard', 'forgot-password', 'health',
   'img', 'league', 'leagues', 'login', 'logout', 'poll', 'reset-password',
   'rsvp', 'signup', 'team-rsvp', 'verify', 'robots.txt', 'favicon.ico',
-  'well-known', 'static', 'assets', 'public'
+  'well-known', 'static', 'assets', 'public',
+  // The homepage in one language (homepage batch 3, item 3).
+  'fr', 'en'
 ]);
 
 /* ---------- time, in the league's timezone ----------

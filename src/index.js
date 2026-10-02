@@ -19,6 +19,7 @@ import { TOKENS_CSS, BUNDLE_CSS, BUNDLE_JS, leagueFillColor, nlDocument, nlEmail
 import { recordHeartbeat, pingHeartbeatUrl, postWebhook, runHealthPass, checkCronOnRequest, openAlertsForLeague, recordClientError, settingsWithPrefix, productName } from './health.js';
 import { installEmailPreviewHost, buildEmailPreview, EMAIL_PREVIEW_ASSETS } from './email_preview.js';
 import { formatEventDate, formatEventDateFull, formatEventTime, formatEventDateTime, formatPageDate, formatPageDateTime, PAGE_DATE_JS, endSentence, eventIso, sentenceDate, sentenceWhen, venueLine, delayText } from './date_format.js';
+import { nlIndexableHost, nlRobotsTxt, nlSitemapXml, robotsTagFor } from './seo.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, makeEventId, eventDateFromId, makeContactId, contactIdLikePattern, extractTrailingNumber, TZ, localParts, eventStart, eventHasStarted } from './league_ids.js';
 import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, extractScopedReviewToken } from './admin_auth.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
@@ -581,13 +582,74 @@ function resolveHomeLang(req) {
   if (q === 'fr' || q === 'en') return q;
   return resolveServerLang(req);
 }
-function renderMarketingHomepage(req) {
-  const lang = resolveHomeLang(req);
+// Homepage SEO (homepage batch 3, item 3): the tab title and description
+// per language, and the head tags built from the request's own origin.
+const HOME_SEO = {
+  fr: {
+    title: 'Notre Ligue : présences, remplaçants et calendrier de ligue',
+    description: 'Notre Ligue gère les présences, trouve des remplaçants et génère le calendrier de ta ligue sportive. Gratuit sous 15 joueurs, 2 mois gratuits, sans carte.',
+    offers: [['Gratuit', '0'], ['Standard', '9.99'], ['Plus', '19.99']]
+  },
+  en: {
+    title: 'Notre Ligue: attendance, subs and schedules for leagues',
+    description: 'Notre Ligue handles attendance, finds subs and builds the schedule for your sports league. Free under 15 players, 2 months free, no card.',
+    offers: [['Free', '0'], ['Standard', '9.99'], ['Plus', '19.99']]
+  }
+};
+function homeHeadHtml(origin, lang, canonicalPath) {
+  const S = HOME_SEO[lang];
+  const abs = p => origin + p;
+  const canonical = abs(canonicalPath);
+  const locale = lang === 'en' ? 'en_CA' : 'fr_CA';
+  const other = lang === 'en' ? 'fr_CA' : 'en_CA';
+  const offer = ([name, price]) => {
+    const o = { '@type': 'Offer', name, price, priceCurrency: 'CAD' };
+    if (price !== '0') o.priceSpecification = { '@type': 'UnitPriceSpecification', price, priceCurrency: 'CAD', referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' } };
+    return o;
+  };
+  const ld = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      { '@type': 'Organization', name: 'Notre Ligue', url: abs('/'), email: 'bonjour@notreligue.ca', founder: { '@type': 'Person', name: 'Roberto Santana' } },
+      { '@type': 'SoftwareApplication', name: 'Notre Ligue', url: canonical, applicationCategory: 'BusinessApplication', inLanguage: lang === 'en' ? 'en-CA' : 'fr-CA', description: S.description, offers: S.offers.map(offer) }
+    ]
+  };
+  return [
+    '',
+    `<link rel="canonical" href="${esc(canonical)}">`,
+    `<link rel="alternate" hreflang="fr-CA" href="${esc(abs('/fr'))}">`,
+    `<link rel="alternate" hreflang="en-CA" href="${esc(abs('/en'))}">`,
+    `<link rel="alternate" hreflang="x-default" href="${esc(abs('/'))}">`,
+    '<meta property="og:type" content="website">',
+    '<meta property="og:site_name" content="Notre Ligue">',
+    `<meta property="og:title" content="${esc(S.title)}">`,
+    `<meta property="og:description" content="${esc(S.description)}">`,
+    `<meta property="og:url" content="${esc(canonical)}">`,
+    `<meta property="og:locale" content="${locale}">`,
+    `<meta property="og:locale:alternate" content="${other}">`,
+    '<meta name="twitter:card" content="summary">',
+    `<meta name="twitter:title" content="${esc(S.title)}">`,
+    `<meta name="twitter:description" content="${esc(S.description)}">`,
+    '<script type="application/ld+json">' + JSON.stringify(ld).replace(/</g, '\\u003c') + '</script>'
+  ].join('\n');
+}
+// forcedLang: /fr and /en always render their own language, whatever the
+// cookie or Accept-Language say.
+function renderMarketingHomepage(req, forcedLang = null) {
+  const reqUrl = new URL(req.url);
+  const q = reqUrl.searchParams.get('lang');
+  const lang = forcedLang || resolveHomeLang(req);
+  const canonicalPath = forcedLang ? '/' + forcedLang : (q === 'fr' || q === 'en') ? '/' + q : '/';
   const T = I18N_HOME[lang];
   const bodyHtml = `
 <style>
   .nl-hero .nl-header { background: transparent; border-bottom-color: #2a2e36; max-width: var(--content-wide); margin: 0 auto; padding: 0 var(--space-6); }
   .nl-hero .nl-nav a { color: #a3a6ad; }
+  /* The FR/EN toggle is two links (/fr and /en), styled like the bundle's
+     toggle buttons. */
+  .nl-lang a { display: inline-flex; align-items: center; justify-content: center; height: 32px; min-width: 40px; padding: 0 var(--space-2); border-radius: var(--radius-sm); font: 700 13px/1 var(--font-sans); letter-spacing: .04em; text-decoration: none; }
+  .nl-hero .nl-lang a { color: var(--ink-inverse); }
+  .nl-hero .nl-lang a[aria-current="true"] { background: var(--ink-inverse); color: var(--surface-hero); }
   .home-in { max-width: var(--content-wide); margin: 0 auto; padding: 0 var(--space-6); }
   .home-hero { display: grid; grid-template-columns: 1.15fr .85fr; gap: var(--space-7); align-items: center; padding: 72px var(--space-6) var(--space-9); max-width: var(--content-wide); margin: 0 auto; }
   .home-hero h1 { font: 800 52px/56px var(--font-display); font-stretch: 118%; letter-spacing: -.02em; color: var(--ink-inverse); }
@@ -606,7 +668,7 @@ function renderMarketingHomepage(req) {
   .home-mock .a { left: 0; top: 0; } .home-mock .b { right: 0; bottom: 0; width: 280px; }
   .home-mock .blk1 { position: absolute; right: 24px; top: 24px; width: 120px; height: 120px; background: var(--yellow); border-radius: 3px; }
   .home-mock .blk2 { position: absolute; left: 48px; bottom: 24px; width: 96px; height: 96px; background: var(--league); border-radius: 3px; }
-  .home-mock h3 { font: 800 21px/25px var(--font-display); font-stretch: 118%; color: var(--ink); }
+  .home-mock .q { font: 800 21px/25px var(--font-display); font-stretch: 118%; color: var(--ink); }
   .home-mock .ov { font: 700 11px/16px var(--font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 8px; }
   .home-mock .btn { display: flex; align-items: center; justify-content: center; height: 44px; border-radius: 4px; font: 600 15px/1 var(--font-sans); margin-top: 10px; }
   .home-mock .p { background: var(--league); color: var(--on-league); }
@@ -690,17 +752,20 @@ function renderMarketingHomepage(req) {
   <header class="nl-header">
     <span class="nl-brand nl-brand--product"><i></i>Notre Ligue</span>
     <nav class="nl-nav" style="margin-left:var(--space-6)">
-      <a href="#fonctionnalites" data-i18n="navFeatures">${T.navFeatures}</a>
-      <a href="#comment-ca-marche" data-i18n="navHow">${T.navHow}</a>
+      <a href="#features" data-i18n="navFeatures">${T.navFeatures}</a>
+      <a href="#how-it-works" data-i18n="navHow">${T.navHow}</a>
       <a href="#pricing" data-i18n="navPricing">${T.navPricing}</a>
     </nav>
     <div class="spacer"></div>
     <a class="nl-btn nl-btn--ghost nl-btn--sm" href="/login" style="color:#f4f4f2" data-i18n="login">${T.login}</a>
     <div class="nl-lang" role="group" aria-label="Langue / Language">
-      <button type="button" id="btn-lang-fr" aria-pressed="${lang === 'fr'}" onclick="window.__setLang('fr')">FR</button>
-      <button type="button" id="btn-lang-en" aria-pressed="${lang === 'en'}" onclick="window.__setLang('en')">EN</button>
+      <a id="btn-lang-fr" href="/fr" hreflang="fr-CA" lang="fr-CA"${lang === 'fr' ? ' aria-current="true"' : ''} onclick="window.__setLang('fr')">FR</a>
+      <a id="btn-lang-en" href="/en" hreflang="en-CA" lang="en-CA"${lang === 'en' ? ' aria-current="true"' : ''} onclick="window.__setLang('en')">EN</a>
     </div>
   </header>
+</div>
+<main>
+<div class="nl-hero">
   <div class="home-hero">
     <div>
       <h1 data-i18n="heroTitle">${T.heroTitle}</h1>
@@ -711,7 +776,7 @@ function renderMarketingHomepage(req) {
     </div>
     <div class="home-mock" aria-hidden="true">
       <div class="blk1"></div><div class="blk2"></div>
-      <div class="card a"><div class="ov lg" data-i18n="mockLeagueName">${T.mockLeagueName}</div><div class="ov" data-i18n="mockDayTime">${T.mockDayTime}</div><h3 data-i18n="mockQuestion">${T.mockQuestion}</h3><div class="btn p" data-i18n="mockBtnIn">${T.mockBtnIn}</div><div class="btn s" data-i18n="mockBtnOut">${T.mockBtnOut}</div></div>
+      <div class="card a"><div class="ov lg" data-i18n="mockLeagueName">${T.mockLeagueName}</div><div class="ov" data-i18n="mockDayTime">${T.mockDayTime}</div><div class="q" data-i18n="mockQuestion">${T.mockQuestion}</div><div class="btn p" data-i18n="mockBtnIn">${T.mockBtnIn}</div><div class="btn s" data-i18n="mockBtnOut">${T.mockBtnOut}</div></div>
       <div class="card b"><div class="ov" data-i18n="mockDayTime">${T.mockDayTime}</div>
         <div class="row"><b>Les Castors</b><span class="ok">✓ 10/10</span></div>
         <div class="row"><b>Les Aurores</b><span class="short" data-i18n="mockShort">${T.mockShort}</span></div>
@@ -721,7 +786,7 @@ function renderMarketingHomepage(req) {
   </div>
 </div>
 
-<section class="home-band" id="fonctionnalites"><div class="home-in">
+<section class="home-band" id="features"><div class="home-in" id="fonctionnalites">
   <div class="home-eyebrow" data-i18n="eyebrow1">${T.eyebrow1}</div>
   <h2 class="home-sec-h" data-i18n="heading1">${T.heading1}</h2>
   <div class="home-feats">
@@ -748,7 +813,7 @@ function renderMarketingHomepage(req) {
   <p class="home-fine" data-i18n="priceNote">${T.priceNote}</p>
 </div></section>
 
-<section class="home-band home-how" id="comment-ca-marche"><div class="home-in">
+<section class="home-band home-how" id="how-it-works"><div class="home-in" id="comment-ca-marche">
   <div class="home-eyebrow" data-i18n="eyebrow2">${T.eyebrow2}</div>
   <h2 class="home-sec-h" data-i18n="heading2">${T.heading2}</h2>
   <div class="home-steps">
@@ -770,6 +835,7 @@ function renderMarketingHomepage(req) {
     <div class="home-proof" data-i18n="finalOffer">${T.finalOffer}</div>
   </div>
 </div></section>
+</main>
 <footer class="home-footer"><div class="home-in">
   <span data-i18n="footerBrand">${T.footerBrand}</span>
   <span data-i18n="footerLinks">${T.footerLinks}</span>
@@ -780,10 +846,9 @@ window.__nlServerLang = '${lang}';
 ${nlAuthScript(I18N_HOME)}
 </script>`;
   return nlDocument({
-    title: 'Notre Ligue',
-    description: lang === 'en'
-      ? "Notre Ligue messages your players, counts who's in and finds subs when you're short. You just play."
-      : "Ta ligue, sans la paperasse. Notre Ligue invite tes joueurs, compte qui sera là et trouve des remplaçants.",
+    titles: { fr: HOME_SEO.fr.title, en: HOME_SEO.en.title },
+    description: HOME_SEO[lang].description,
+    headHtml: homeHeadHtml(reqUrl.origin, lang, canonicalPath),
     bodyHtml,
     lang
   });
@@ -32307,9 +32372,13 @@ export default {
       resp = (await billingWriteRefusal(req, env)) || await handleFetch(req, env, ctx);
       resp = await billingBanner(req, env, resp);
     }
-    if (env.DEMO_ENV !== 'true') return resp;
+    // Search engines (src/seo.js): the demo deployment keeps everything out
+    // except Notre Ligue's public pages on its own hostnames; Notre Ligue's
+    // private routes are noindex everywhere. SMBHL unchanged.
+    const robotsTag = robotsTagFor(env, new URL(req.url));
+    if (!robotsTag) return resp;
     const headers = new Headers(resp.headers);
-    headers.set('X-Robots-Tag', 'noindex, nofollow');
+    headers.set('X-Robots-Tag', robotsTag);
     return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
   }
 };
@@ -32409,9 +32478,17 @@ async function handleFetch(req, env, ctx) {
         if (body) await recordClientError(env, body);
         return new Response(null, { status: 204 });
       }
-      if (env.DEMO_ENV === 'true' && url.pathname === '/robots.txt' && req.method === 'GET') {
-        return new Response('User-agent: *\nDisallow: /\n', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+      // robots.txt and sitemap.xml (homepage batch 3, item 3): Notre Ligue's
+      // own (src/seo.js) on the product's hostnames; the demo's other
+      // hostnames (workers.dev) still disallow everything. SMBHL unchanged.
+      if (url.pathname === '/robots.txt' && req.method === 'GET') {
+        if (env.DEMO_ENV === 'true' && !nlIndexableHost(env, url))
+          return new Response('User-agent: *\nDisallow: /\n', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+        if (env.LEAGUE_PRODUCT === 'true')
+          return new Response(nlRobotsTxt(url.origin), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
       }
+      if (url.pathname === '/sitemap.xml' && req.method === 'GET' && env.LEAGUE_PRODUCT === 'true' && (env.DEMO_ENV !== 'true' || nlIndexableHost(env, url)))
+        return new Response(nlSitemapXml(url.origin), { headers: { 'content-type': 'application/xml; charset=utf-8' } });
       if (url.pathname.startsWith('/admin') && url.hostname.endsWith('workers.dev')) {
         const canonicalBase = env.PUBLIC_URL || 'https://rsvp.smbhl.com';
         return Response.redirect(`${canonicalBase}${url.pathname}${url.search}`, 302);
@@ -33473,6 +33550,13 @@ async function handleFetch(req, env, ctx) {
           return Response.redirect('https://smbhl.com', 302);
         }
         return new Response(renderMarketingHomepage(req), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', vary: 'Accept-Language, Cookie' } });
+      }
+      // /fr and /en: the homepage in that language, whatever the cookie or
+      // Accept-Language say, and the language cookie set to it. Not on
+      // SMBHL's hostnames, like / above.
+      if ((url.pathname === '/fr' || url.pathname === '/en') && !url.hostname.includes('smbhl.com')) {
+        const lang = url.pathname.slice(1);
+        return new Response(renderMarketingHomepage(req, lang), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'set-cookie': `nl_lang=${lang}; Path=/; Max-Age=31536000; SameSite=Lax` } });
       }
       // Part 2: last-resort GET route for a league's short public URL
       // (notreligue.ca/dmbhl), checked ONLY after every fixed route

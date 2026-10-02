@@ -46,8 +46,8 @@ describe('item 1: the copy', () => {
   it('French', async () => {
     const html = await (await home('/', { 'accept-language': 'fr-CA' })).text();
     for (const s of [
-      '<a href="#fonctionnalites" data-i18n="navFeatures">Fonctionnalités</a>',
-      '<a href="#comment-ca-marche" data-i18n="navHow">Comment ça marche</a>',
+      '<a href="#features" data-i18n="navFeatures">Fonctionnalités</a>',
+      '<a href="#how-it-works" data-i18n="navHow">Comment ça marche</a>',
       '<a href="#pricing" data-i18n="navPricing">Tarifs</a>',
       'Chaque semaine, Notre Ligue demande qui joue, compte les réponses et trouve des remplaçants quand il manque du monde. Toi, tu joues.',
       'href="/signup" data-i18n="cta">Créer ma ligue</a>',
@@ -89,7 +89,7 @@ describe('item 2: six feature cards', () => {
       'Une page pour ta ligue', 'Calendrier, équipes, résultats et statistiques sur une page publique à partager dans le groupe.'
     ]) expect(fr).toContain(s);
     expect(fr.match(/class="home-feat"/g)).toHaveLength(6);
-    const feats = fr.slice(fr.indexOf('id="fonctionnalites"'), fr.indexOf('id="comment-ca-marche"'));
+    const feats = fr.slice(fr.indexOf('id="features"'), fr.indexOf('id="how-it-works"'));
     expect(feats).not.toContain('M10 3l8 14H2z');
     expect(fr).not.toMatch(/home-i[1-4]/);
     expect(fr).toContain('grid-template-columns: repeat(3, 1fr)');
@@ -110,9 +110,9 @@ describe('item 3: the pricing section', () => {
   it('after the cards and before how it works, four tiers, no payment button', async () => {
     const fr = await (await home('/', { 'accept-language': 'fr-CA' })).text();
     const at = id => fr.indexOf(`id="${id}"`);
-    expect(at('pricing')).toBeGreaterThan(at('fonctionnalites'));
-    expect(at('pricing')).toBeLessThan(at('comment-ca-marche'));
-    const sec = fr.slice(at('pricing'), at('comment-ca-marche'));
+    expect(at('pricing')).toBeGreaterThan(at('features'));
+    expect(at('pricing')).toBeLessThan(at('how-it-works'));
+    const sec = fr.slice(at('pricing'), at('how-it-works'));
     for (const s of [
       '>Tarifs<', 'Un prix fixe par mois.', 'Pas de crédits à acheter, et rien ne bloque ton calendrier.',
       'Gratuit', 'Moins de 15 joueurs', '0 $',
@@ -158,7 +158,7 @@ describe('item 4: trust block, closing call to action, footer', () => {
   it('French and English, in page order, every href kept', async () => {
     const fr = await (await home('/', { 'accept-language': 'fr-CA' })).text();
     const trust = fr.indexOf("Notre Ligue est née de ma propre ligue de hockey cosom, à Laval. C'est moi qui réponds à tes courriels. Fait au Québec, en français d'abord.");
-    expect(trust).toBeGreaterThan(fr.indexOf('id="comment-ca-marche"'));
+    expect(trust).toBeGreaterThan(fr.indexOf('id="how-it-works"'));
     expect(trust).toBeLessThan(fr.indexOf('class="home-final"'));
     expect(fr).toContain('Roberto Santana · <a href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a>');
     const final = fr.slice(fr.indexOf('class="home-final"'));

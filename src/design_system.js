@@ -587,14 +587,16 @@ export const NL_FONT_FACE_CSS = [
 // every page shell (nlDocument, page() in src/index.js, src/review.js).
 export const HIDDEN_ATTR_CSS = '[hidden]{display:none !important}';
 
-export function nlDocument({ title, titles = null, description = '', bodyHtml, lang = 'fr', leagueColor = null }) {
+// headHtml: optional extra head markup (the homepage's canonical, hreflang,
+// Open Graph and JSON-LD), already escaped by the caller.
+export function nlDocument({ title, titles = null, description = '', bodyHtml, lang = 'fr', leagueColor = null, headHtml = '' }) {
   const shown = titles ? (lang === 'en' ? titles.en : titles.fr) : title;
   const titlesMeta = titles ? `<meta name="nl-titles" data-title-fr="${nlEmailEsc(titles.fr)}" data-title-en="${nlEmailEsc(titles.en)}">` : '';
   return `<!DOCTYPE html><html lang="${lang === 'en' ? 'en-CA' : 'fr-CA'}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 ${CLIENT_ERROR_REPORTER}
 <title>${nlEmailEsc(shown)}</title>${titlesMeta}
-${description ? `<meta name="description" content="${nlEmailEsc(description)}">` : ''}
+${description ? `<meta name="description" content="${nlEmailEsc(description)}">` : ''}${headHtml}
 <link rel="icon" href="${NL_FAVICON_DATA_URI}" type="image/svg+xml">
 <style>${NL_FONT_FACE_CSS}${TOKENS_CSS}${BUNDLE_CSS}${HIDDEN_ATTR_CSS}${leagueColor ? `:root{--league:${nlEmailEsc(leagueColor)};--on-league:#ffffff}` : ''}</style>
 </head><body class="nl">
