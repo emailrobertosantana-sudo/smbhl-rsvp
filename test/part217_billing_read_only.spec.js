@@ -15,7 +15,7 @@ import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import INDEX_SRC from '../src/index.js?raw';
 import { applyRealSchema } from './support/real_schema.js';
-import { classifyLeague, freeSlotsByOwner, loadLeagueState, leagueAutoMailStopped, setFreeException } from '../src/billing.js';
+import { classifyLeague, freeSlotsByOwner, loadLeagueState, leagueAutoMailStopped, setFreeException, billingSummary, billingSummaries } from '../src/billing.js';
 import { WRITE_MODES, writeAllowed } from '../src/write_guard.js';
 import { BILLING_BANNER_TEXT } from '../src/index.js';
 import { runLeagueReminders } from '../src/reminders.js';
@@ -132,6 +132,60 @@ describe('the state (classifyLeague)', () => {
     expect(st({ ...NO_SUB, ...PAST_TRIAL, status: 'free', regular_count: 16 })).toMatchObject({ status: 'grace', readOnly: false, mailStopped: false });
     expect(st({ ...NO_SUB, ...PAST_TRIAL, status: 'free', regular_count: 16, grace_ends_at: iso(5 * DAY) })).toMatchObject({ status: 'grace', readOnly: false, mailStopped: false });
     expect(st({ ...NO_SUB, ...PAST_TRIAL, status: 'free', regular_count: 16, grace_ends_at: iso(-1 * DAY) })).toMatchObject({ status: 'grace', readOnly: false, mailStopped: true });
+  });
+
+  // Item C (2026-10-02): the TEST league's test subscription was cancelled
+  // inside its trial; the super-admin said "Inactive" while the billing
+  // page showed the trial. Cancelling keeps the trial; read-only starts at
+  // the later of the trial end and the end of any paid period.
+  it('a subscription cancelled during the trial keeps the trial; read-only only from the later of the trial end and the paid period end', () => {
+    const CANCELLED = { ...LIVE, status: 'inactive', stripe_status: 'canceled', cancel_at_period_end: 0 };
+    // Cancelled at once, inside the trial: still the trial, nothing locked.
+    expect(st({ ...CANCELLED, ...IN_TRIAL })).toMatchObject({ status: 'trial', readOnly: false, mailStopped: false, inactive: false, trialEnd: IN_TRIAL.trial_ends_at });
+    // Even after a payment (a paid period that ended inside the trial).
+    expect(st({ ...CANCELLED, ...IN_TRIAL, last_paid_at: iso(-3 * DAY) })).toMatchObject({ status: 'trial', readOnly: false });
+    // Once the trial is over: an unpaid trial.
+    expect(st({ ...CANCELLED, ...PAST_TRIAL })).toMatchObject({ status: 'unpaid', readOnly: true, reason: 'trial_ended' });
+    // Cancelled from the portal inside the trial: Stripe keeps it until the
+    // period end (the trial end), so it stays live until then.
+    const AT_END = { ...LIVE, status: 'active', stripe_status: 'trialing', cancel_at_period_end: 1, current_period_end: IN_TRIAL.trial_ends_at };
+    expect(st({ ...AT_END, ...IN_TRIAL })).toMatchObject({ status: 'active', readOnly: false });
+    // A paid period running past the trial end: live (not read-only) until
+    // the period ends, then cancelled and read-only.
+    const PAID = { ...LIVE, status: 'active', stripe_status: 'active', cancel_at_period_end: 1, current_period_end: iso(10 * DAY), last_paid_at: iso(-20 * DAY) };
+    expect(st({ ...PAID, ...PAST_TRIAL })).toMatchObject({ status: 'active', readOnly: false });
+    expect(st({ ...PAID, ...PAST_TRIAL, status: 'inactive', stripe_status: 'canceled', current_period_end: iso(-1 * DAY) })).toMatchObject({ status: 'unpaid', readOnly: true, reason: 'cancelled' });
+  });
+
+  it('the super-admin summary is the same state, never the raw Stripe status', () => {
+    const env1 = { BILLING_LAUNCH_AT: LAUNCH };
+    const sum = (row, opts = {}) => billingSummary(env1, league, { regular_count: 20, ...row }, opts);
+    const CANCELLED = { ...LIVE, status: 'inactive', stripe_status: 'canceled' };
+    expect(sum({ ...CANCELLED, ...IN_TRIAL })).toMatchObject({ status: 'trial', readOnly: false, trialEndsAt: IN_TRIAL.trial_ends_at });
+    expect(sum({ ...CANCELLED, ...PAST_TRIAL })).toMatchObject({ status: 'unpaid', readOnly: true });
+    expect(sum({ ...CANCELLED, ...PAST_TRIAL, last_paid_at: iso(-40 * DAY) })).toMatchObject({ status: 'inactive', readOnly: true });
+    expect(sum({ ...LIVE, ...IN_TRIAL, status: 'active', stripe_status: 'trialing' })).toMatchObject({ status: 'active', readOnly: false });
+    expect(sum({ ...LIVE, ...PAST_TRIAL, status: 'past_due', stripe_status: 'past_due' })).toMatchObject({ status: 'past_due', readOnly: true });
+    expect(sum({ ...NO_SUB, ...PAST_TRIAL, status: 'free', regular_count: 16 })).toMatchObject({ status: 'grace', readOnly: false });
+    expect(sum({ ...NO_SUB, ...PAST_TRIAL, regular_count: 10 }, { freeSlot: 'lg-x' })).toMatchObject({ status: 'free', readOnly: false });
+    expect(sum({ ...NO_SUB, ...PAST_TRIAL, regular_count: 10 }, { freeSlot: 'other' })).toMatchObject({ status: 'unpaid', readOnly: true });
+  });
+});
+
+describe('the super-admin, the billing page and the gate agree (item C)', () => {
+  it('a league whose subscription was cancelled during its trial: trial everywhere, no read-only', async () => {
+    const lg = await createLeague(await account('cancel'), 'Ligue Annulée Pendant Essai');
+    await setRow(lg, { ...LIVE, stripe_subscription_id: 'sub_p217c', status: 'inactive', stripe_status: 'canceled', ...IN_TRIAL, regular_count: 20, count_tier: 'standard' });
+    const leagues = (await env.DB.prepare('SELECT id, created_at, created_by, deactivated_at FROM leagues').all()).results;
+    const summary = (await billingSummaries(env, leagues)).get(lg);
+    const state = await loadLeagueState(env, lg);
+    expect(state).toMatchObject({ status: 'trial', readOnly: false });
+    expect(summary).toMatchObject({ status: state.status, readOnly: state.readOnly, trialEndsAt: state.trialEnd });
+    // The read-only league of this file: the same answer on both sides too.
+    const ro = (await billingSummaries(env, leagues)).get(leagueRO);
+    expect(ro).toMatchObject({ status: 'unpaid', readOnly: true });
+    expect((await loadLeagueState(env, leagueRO)).readOnly).toBe(true);
+    await env.DB.prepare('DELETE FROM league_billing WHERE league_id = ?').bind(lg).run();
   });
 });
 

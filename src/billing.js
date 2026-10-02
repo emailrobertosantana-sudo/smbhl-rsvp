@@ -335,14 +335,20 @@ export async function leagueAutoMailStopped(env, leagueId, now = new Date()) {
   }
 }
 
-// What the super-admin page shows for one league. Pure. status:
+// What the super-admin page (and the health and the daily digest, through
+// src/league_health.js) shows for one league. Pure. The status is the
+// league's real state, classifyLeague's, the one the billing page and the
+// read-only gate use, never Stripe's raw subscription status: a
+// subscription cancelled inside its trial leaves the league in its trial.
 //   exempt   SMBHL, or a league marked never billed
 //   off      billing is off (BILLING_LAUNCH_AT unset)
-//   trial    inside its trial
+//   trial    inside its trial, with no live subscription
 //   free     free tier, and the owner's free slot (or the free exception)
-//   active, past_due, paused, inactive   from its Stripe subscription
-//   unpaid   past its trial with no subscription and not free (batch 3
-//            gates it; batch 1 only shows it)
+//   active, past_due, paused   a live Stripe subscription
+//   grace    a free league that reached 15 regular players
+//   inactive cancelled after a paid period, read-only
+//   unpaid   past its trial with no subscription and not free, read-only
+// freeSlot: the league holding its owner's free slot (freeSlotsByOwner).
 export function billingSummary(env, league, row, { freeSlot = null, now = new Date() } = {}) {
   const count = row && row.regular_count != null ? Number(row.regular_count) : null;
   const countTier = count == null ? null : tierForCount(count);
@@ -354,14 +360,10 @@ export function billingSummary(env, league, row, { freeSlot = null, now = new Da
     trialEndsAt: null
   };
   if (!league || league.id === SMBHL_ID) return { ...base, status: 'exempt' };
-  if (row && row.billing_exempt) return { ...base, status: 'exempt' };
-  if (!billingEnabled(env)) return { ...base, status: 'off' };
-  const trial = trialWindow(env, league, row);
-  const withTrial = { ...base, trialEndsAt: trial ? trial.end : null };
-  if (row && row.stripe_subscription_id && ['active', 'past_due', 'paused', 'inactive'].includes(row.status)) return { ...withTrial, status: row.status };
-  if (trial && now.getTime() < Date.parse(trial.end)) return { ...withTrial, status: 'trial' };
-  if (countTier === 'free' && (base.freeException || freeSlot === league.id)) return { ...withTrial, status: 'free' };
-  return { ...withTrial, status: 'unpaid' };
+  const freeEligible = !!(league && (base.freeException || freeSlot === league.id));
+  const st = classifyLeague(env, league, row, { freeEligible, now });
+  const status = st.status === 'unpaid' && st.reason === 'cancelled' ? 'inactive' : st.status;
+  return { ...base, trialEndsAt: st.trialEnd, status, readOnly: st.readOnly };
 }
 
 // Every league's billing row and summary, for the super-admin list. A

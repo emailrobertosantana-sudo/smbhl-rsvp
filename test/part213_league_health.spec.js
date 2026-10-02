@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { evaluateHealth, HEALTH_RULES, collectLeagueMetrics, computeLeagueHealth, runDailyLeagueHealth, storedHealth, recordAdminSeen, filterLeagueRows, healthKey, HEALTH_DAY_KEY } from '../src/league_health.js';
 import { localParts } from '../src/league_ids.js';
+import { montrealDate, montrealMidnight, addDays } from '../src/montreal_time.js';
 
 const ADMIN_KEY = 'test-p213-admin';
 const DAY = 86400000;
@@ -231,5 +232,35 @@ describe('the list: filter and search', () => {
       expect(d.rows).toBeUndefined();
       expect(d.leagues.length).toBeGreaterThan(5);
     } finally { env.LEAGUE_PRODUCT = 'true'; }
+  });
+});
+
+// Item C (2026-10-02): a subscription cancelled during the trial. The list,
+// the health rules and the daily digest's trials see the league's real
+// state (the trial), never the raw Stripe status ("Inactive").
+describe('the real billing state: a subscription cancelled during the trial', () => {
+  const today = montrealDate(new Date(NOW));
+  // The trial's last day is today + n - 1: n days left, today included.
+  const trialLeft = n => ({ trial_started_at: ago(1), trial_ends_at: montrealMidnight(addDays(today, n)).toISOString() });
+  const cancelled = async (id, n) => {
+    await league(id, { billing: { sub: `sub_${id}`, status: 'inactive' } });
+    const t = trialLeft(n);
+    await env.DB.prepare(`UPDATE league_billing SET stripe_status = 'canceled', trial_started_at = ?, trial_ends_at = ? WHERE league_id = ?`)
+      .bind(t.trial_started_at, t.trial_ends_at, id).run();
+  };
+
+  it('shows the trial and its days left, not "Inactive"; the trial rules use it', async () => {
+    await cancelled('lg-cancel61', 61);
+    await cancelled('lg-cancel3', 3);
+    const m = await byId();
+    expect(m.get('lg-cancel61')).toMatchObject({ billingStatus: 'trial', trialDaysLeft: 61, subscribed: false, paymentFailed: false, trialEndingNoSub: false, light: 'green' });
+    expect(m.get('lg-cancel3')).toMatchObject({ billingStatus: 'trial', trialDaysLeft: 3, subscribed: false, trialEndingNoSub: true, light: 'yellow' });
+    expect(broken(m.get('lg-cancel3'))).toEqual(['trial_not_ending']);
+    const rows = new Map((await data()).rows.map(r => [r.id, r]));
+    expect(rows.get('lg-cancel61')).toMatchObject({ billingStatus: 'trial', trialDaysLeft: 61 });
+    // The daily digest's trials (src/ops_digest.js reads trialsEntering).
+    const r = await runDailyLeagueHealth(env, new Date(NOW), { force: true });
+    expect(r.trialsEntering.map(t => t.id)).toContain('lg-cancel3');
+    expect(r.trialsEntering.map(t => t.id)).not.toContain('lg-cancel61');
   });
 });

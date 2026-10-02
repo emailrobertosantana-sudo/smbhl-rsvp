@@ -27,7 +27,7 @@ const COMMON = {
     none: 'Aucun', never: 'Jamais', noInvites: 'Aucune invitation',
     tier_free: 'Gratuit', tier_standard: 'Standard', tier_plus: 'Plus', tier_custom: 'Sur mesure',
     st_exempt: 'Exemptée', st_off: 'Facturation désactivée', st_trial: 'Essai', st_free: 'Gratuite', st_active: 'Abonnée',
-    st_past_due: 'Paiement en retard', st_paused: 'En pause', st_inactive: 'Inactive', st_unpaid: 'Sans abonnement',
+    st_past_due: 'Paiement en retard', st_paused: 'En pause', st_inactive: 'Inactive', st_unpaid: 'Sans abonnement', st_grace: 'Délai de grâce',
     trialDays1: 'Essai : 1 jour restant', trialDaysN: 'Essai : {n} jours restants'
   },
   en: {
@@ -38,7 +38,7 @@ const COMMON = {
     none: 'None', never: 'Never', noInvites: 'No invitations',
     tier_free: 'Free', tier_standard: 'Standard', tier_plus: 'Plus', tier_custom: 'Custom',
     st_exempt: 'Exempt', st_off: 'Billing off', st_trial: 'Trial', st_free: 'Free', st_active: 'Subscribed',
-    st_past_due: 'Payment past due', st_paused: 'Paused', st_inactive: 'Inactive', st_unpaid: 'No subscription',
+    st_past_due: 'Payment past due', st_paused: 'Paused', st_inactive: 'Inactive', st_unpaid: 'No subscription', st_grace: 'Grace period',
     trialDays1: 'Trial: 1 day left', trialDaysN: 'Trial: {n} days left'
   }
 };

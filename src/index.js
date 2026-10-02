@@ -32945,7 +32945,7 @@ async function handleFetch(req, env, ctx) {
         if (auth !== 'ok') return adminAuthResponse(auth);
         const leagues = await listLeaguesWithMetadata(env);
         // Billing (src/billing.js): count, tiers, status, trial end, free exception.
-        const owners = (await env.DB.prepare('SELECT id, created_by, created_at FROM leagues').all()).results || [];
+        const owners = (await env.DB.prepare('SELECT id, created_by, created_at, deactivated_at FROM leagues').all()).results || [];
         const billing = await billingSummaries(env, owners);
         // Notre Ligue: rows, the list page's (src/league_health.js): one per
         // league with its light, filtered by ?status= and searched by ?q=.
