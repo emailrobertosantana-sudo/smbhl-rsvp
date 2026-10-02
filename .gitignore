@@ -171,3 +171,6 @@ contacts-demo.sql
 
 # The copy audit: local working notes, not part of the repo
 copy-audit/
+
+# The onboarding walkthrough screenshots: local review, not part of the repo
+onboarding-review/
