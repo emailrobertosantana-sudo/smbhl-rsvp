@@ -36,6 +36,19 @@ SMBHL is never counted or billed.
 - When one owner has two small leagues, the oldest keeps the free slot.
 - Payment and card notices go to the owner only. Read-only and deletion warnings go to every admin.
 - The "Test interne" promotion code is deactivated at launch, and its test subscriptions are cancelled.
+- No beta leagues: billing launches on demo for every Notre Ligue league at once (batch 2). SMBHL and production never get a launch date.
+- A full refund ends the subscription at once (Roberto makes refunds in the Dashboard).
+
+## Batch 2: the billing page (src/billing_actions.js)
+
+- `/league/billing`, linked from the settings page once billing is on. Every admin sees it; only the owner (`leagues.created_by`) acts. Never SMBHL.
+- Checkout: Stripe's hosted page (a redirect, the default `ui_mode`; no Stripe script on our pages). Subscription mode, the price for the tier the count implies and the chosen interval, `client_reference_id` and metadata with the league id, the owner's email, promotion codes allowed, `payment_method_collection` `if_required`, locale `fr-CA` or `en`, success and cancel URLs back to the page.
+- Inside the trial: `subscription_data[trial_end]` is the league's trial end (when at least 48 hours away), so the first charge is then. No card is asked at checkout when nothing is due; `trial_settings[end_behavior][missing_payment_method]` is `pause`, so a subscription with no card and an amount due is paused when the trial ends. A card is required then unless the total is 0.
+- A live subscription (active, trialing, past due or paused) shows "Manage my subscription" (the Customer Portal, the account's default configuration) instead of a second Checkout. Back from Checkout, the session is read and the subscription written at once.
+- Cancellation from the portal takes effect at the period end; the page shows the end date.
+- Refunds: `charge.refunded` with the full amount refunded cancels the league's subscription at once (DELETE); a partial refund changes nothing.
+- Pause (monthly only): `pause_collection[behavior]=void`. Stripe keeps the subscription and voids each invoice while paused, so nothing is charged, for as long as it lasts. Resume clears it with `billing_cycle_anchor=now` and `proration_behavior=none`: a new cycle starts that day.
+- Tier change at renewal: the Notre Ligue cron checks every pass. A subscription whose stored count belongs in the other paid tier gets the other price (same interval) within the last 36 hours before its renewal, with `proration_behavior=none`, so the renewal invoice is the first at the new price. Free and custom counts are left to batch 3.
 
 ## Batch 2: secrets, variables, key
 
