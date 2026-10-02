@@ -491,9 +491,9 @@ const notice = (fr, en, logoTooltip = '') => page(fr, `<h1>${esc(fr)}<span class
  * it: the hero's second "Voir un exemple" button is dropped
  * (no canonical demo league exists to link it to) -- the design
  * system's own "one primary action, everything else secondary" rule
- * is still satisfied with just the one primary CTA. Footer's
- * "Confidentialité · Conditions" are rendered as plain text (no real
- * pages behind them yet); "Contact" is the real mailto: address.
+ * is still satisfied with just the one primary CTA. The footer links
+ * to the privacy policy (/confidentialite), the terms (/conditions) and
+ * the contact address.
  */
 const I18N_HOME = {
   fr: {
@@ -520,7 +520,9 @@ const I18N_HOME = {
     s1Title: 'Créer ta ligue', s1Body: "Le nom, ta formule de jeu, l'adresse de ta page. Cinq minutes.",
     s2Title: 'Ajouter tes joueurs', s2Body: 'Un nom et un courriel. Importe une liste si tu en as une.',
     s3Title: 'On s\'occupe du reste', s3Body: 'Invitations, rappels, remplaçants. Tu reçois une alerte seulement si quelque chose coince.',
-    finalTitle: 'Ta prochaine saison commence ici.',
+    trust: "Notre Ligue est née de ma propre ligue de hockey cosom, à Laval. C'est moi qui réponds à tes courriels. Fait au Québec, en français d'abord.",
+    finalTitle: 'Ta prochaine saison commence ici.', finalOffer: '2 mois gratuits, sans carte.',
+    footerOperator: 'Exploité par Roberto Santana, faisant affaire sous le nom Notre Ligue.',
     footerBrand: 'Notre Ligue · Fait au Québec', footerLinks: '<a href="/confidentialite">Confidentialité</a> · <a href="/conditions">Conditions</a> · <a href="mailto:bonjour@notreligue.ca">Contact</a>',
     mockLeagueName: 'Ligue du dimanche matin', mockDayTime: 'Dimanche · 9 h',
     mockQuestion: 'Marc, tu joues dimanche?', mockBtnIn: '✓ Je joue', mockBtnOut: 'Je ne peux pas',
@@ -550,7 +552,9 @@ const I18N_HOME = {
     s1Title: 'Create your league', s1Body: 'Name, how it runs, your page address. Five minutes.',
     s2Title: 'Add your players', s2Body: 'A name and an email. Import a list if you have one.',
     s3Title: 'We handle the rest', s3Body: "Invites, reminders, subs. You get an alert only if something's stuck.",
-    finalTitle: 'Your next season starts here.',
+    trust: "Notre Ligue grew out of my own ball hockey league in Laval. I'm the one who answers your emails. Made in Quebec, French first.",
+    finalTitle: 'Your next season starts here.', finalOffer: '2 months free, no card.',
+    footerOperator: 'Operated by Roberto Santana, doing business as Notre Ligue.',
     footerBrand: 'Notre Ligue · Made in Quebec', footerLinks: '<a href="/confidentialite#en">Privacy</a> · <a href="/conditions#en">Terms</a> · <a href="mailto:bonjour@notreligue.ca">Contact</a>',
     mockLeagueName: 'Sunday morning league', mockDayTime: 'Sunday · 9 am',
     mockQuestion: 'Marc, are you playing Sunday?', mockBtnIn: "✓ I'm in", mockBtnOut: "Can't make it",
@@ -625,11 +629,39 @@ function renderMarketingHomepage(req) {
   .home-final .home-in { display: flex; justify-content: space-between; align-items: center; gap: var(--space-6); flex-wrap: wrap; }
   .home-final h2 { font: 800 38px/44px var(--font-display); font-stretch: 118%; color: #f4f4f2; max-width: 620px; }
   .home-final .nl-btn--primary { background: var(--yellow); color: var(--on-yellow) !important; }
+  .home-trust-text { font: 600 22px/32px var(--font-sans); max-width: 760px; text-wrap: pretty; }
+  .home-sign { margin-top: var(--space-4); color: var(--ink-muted); }
+  .home-sign a { color: var(--ink); }
+  .home-final-cta { display: flex; flex-direction: column; gap: var(--space-3); }
+  .home-final .home-proof { margin-top: 0; }
   .home-footer { padding: var(--space-5) 0; font-size: 13px; color: var(--ink-muted); border-top: 1px solid var(--line); }
+  .home-operator { flex-basis: 100%; }
+  .home-hero h1, .home-sec-h, .home-final h2, .home-step h3, .home-feat h3 { text-wrap: balance; }
+  .home-hero p, .home-proof, .home-feat p, .home-step p, .home-sub, .home-fine, .home-beta-note { text-wrap: pretty; }
+  .home-tier .go a { display: inline-block; min-height: 44px; line-height: 44px; }
   .home-footer .home-in { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
   @media (max-width: 900px) { .home-hero { grid-template-columns: 1fr; } .home-mock { display: none; } .home-feats, .home-tiers { grid-template-columns: 1fr 1fr; } .home-steps { grid-template-columns: 1fr; } }
   @media (max-width: 639px) { .home-feats, .home-tiers { grid-template-columns: 1fr; } }
   @media (max-width: 560px) { .home-hero h1 { font-size: 34px; line-height: 36px; } }
+  /* The browser's 8px body margin framed the dark hero in white and ate
+     the phone gutter. */
+  body.nl { margin: 0; }
+  /* Phones: the page gutter is space-4; the nav keeps only Log in and the
+     language toggle; the hero mockup is already hidden below 900 px. */
+  @media (max-width: 639px) {
+    .nl-hero .nl-header, .home-in { padding-left: var(--space-4); padding-right: var(--space-4); }
+    .home-hero { padding: var(--space-7) var(--space-4) var(--space-8); }
+    .nl-hero .nl-nav { display: none; }
+    .home-band { padding: var(--space-8) 0; }
+    .home-final { padding: var(--space-8) 0; }
+    .home-sec-h { font-size: 28px; line-height: 34px; }
+    .home-final h2 { font-size: 30px; line-height: 36px; }
+    .home-trust-text { font-size: 19px; line-height: 28px; }
+  }
+  /* Small phones: buttons full width. */
+  @media (max-width: 479px) {
+    .home-cta .nl-btn, .home-final-cta, .home-final-cta .nl-btn { width: 100%; }
+  }
 </style>
 <div class="nl-hero">
   <header class="nl-header">
@@ -703,13 +735,22 @@ function renderMarketingHomepage(req) {
   </div>
 </div></section>
 
+<section class="home-band home-trust"><div class="home-in">
+  <p class="home-trust-text" data-i18n="trust">${T.trust}</p>
+  <p class="home-sign">Roberto Santana · <a href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a></p>
+</div></section>
+
 <section class="home-final"><div class="home-in">
   <h2 data-i18n="finalTitle">${T.finalTitle}</h2>
-  <a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">${T.cta}</a>
+  <div class="home-final-cta">
+    <a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">${T.cta}</a>
+    <div class="home-proof" data-i18n="finalOffer">${T.finalOffer}</div>
+  </div>
 </div></section>
 <footer class="home-footer"><div class="home-in">
   <span data-i18n="footerBrand">${T.footerBrand}</span>
   <span data-i18n="footerLinks">${T.footerLinks}</span>
+  <span class="home-operator" data-i18n="footerOperator">${T.footerOperator}</span>
 </div></footer>
 <script>
 window.__nlServerLang = '${lang}';

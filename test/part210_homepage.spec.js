@@ -132,3 +132,38 @@ describe('item 3: the pricing section', () => {
     ]) expect(en).toContain(s);
   });
 });
+
+describe('item 4: trust block, closing call to action, footer', () => {
+  it('French and English, in page order, every href kept', async () => {
+    const fr = await (await home('/', { 'accept-language': 'fr-CA' })).text();
+    const trust = fr.indexOf("Notre Ligue est née de ma propre ligue de hockey cosom, à Laval. C'est moi qui réponds à tes courriels. Fait au Québec, en français d'abord.");
+    expect(trust).toBeGreaterThan(fr.indexOf('id="comment-ca-marche"'));
+    expect(trust).toBeLessThan(fr.indexOf('class="home-final"'));
+    expect(fr).toContain('Roberto Santana · <a href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a>');
+    const final = fr.slice(fr.indexOf('class="home-final"'));
+    expect(final).toContain('Ta prochaine saison commence ici.');
+    expect(final).toContain('<a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">Créer ma ligue</a>');
+    expect(final).toContain('2 mois gratuits, sans carte.');
+    expect(fr).toContain('<a href="/confidentialite">Confidentialité</a> · <a href="/conditions">Conditions</a> · <a href="mailto:bonjour@notreligue.ca">Contact</a>');
+    expect(fr).toContain('Notre Ligue · Fait au Québec');
+    expect(fr).toContain('Exploité par Roberto Santana, faisant affaire sous le nom Notre Ligue.');
+    const en = await (await home('/?lang=en')).text();
+    for (const s of [
+      "Notre Ligue grew out of my own ball hockey league in Laval. I'm the one who answers your emails. Made in Quebec, French first.",
+      'Your next season starts here.', '2 months free, no card.',
+      '<a href="/confidentialite#en">Privacy</a> · <a href="/conditions#en">Terms</a>', 'Notre Ligue · Made in Quebec',
+      'Operated by Roberto Santana, doing business as Notre Ligue.'
+    ]) expect(en).toContain(s);
+  });
+
+  it('no channel is named, no em dash, French typography', async () => {
+    for (const path of ['/?lang=fr', '/?lang=en']) {
+      const html = await (await home(path)).text();
+      const text = html.slice(html.indexOf('<body')).replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, ' ');
+      expect(text).not.toMatch(/texto|SMS|\btext(s|ing)?\b/i);
+      expect(text).not.toContain('—');
+      expect(text).not.toMatch(/ [?!]/);
+      expect(text).not.toMatch(/substitut|skater/i);
+    }
+  });
+});
