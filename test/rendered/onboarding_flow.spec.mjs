@@ -134,6 +134,60 @@ describe('the finance step', () => {
   }, 60000);
 });
 
+describe('the import team column (onboarding batch 2, item 3)', () => {
+  async function importInto(email, body, lines) {
+    const s = await h.signup(email);
+    await h.api('/leagues/create', { ...s, body });
+    await h.api('/league/season/publish', { ...s, body: { season_name: 'Automne 2026' } });
+    const { context, page, errors } = await open(s.cookie);
+    await page.goto(h.baseUrl + '/league/roster');
+    await page.click('#ro_toggle_bulk');
+    await page.fill('#ro_bulk_text', lines.join('\n'));
+    await page.click('[onclick="bulkPreview()"]');
+    const preview = await page.evaluate(() => [...document.querySelectorAll('#ro_bulk_tbody tr')].map(tr => [...tr.children].map(td => td.textContent)));
+    const teamTh = await page.isVisible('#ro_bulk_team_th');
+    await page.click('#ro_bulk_confirm');
+    await page.waitForTimeout(500);
+    if (await page.isVisible('#add_emails_dialog')) {
+      if (await page.isVisible('#add_emails_skip')) await page.click('#add_emails_skip'); else await page.click('#add_notice_ok');
+    }
+    await page.waitForSelector('#ro_import_note', { state: 'attached' });
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(300);
+    const note = { visible: await page.isVisible('#ro_import_note'), text: await page.textContent('#ro_import_note_text'), list: await page.evaluate(() => [...document.querySelectorAll('#ro_import_note_list li')].map(li => li.textContent)) };
+    await context.close();
+    return { preview, teamTh, note, errors };
+  }
+
+  it('fixed teams: the last column is the team, any case or accent; an unknown one listed after the import', async () => {
+    const r = await importInto('imp.fixed.ui@example.com', { name: 'Ligue importée', teamNames: ['Rouge', 'Écureuils'] }, [
+      'Nom, Courriel, Équipe',
+      'Ann Rouge, ann.ui@example.com, rouge',
+      'Ben Ecureuil, ben.ui@example.com, 514-555-0100, ECUREUILS',
+      'Cal Nowhere, cal.ui@example.com, Aigles',
+      'Dee Plain, dee.ui@example.com'
+    ]);
+    expect(r.teamTh).toBe(true);
+    expect(r.preview.map(row => [row[0], row[3]])).toEqual([['Ann Rouge', 'rouge'], ['Ben Ecureuil', 'ECUREUILS'], ['Cal Nowhere', 'Aigles'], ['Dee Plain', '–']]);
+    expect(r.note.visible).toBe(true);
+    expect(r.note.text).toBe("Ajoutés sans équipe, car l'équipe inscrite ne correspond à aucune équipe de ta ligue :");
+    expect(r.note.list).toEqual(['Cal Nowhere (Aigles)']);
+    const placed = Object.fromEntries((await h.db.prepare("SELECT name, preferred_team FROM contacts WHERE email LIKE '%.ui@example.com'").all()).results.map(x => [x.name, x.preferred_team]));
+    expect(placed).toEqual({ 'Ann Rouge': 'Rouge', 'Ben Ecureuil': 'Écureuils', 'Cal Nowhere': null, 'Dee Plain': null });
+    expect(r.errors).toEqual([]);
+  }, 60000);
+
+  it('the old format reads as before; a no-teams league ignores the column, with a note', async () => {
+    const r = await importInto('imp.none.ui@example.com', { name: 'Drop-in importé', teamStructure: 'headcount' }, [
+      'Eve Old, eve.ui2@example.com, 514-555-0101',
+      'Fay New, fay.ui2@example.com, Rouge'
+    ]);
+    expect(r.preview[0].slice(0, 3)).toEqual(['Eve Old', 'eve.ui2@example.com', '514-555-0101']);
+    expect(r.note.text).toBe("La colonne d'équipe a été ignorée : ta ligue n'a pas d'équipes fixes.");
+    expect(r.errors).toEqual([]);
+  }, 60000);
+});
+
 describe('S5: an owner creating a second league under 15 when the free slot is taken', () => {
   it('from the dashboard to the summary, then back to the first league', async () => {
     const s = await h.signup('s5.owner@example.com');

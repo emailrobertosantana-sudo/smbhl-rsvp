@@ -22,7 +22,7 @@ import { isMailDeferred } from './mail_queue.js';
 import { sanitizeAndValidateEmail } from './validation.js';
 import { validateBulkEvents, BULK_INTERVAL_DAYS } from './bulk_events_validation.js';
 import { SMBHL_LEAGUE_ID, HEADCOUNT_TEAM_NAME, dataJsonKeyFor, makeContactId, makeEventId, contactIdLikePattern, extractTrailingNumber, slugify, isValidSlugFormat, RESERVED_SLUGS, eventHasStarted } from './league_ids.js';
-import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie, generateRoundRobinRounds } from './season_config.js';
+import { getSeasonConfig, DEFAULT_SEASON_CONFIG, getTeamNames, sportHasGoalie, generateRoundRobinRounds, NO_GOALIE_SPORT } from './season_config.js';
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
 import { nlLegalEmailWrap } from './legal.js';
@@ -315,7 +315,97 @@ export async function getLeagueSeasonConfig(env, leagueId, seasonName = null) {
     leagueSportType = leagueRow.sport_type || 'hockey';
   }
 
-  return getSeasonConfig(leagueData, seasonName, leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure, leagueSportType);
+  const cfg = getSeasonConfig(leagueData, seasonName, leagueTeamNames, leagueBranding, leagueRosterLimits, leagueTeamStructure, leagueSportType);
+  // Onboarding batch 2, item 2: a league with no goalies needs none, and
+  // its sport type turns every goalie feature off (season_config.js).
+  // Turned back on: a season published while it was off still asks for
+  // the league's own goalie minimum (it was saved as 0 then).
+  if (leagueRow && leagueId !== SMBHL_LEAGUE_ID) {
+    const goalies = await leagueGoaliesSetting(env, leagueId);
+    if (goalies === 'off') return { ...cfg, sportType: NO_GOALIE_SPORT, goaliesPerTeam: 0, maxGoalies: 0 };
+    if (goalies === 'on' && !Number(cfg.goaliesPerTeam)) {
+      const min = Math.max(1, Number(leagueRow.min_goalies) || 1);
+      return { ...cfg, goaliesPerTeam: min, maxGoalies: Math.max(min, Number(cfg.maxGoalies) || 0) };
+    }
+  }
+  return cfg;
+}
+
+/* ---------- does the league have goalies (onboarding batch 2, item 2) ----------
+ * Settings table, no migration: key league_goalies:<league>, value 'off'
+ * (no goalies) or 'on' (turned back on). No row: a league from before, or
+ * one that said yes: it has goalies, as always. SMBHL never has a row.
+ */
+export const leagueGoaliesKey = leagueId => `league_goalies:${leagueId}`;
+async function leagueGoaliesSetting(env, leagueId) {
+  try {
+    const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(leagueGoaliesKey(leagueId)).first();
+    return row ? row.value : null;
+  } catch (_) { return null; }
+}
+export async function leagueHasGoalies(env, leagueId) {
+  if (!leagueId || leagueId === SMBHL_LEAGUE_ID) return true;
+  return (await leagueGoaliesSetting(env, leagueId)) !== 'off';
+}
+// Off: the minimum and maximum go to 0. On: the minimum back to 1 (the
+// maximum left as it was, or 1). The goalie fees of a season stay saved
+// (hidden while off), so turning it back on shows them again.
+export async function saveLeagueHasGoalies(env, leagueId, on) {
+  await env.DB.prepare(
+    `INSERT INTO settings (key, value, league_id) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, league_id = excluded.league_id`
+  ).bind(leagueGoaliesKey(leagueId), on ? 'on' : 'off', leagueId).run();
+  if (on) await env.DB.prepare('UPDATE leagues SET min_goalies = 1, max_goalies = CASE WHEN max_goalies IS NULL OR max_goalies < 1 THEN NULL ELSE max_goalies END WHERE id = ?').bind(leagueId).run();
+  else await env.DB.prepare('UPDATE leagues SET min_goalies = 0, max_goalies = 0 WHERE id = ?').bind(leagueId).run();
+}
+
+// POST /league/settings/goalies { hasGoalies: true | false }: the Settings
+// switch « Ma ligue a des gardiens ». Session, CSRF, league access.
+export async function handleLeagueUpdateGoalies(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) return Response.json({ ok: false, error: 'This route cannot change SMBHL.', errorKey: 'ROUTE_BLOCKED_SETTINGS' }, { status: 403 });
+  const body = await req.json().catch(() => ({}));
+  if (typeof body.hasGoalies !== 'boolean') return Response.json({ ok: false, error: 'hasGoalies must be true or false.', errorKey: 'GOALIES_SETTING_INVALID' }, { status: 400 });
+  await saveLeagueHasGoalies(env, leagueId, body.hasGoalies);
+  return Response.json({ ok: true, hasGoalies: body.hasGoalies });
+}
+
+// Onboarding batch 2, item 3: a team named in a spreadsheet import, matched
+// to the league's own teams regardless of case and accents (« rouge »,
+// « Rouge », « ROUGÉ » all match « Rouge »). Null when nothing matches.
+const teamKey = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+export function matchTeamName(teamNames, value) {
+  const k = teamKey(value);
+  if (!k) return null;
+  return (teamNames || []).find(t => teamKey(t) === k) || null;
+}
+// The import's team column for one league: fixed teams -- the matched
+// name, or no team (listed in `unmatched`); any other structure -- ignored.
+export function resolveImportTeams(cfg, rows) {
+  const fixed = (cfg.teamStructure || 'fixed') === 'fixed';
+  const teams = getTeamNames(cfg);
+  const unmatched = [];
+  let ignored = false;
+  const out = rows.map(r => {
+    if (!r || typeof r !== 'object') return r;
+    const raw = String(r.team || '').trim();
+    if (!raw) return r;
+    if (!fixed) { ignored = true; const { team, ...rest } = r; return rest; }
+    const hit = matchTeamName(teams, raw);
+    if (hit) return { ...r, team: hit };
+    unmatched.push({ name: String(r.name || '').trim(), team: raw });
+    const { team, ...rest } = r;
+    return rest;
+  });
+  return { rows: out, unmatched, ignored };
 }
 
 /* ---------- proof of concept: GET /league/contacts ----------
@@ -881,10 +971,14 @@ export async function handleLeagueContactsBulkCreate(req, env) {
     return Response.json({ ok: false, error: 'This route cannot create contacts for SMBHL.', errorKey: 'ROUTE_BLOCKED_CONTACTS' }, { status: 403 });
   }
 
-  const rows = Array.isArray(body.contacts) ? body.contacts.slice(0, 200) : [];
-  if (!rows.length) {
+  const given = Array.isArray(body.contacts) ? body.contacts.slice(0, 200) : [];
+  if (!given.length) {
     return Response.json({ ok: false, error: 'No contacts provided.', errorKey: 'BULK_CONTACTS_REQUIRED' }, { status: 400 });
   }
+  // Onboarding batch 2, item 3: the import's optional team column -- matched
+  // regardless of case and accents (fixed teams); a team matching none, or
+  // any team in another structure, is dropped and reported, never a refusal.
+  const { rows, unmatched: teamUnmatched, ignored: teamIgnored } = resolveImportTeams(await getLeagueSeasonConfig(env, leagueId), given);
 
   const results = [];
   const seenEmails = new Set();
@@ -908,7 +1002,9 @@ export async function handleLeagueContactsBulkCreate(req, env) {
     league_id: leagueId,
     createdCount: results.filter(r => r.status === 'created').length,
     skippedCount: results.filter(r => r.status === 'skipped').length,
-    results
+    results,
+    teamUnmatched,
+    teamIgnored
   });
 }
 
@@ -3468,6 +3564,16 @@ export async function handleLeagueCreate(req, env) {
     await env.DB.prepare(
       `INSERT INTO league_admins (user_id, league_id, role, created_at) VALUES (?, ?, 'admin', ?)`
     ).bind(session.userId, leagueId, now).run();
+
+    // Onboarding batch 2: the league's language (items 1) and whether it has
+    // goalies (item 2), both asked at sign-up step 2. Optional: a caller that
+    // sends neither gets a bilingual league with goalies, as before.
+    const languageMode = VALID_LANGUAGE_MODES.has(String(body.languageMode || '')) ? String(body.languageMode) : null;
+    if (languageMode) await env.DB.prepare('UPDATE leagues SET language_mode = ? WHERE id = ?').bind(languageMode, leagueId).run();
+    if (body.hasGoalies === false) {
+      await saveLeagueHasGoalies(env, leagueId, false);
+      minGoalies = 0;
+    }
 
     return Response.json({
       ok: true,

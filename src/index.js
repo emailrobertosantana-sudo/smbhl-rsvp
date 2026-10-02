@@ -35,7 +35,8 @@ import { checkAdminAuth, adminAuthResponse, adminPageHeaders, checkReviewAuth, e
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, reached, afterQuiet, getEmailSettings, DEFAULT_EMAIL_SETTINGS, jobDone, markJob, runSchedule, runLeagueReminders, sendLeagueReminderWave, installReminderHost, usesAdvancedReminders, runReminderPass } from './reminders.js';
 import { MAIL_SENDS_PER_INVOCATION, createSendBudget, sendsPerInvocation, claimOutboxRow, hardDailyCapFromEnv, hardCapError, isSubrequestLimitError, OUTBOX_DUE_WHERE, outboxRowStatus, recordSendSuccess, recordSendFailure, dailyCapFromEnv, countSentMail, readDailyCount, subCallAllowance, deferToNextDay, isResendQuotaError, recordResendQuotaExhausted, ADMIN_ALERT_RESERVE, nextUtcMidnight, MailDeferredError, isMailDeferred, MAX_QUEUED_MAIL_BYTES } from './mail_queue.js';
 import { handleSignup, handleLogin, handleAcceptTerms, purgeRateLimitIps, handleLogout, handleVerifyEmail, handleResendVerification, checkUserSession, isUserEmailVerified, handleRequestPasswordReset, handleResetPassword, checkCsrfToken } from './auth.js';
-import { handleLeagueCreate, handleLeagueContacts, handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, newestSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
+import { handleLeagueUpdateGoalies, leagueHasGoalies, matchTeamName } from './leagues.js';
+import { handleLeagueCreate, handleLeagueContacts,handleLeagueEvents, handleLeagueContactCreate, handleLeagueContactUpdate, handleLeagueContactsBulkCreate, handleLeagueEventCreate, handleLeagueEventsBulkCreate, handleLeagueEventDuplicate, handleLeagueSeasonPublish, checkLeagueAccess, leagueAccessResponse, resolveSessionLeagueId, newestSessionLeagueId, getLeagueDataJson, getLeagueSeasonConfig, handleLeagueAdminInvite, handleLeagueAdminAccept, verifyInviteToken, handleLeagueDeactivate, getOrCreateLeagueSlug, resolveLeagueIdBySlug, handleLeagueUpdateLanguageMode, handleLeagueUpdateReminderSettings, handleLeagueUpdateReminderCadence, handleLeagueUpdateIdentity, handleLeagueUpdateTeams, handleLeagueUpdateSeasonTeams, handleLeagueUpdateStructure, handleLeagueVenueCreate, handleLeagueVenueDelete, getLeagueVenues, getVenueMapLinksById, handleLeagueEventUpdateReminders, handleLeagueEventUpdate, handleLeagueContactSetActive, handleLeagueSeasonRolloverImport, handleLeagueSeasonMoveEvents, handleLeagueUpdatePlayoffs, playoffRoleLabel, handleLeagueEventScore, handleLeaguePlayerStatsUpsert, deriveGoalieRecord, deriveGoalsAgainst, computeStandings, rankStandings, computeTopScorers, computeGoalieStats, getLeagueSeasonsList, handleLeagueEventCancel, handleLeagueEventDelete, resolveEventMapLink, handleLeagueMatchupsPreview, handleLeagueMatchupsConfirm, handleLeagueEventMatchupUpdate, computeMatchupDistribution, describeMatchupDistribution } from './leagues.js';
 import { PLAN_TIERS, CAPABILITY_FLAGS, listLeaguesWithMetadata, updateLeaguePlanTier, updateLeagueCapabilityFlag } from './super_admin.js';
 import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, setFreeException, billingEnabled, loadLeagueState, leagueAutoMailStopped } from './billing.js';
 import { handleStripeWebhook, processPendingStripeEvents, resumeIfCardAdded } from './stripe_webhook.js';
@@ -926,6 +927,10 @@ const I18N_SIGNUP = {
     // label apart from pickup's "Sans équipes fixes".
     structureMyTeamTitle: 'Juste mon équipe', structureMyTeamDesc: "Une seule équipe qui joue dans une autre ligue, celle d'une ville par exemple : présences et remplaçants, sans classement.",
     structureHeadcountTitle: 'Drop-in, sans équipes attitrées', structureHeadcountDesc: 'Juste la liste des présents. Tu formes les équipes sur place.',
+    // Onboarding batch 2: the league's language (item 1), its goalies (item 2a).
+    langLabel: 'Langue de ta ligue', langFr: 'Français', langEn: 'English', langBoth: 'Les deux / Both',
+    langHelp: 'La langue des courriels et des pages de tes joueurs. Tu peux la changer plus tard dans les Paramètres.',
+    goaliesLabel: 'Ta ligue a des gardiens?', goaliesYes: 'Oui', goaliesNo: 'Non',
     back: 'Retour', cancelNew: 'Annuler',
     step3:'Étape 3 sur 10', title3: "Combien d'équipes?",
     teamCountGroupAria: "Nombre d'équipes", decreaseTeamsAria: 'Moins', increaseTeamsAria: 'Plus',
@@ -974,6 +979,9 @@ const I18N_SIGNUP = {
     structureWeeklyTitle: 'Pickup with teams', structureWeeklyDesc: 'Pickup, but split into teams each game, drawn automatically or set by you.',
     structureMyTeamTitle: 'Just my team', structureMyTeamDesc: "One team playing in someone else's league, a city or rec league for example: attendance and subs, no standings.",
     structureHeadcountTitle: 'Drop-in, no fixed teams', structureHeadcountDesc: "Just a list of who's in. You sort out sides at the venue.",
+    langLabel: "Your league's language", langFr: 'Français', langEn: 'English', langBoth: 'Les deux / Both',
+    langHelp: "The language of your players' emails and pages. You can change it later in Settings.",
+    goaliesLabel: 'Does your league have goalies?', goaliesYes: 'Yes', goaliesNo: 'No',
     back: 'Back', cancelNew: 'Cancel',
     step3:'Step 3 of 10', title3: 'How many teams?',
     teamCountGroupAria: 'Number of teams', decreaseTeamsAria: 'Decrease', increaseTeamsAria: 'Increase',
@@ -1073,6 +1081,10 @@ function signupStyles() {
      spacing. */
   .su-structure-opt .d { font-size: 13px; color: var(--ink-muted); margin-top: 2px; display: block; }
   .su-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+  /* Onboarding batch 2: short choices (Oui / Non, the three languages) side by side. */
+  .su-inline { flex-direction: row; flex-wrap: wrap; }
+  .su-inline .su-structure-opt { flex: 1 1 110px; align-items: center; }
+  .su-inline .su-structure-opt input { margin-top: 0; }
   @media (min-width: 640px) { .su-body { padding-top: var(--space-7); } }
 </style>`;
 }
@@ -1334,6 +1346,7 @@ async function submitStep1() {
 }
 
 function renderSignupStep2(langParam, another = false) {
+  const stepLang = langParam === 'en' ? 'en' : 'fr';
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
@@ -1371,6 +1384,24 @@ function renderSignupStep2(langParam, another = false) {
       </label>
     </div>
   </div>
+  <!-- Onboarding batch 2, item 2a: right after the structure. -->
+  <div class="nl-field">
+    <span class="nl-label" data-i18n="goaliesLabel">${esc(I18N_SIGNUP[stepLang].goaliesLabel)}</span>
+    <div class="su-structure su-inline" id="su_goalies_radio">
+      <label class="su-structure-opt on"><input type="radio" name="su_goalies" value="yes" checked><span class="t" data-i18n="goaliesYes">${esc(I18N_SIGNUP[stepLang].goaliesYes)}</span></label>
+      <label class="su-structure-opt"><input type="radio" name="su_goalies" value="no"><span class="t" data-i18n="goaliesNo">${esc(I18N_SIGNUP[stepLang].goaliesNo)}</span></label>
+    </div>
+  </div>
+  <!-- Onboarding batch 2, item 1: the league's language, the admin's own by default. -->
+  <div class="nl-field">
+    <span class="nl-label" data-i18n="langLabel">${esc(I18N_SIGNUP[stepLang].langLabel)}</span>
+    <div class="su-structure su-inline" id="su_lang_radio">
+      <label class="su-structure-opt${stepLang === 'fr' ? ' on' : ''}"><input type="radio" name="su_lang" value="fr"${stepLang === 'fr' ? ' checked' : ''}><span class="t" lang="fr-CA">Français</span></label>
+      <label class="su-structure-opt${stepLang === 'en' ? ' on' : ''}"><input type="radio" name="su_lang" value="en"${stepLang === 'en' ? ' checked' : ''}><span class="t" lang="en-CA">English</span></label>
+      <label class="su-structure-opt"><input type="radio" name="su_lang" value="both"><span class="t">Les deux / Both</span></label>
+    </div>
+    <p class="nl-help" data-i18n="langHelp">${esc(I18N_SIGNUP[stepLang].langHelp)}</p>
+  </div>
 </main>
 <div class="su-bottom">
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="su_submit" data-i18n="continueBtn" onclick="submitStep2()">Continuer</button>
@@ -1389,12 +1420,32 @@ document.getElementById('su_slug').addEventListener('input', function() { slugTo
 document.getElementById('su_league_name').addEventListener('input', function() {
   if (!slugTouched) document.getElementById('su_slug').value = window.NotreLigue.slugify(this.value);
 });
-document.querySelectorAll('#su_structure_radio input[type=radio]').forEach(function(r) {
-  r.addEventListener('change', function() {
-    document.querySelectorAll('.su-structure-opt').forEach(function(opt) { opt.classList.remove('on'); });
-    r.closest('.su-structure-opt').classList.add('on');
+// Each choice group marks its own picked option.
+['su_structure_radio', 'su_goalies_radio', 'su_lang_radio'].forEach(function(id) {
+  document.querySelectorAll('#' + id + ' input[type=radio]').forEach(function(r) {
+    r.addEventListener('change', function() {
+      document.querySelectorAll('#' + id + ' .su-structure-opt').forEach(function(opt) { opt.classList.remove('on'); });
+      r.closest('.su-structure-opt').classList.add('on');
+      if (id === 'su_lang_radio') langTouched = true;
+    });
   });
 });
+// The league's language follows the admin's own until they pick one.
+var langTouched = false;
+window.addEventListener('nl_lang_changed', function(e) {
+  if (langTouched) return;
+  var r = document.querySelector('#su_lang_radio input[value="' + (e.detail && e.detail.lang === 'en' ? 'en' : 'fr') + '"]');
+  if (!r) return;
+  r.checked = true;
+  document.querySelectorAll('#su_lang_radio .su-structure-opt').forEach(function(opt) { opt.classList.remove('on'); });
+  r.closest('.su-structure-opt').classList.add('on');
+});
+function signupChoices() {
+  return {
+    languageMode: document.querySelector('#su_lang_radio input:checked').value,
+    hasGoalies: document.querySelector('#su_goalies_radio input:checked').value === 'yes'
+  };
+}
 async function submitStep2() {
   clearError();
   var name = document.getElementById('su_league_name').value.trim();
@@ -1426,7 +1477,7 @@ async function submitStep2() {
       var res = await fetch('/leagues/create', {
         method: 'POST', credentials: 'same-origin',
         headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
-        body: JSON.stringify({ name: name, tracksStats: tracksStats, slug: slug || undefined, teamStructure: teamStructure, teamNames: teamStructure === 'headcount' ? undefined : [(window.__pageDict().teamPlaceholder) + '1', (window.__pageDict().teamPlaceholder) + '2'] })
+        body: JSON.stringify(Object.assign({ name: name, tracksStats: tracksStats, slug: slug || undefined, teamStructure: teamStructure, teamNames: teamStructure === 'headcount' ? undefined : [(window.__pageDict().teamPlaceholder) + '1', (window.__pageDict().teamPlaceholder) + '2'] }, signupChoices()))
       });
       // A4 bug fix (signup/recovery task): same distinction as
       // submitStep1 -- an unparseable body no longer silently becomes
@@ -1455,7 +1506,7 @@ async function submitStep2() {
     }
     return;
   }
-  try { sessionStorage.setItem('nl_signup_league', JSON.stringify({ name: name, slug: slug, tracksStats: tracksStats, teamStructure: teamStructure })); } catch (e) {}
+  try { sessionStorage.setItem('nl_signup_league', JSON.stringify(Object.assign({ name: name, slug: slug, tracksStats: tracksStats, teamStructure: teamStructure }, signupChoices()))); } catch (e) {}
   window.__navWithLang('/signup?step=3${another ? '&new=1' : ''}');
 }
 </script>`;
@@ -1515,7 +1566,7 @@ function clearError() { document.getElementById('formErr').style.display = 'none
 async function submitStep3() {
   clearError();
   if (!leagueDraft) { window.__navWithLang('/signup?step=2'); return; }
-  var payload = { name: leagueDraft.name, tracksStats: leagueDraft.tracksStats, slug: leagueDraft.slug || undefined, teamStructure: leagueDraft.teamStructure };
+  var payload = { name: leagueDraft.name, tracksStats: leagueDraft.tracksStats, slug: leagueDraft.slug || undefined, teamStructure: leagueDraft.teamStructure, languageMode: leagueDraft.languageMode, hasGoalies: leagueDraft.hasGoalies };
   {
     // Onboarding polish task (B1): this step only ever asks for the
     // COUNT now (see su_teams_section's own comment) -- real names are
@@ -3083,7 +3134,7 @@ function buildOnboardingI18n() {
     payHelp: 'Affiché dans les rappels de paiement. Laisse vide pour masquer.',
     payEmailLabel: 'Courriel pour virement Interac', payPhoneLabel: 'Cellulaire pour virement Interac',
     sumTitle: "Ta ligue en un coup d'œil", sumSub: 'Voici où en est ta ligue. Tu peux tout changer plus tard.',
-    sumStructure: 'Structure', sumPlayers: 'Joueurs', sumGames: 'Matchs', sumBilling: 'Abonnement', sumFirstGame: 'Premier match :',
+    sumStructure: 'Structure', sumLanguage: 'Langue', sumPlayers: 'Joueurs', sumGames: 'Matchs', sumBilling: 'Abonnement', sumFirstGame: 'Premier match :',
     actSchedule: 'Créer ton horaire', actSeeSchedule: 'Voir ton horaire', actPlayers: 'Ajouter tes joueurs', actSeePlayers: 'Voir tes joueurs',
     actTeams: 'Placer tes joueurs dans une équipe', actBilling: "Voir l'abonnement", actPublic: 'Voir ta page publique'
   };
@@ -3140,7 +3191,7 @@ function buildOnboardingI18n() {
     payHelp: 'Shown in payment reminders. Leave empty to hide.',
     payEmailLabel: 'e-Transfer email', payPhoneLabel: 'e-Transfer mobile number',
     sumTitle: 'Your league at a glance', sumSub: "Here's where your league stands. You can change all of it later.",
-    sumStructure: 'Structure', sumPlayers: 'Players', sumGames: 'Games', sumBilling: 'Subscription', sumFirstGame: 'First game:',
+    sumStructure: 'Structure', sumLanguage: 'Language', sumPlayers: 'Players', sumGames: 'Games', sumBilling: 'Subscription', sumFirstGame: 'First game:',
     actSchedule: 'Create your schedule', actSeeSchedule: 'See your schedule', actPlayers: 'Add your players', actSeePlayers: 'See your players',
     actTeams: 'Put your players on a team', actBilling: 'See the subscription', actPublic: 'See your public page'
   };
@@ -3210,6 +3261,12 @@ document.getElementById('ob_season_name').addEventListener('keydown', function(e
   });
 }
 
+// Onboarding batch 2, item 1: the league's language, in the summary.
+const SUMMARY_LANGUAGE = {
+  fr: { fr: 'Français.', en: 'French.' },
+  en: { fr: 'Anglais.', en: 'English.' },
+  both: { fr: 'Français et anglais.', en: 'French and English.' }
+};
 // Onboarding batch, item 2: where the league stands at the end of the
 // flow -- its structure, its players, its first games and its billing
 // status -- with links to what is left to do. Every line carries both
@@ -3278,6 +3335,7 @@ async function onboardingSummaryScreen(env, url, leagueRow, season, lang, { fr, 
   </div>
   <dl class="ob-sum" id="ob_summary">
     ${row('sumStructure', bi(structLine))}
+    ${row('sumLanguage', bi(SUMMARY_LANGUAGE[leagueRow.language_mode] || SUMMARY_LANGUAGE.both))}
     ${row('sumPlayers', bi(playersLine))}
     ${row('sumGames', bi(gamesLine) + (first ? ` <span data-i18n="sumFirstGame">${esc(t.sumFirstGame)}</span> ${dateTimeSpanHtml('span', first.date, first.start_time, 'long')}${first.venue ? `, ${esc(first.venue)}` : ''}.` : ''))}
     ${billingLines ? row('sumBilling', billingLines.map(l => bi(l)).join(' ')) : ''}
@@ -3323,6 +3381,9 @@ async function handleOnboardingSeasonPage(req, env, url) {
   // sign-up; a co-admin opening a step from the dashboard's checklist is
   // not in it, so no "Étape 5 sur 10" for them.
   const showFlow = leagueRow.created_by === session.userId;
+  // Onboarding batch 2, item 2b: no goalie question, explanation or fee
+  // for a league that has no goalies.
+  const leagueGoalies = await leagueHasGoalies(env, leagueRow.id);
   const { fr, en } = buildOnboardingI18n();
   // Onboarding batch: no season yet -- the season is this wizard's own
   // screen (it was a form on the dashboard, outside the flow).
@@ -3387,7 +3448,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
       <input class="nl-input" id="ob_max_players" type="number" min="1" value="${esc(leagueRow.max_players != null ? String(leagueRow.max_players) : '')}">
     </div>
   </div>
-  <div class="su-two">
+  ${leagueGoalies ? `<div class="su-two">
     <div class="nl-field">
       <label class="nl-label" for="ob_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
       <!-- A4 bug fix (onboarding polish task): leagues.min_goalies is a
@@ -3408,7 +3469,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
       <label class="nl-label" for="ob_max_goalies" data-i18n="lblMaxGoalies">Maximum de gardiens (optionnel)</label>
       <input class="nl-input" id="ob_max_goalies" type="number" min="0" value="${esc(leagueRow.max_goalies != null ? String(leagueRow.max_goalies) : '')}">
     </div>
-  </div>`;
+  </div>` : ''}`;
   } else if (step === 'teams') {
     const isWeekly = teamStructure === 'weekly_draw';
     stepHtml = `
@@ -3503,7 +3564,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
     // Item 8: what each choice does, in plain words, as the product does it.
     // Goalie stats need results (goals against come from the score), so not
     // for a no-teams league, nor a league whose roster asks for no goalie.
-    const hasGoalies = offerResults && (Number(leagueRow.min_goalies) > 0 || Number(leagueRow.max_goalies) > 0);
+    const hasGoalies = offerResults && leagueGoalies && (Number(leagueRow.min_goalies) > 0 || Number(leagueRow.max_goalies) > 0);
     const resultsKey = teamStructure === 'weekly_draw' ? 'statsExplainResultsPickup' : 'statsExplainResults';
     stepHtml = `
   <div class="su-title">
@@ -3566,11 +3627,11 @@ async function handleOnboardingSeasonPage(req, env, url) {
     </div>
     <div class="su-two" data-fin-season${perGame ? ' style="display:none"' : ''}>
       <div class="nl-field"><label class="nl-label" for="ob_price_player" data-i18n="lblPricePlayer">${esc(fr.lblPricePlayer)}</label><input class="nl-input" id="ob_price_player" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_player')}"></div>
-      <div class="nl-field"><label class="nl-label" for="ob_price_goalie" data-i18n="lblPriceGoalie">${esc(fr.lblPriceGoalie)}</label><input class="nl-input" id="ob_price_goalie" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_goalie')}"></div>
+      ${leagueGoalies ? `<div class="nl-field"><label class="nl-label" for="ob_price_goalie" data-i18n="lblPriceGoalie">${esc(fr.lblPriceGoalie)}</label><input class="nl-input" id="ob_price_goalie" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_goalie')}"></div>` : ''}
     </div>
     <div class="su-two">
       <div class="nl-field"><label class="nl-label" for="ob_game_player" data-i18n="lblGamePlayer">${esc(fr.lblGamePlayer)}</label><input class="nl-input" id="ob_game_player" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_sub_player')}"></div>
-      <div class="nl-field"><label class="nl-label" for="ob_game_goalie" data-i18n="lblGameGoalie">${esc(fr.lblGameGoalie)}</label><input class="nl-input" id="ob_game_goalie" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_sub_goalie')}"></div>
+      ${leagueGoalies ? `<div class="nl-field"><label class="nl-label" for="ob_game_goalie" data-i18n="lblGameGoalie">${esc(fr.lblGameGoalie)}</label><input class="nl-input" id="ob_game_goalie" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_sub_goalie')}"></div>` : ''}
     </div>
     <div class="nl-field" style="margin:0">
       <span class="nl-label" data-i18n="financeCostsLabel">${esc(fr.financeCostsLabel)}</span>
@@ -3732,8 +3793,9 @@ async function obSubmit() {
       var payload = {};
       var mp = document.getElementById('ob_min_players').value;
       var xp = document.getElementById('ob_max_players').value;
-      var mg = document.getElementById('ob_min_goalies').value;
-      var xg = document.getElementById('ob_max_goalies').value;
+      // No goalie fields for a league with no goalies (onboarding batch 2).
+      var mg = document.getElementById('ob_min_goalies') ? document.getElementById('ob_min_goalies').value : '';
+      var xg = document.getElementById('ob_max_goalies') ? document.getElementById('ob_max_goalies').value : '';
       if (mp !== '') payload.min_players = Number(mp);
       if (xp !== '') payload.max_players = Number(xp);
       if (mg !== '') payload.min_goalies = Number(mg);
@@ -3803,7 +3865,7 @@ async function obSubmit() {
       if (document.getElementById('ob_finance_yes').checked) {
         await obSave('/league/settings/payment', { email: document.getElementById('ob_pay_email').value.trim(), phone: document.getElementById('ob_pay_phone').value.trim() });
         var feeIds = ['ob_price_player', 'ob_price_goalie', 'ob_game_player', 'ob_game_goalie'];
-        var fees = feeIds.map(function(id) { return document.getElementById(id).value.trim(); });
+        var fees = feeIds.map(function(id) { var el = document.getElementById(id); return el ? el.value.trim() : ''; });
         var finMode = document.querySelector('input[name="ob_fin_mode"]:checked').value;
         if (finMode === 'per_game') { fees[0] = ''; fees[1] = ''; }
         if (fees.some(function(v) { return v !== ''; })) {
@@ -4837,7 +4899,9 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   // a goalie stat line without game results has no win/loss/GAA to
   // show.
   let goalieStats = [];
-  if (leagueRow.tracks_player_stats && leagueRow.tracks_results && (isAllTime || selectedSeasonName)) {
+  // Onboarding batch 2, item 2b: a league with no goalies has no goalie stats.
+  const publicGoalies = await leagueHasGoalies(env, leagueId);
+  if (publicGoalies && leagueRow.tracks_player_stats && leagueRow.tracks_results && (isAllTime || selectedSeasonName)) {
     goalieStats = (await computeGoalieStats(env, leagueId, selectedSeasonName))
       .sort((a, b) => (a.gaa ?? Infinity) - (b.gaa ?? Infinity) || b.w - a.w);
   }
@@ -5089,7 +5153,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
 
   // Public site rebuild task (Part 3, item 3): goalie stats get a
   // public surface for the first time.
-  const goalieStatsHtml = (leagueRow.tracks_player_stats && leagueRow.tracks_results) ? (goalieStats.length ? `
+  const goalieStatsHtml = (publicGoalies && leagueRow.tracks_player_stats && leagueRow.tracks_results) ? (goalieStats.length ? `
   <h2 data-i18n="goalieStats">${esc(t.goalieStats)}</h2>
   <div class="pb-table-wrap"><table class="pb-table">
     <thead><tr><th data-i18n="goalieName">${esc(t.goalieName)}</th><th data-i18n="gp">${esc(t.gp)}</th><th data-i18n="wins">${esc(t.wins)}</th><th data-i18n="losses">${esc(t.losses)}</th><th data-i18n="ties">${esc(t.ties)}</th><th data-i18n="goalsAgainst">${esc(t.goalsAgainst)}</th><th data-i18n="gaa">${esc(t.gaa)}</th></tr></thead>
@@ -5244,7 +5308,7 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
     { id: 'home', key: 'navHome', show: true },
     { id: 'standings', key: 'navStandings', show: !!(leagueRow.tracks_results && teamStructure === 'fixed') },
     { id: 'players', key: 'navPlayers', show: !!leagueRow.tracks_player_stats },
-    { id: 'goalies', key: 'navGoalies', show: !!(leagueRow.tracks_player_stats && leagueRow.tracks_results) },
+    { id: 'goalies', key: 'navGoalies', show: !!(publicGoalies && leagueRow.tracks_player_stats && leagueRow.tracks_results) },
     { id: 'leaders', key: 'navLeaders', show: leadersEligible },
     { id: 'schedule', key: 'navSchedule', show: true },
     { id: 'history', key: 'navHistory', show: statsTracked }
@@ -6963,6 +7027,8 @@ async function handleLeagueFinancesPage(req, env, url) {
   if (access !== 'ok' || leagueId === SMBHL_LEAGUE_ID) return Response.redirect(url.origin + '/dashboard', 302);
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
   const { header, tabbar } = dashChrome(leagueRow.name, 'finances');
+  // Onboarding batch 2, item 2b: no goalie fees for a league with no goalies.
+  const finGoalies = await leagueHasGoalies(env, leagueId);
 
   const I18N_FIN = {
     fr: {
@@ -7050,9 +7116,9 @@ async function handleLeagueFinancesPage(req, env, url) {
     </div>
     <div class="fin-row">
       <div class="nl-field" data-mode-only="season"><label class="nl-label" for="fin-price-player" ${L('lblPricePlayer')}</label><input class="nl-input" id="fin-price-player" type="number" min="0" step="0.01" inputmode="decimal"></div>
-      <div class="nl-field" data-mode-only="season"><label class="nl-label" for="fin-price-goalie" ${L('lblPriceGoalie')}</label><input class="nl-input" id="fin-price-goalie" type="number" min="0" step="0.01" inputmode="decimal"></div>
+      <div class="nl-field" data-mode-only="season"${finGoalies ? '' : ' data-no-goalies hidden'}><label class="nl-label" for="fin-price-goalie" ${L('lblPriceGoalie')}</label><input class="nl-input" id="fin-price-goalie" type="number" min="0" step="0.01" inputmode="decimal"></div>
       <div class="nl-field"><label class="nl-label" for="fin-game-player" ${L('lblGamePlayer')}</label><input class="nl-input" id="fin-game-player" type="number" min="0" step="0.01" inputmode="decimal"></div>
-      <div class="nl-field"><label class="nl-label" for="fin-game-goalie" ${L('lblGameGoalie')}</label><input class="nl-input" id="fin-game-goalie" type="number" min="0" step="0.01" inputmode="decimal"></div>
+      <div class="nl-field"${finGoalies ? '' : ' hidden'}><label class="nl-label" for="fin-game-goalie" ${L('lblGameGoalie')}</label><input class="nl-input" id="fin-game-goalie" type="number" min="0" step="0.01" inputmode="decimal"></div>
     </div>
     <div style="margin-top:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
       <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="fin-save-pricing" ${L('btnSavePricing')}</button>
@@ -7241,6 +7307,10 @@ async function handleLeagueSettingsPage(req, env, url) {
   // "Email players when they are added" (src/add_emails.js): on unless the
   // league turned it off.
   const addEmailsOn = (await getAddEmails(env.DB, leagueId)).mode !== 'off';
+  // Onboarding batch 2, item 2c: « Ma ligue a des gardiens »; off, the
+  // goalie minimum and maximum fields are hidden (they are 0 then).
+  const leagueGoalies = await leagueHasGoalies(env, leagueId);
+  const goalieHide = leagueGoalies ? '' : ' style="display:none"';
   const subCallHours = await getSubCallHours(env.DB, leagueId);
   const paymentInfo = await getPaymentInfo(env.DB, leagueId);
   const advancedCadence = leagueRow && (await usesAdvancedReminders(env, leagueId)) ? await getEmailSettings(env.DB, leagueId) : null;
@@ -7342,6 +7412,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblSlug: 'Adresse publique', slugHelp: "L'adresse de ta ligue est fixée à la création et ne peut pas être changée. Ça garantit que les liens déjà partagés (courriels, texto, favoris) continuent toujours de fonctionner.",
       lblColor: 'Couleur de la ligue', save: 'Enregistrer', saved: 'Enregistré!',
       addEmailsLabel: "Envoyer un courriel aux joueurs lorsqu'ils sont ajoutés",
+      goaliesSwitchLabel: 'Ma ligue a des gardiens', goaliesSwitchHelp: 'Non : aucune option de gardien dans ta ligue (rôle, remplaçants, alertes, statistiques, frais).',
       payTitle: 'Rappels de paiement', payEmailLabel: 'Courriel pour virement Interac', payPhoneLabel: 'Cellulaire pour virement Interac',
       payHelp: 'Affiché dans les rappels de paiement. Laisse vide pour masquer.',
       subCallsLabel: 'Commencer à appeler les remplaçants',
@@ -7502,6 +7573,7 @@ async function handleLeagueSettingsPage(req, env, url) {
       lblSlug: 'Public address', slugHelp: "Your league's address is set at creation and can't be changed. That guarantees links you've already shared (emails, texts, bookmarks) always keep working.",
       lblColor: 'League colour', save: 'Save', saved: 'Saved!',
       addEmailsLabel: 'Email players when they are added',
+      goaliesSwitchLabel: 'My league has goalies', goaliesSwitchHelp: 'Off: no goalie options anywhere in your league (role, subs, alerts, stats, fees).',
       payTitle: 'Payment reminders', payEmailLabel: 'e-Transfer email', payPhoneLabel: 'e-Transfer mobile number',
       payHelp: 'Shown in payment reminders. Leave empty to hide.',
       subCallsLabel: 'Start calling subs',
@@ -7669,6 +7741,9 @@ async function handleLeagueSettingsPage(req, env, url) {
     .se-layout { flex-direction: column; }
     .se-nav { width: 100%; flex-direction: row; overflow-x: auto; position: static; gap: 6px; }
     .se-nav a { flex-shrink: 0; }
+    /* Onboarding batch 2: the content takes the column's width, no more
+       (as a flex-start child it grew to its widest line, past 390 px). */
+    .se-content { width: 100%; align-self: stretch; }
   }
 </style>${header}
 <main class="dash-main se-main">
@@ -7897,7 +7972,7 @@ async function handleLeagueSettingsPage(req, env, url) {
           <input class="nl-input" id="season_max_players" type="number" min="1" value="${esc(seasonMaxPlayersDisplay != null ? String(seasonMaxPlayersDisplay) : (seasonStructureForDisplay === 'headcount' ? '12' : ''))}" ${isViewingClosedSeason ? 'disabled' : ''}>
         </div>
       </div>
-      <div class="su-two">
+      <div class="su-two"${goalieHide}>
         <div class="nl-field">
           <label class="nl-label" for="season_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
           <input class="nl-input" id="season_min_goalies" type="number" min="0" value="${esc(seasonHasGoalieLimits ? String(seasonMinGoaliesDisplay || 0) : '')}" ${isViewingClosedSeason ? 'disabled' : ''}>
@@ -7907,7 +7982,7 @@ async function handleLeagueSettingsPage(req, env, url) {
           <input class="nl-input" id="season_max_goalies" type="number" min="0" value="${esc(seasonHasGoalieLimits && seasonMaxGoaliesDisplay != null ? String(seasonMaxGoaliesDisplay) : '')}" ${isViewingClosedSeason ? 'disabled' : ''}>
         </div>
       </div>
-      <p class="nl-help" data-i18n="maxGoaliesHelp">Laisse vide pour utiliser le même nombre que le minimum.</p>
+      <p class="nl-help" data-i18n="maxGoaliesHelp"${goalieHide}>Laisse vide pour utiliser le même nombre que le minimum.</p>
     </div>
     ${isViewingClosedSeason ? '' : `<div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="season_mgmt_submit" data-i18n="seasonSaveBtn" onclick="submitSeasonMgmt()">Enregistrer la saison</button></div>`}
   </section>` : ''}
@@ -7950,7 +8025,7 @@ async function handleLeagueSettingsPage(req, env, url) {
           <input class="nl-input" id="se_max_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.max_players) : (isHeadcount ? '12' : ''))}">
         </div>
       </div>
-      <div class="su-two">
+      <div class="su-two"${goalieHide}>
         <div class="nl-field">
           <label class="nl-label" for="se_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
           <input class="nl-input" id="se_min_goalies" type="number" min="0" value="${esc(hasRosterLimits ? String(leagueRow.min_goalies || 0) : '')}">
@@ -7960,9 +8035,18 @@ async function handleLeagueSettingsPage(req, env, url) {
           <input class="nl-input" id="se_max_goalies" type="number" min="0" value="${esc(hasRosterLimits && leagueRow.max_goalies != null ? String(leagueRow.max_goalies) : '')}">
         </div>
       </div>
-      <p class="nl-help" data-i18n="maxGoaliesHelp">Laisse vide pour utiliser le même nombre que le minimum.</p>
+      <p class="nl-help" data-i18n="maxGoaliesHelp"${goalieHide}>Laisse vide pour utiliser le même nombre que le minimum.</p>
     </div>
     <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--primary nl-btn--sm" id="structure_save" data-i18n="save" onclick="submitStructure()">Enregistrer</button></div>
+  </section>
+
+  <!-- Onboarding batch 2, item 2c: whether the league has goalies. -->
+  <section class="nl-card nl-card--pad-lg" id="section-goalies">
+    <div id="goaliesErr" class="nl-error" style="display:none"></div>
+    <div class="nl-toggle">
+      <div><div class="nl-label" data-i18n="goaliesSwitchLabel">Ma ligue a des gardiens</div><p class="nl-help" style="margin:2px 0 0" data-i18n="goaliesSwitchHelp">Non : aucune option de gardien dans ta ligue (rôle, remplaçants, alertes, statistiques, frais).</p></div>
+      <button type="button" class="nl-switch" role="switch" aria-checked="${leagueGoalies ? 'true' : 'false'}" id="se_goalies_switch" data-i18n-aria="goaliesSwitchLabel" aria-label="Ma ligue a des gardiens" onclick="toggleLeagueGoalies(this)"></button>
+    </div>
   </section>
 
   ${currentSeasonEntry && !isViewingClosedSeason ? `
@@ -8027,7 +8111,7 @@ async function handleLeagueSettingsPage(req, env, url) {
             <input class="nl-input" id="new_season_max_players" type="number" min="1" value="${esc(hasRosterLimits ? String(leagueRow.max_players) : (isHeadcount ? '12' : ''))}">
           </div>
         </div>
-        <div class="su-two">
+        <div class="su-two"${goalieHide}>
           <div class="nl-field">
             <label class="nl-label" for="new_season_min_goalies" data-i18n="lblMinGoalies">Minimum de gardiens (optionnel)</label>
             <input class="nl-input" id="new_season_min_goalies" type="number" min="0" value="${esc(hasRosterLimits ? String(leagueRow.min_goalies || 0) : '')}">
@@ -8699,6 +8783,19 @@ async function savePaymentInfo() {
   } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; }
   btn.disabled = false;
 }
+// « Ma ligue a des gardiens »: saved at once; the page reloads so every
+// goalie field shows or hides with it.
+async function toggleLeagueGoalies(btn) {
+  var err = document.getElementById('goaliesErr'); err.style.display = 'none';
+  var next = btn.getAttribute('aria-checked') !== 'true';
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/settings/goalies', { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()), body: JSON.stringify({ hasGoalies: next }) });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { err.textContent = window.__errorText(data.errorKey, data.error); err.style.display = 'block'; btn.disabled = false; return; }
+    window.location.reload();
+  } catch (e) { err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false; }
+}
 // "Start calling subs": saved as soon as it is chosen.
 async function saveSubCallHours(sel) {
   var err = document.getElementById('remindersErr'); var ok = document.getElementById('remindersOk');
@@ -9199,7 +9296,11 @@ async function handleLeagueRosterPage(req, env, url) {
       addNoticeTeamless: "{n|Ce joueur n'a pas d'équipe : il ne recevra aucun rappel tant que tu ne lui en donnes pas une.|# de ces joueurs n'ont pas d'équipe : ils ne recevront aucun rappel tant que tu ne leur en donnes pas une.}",
       addNoticeTeamlessOne: "1 de ces joueurs n'a pas d'équipe : il ne recevra aucun rappel tant que tu ne lui en donnes pas une.",
       addNoticeBtn: '{n|Ajouter le joueur|Ajouter les joueurs}',
-      bulkImportHelp: "Colle une liste copiée d'un tableur (Excel, Google Sheets) : une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée.",
+      bulkImportHelp: "Colle une liste copiée d'un tableur (Excel, Google Sheets) : une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée. Colonnes : nom, courriel, téléphone et, en dernier, l'équipe (optionnelle, équipes fixes seulement). Exemple : Marie Tremblay, marie@example.com, 514-555-0100, Rouge",
+      lblTeamCol: 'Équipe',
+      importTeamUnmatched: "Ajoutés sans équipe, car l'équipe inscrite ne correspond à aucune équipe de ta ligue :",
+      importTeamIgnored: "La colonne d'équipe a été ignorée : ta ligue n'a pas d'équipes fixes.",
+      importNoteClose: 'Fermer',
       bulkPreviewBtn: 'Prévisualiser', bulkConfirmBtn: "Confirmer l'import",
       lblEmailCol: 'Courriel', lblPhoneCol: 'Téléphone', bulkStatusCol: 'Statut',
       bulkStatusOk: 'Sera importé', bulkStatusNoName: 'Ignoré : nom manquant ou invalide',
@@ -9212,7 +9313,7 @@ async function handleLeagueRosterPage(req, env, url) {
       bulkResultSummary: '{created|# ajouté|# ajoutés}, {skipped|# ignoré|# ignorés}.',
       bulkResultCreated: 'Ajouté', bulkResultSkippedDupeExisting: 'Ignoré : existe déjà dans ta ligue',
       bulkResultSkippedInvalid: 'Ignoré : invalide', bulkResultSkippedDupeBatch: 'Ignoré : doublon dans la liste',
-      bulkTextPh: 'Marie Tremblay, marie@example.com, 514-555-0100\nJean Bouchard, jean@example.com'
+      bulkTextPh: 'Marie Tremblay, marie@example.com, 514-555-0100, Rouge\nJean Bouchard, jean@example.com'
     },
     en: {
       navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navSettings: 'Settings', logout: 'Log out',
@@ -9267,7 +9368,11 @@ async function handleLeagueRosterPage(req, env, url) {
       addNoticeTeamless: '{n|This player has no team: they get no reminder until you give them one.|# of these players have no team: they get no reminder until you give them one.}',
       addNoticeTeamlessOne: '1 of these players has no team: they get no reminder until you give them one.',
       addNoticeBtn: '{n|Add the player|Add the players}',
-      bulkImportHelp: 'Paste a list copied from a spreadsheet (Excel, Google Sheets): one person per line, columns separated by a tab or comma. A header row is fine, it will be skipped.',
+      bulkImportHelp: 'Paste a list copied from a spreadsheet (Excel, Google Sheets): one person per line, columns separated by a tab or comma. A header row is fine, it will be skipped. Columns: name, email, phone and, last, the team (optional, fixed teams only). Example: John Smith, john@example.com, 514-555-0100, Red',
+      lblTeamCol: 'Team',
+      importTeamUnmatched: "Added without a team, because the team given matches none of your league's teams:",
+      importTeamIgnored: 'The team column was ignored: your league has no fixed teams.',
+      importNoteClose: 'Close',
       bulkPreviewBtn: 'Preview', bulkConfirmBtn: 'Confirm import',
       lblEmailCol: 'Email', lblPhoneCol: 'Phone', bulkStatusCol: 'Status',
       bulkStatusOk: 'Will be imported', bulkStatusNoName: 'Skipped: missing or invalid name',
@@ -9280,7 +9385,7 @@ async function handleLeagueRosterPage(req, env, url) {
       bulkResultSummary: '{created} added, {skipped} skipped.',
       bulkResultCreated: 'Added', bulkResultSkippedDupeExisting: 'Skipped: already in your league',
       bulkResultSkippedInvalid: 'Skipped: invalid', bulkResultSkippedDupeBatch: 'Skipped: duplicate in list',
-      bulkTextPh: 'John Smith, john@example.com, 514-555-0100\nJane Doe, jane@example.com'
+      bulkTextPh: 'John Smith, john@example.com, 514-555-0100, Red\nJane Doe, jane@example.com'
     }
   };
 
@@ -9449,6 +9554,11 @@ async function handleLeagueRosterPage(req, env, url) {
       <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="ro_reminders_pause_btn" onclick="toggleReminderPause(this)" data-i18n="${reminderWindowEvent.auto_reminders_enabled ? 'pauseRemindersBtn' : 'resumeRemindersBtn'}">${reminderWindowEvent.auto_reminders_enabled ? 'Suspendre les rappels pour ce match' : 'Reprendre les rappels pour ce match'}</button>
     </div>
   </section>` : ''}
+  <section class="nl-card nl-card--pad-lg" id="ro_import_note" hidden>
+    <p id="ro_import_note_text" style="margin:0"></p>
+    <ul id="ro_import_note_list" style="margin:6px 0 0;padding-left:20px"></ul>
+    <div style="margin-top:8px"><button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="importNoteClose" onclick="document.getElementById('ro_import_note').hidden = true">Fermer</button></div>
+  </section>
   ${rosterSetupDoneHtml}
   ${showScheduleNudge ? `<section class="nl-card nl-card--pad-lg" style="border-color:var(--yellow)">
     <div class="overline" style="color:var(--primary)" data-i18n="nextStep">Prochaine étape</div>
@@ -9540,9 +9650,9 @@ async function handleLeagueRosterPage(req, env, url) {
   <div class="ro-bulk-overlay" id="ro_bulk_overlay">
     <div class="ro-bulk-card">
       <h2 data-i18n="bulkImportTitle">Importer des joueurs</h2>
-      <p class="nl-help" data-i18n="bulkImportHelp">Colle une liste copiée d'un tableur (Excel, Google Sheets) : une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée.</p>
+      <p class="nl-help" data-i18n="bulkImportHelp">${esc(I18N_ROSTER.fr.bulkImportHelp)}</p>
       <div id="bulkErr" class="nl-error" style="display:none"></div>
-      <textarea id="ro_bulk_text" data-i18n-ph="bulkTextPh" placeholder="Marie Tremblay, marie@example.com, 514-555-0100&#10;Jean Bouchard, jean@example.com"></textarea>
+      <textarea id="ro_bulk_text" data-i18n-ph="bulkTextPh" placeholder="Marie Tremblay, marie@example.com, 514-555-0100, Rouge&#10;Jean Bouchard, jean@example.com"></textarea>
       <div style="display:flex;gap:8px;">
         <button type="button" class="nl-btn nl-btn--secondary" data-i18n="bulkPreviewBtn" onclick="bulkPreview()">Prévisualiser</button>
       </div>
@@ -9550,7 +9660,7 @@ async function handleLeagueRosterPage(req, env, url) {
         <div class="ro-bulk-summary" id="ro_bulk_summary"></div>
         <div style="max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:var(--radius-md);">
           <table class="ro-bulk-table">
-            <thead><tr><th data-i18n="colPlayer">Joueur</th><th data-i18n="lblEmailCol">Courriel</th><th data-i18n="lblPhoneCol">Téléphone</th><th data-i18n="bulkStatusCol">Statut</th></tr></thead>
+            <thead><tr><th data-i18n="colPlayer">Joueur</th><th data-i18n="lblEmailCol">Courriel</th><th data-i18n="lblPhoneCol">Téléphone</th><th data-i18n="lblTeamCol" id="ro_bulk_team_th" style="display:none">Équipe</th><th data-i18n="bulkStatusCol">Statut</th></tr></thead>
             <tbody id="ro_bulk_tbody"></tbody>
           </table>
         </div>
@@ -9726,7 +9836,13 @@ function cancelBulkImport() {
   BULK_ROWS = [];
   document.getElementById('ro_bulk_overlay').classList.remove('open');
 }
-var BULK_HEADER_WORDS = ['name', 'nom', 'full name', 'nom complet', 'email', 'e-mail', 'courriel', 'phone', 'téléphone', 'telephone', 'tel'];
+var BULK_HEADER_WORDS = ['name', 'nom', 'full name', 'nom complet', 'email', 'e-mail', 'courriel', 'phone', 'téléphone', 'telephone', 'tel', 'team', 'équipe', 'equipe'];
+// Onboarding batch 2, item 3: the optional team column. A league's teams,
+// matched regardless of case and accents (the server matches the same way).
+var ROSTER_TEAMS = ${JSON.stringify(teamNames).replace(/</g, '\\u003c')};
+var ACCENTS = new RegExp('[' + String.fromCharCode(0x300) + '-' + String.fromCharCode(0x36f) + ']', 'g');
+function teamKey(t) { return String(t || '').normalize('NFD').replace(ACCENTS, '').toLowerCase().split(' ').filter(Boolean).join(' '); }
+function namesTeam(t) { var k = teamKey(t); return !!k && ROSTER_TEAMS.some(function(x) { return teamKey(x) === k; }); }
 function parseBulkText(text) {
   // Live-testing bug fix (Part 1, URGENT regression, root cause of the
   // roster page's "Ajouter" button doing nothing). This whole function
@@ -9820,12 +9936,24 @@ function parseBulkText(text) {
     var remaining = fields.slice();
     var emailIdx = -1;
     for (var j = 0; j < remaining.length; j++) { if (isEmailField(remaining[j])) { emailIdx = j; break; } }
+    // The team: the line's last field, when it comes after the email or
+    // the phone, or when it names one of the league's teams; never the only
+    // field. Without it, the line reads as it always did.
+    var team = '';
+    var lastIdx = fields.length - 1;
+    var lastField = fields[lastIdx];
+    var contactIdx = -1;
+    for (var ci = 0; ci < fields.length; ci++) { if (isEmailField(fields[ci]) || isPhoneField(fields[ci])) contactIdx = ci; }
+    if (lastIdx > 0 && !isEmailField(lastField) && !isPhoneField(lastField) && (contactIdx !== -1 && contactIdx < lastIdx || namesTeam(lastField))) {
+      team = lastField;
+      remaining.splice(remaining.lastIndexOf(lastField), 1);
+    }
     var email = emailIdx !== -1 ? remaining.splice(emailIdx, 1)[0] : '';
     var phoneIdx = -1;
     for (var k = 0; k < remaining.length; k++) { if (isPhoneField(remaining[k])) { phoneIdx = k; break; } }
     var phone = phoneIdx !== -1 ? remaining.splice(phoneIdx, 1)[0] : '';
     var name = remaining.join(' ').replace(/\\s+/g, ' ').trim();
-    rows.push({ name: name, email: email, phone: phone });
+    rows.push({ name: name, email: email, phone: phone, team: team });
   }
   return rows;
 }
@@ -9863,6 +9991,8 @@ function bulkPreview() {
   BULK_ROWS = [];
   var tbody = document.getElementById('ro_bulk_tbody');
   tbody.innerHTML = '';
+  var anyTeam = rows.some(function(r) { return !!r.team; });
+  document.getElementById('ro_bulk_team_th').style.display = anyTeam ? '' : 'none';
   rows.forEach(function(r) {
     var status = 'ok';
     if (!r.name || r.name.split(' ').filter(Boolean).length < 2) { status = 'noname'; }
@@ -9873,6 +10003,7 @@ function bulkPreview() {
     tr.appendChild(bulkTableCell(r.name || '–'));
     tr.appendChild(bulkTableCell(r.email || '–'));
     tr.appendChild(bulkTableCell(r.phone || '–'));
+    if (anyTeam) tr.appendChild(bulkTableCell(r.team || '–'));
     tr.appendChild(bulkTableCell(statusText, status !== 'ok' ? 'ro-bulk-skip' : ''));
     tbody.appendChild(tr);
   });
@@ -9901,15 +10032,47 @@ async function bulkConfirm() {
         if (!pr.ok || !pd.ok) { errEl.textContent = window.__errorText(pd.errorKey, pd.error); errEl.style.display = 'block'; btn.disabled = false; return; }
       }
     }
-    var bulkBody = { contacts: BULK_ROWS.map(function(r) { return { name: r.name, email: r.email || undefined, phone: r.phone || undefined }; }) };
+    var bulkBody = { contacts: BULK_ROWS.map(function(r) { return { name: r.name, email: r.email || undefined, phone: r.phone || undefined, team: r.team || undefined }; }) };
     var r = await postContacts('/league/contacts/bulk', bulkBody, { wantsNotice: true });
     if (r.data.needsEmailChoice || r.data.needsRegularNotice) { btn.disabled = false; openAddEmailsDialog(r.data, function(extra) { return postContacts('/league/contacts/bulk', bulkBody, extra); }); return; }
     if (!r.ok) { errEl.textContent = r.message; errEl.style.display = 'block'; btn.disabled = false; return; }
-    window.location.reload();
+    importDone(r.data);
   } catch (e) {
     errEl.textContent = window.__errorText('NETWORK_ERROR'); errEl.style.display = 'block'; btn.disabled = false;
   }
 }
+// Onboarding batch 2, item 3: after an import, the players whose team
+// matched none of the league's (added without one), or the note that the
+// team column was ignored, are shown at the top of the reloaded page.
+function importDone(data) {
+  try {
+    if (data && ((data.teamUnmatched && data.teamUnmatched.length) || data.teamIgnored)) {
+      sessionStorage.setItem('nl_import_note', JSON.stringify({ unmatched: data.teamUnmatched || [], ignored: !!data.teamIgnored }));
+    }
+  } catch (e) {}
+  window.location.reload();
+}
+(function showImportNote() {
+  var raw = null;
+  try { raw = sessionStorage.getItem('nl_import_note'); sessionStorage.removeItem('nl_import_note'); } catch (e) {}
+  if (!raw) return;
+  var note = null;
+  try { note = JSON.parse(raw); } catch (e) { return; }
+  var box = document.getElementById('ro_import_note');
+  if (!box || !note) return;
+  var draw = function() {
+    var d = window.__pageDict();
+    var unmatched = note.unmatched || [];
+    document.getElementById('ro_import_note_text').textContent = unmatched.length ? d.importTeamUnmatched : d.importTeamIgnored;
+    var list = document.getElementById('ro_import_note_list');
+    list.innerHTML = '';
+    unmatched.forEach(function(u) { var li = document.createElement('li'); li.textContent = u.name + ' (' + u.team + ')'; list.appendChild(li); });
+    if (unmatched.length && note.ignored) { var li = document.createElement('li'); li.textContent = d.importTeamIgnored; list.appendChild(li); }
+  };
+  draw();
+  window.addEventListener('nl_lang_changed', draw);
+  box.hidden = false;
+})();
 document.querySelectorAll('.ro-f').forEach(function(btn) {
   btn.addEventListener('click', function() {
     document.querySelectorAll('.ro-f').forEach(function(x) { x.setAttribute('aria-pressed', 'false'); });
@@ -10135,7 +10298,7 @@ async function answerAddEmails(choice) {
     if (choice) { extra.emailChoice = choice; extra.turnOffAutoEmails = document.getElementById('add_emails_off').checked; }
     var r = await ADD_EMAILS_RETRY(extra);
     if (r.data && (r.data.needsEmailChoice || r.data.needsRegularNotice)) { btns.forEach(function(b) { b.disabled = false; }); openAddEmailsDialog(r.data, ADD_EMAILS_RETRY); return; }
-    if (r.ok) { window.location.reload(); return; }
+    if (r.ok) { importDone(r.data); return; }
     err.textContent = r.message; err.style.display = 'block';
   } catch (e) {
     err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block';
@@ -11762,6 +11925,9 @@ ${tabbar}`;
   // Result and player stats are for a game that has started: hidden until
   // then (and the routes refuse it) -- eventHasStarted, league_ids.js.
   const gameStarted = eventHasStarted(ev);
+  // Onboarding batch 2, item 2b: a league with no goalies shows no goalie
+  // badge and no goalie column in its stats.
+  const detailGoalies = await leagueHasGoalies(env, ev.league_id || leagueRow.id);
 
   const I18N_DETAIL = {
     fr: {
@@ -11946,6 +12112,7 @@ ${tabbar}`;
   // needed" -- and both tooltips follow the language toggle.
   function eventRowGoalieBadge(c) {
     const d = I18N_DETAIL[lang] || I18N_DETAIL.fr;
+    if (!detailGoalies) return '';
     if (c.is_goalie) return ` <span class="nl-badge nl-badge--in" style="padding:1px 6px;font-size:11px;" data-i18n="goalieBadge" data-i18n-title="goalieTitle" data-goalie="1" title="${esc(d.goalieTitle)}">G</span>`;
     if (c.is_backup_goalie) return ` <span class="nl-badge nl-badge--sub" style="padding:1px 6px;font-size:11px;" data-i18n="canAlsoGoalieBadge" data-i18n-title="canAlsoGoalieTitle" data-goalie="backup" title="${esc(d.canAlsoGoalieTitle)}">${esc(d.canAlsoGoalieBadge)}</span>`;
     return '';
@@ -12359,7 +12526,7 @@ ${tabbar}`;
     <div id="playerStatsErr" class="nl-error" style="display:none"></div>
     <div id="playerStatsOk" class="nl-ok" style="display:none"></div>
     ${!confirmedPlayers.length ? `<p class="nl-help" data-i18n="playerStatsNoConfirmed">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).playerStatsNoConfirmed)}</p>` : `
-    ${!leagueRow.tracks_results ? `<p class="nl-help" data-i18n="goalieNeedsResults" style="margin-bottom:8px">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).goalieNeedsResults)}</p>` : ''}
+    ${!leagueRow.tracks_results && detailGoalies ? `<p class="nl-help" data-i18n="goalieNeedsResults" style="margin-bottom:8px">${esc((I18N_DETAIL[lang] || I18N_DETAIL.fr).goalieNeedsResults)}</p>` : ''}
     <div id="player_stats_rows" style="display:flex;flex-direction:column;gap:8px;">
       ${confirmedPlayers.map(p => {
         const existing = existingPlayerStats.get(p.player_id);
@@ -12374,7 +12541,7 @@ ${tabbar}`;
         const gaValue = derivedGA != null ? derivedGA : (isGoalie && existing.goals_against != null ? existing.goals_against : '');
         return `<div class="ev-p" data-player-stat-row="${esc(p.player_id)}" data-team="${esc(p.team || '')}" style="align-items:center;flex-wrap:wrap;">
         <span style="min-width:140px">${esc(p.name)}</span>
-        <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" class="ps-goalie-toggle" ${isGoalie ? 'checked' : ''} ${leagueRow.tracks_results ? '' : 'disabled'} onchange="psToggleGoalie(this)"> <span data-i18n="colGoalie">Gardien</span></label>
+        <label style="display:${detailGoalies ? 'flex' : 'none'};align-items:center;gap:4px;font-size:13px;"><input type="checkbox" class="ps-goalie-toggle" ${isGoalie ? 'checked' : ''} ${leagueRow.tracks_results ? '' : 'disabled'} onchange="psToggleGoalie(this)"> <span data-i18n="colGoalie">Gardien</span></label>
         <label class="ps-skater-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? 'display:none' : ''}"><span data-i18n="colGoals">Buts</span> <input class="nl-input ps-goals" type="number" min="0" style="width:60px" value="${existing && existing.role !== 'goalie' ? esc(String(existing.goals)) : ''}" oninput="updateGoalTally()"></label>
         <label class="ps-skater-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? 'display:none' : ''}"><span data-i18n="colAssists">Passes</span> <input class="nl-input ps-assists" type="number" min="0" style="width:60px" value="${existing && existing.role !== 'goalie' ? esc(String(existing.assists)) : ''}"></label>
         <label class="ps-goalie-fields" style="display:flex;align-items:center;gap:4px;font-size:13px;${isGoalie ? '' : 'display:none'}"><span data-i18n="colGoalsAgainst">Buts alloués</span> ${derivedGA != null
@@ -15394,7 +15561,7 @@ async function addContactsWithEmailChoice(req, env, url, handler) {
     if (noticeDue) {
       const cfg = await getLeagueSeasonConfig(env, leagueId);
       const fixed = (cfg.teamStructure || 'fixed') === 'fixed';
-      Object.assign(out, { needsRegularNotice: true, regularCount: regulars.length, teamlessCount: fixed ? regulars.filter(r => !String(r.team || '').trim()).length : 0, firstEmail: await firstEmailForNewRegulars(env, leagueId) });
+      Object.assign(out, { needsRegularNotice: true, regularCount: regulars.length, teamlessCount: fixed ? regulars.filter(r => !matchTeamName(getTeamNames(cfg), r.team)).length : 0, firstEmail: await firstEmailForNewRegulars(env, leagueId) });
     }
     return Response.json(out, { status: 409 });
   }
@@ -33172,6 +33339,9 @@ async function handleFetch(req, env, ctx) {
       // field existed with no way for an admin to ever change it.
       if (url.pathname === '/league/language-mode' && req.method === 'POST')
         return await handleLeagueUpdateLanguageMode(req, env, url);
+      // Onboarding batch 2, item 2c: « Ma ligue a des gardiens ».
+      if (url.pathname === '/league/settings/goalies' && req.method === 'POST')
+        return await handleLeagueUpdateGoalies(req, env, url);
       // Part 2 (automated reminders task): the 3 independent toggle
       // switches on the dashboard's own reminder-settings card.
       if (url.pathname === '/league/reminders/settings' && req.method === 'POST')

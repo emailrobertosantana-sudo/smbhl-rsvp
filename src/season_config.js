@@ -76,8 +76,15 @@ export const DEFAULT_SEASON_CONFIG = {
 // so this starts as a single entry, but adding a second sport later
 // means adding one entry here, not hunting down every place that used
 // to compare against 'hockey' by name.
+// Onboarding batch 2 (2026-10-02): a Notre Ligue league can say it has no
+// goalies (settings league_goalies:<league> = 'off', leagues.js). Its
+// season config then reads this sport type, so every place gated on
+// sportHasGoalie (the Player / Goalie choice, goalie sub calls and
+// shortages, the dual-role features) turns off with no other change.
+export const NO_GOALIE_SPORT = 'no_goalies';
 const SPORT_CAPABILITIES = {
-  hockey: { hasGoalie: true }
+  hockey: { hasGoalie: true },
+  [NO_GOALIE_SPORT]: { hasGoalie: false }
 };
 
 export function sportHasGoalie(sportType) {
