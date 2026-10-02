@@ -498,18 +498,19 @@ const notice = (fr, en, logoTooltip = '') => page(fr, `<h1>${esc(fr)}<span class
  */
 const I18N_HOME = {
   fr: {
-    navFeatures: 'Fonctionnalités', navHow: 'Comment ça marche', login: 'Se connecter',
-    heroTitle: 'Ta ligue du dimanche, sans la <u>paperasse</u>.',
-    heroBody: "Notre Ligue texte tes joueurs, compte les présences et trouve des remplaçants quand une équipe manque de monde. Toi, tu joues.",
-    cta: 'Créer ma ligue', proof: 'Prêt en 5 minutes. En français et en anglais.',
+    navFeatures: 'Fonctionnalités', navHow: 'Comment ça marche', navPricing: 'Tarifs', login: 'Se connecter',
+    heroTitle: 'Ta ligue, sans la <u>paperasse</u>.',
+    heroBody: "Notre Ligue invite tes joueurs, compte qui sera là et trouve des remplaçants quand il manque du monde. Toi, tu joues.",
+    cta: 'Créer ma ligue', proof: 'Prêt en 5 minutes. 2 mois gratuits, sans carte. Gratuit sous 15 joueurs.',
+    beta: 'Ligues bêta\u00a0: ton essai de 2 mois commence le jour du lancement de la facturation.',
     eyebrow1: 'Ce qu\'on fait pour toi', heading1: 'Le travail plate de la ligue, fait automatiquement.',
     f1Title: 'Présences en un tap', f1Body: "Chaque semaine, les joueurs reçoivent un texto. Un tap pour dire oui ou non. Pas d'appli à installer.",
     f2Title: 'Remplaçants automatiques', f2Body: 'Une équipe manque de joueurs? On invite ta liste de remplaçants, premier arrivé, premier servi.',
     f3Title: 'Équipes et alignements', f3Body: 'Place chaque joueur dans une équipe, change en un clic, garde les gardiens en rotation.',
     f4Title: 'Une page pour ta ligue', f4Body: 'Horaire, équipes et classement sur une page publique à partager dans le groupe.',
     eyebrow2: 'Comment ça marche', heading2: 'Trois étapes, une fois. Ensuite ça roule tout seul.',
-    s1Title: 'Crée ta ligue', s1Body: 'Nom, équipes, adresse de ta page. Cinq minutes.',
-    s2Title: 'Ajoute tes joueurs', s2Body: "Un nom et un numéro de cellulaire ou un courriel. Importe une liste si tu en as une.",
+    s1Title: 'Créer ta ligue', s1Body: "Le nom, ta formule de jeu, l'adresse de ta page. Cinq minutes.",
+    s2Title: 'Ajouter tes joueurs', s2Body: 'Un nom et un courriel. Importe une liste si tu en as une.',
     s3Title: 'On s\'occupe du reste', s3Body: 'Invitations, rappels, remplaçants. Tu reçois une alerte seulement si quelque chose coince.',
     finalTitle: 'Ta prochaine saison commence ici.',
     footerBrand: 'Notre Ligue · Fait au Québec', footerLinks: '<a href="/confidentialite">Confidentialité</a> · <a href="/conditions">Conditions</a> · <a href="mailto:bonjour@notreligue.ca">Contact</a>',
@@ -518,18 +519,19 @@ const I18N_HOME = {
     mockShort: 'Manque 2', mockSubsInvited: '3 remplaçants invités'
   },
   en: {
-    navFeatures: 'Features', navHow: 'How it works', login: 'Log in',
-    heroTitle: 'Your Sunday league, without the <u>paperwork</u>.',
-    heroBody: "Notre Ligue texts your players, counts who's in and finds subs when a team is short. You just play.",
-    cta: 'Create my league', proof: 'Ready in 5 minutes. In French and English.',
+    navFeatures: 'Features', navHow: 'How it works', navPricing: 'Pricing', login: 'Log in',
+    heroTitle: 'Your league, without the <u>paperwork</u>.',
+    heroBody: "Notre Ligue messages your players, counts who's in and finds subs when you're short. You just play.",
+    cta: 'Create my league', proof: 'Ready in 5 minutes. 2 months free, no card. Free under 15 players.',
+    beta: 'Beta leagues: your 2-month trial starts the day billing launches.',
     eyebrow1: 'What we handle for you', heading1: 'The boring league work, done automatically.',
     f1Title: 'Attendance in one tap', f1Body: "Every week, players get a text. One tap to say yes or no. No app to install.",
     f2Title: 'Automatic subs', f2Body: 'A team short on players? We invite your sub list, first come first served.',
     f3Title: 'Teams and lineups', f3Body: 'Put each player on a team, change it in one click, keep goalies in rotation.',
     f4Title: 'A page for your league', f4Body: 'Schedule, teams and standings on a public page you can share in the group chat.',
     eyebrow2: 'How it works', heading2: 'Three steps, once. Then it runs itself.',
-    s1Title: 'Create your league', s1Body: 'Name, teams, your page address. Five minutes.',
-    s2Title: 'Add your players', s2Body: "A name and a cell number or email. Import a list if you have one.",
+    s1Title: 'Create your league', s1Body: 'Name, how it runs, your page address. Five minutes.',
+    s2Title: 'Add your players', s2Body: 'A name and an email. Import a list if you have one.',
     s3Title: 'We handle the rest', s3Body: "Invites, reminders, subs. You get an alert only if something's stuck.",
     finalTitle: 'Your next season starts here.',
     footerBrand: 'Notre Ligue · Made in Quebec', footerLinks: '<a href="/confidentialite#en">Privacy</a> · <a href="/conditions#en">Terms</a> · <a href="mailto:bonjour@notreligue.ca">Contact</a>',
@@ -538,8 +540,18 @@ const I18N_HOME = {
     mockShort: 'Short 2', mockSubsInvited: '3 subs invited'
   }
 };
+// The homepage's language: ?lang=fr|en, then the remembered choice (the
+// toggle's nl_lang cookie), then Accept-Language (English if it prefers
+// en), then French. The page is rendered in it on the server; the toggle
+// still switches in place and remembers the choice.
+function resolveHomeLang(req) {
+  const q = new URL(req.url).searchParams.get('lang');
+  if (q === 'fr' || q === 'en') return q;
+  return resolveServerLang(req);
+}
 function renderMarketingHomepage(req) {
-  const lang = resolveServerLang(req);
+  const lang = resolveHomeLang(req);
+  const T = I18N_HOME[lang];
   const bodyHtml = `
 <style>
   .nl-hero .nl-header { background: transparent; border-bottom-color: #2a2e36; max-width: var(--content-wide); margin: 0 auto; padding: 0 var(--space-6); }
@@ -595,72 +607,75 @@ function renderMarketingHomepage(req) {
   <header class="nl-header">
     <span class="nl-brand nl-brand--product"><i></i>Notre Ligue</span>
     <nav class="nl-nav" style="margin-left:var(--space-6)">
-      <a href="#fonctionnalites" data-i18n="navFeatures">Fonctionnalités</a>
-      <a href="#comment-ca-marche" data-i18n="navHow">Comment ça marche</a>
+      <a href="#fonctionnalites" data-i18n="navFeatures">${T.navFeatures}</a>
+      <a href="#comment-ca-marche" data-i18n="navHow">${T.navHow}</a>
+      <a href="#pricing" data-i18n="navPricing">${T.navPricing}</a>
     </nav>
     <div class="spacer"></div>
-    <a class="nl-btn nl-btn--ghost nl-btn--sm" href="/login" style="color:#f4f4f2" data-i18n="login">Se connecter</a>
+    <a class="nl-btn nl-btn--ghost nl-btn--sm" href="/login" style="color:#f4f4f2" data-i18n="login">${T.login}</a>
     <div class="nl-lang" role="group" aria-label="Langue / Language">
-      <button type="button" id="btn-lang-fr" aria-pressed="true" onclick="window.__setLang('fr')">FR</button>
-      <button type="button" id="btn-lang-en" aria-pressed="false" onclick="window.__setLang('en')">EN</button>
+      <button type="button" id="btn-lang-fr" aria-pressed="${lang === 'fr'}" onclick="window.__setLang('fr')">FR</button>
+      <button type="button" id="btn-lang-en" aria-pressed="${lang === 'en'}" onclick="window.__setLang('en')">EN</button>
     </div>
   </header>
   <div class="home-hero">
     <div>
-      <h1 data-i18n="heroTitle">Ta ligue du dimanche, sans la <u>paperasse</u>.</h1>
-      <p data-i18n="heroBody">Notre Ligue texte tes joueurs, compte les présences et trouve des remplaçants quand une équipe manque de monde. Toi, tu joues.</p>
-      <div class="home-cta"><a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">Créer ma ligue</a></div>
-      <div class="home-proof" data-i18n="proof">Prêt en 5 minutes. En français et en anglais.</div>
+      <h1 data-i18n="heroTitle">${T.heroTitle}</h1>
+      <p data-i18n="heroBody">${T.heroBody}</p>
+      <div class="home-cta"><a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">${T.cta}</a></div>
+      <div class="home-proof" data-i18n="proof">${T.proof}</div>
+      <div class="home-proof home-beta" data-i18n="beta">${T.beta}</div>
     </div>
     <div class="home-mock" aria-hidden="true">
       <div class="blk1"></div><div class="blk2"></div>
-      <div class="card a"><div class="ov lg" data-i18n="mockLeagueName">Ligue du dimanche matin</div><div class="ov" data-i18n="mockDayTime">Dimanche · 9 h</div><h3 data-i18n="mockQuestion">Marc, tu joues dimanche?</h3><div class="btn p" data-i18n="mockBtnIn">✓ Je joue</div><div class="btn s" data-i18n="mockBtnOut">Je ne peux pas</div></div>
-      <div class="card b"><div class="ov" data-i18n="mockDayTime">Dimanche · 9 h</div>
+      <div class="card a"><div class="ov lg" data-i18n="mockLeagueName">${T.mockLeagueName}</div><div class="ov" data-i18n="mockDayTime">${T.mockDayTime}</div><h3 data-i18n="mockQuestion">${T.mockQuestion}</h3><div class="btn p" data-i18n="mockBtnIn">${T.mockBtnIn}</div><div class="btn s" data-i18n="mockBtnOut">${T.mockBtnOut}</div></div>
+      <div class="card b"><div class="ov" data-i18n="mockDayTime">${T.mockDayTime}</div>
         <div class="row"><b>Les Castors</b><span style="color:#0e7a4f;font-weight:600">✓ 10/10</span></div>
-        <div class="row"><b>Les Aurores</b><span style="background:#ffd23f;padding:2px 6px;border-radius:3px;font-weight:700" data-i18n="mockShort">Manque 2</span></div>
-        <div class="row"><span style="color:#55585f" data-i18n="mockSubsInvited">3 remplaçants invités</span></div>
+        <div class="row"><b>Les Aurores</b><span style="background:#ffd23f;padding:2px 6px;border-radius:3px;font-weight:700" data-i18n="mockShort">${T.mockShort}</span></div>
+        <div class="row"><span style="color:#55585f" data-i18n="mockSubsInvited">${T.mockSubsInvited}</span></div>
       </div>
     </div>
   </div>
 </div>
 
 <section class="home-band" id="fonctionnalites"><div class="home-in">
-  <div class="home-eyebrow" data-i18n="eyebrow1">Ce qu'on fait pour toi</div>
-  <h2 class="home-sec-h" data-i18n="heading1">Le travail plate de la ligue, fait automatiquement.</h2>
+  <div class="home-eyebrow" data-i18n="eyebrow1">${T.eyebrow1}</div>
+  <h2 class="home-sec-h" data-i18n="heading1">${T.heading1}</h2>
   <div class="home-feats">
-    <div class="home-feat"><div class="home-ico home-i1"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 10.5l4 4 8-9"/></svg></div><h3 data-i18n="f1Title">Présences en un tap</h3><p data-i18n="f1Body">Chaque semaine, les joueurs reçoivent un texto. Un tap pour dire oui ou non. Pas d'appli à installer.</p></div>
-    <div class="home-feat"><div class="home-ico home-i2"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 3l8 14H2z"/><path d="M10 8v4M10 14.5v.5"/></svg></div><h3 data-i18n="f2Title">Remplaçants automatiques</h3><p data-i18n="f2Body">Une équipe manque de joueurs? On invite ta liste de remplaçants, premier arrivé, premier servi.</p></div>
-    <div class="home-feat"><div class="home-ico home-i3"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="3"/><circle cx="14" cy="9" r="2.5"/><path d="M2 17c0-3 2.5-5 5-5s5 2 5 5M12 17c0-2 1-4 3-4s3 1.5 3 4"/></svg></div><h3 data-i18n="f3Title">Équipes et alignements</h3><p data-i18n="f3Body">Place chaque joueur dans une équipe, change en un clic, garde les gardiens en rotation.</p></div>
-    <div class="home-feat"><div class="home-ico home-i4"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="14" height="13" rx="1"/><path d="M3 8h14M7 2v4M13 2v4"/></svg></div><h3 data-i18n="f4Title">Une page pour ta ligue</h3><p data-i18n="f4Body">Horaire, équipes et classement sur une page publique à partager dans le groupe.</p></div>
+    <div class="home-feat"><div class="home-ico home-i1"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 10.5l4 4 8-9"/></svg></div><h3 data-i18n="f1Title">${T.f1Title}</h3><p data-i18n="f1Body">${T.f1Body}</p></div>
+    <div class="home-feat"><div class="home-ico home-i2"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 3l8 14H2z"/><path d="M10 8v4M10 14.5v.5"/></svg></div><h3 data-i18n="f2Title">${T.f2Title}</h3><p data-i18n="f2Body">${T.f2Body}</p></div>
+    <div class="home-feat"><div class="home-ico home-i3"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="3"/><circle cx="14" cy="9" r="2.5"/><path d="M2 17c0-3 2.5-5 5-5s5 2 5 5M12 17c0-2 1-4 3-4s3 1.5 3 4"/></svg></div><h3 data-i18n="f3Title">${T.f3Title}</h3><p data-i18n="f3Body">${T.f3Body}</p></div>
+    <div class="home-feat"><div class="home-ico home-i4"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="14" height="13" rx="1"/><path d="M3 8h14M7 2v4M13 2v4"/></svg></div><h3 data-i18n="f4Title">${T.f4Title}</h3><p data-i18n="f4Body">${T.f4Body}</p></div>
   </div>
 </div></section>
 
 <section class="home-band home-how" id="comment-ca-marche"><div class="home-in">
-  <div class="home-eyebrow" data-i18n="eyebrow2">Comment ça marche</div>
-  <h2 class="home-sec-h" data-i18n="heading2">Trois étapes, une fois. Ensuite ça roule tout seul.</h2>
+  <div class="home-eyebrow" data-i18n="eyebrow2">${T.eyebrow2}</div>
+  <h2 class="home-sec-h" data-i18n="heading2">${T.heading2}</h2>
   <div class="home-steps">
-    <div class="home-step"><div class="home-num">1</div><h3 data-i18n="s1Title">Crée ta ligue</h3><p data-i18n="s1Body">Nom, équipes, adresse de ta page. Cinq minutes.</p></div>
-    <div class="home-step"><div class="home-num">2</div><h3 data-i18n="s2Title">Ajoute tes joueurs</h3><p data-i18n="s2Body">Un nom et un numéro de cellulaire ou un courriel. Importe une liste si tu en as une.</p></div>
-    <div class="home-step"><div class="home-num">3</div><h3 data-i18n="s3Title">On s'occupe du reste</h3><p data-i18n="s3Body">Invitations, rappels, remplaçants. Tu reçois une alerte seulement si quelque chose coince.</p></div>
+    <div class="home-step"><div class="home-num">1</div><h3 data-i18n="s1Title">${T.s1Title}</h3><p data-i18n="s1Body">${T.s1Body}</p></div>
+    <div class="home-step"><div class="home-num">2</div><h3 data-i18n="s2Title">${T.s2Title}</h3><p data-i18n="s2Body">${T.s2Body}</p></div>
+    <div class="home-step"><div class="home-num">3</div><h3 data-i18n="s3Title">${T.s3Title}</h3><p data-i18n="s3Body">${T.s3Body}</p></div>
   </div>
 </div></section>
 
 <section class="home-final"><div class="home-in">
-  <h2 data-i18n="finalTitle">Ta prochaine saison commence ici.</h2>
-  <a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">Créer ma ligue</a>
+  <h2 data-i18n="finalTitle">${T.finalTitle}</h2>
+  <a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">${T.cta}</a>
 </div></section>
 <footer class="home-footer"><div class="home-in">
-  <span data-i18n="footerBrand">Notre Ligue · Fait au Québec</span>
-  <span data-i18n="footerLinks"><a href="/confidentialite">Confidentialité</a> · <a href="/conditions">Conditions</a> · <a href="mailto:bonjour@notreligue.ca">Contact</a></span>
+  <span data-i18n="footerBrand">${T.footerBrand}</span>
+  <span data-i18n="footerLinks">${T.footerLinks}</span>
 </div></footer>
 <script>
+window.__nlServerLang = '${lang}';
 ${nlAuthScript(I18N_HOME)}
 </script>`;
   return nlDocument({
     title: 'Notre Ligue',
     description: lang === 'en'
-      ? "Notre Ligue texts your players, counts who's in and finds subs when a team is short. You just play."
-      : "Ta ligue du dimanche, sans la paperasse. Présences, remplaçants et équipes, automatiquement.",
+      ? "Notre Ligue messages your players, counts who's in and finds subs when you're short. You just play."
+      : "Ta ligue, sans la paperasse. Notre Ligue invite tes joueurs, compte qui sera là et trouve des remplaçants.",
     bodyHtml,
     lang
   });
@@ -946,6 +961,10 @@ ${PAGE_DATE_JS}
     var urlLang = new URLSearchParams(location.search).get('lang');
     if (urlLang === 'fr' || urlLang === 'en') {
       lang = urlLang;
+    } else if (window.__nlServerLang === 'fr' || window.__nlServerLang === 'en') {
+      // A page the server rendered in a language it resolved (the
+      // marketing homepage): the cookie, then Accept-Language.
+      lang = window.__nlServerLang;
     } else {
       var saved = localStorage.getItem('smbhl_admin_lang');
       if (saved === 'fr' || saved === 'en') lang = saved;
@@ -32857,7 +32876,7 @@ async function handleFetch(req, env, ctx) {
         if (url.hostname.includes('smbhl.com')) {
           return Response.redirect('https://smbhl.com', 302);
         }
-        return new Response(renderMarketingHomepage(req), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+        return new Response(renderMarketingHomepage(req), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', vary: 'Accept-Language, Cookie' } });
       }
       // Part 2: last-resort GET route for a league's short public URL
       // (notreligue.ca/dmbhl), checked ONLY after every fixed route
