@@ -64,6 +64,12 @@ Only once `BILLING_LAUNCH_AT` is set; SMBHL is never read. No migration: `league
 - The 12-month clock (`inactive_since`): from the trial's end (unpaid, or Stripe-paused for want of a card) or the cancellation. Subscribing clears it. A league the owner paused is never deleted. Deletion through `performLeagueHardDelete` (`deleted_via` `billing_inactive_12_months`), at the earliest 30 days after the first notice and 7 days after the second; a subscription Stripe still keeps paused is cancelled first.
 - Decision 3: a subscription Stripe paused at its trial's end (Stripe status `paused`) shows « Ajouter une carte » (the portal). The portal does not resume it: the app calls `POST /subscriptions/{id}/resume` (`billing_cycle_anchor=now`, no proration) once a card is on file, from the billing page load (back from the portal), the cron, and `invoice.paid`.
 
+## Decisions (Roberto, 2026-10-02)
+
+- Read-only still allows: deactivating or deleting the league, creating another league, accepting an admin invitation (`src/write_guard.js` mode `billing`).
+- A cancelled subscription makes a league that is not free read-only at the end of the paid period (Stripe ends it then), and starts its 12-month clock.
+- A trial that Stripe paused for want of a card counts as an unpaid trial: its 12-month clock runs, and its Stripe subscription is cancelled before the deletion. Only a pause the owner chose is never deleted.
+
 ## Batch 2: secrets, variables, key
 
 Secrets (`npx wrangler secret put <NAME> --env demo`):
