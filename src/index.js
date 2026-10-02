@@ -30,6 +30,7 @@ import { afterRosterCountChange, refreshDailyRegularCounts, billingSummaries, se
 import { handleStripeWebhook, processPendingStripeEvents } from './stripe_webhook.js';
 import { checkStripeConfig } from './billing_check.js';
 import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS } from './billing_actions.js';
+import { runDailyLeagueHealth, leagueListRows, filterLeagueRows } from './league_health.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
   cleanupOldReviews,
@@ -32064,6 +32065,9 @@ async function runCronPass(env) {
     // A subscription whose count belongs in the other paid tier gets that
     // price for its next billing date (src/billing_actions.js).
     try { await runTierChanges(env); } catch (e) { console.error(`[billing] tier changes: ${e.message}`); }
+    // Each league's health for the super-admin (src/league_health.js), once a
+    // day, stored. Silent unless it fails.
+    try { await runDailyLeagueHealth(env); } catch (e) { console.error(`[health] daily league health: ${e.message}`); }
   }
   try { await recordHeartbeat(env, 'end', { ok: passOk, error: passError }); } catch (e) { console.error(`[health] heartbeat end: ${e.message}`); }
   await pingHeartbeatUrl(env, passOk);
@@ -32586,7 +32590,13 @@ async function handleFetch(req, env, ctx) {
         // Billing (src/billing.js): count, tiers, status, trial end, free exception.
         const owners = (await env.DB.prepare('SELECT id, created_by, created_at FROM leagues').all()).results || [];
         const billing = await billingSummaries(env, owners);
-        return Response.json({ ok: true, leagues: leagues.map(l => ({ ...l, billing: billing.get(l.id) || null })) });
+        // Notre Ligue: rows, the list page's (src/league_health.js): one per
+        // league with its light, filtered by ?status= and searched by ?q=.
+        // SMBHL is not among them.
+        const rows = env.LEAGUE_PRODUCT === 'true'
+          ? filterLeagueRows(await leagueListRows(env), { status: url.searchParams.get('status') || '', q: url.searchParams.get('q') || '' })
+          : undefined;
+        return Response.json({ ok: true, leagues: leagues.map(l => ({ ...l, billing: billing.get(l.id) || null })), ...(rows ? { rows } : {}) });
       }
       // Billing: the Stripe configuration, read only (src/billing_check.js).
       if (url.pathname === '/super-admin/billing/check' && req.method === 'GET') {

@@ -28,6 +28,7 @@ import { nlEmailWrap, nlEmailButton, leagueFillColor, assembleBilingualEmail, nl
 import { nlLegalEmailWrap } from './legal.js';
 import { recordTermsAcceptance, acceptsTerms, TERMS_REFUSAL } from './terms.js';
 import { hasCapability } from './super_admin.js';
+import { recordAdminSeen } from './league_health.js';
 import { applyReminderWindowSkipRule } from './reminder_scheduling.js';
 import { usesAdvancedReminders, getEmailSettings, emailSettingsKey } from './reminders.js';
 import { concurrencyClusters, teamClash, doubleBookedPlayers } from './league_nights.js';
@@ -67,6 +68,9 @@ export async function checkLeagueAccess(req, env, leagueId) {
   const league = await env.DB.prepare('SELECT deactivated_at FROM leagues WHERE id = ?').bind(leagueId).first();
   if (league && league.deactivated_at) return 'deactivated';
 
+  // The super-admin's league health (src/league_health.js): the last day an
+  // admin used the league's pages.
+  await recordAdminSeen(env, leagueId);
   return 'ok';
 }
 
