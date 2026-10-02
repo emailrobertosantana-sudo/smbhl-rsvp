@@ -71,7 +71,9 @@ describe('Live-testing Part 1: language toggle consistency across signup and the
     expect(step1Html).not.toMatch(/location\.href\s*=\s*'\/signup\?step=2'/);
 
     const step2Html = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
-    expect(step2Html).toContain("window.__navWithLang('/signup?step=1')");
+    // Onboarding batch (2026-10-02): no way back to the account step from
+    // here any more (the account exists; step 1 sends a signed-in admin on).
+    expect(step2Html).not.toContain("window.__navWithLang('/signup?step=1')");
     expect(step2Html).toContain("window.__navWithLang('/signup?step=3')");
     expect(step2Html).not.toMatch(/location\.href\s*=\s*'\/signup\?step=[13]'/);
     expect(step2Html).not.toMatch(/onclick="location\.href='\/signup\?step=1'"/);

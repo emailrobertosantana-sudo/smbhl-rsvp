@@ -100,11 +100,12 @@ describe('signup done screen: primary action starts the season (live-testing tas
     await applyRealSchema(env);
   });
 
-  it('the done screen\'s primary button targets /dashboard; "add players" is gone, not just secondary', async () => {
+  // Onboarding batch (2026-10-02): the season screen is the wizard's own.
+  it('the done screen\'s primary button targets the season screen; "add players" is gone, not just secondary', async () => {
     const { cookie } = await signupAndCreateLeague('bug2.addplayers@example.com', '203.0.113.903', 'Bug 2 League', ['A', 'B']);
     const res = await SELF.fetch('http://example.com/signup?step=done', { headers: { cookie } });
     const html = await res.text();
-    expect(html).toContain("onclick=\"location.href='/dashboard'\"");
+    expect(html).toContain("onclick=\"window.__navWithLang('/onboarding/season')\"");
     expect(html).not.toContain("onclick=\"location.href='/league/roster'\"");
   });
 });

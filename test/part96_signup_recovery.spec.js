@@ -100,12 +100,13 @@ describe('Signup/recovery, A2: back navigation cannot strand a user out of their
     expect(await res2.text()).toContain('id="su_league_name"');
   });
 
-  it('the redirected onboarding/season page itself resolves sensibly for a league with no season yet (redirects to dashboard, not a broken shell)', async () => {
+  // Onboarding batch (2026-10-02): the wizard asks for the season itself.
+  it('the redirected onboarding/season page itself resolves sensibly for a league with no season yet (the season screen, not a broken shell)', async () => {
     const { cookie, csrfToken } = await signup('a2.noseasonyet@example.com', '203.0.220.013');
     await createLeague(cookie, csrfToken, { name: 'A2 No Season League', teamNames: ['A', 'B'] });
     const res = await SELF.fetch('http://example.com/onboarding/season', { headers: { cookie }, redirect: 'manual' });
-    expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toContain('/dashboard');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('id="ob_season_name"');
   });
 });
 

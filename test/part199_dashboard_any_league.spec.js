@@ -23,7 +23,9 @@ beforeAll(async () => {
 });
 
 const get = (path, cookie) => SELF.fetch(BASE + path, { redirect: 'manual', headers: { cookie } });
-const leagueOn = html => (html.includes('Older Dash League') ? 'older' : '') + (html.includes('Newer Dash League') ? 'newer' : '') + (html.includes('Someone Else Dash') ? 'other' : '');
+// The league shown: its heading (the league picker lists both since the
+// onboarding batch).
+const leagueOn = page => { const html = (page.match(/<h1>[^<]*<\/h1>/) || [''])[0]; return (html.includes('Older Dash League') ? 'older' : '') + (html.includes('Newer Dash League') ? 'newer' : '') + (html.includes('Someone Else Dash') ? 'other' : ''); };
 
 describe('the dashboard, for an admin of two leagues', () => {
   it('no choice yet: the most recent league, as before', async () => {

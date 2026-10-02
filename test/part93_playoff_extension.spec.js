@@ -235,7 +235,9 @@ describe('Playoff extension, Part 1: onboarding + Settings (fixed-teams only)', 
 
     const step3 = await onboardingHtml(cookie, 3);
     expect(step3).toContain('id="ob_playoffs_enabled"');
-    expect(step3).toMatch(/aria-valuenow="6" aria-valuemax="8"|aria-valuemax="8" aria-valuenow="6"/);
+    // Onboarding batch (2026-10-02): the season screen and the finance step
+    // joined the count (10 for fixed); playoffs is #7.
+    expect(step3).toMatch(/aria-valuenow="7" aria-valuemax="10"|aria-valuemax="10" aria-valuenow="7"/);
   });
 
   it('weekly_draw and headcount onboarding never show a playoffs step — their own flow totals (6) are unaffected', async () => {

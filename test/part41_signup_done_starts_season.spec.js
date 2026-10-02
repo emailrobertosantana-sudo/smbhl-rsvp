@@ -55,13 +55,15 @@ describe('Part 6 (live-testing task): signup completion screen starts the season
     ['headcount', { teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 }],
     ['weekly_draw', { teamStructure: 'weekly_draw', teamNames: ['A', 'B'] }]
   ]) {
-    it(`${structure}: the primary button is "Créer ma saison" targeting /dashboard`, async () => {
+    // Onboarding batch (2026-10-02): the season is the wizard's own screen
+    // now (/onboarding/season), no longer a form on the dashboard.
+    it(`${structure}: the primary button is "Créer ma saison" targeting the season screen`, async () => {
       const { cookie, csrfToken } = await signup(`done.primary.${structure}@example.com`, `203.0.151.00${structure === 'fixed' ? 1 : structure === 'headcount' ? 2 : 3}`);
       await createLeague(cookie, csrfToken, { name: `Done Primary ${structure} League`, tracksStats: true, ...extra });
       const html = await (await SELF.fetch('http://example.com/signup?step=done', { headers: { cookie } })).text();
       const primaryMatch = html.match(/<button[^>]*nl-btn--primary[^>]*>/);
       expect(primaryMatch).not.toBeNull();
-      expect(primaryMatch[0]).toContain("onclick=\"location.href='/dashboard'\"");
+      expect(primaryMatch[0]).toContain("onclick=\"window.__navWithLang('/onboarding/season')\"");
       expect(primaryMatch[0]).toContain('data-i18n="startMySeason"');
       expect(html).toContain('>Créer ma saison</button>');
     });

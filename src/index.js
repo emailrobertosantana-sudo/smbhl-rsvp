@@ -2003,10 +2003,13 @@ async function readOnboardingDone(env, leagueId) {
   try { const v = JSON.parse(row.value || '[]'); return Array.isArray(v) ? v : []; } catch (_) { return []; }
 }
 // The first onboarding step neither answered nor skipped, as its ?step=
-// number; 0 once every step has been seen; null for a league with no record.
+// number; 0 once every step has been seen; null for a league whose
+// onboarding did not start on the season screen.
 async function firstOpenOnboardingStep(env, leagueRow) {
   const done = await readOnboardingDone(env, leagueRow.id);
-  if (!done) return null;
+  // Only a league whose onboarding started on the season screen: one set up
+  // before (a step reached from the checklist leaves a record too) is not.
+  if (!done || !done.includes('season')) return null;
   const skipped = await readOnboardingSkips(env, leagueRow.id);
   const steps = onboardingStepsFor(leagueRow.team_structure || 'fixed');
   const i = steps.findIndex(k => !done.includes(k) && !skipped.includes(k));

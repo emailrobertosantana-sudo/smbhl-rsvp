@@ -97,7 +97,9 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(html).toContain("window.__navWithLang('/onboarding/season')");
   });
 
-  it('GET /onboarding/season redirects to /dashboard with no session, no league, or no season yet', async () => {
+  // Onboarding batch (2026-10-02): with no season yet, the wizard now asks
+  // for it on its own screen instead of sending the admin to the dashboard.
+  it('GET /onboarding/season: to /login with no session, to /dashboard with no league, the season screen with no season yet', async () => {
     const noSession = await SELF.fetch('http://example.com/onboarding/season', { redirect: 'manual' });
     expect(noSession.status).toBe(302);
     expect(noSession.headers.get('location')).toContain('/login');
@@ -109,8 +111,8 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
 
     await createLeague(cookie, csrfToken, { name: 'No Season Yet League', teamNames: ['X', 'Y'] });
     const noSeason = await SELF.fetch('http://example.com/onboarding/season', { headers: { cookie }, redirect: 'manual' });
-    expect(noSeason.status).toBe(302);
-    expect(noSeason.headers.get('location')).toContain('/dashboard');
+    expect(noSeason.status).toBe(200);
+    expect(await noSeason.text()).toContain('id="ob_season_name"');
   });
 
   it('fixed structure: 5 steps (roster, teams, playoffs, reminders, stats), pre-filled and skippable', async () => {
@@ -125,10 +127,12 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     // playoffs,reminders,stats -- the playoffs step added by the
     // playoff extension), and this onboarding roster step is #4 in
     // that count.
-    expect(step1).toContain('aria-valuemax="8"');
-    expect(step1).toContain('aria-valuenow="4"');
+    // Onboarding batch (2026-10-02): the season screen (#4) and the finance
+    // step joined the count: 10 for fixed, this roster step #5.
+    expect(step1).toContain('aria-valuemax="10"');
+    expect(step1).toContain('aria-valuenow="5"');
     expect(step1).toContain('data-i18n="flowStepLabel"');
-    expect(step1).toMatch(/Étape 4 sur 8|Step 4 of 8/);
+    expect(step1).toMatch(/Étape 5 sur 10|Step 5 of 10/);
     expect(step1).toContain('id="ob_min_players"');
     expect(step1).toContain('data-i18n="skip"');
     // B2 (onboarding polish task): "Skip for now" is a small centered
@@ -156,8 +160,11 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     // toggle replaced by two independent ones.
     expect(step5).toContain('id="ob_tracks_results"');
     expect(step5).toContain('id="ob_tracks_player_stats"');
-    expect(step5).toContain('data-i18n="finish"');
-    expect(step5).not.toContain('data-i18n="next"');
+    // Onboarding batch (2026-10-02): the finance step comes last now, then the summary.
+    const step6 = await getOnboarding(cookie, 6);
+    expect(step6).toContain('id="ob_finance_yes"');
+    expect(step6).toContain('href="/onboarding/season?step=summary" id="ob_skip"');
+    expect(step5).toContain('data-i18n="next"');
   });
 
   // Onboarding item 4: pickup teams are drawn fresh each game -- no
@@ -253,9 +260,10 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     // Item 2: headcount's flow-wide total is 5 (signup 1,2 + onboarding
     // roster,reminders,stats), and this roster step -- where the player
     // count is asked, once -- is #3.
-    expect(step1).toContain('aria-valuemax="5"');
-    expect(step1).toContain('aria-valuenow="3"');
-    expect(step1).toMatch(/Étape 3 sur 5|Step 3 of 5/);
+    // Onboarding batch: 7 now (the season screen #3, the finance step #7).
+    expect(step1).toContain('aria-valuemax="7"');
+    expect(step1).toContain('aria-valuenow="4"');
+    expect(step1).toMatch(/Étape 4 sur 7|Step 4 of 7/);
 
     // step=2 for headcount is 'reminders' (teams was skipped), not 'teams'
     const step2 = await getOnboarding(cookie, 2);
@@ -267,7 +275,8 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     // the game-results question -- no sides to attach a score to.
     expect(step3).not.toContain('id="ob_tracks_results"');
     expect(step3).toContain('id="ob_tracks_player_stats"');
-    expect(step3).toContain('data-i18n="finish"');
+    // Onboarding batch: the finance step comes last now (step 4 here).
+    expect(await getOnboarding(cookie, 4)).toContain('id="ob_finance_yes"');
   });
 
   it('the roster step\'s two-call mechanism (settings/structure + season/publish) genuinely applies to the CURRENT season, not just future ones', async () => {
@@ -376,8 +385,9 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     // Address all four: create the schedule, add a player, rename
     // teams, set roster limits.
     await post(cookie, csrfToken, '/league/events', withGameTimes({ date: '2099-01-05', season: 'S1' }));
-    await post(cookie, csrfToken, '/league/contacts', { name: 'Real Player One', role: 'roster' });
     await post(cookie, csrfToken, '/league/settings/teams', { teamNames: ['Nord', 'Sud'], teamColors: ['#b3122e', '#b3122e'] });
+    // On a team (onboarding batch: a regular with no team is a next step).
+    await post(cookie, csrfToken, '/league/contacts', { name: 'Real Player One', role: 'roster', team: 'Nord' });
     await post(cookie, csrfToken, '/league/settings/structure', { min_players: 8, max_players: 16 });
 
     const after = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
@@ -390,7 +400,7 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     await post(cookie, csrfToken, '/league/events', withGameTimes({ date: '2099-01-05', season: 'S1' }));
     await post(cookie, csrfToken, '/league/settings/structure', { min_players: 8, max_players: 16 });
-    await post(cookie, csrfToken, '/league/contacts', { name: 'Real Player One', role: 'roster' });
+    await post(cookie, csrfToken, '/league/contacts', { name: 'Real Player One', role: 'roster', team: 'Nord' });
 
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
     expect(html).not.toContain('data-i18n="nextStepsTitle"');

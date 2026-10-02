@@ -173,7 +173,7 @@ describe('Stats tracking, Part 1: two independent switches', () => {
     await createLeague(cookie, csrfToken, { name: 'Pickup Stats League', teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
-    const step4 = await onboardingHtml(cookie, 4); // weekly_draw: roster,teams,playoffs-skipped,reminders... step numbering: roster=1,teams=2,reminders=3,stats=4
+    const step4 = await onboardingHtml(cookie, 3); // weekly_draw: roster=1, reminders=2, stats=3, finance=4 (onboarding batch)
     expect(step4).toContain('id="ob_tracks_results"');
     expect(step4).toContain('id="ob_tracks_player_stats"');
     expect(step4).toContain('data-i18n="lblTracksResultsDescPickup"');

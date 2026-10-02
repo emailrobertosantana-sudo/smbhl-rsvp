@@ -24,11 +24,13 @@ beforeAll(async () => {
 });
 
 describe('1. The step counter waits for the structure', () => {
-  it('steps 1 and 2 show no total; once chosen, the real total (8 fixed, 6 pickup, 5 no teams)', async () => {
+  // Onboarding batch (2026-10-02): the season screen and the finance step
+  // joined the count: 10 fixed, 7 for the others.
+  it('steps 1 and 2 show no total; once chosen, the real total (10 fixed, 7 pickup, 7 no teams)', async () => {
     const step1 = await page(null, '/signup?step=1');
     expect(step1).toContain('data-i18n="step1">Étape 1<');
     expect(step1).not.toContain('role="progressbar"');
-    for (const [structure, total, extra] of [['fixed', 8, { teamNames: ['A', 'B'] }], ['weekly_draw', 5, { teamNames: ['A', 'B'] }], ['headcount', 5, {}]]) {
+    for (const [structure, total, extra] of [['fixed', 10, { teamNames: ['A', 'B'] }], ['weekly_draw', 7, { teamNames: ['A', 'B'] }], ['headcount', 7, {}]]) {
       const s = await signup(`p140.count.${structure}@example.com`);
       expect(await page(s, '/signup?step=2')).not.toContain('role="progressbar"');
       await post(s, '/leagues/create', { name: `P140 ${structure}`, teamStructure: structure, ...extra });
@@ -54,15 +56,15 @@ describe('2. The mid-flow screen says created, not ready', () => {
 });
 
 describe('3. Skip advances, and what was skipped stays on the checklist', () => {
-  it('Skip on each step leads to the NEXT step (the last one to the dashboard)', async () => {
+  it('Skip on each step leads to the NEXT step (the last one to the summary)', async () => {
     const s = await signup('p140.skip.links@example.com');
     await post(s, '/leagues/create', { name: 'P140 Skip Links', teamNames: ['A', 'B'] });
     await post(s, '/league/season/publish', { season_name: 'S1' });
-    // fixed: roster, teams, playoffs, reminders, stats
-    for (let step = 1; step <= 4; step++) {
+    // fixed: roster, teams, playoffs, reminders, stats, finance (onboarding batch)
+    for (let step = 1; step <= 5; step++) {
       expect(await page(s, `/onboarding/season?step=${step}`)).toContain(`href="/onboarding/season?step=${step + 1}" id="ob_skip"`);
     }
-    expect(await page(s, '/onboarding/season?step=5')).toContain('href="/dashboard" id="ob_skip"');
+    expect(await page(s, '/onboarding/season?step=6')).toContain('href="/onboarding/season?step=summary" id="ob_skip"');
   });
 
   it('skipped reminders, stats and playoffs appear on the dashboard checklist; done or reminders on, they go', async () => {
