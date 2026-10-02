@@ -10,10 +10,16 @@ import { nlDocument, nlEmailWrap } from './design_system.js';
 import { LEGAL_TEXT } from './legal_text.js';
 
 // Each text's publication date, shown as "last updated" on its page. The
-// privacy policy changed on 2026-10-02 (support access, section 5).
-export const LEGAL_UPDATED_BY_KIND = { privacy: '2026-10-02', terms: '2026-10-01' };
-// The latest of them: the version an account's acceptance records (src/terms.js).
+// privacy policy changed on 2026-10-02 (support access, section 5), then
+// the terms the same day (section 8, the launch-day trial sentence gone).
+export const LEGAL_UPDATED_BY_KIND = { privacy: '2026-10-02', terms: '2026-10-02' };
+// The latest of them.
 export const LEGAL_UPDATED = Object.values(LEGAL_UPDATED_BY_KIND).sort().slice(-1)[0];
+// The version an account's acceptance records (src/terms.js). Change it
+// with every change to either text: each account whose acceptance is of
+// another version is asked once to accept the new one. Two publications
+// on 2026-10-02, hence the ".2".
+export const LEGAL_VERSION = '2026-10-02.2';
 
 export const LEGAL_PATHS = { privacy: '/confidentialite', terms: '/conditions' };
 export const LEGAL_REDIRECTS = { '/privacy': '/confidentialite', '/terms': '/conditions' };

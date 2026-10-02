@@ -12,7 +12,7 @@ import { contactDisplayName, rosterNameMap } from './contact_name.js';
 import { passCached } from './pass_cache.js';
 import { getSubCallHours, saveSubCallHours, subCallWindowText, SUB_CALL_HOURS_CHOICES } from './sub_call_window.js';
 import { legalRoute, nlLegalEmailWrap, legalLinksPageHtml, legalLinksEmailHtml, LEGAL_I18N } from './legal.js';
-import { TERMS_LABEL, getTermsAcceptance } from './terms.js';
+import { TERMS_LABEL, getTermsAcceptance, termsAcceptanceCurrent } from './terms.js';
 import { ARCHIVO_WOFF2 } from './fonts_archivo.js';
 import { SHARE_IMAGE_PATH, SHARE_IMAGE_WIDTH, SHARE_IMAGE_HEIGHT, SHARE_IMAGE_PNG_BASE64 } from './share_image.js';
 // The share image's bytes, decoded once per isolate.
@@ -1683,20 +1683,23 @@ const I18N_LOGIN = {
 // on record, reached from sign-in. Accepted (or already on record): on to
 // the page asked for.
 const I18N_ACCEPT_TERMS = {
-  fr: { title: 'Avant de continuer', body: "Nous avons publié nos conditions d'utilisation et notre politique de confidentialité. Accepte-les pour continuer.", termsAccept: TERMS_LABEL.fr, continueBtn: 'Continuer', ...LEGAL_I18N.fr },
-  en: { title: 'Before you continue', body: 'We have published our terms of service and our privacy policy. Accept them to continue.', termsAccept: TERMS_LABEL.en, continueBtn: 'Continue', ...LEGAL_I18N.en }
+  fr: { title: 'Avant de continuer', body: "Nous avons publié nos conditions d'utilisation et notre politique de confidentialité. Accepte-les pour continuer.", bodyUpdated: "Nous avons mis à jour nos conditions d'utilisation et notre politique de confidentialité. Accepte-les pour continuer.", termsAccept: TERMS_LABEL.fr, continueBtn: 'Continuer', ...LEGAL_I18N.fr },
+  en: { title: 'Before you continue', body: 'We have published our terms of service and our privacy policy. Accept them to continue.', bodyUpdated: 'We have updated our terms of service and our privacy policy. Accept them to continue.', termsAccept: TERMS_LABEL.en, continueBtn: 'Continue', ...LEGAL_I18N.en }
 };
 async function renderAcceptTermsPage(req, env, url) {
   const next = safeNextPath(url.searchParams.get('next')) || '/dashboard';
   const session = await checkUserSession(req, env);
   if (!session) return Response.redirect(url.origin + '/login' + nextQuery(next), 302);
-  if (await getTermsAcceptance(env.DB, session.userId)) return Response.redirect(url.origin + next, 302);
+  const accepted = await getTermsAcceptance(env.DB, session.userId);
+  if (termsAcceptanceCurrent(accepted)) return Response.redirect(url.origin + next, 302);
   const lang = resolveServerLang(req);
   const t = I18N_ACCEPT_TERMS[lang] || I18N_ACCEPT_TERMS.fr;
+  // An older acceptance on record: the texts were updated, not published.
+  const bodyKey = accepted ? 'bodyUpdated' : 'body';
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <h1 data-i18n="title">${esc(t.title)}</h1>
-  <p class="nl-help" data-i18n="body">${esc(t.body)}</p>
+  <p class="nl-help" data-i18n="${bodyKey}">${esc(t[bodyKey])}</p>
   <div id="formErr" class="nl-error" style="display:none"></div>
   <label style="display:flex;gap:10px;align-items:flex-start;font-size:15px;line-height:1.45;margin-top:var(--space-3)">
     <input type="checkbox" id="at_terms" style="margin-top:3px;width:18px;height:18px;flex:none">

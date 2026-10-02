@@ -1,6 +1,6 @@
 # Notre Ligue : Conditions d'utilisation / Terms of Service
 
-Oct 1, 2026 · @Roberto
+Oct 2, 2026 · @Roberto
 
 ## Version française
 
@@ -50,7 +50,7 @@ Tu acceptes de ne pas :
 
 ### 8. Essai gratuit
 
-- Chaque ligue a droit à un essai gratuit de 2 mois, sans carte de crédit. Pour les ligues inscrites avant le lancement de la facturation, l'essai commence le jour du lancement.
+- Chaque ligue a droit à un essai gratuit de 2 mois, sans carte de crédit.
 - Nous t'avisons 7 jours avant la fin de l'essai, puis le jour même.
 - Sans abonnement à la fin de l'essai, la ligue passe en lecture seule et ses courriels automatiques s'arrêtent. Rien n'est supprimé, et t'abonner débloque la ligue aussitôt.
 
@@ -161,7 +161,7 @@ You agree not to:
 
 ### 8. Free trial
 
-- Each league gets a 2-month free trial, with no credit card. For leagues that joined before billing launched, the trial starts on launch day.
+- Each league gets a 2-month free trial, with no credit card.
 - We notify you 7 days before the trial ends, and on the day.
 - Without a subscription at the end of the trial, the league becomes read-only and its automatic emails stop. Nothing is deleted, and subscribing unlocks the league right away.
 

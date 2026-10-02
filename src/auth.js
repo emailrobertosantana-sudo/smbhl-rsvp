@@ -13,7 +13,7 @@
 import { hmac, same } from './crypto_utils.js';
 import { nlEmailWrap, nlEmailButton, nlDocument, assembleBilingualEmail, nlSentByFooter } from './design_system.js';
 import { nlLegalEmailWrap } from './legal.js';
-import { recordTermsAcceptance, getTermsAcceptance, acceptsTerms, TERMS_REFUSAL } from './terms.js';
+import { recordTermsAcceptance, getTermsAcceptance, termsAcceptanceCurrent, acceptsTerms, TERMS_REFUSAL } from './terms.js';
 import { ERROR_I18N } from './error_i18n.js';
 import { nextQuery } from './next_path.js';
 import { readSupportSession, supportUserSession } from './support_mode.js';
@@ -841,9 +841,9 @@ export async function handleLogin(req, env) {
 
     await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(new Date().toISOString(), user.id).run();
 
-    // An account with no acceptance on record is asked once, now
-    // (/accept-terms, src/terms.js), before it goes on.
-    const termsNeeded = !(await getTermsAcceptance(env.DB, user.id));
+    // An account with no acceptance on record, or one of an older version,
+    // is asked once, now (/accept-terms, src/terms.js), before it goes on.
+    const termsNeeded = !termsAcceptanceCurrent(await getTermsAcceptance(env.DB, user.id));
     return new Response(JSON.stringify({ ok: true, userId: user.id, termsNeeded }), {
       status: 200,
       headers: await sessionResponseHeaders(env, user.id, user.session_epoch)
@@ -856,8 +856,8 @@ export async function handleLogin(req, env) {
   }
 }
 
-// POST /auth/accept-terms { accept_terms: true }: the one-time acceptance
-// of an account that has none on record.
+// POST /auth/accept-terms { accept_terms: true }: the acceptance of an
+// account that has none on record, or one of an older version.
 export async function handleAcceptTerms(req, env) {
   const session = await checkUserSession(req, env);
   if (!session) return Response.json({ ok: false, error: 'Not signed in.', errorKey: 'UNAUTHENTICATED' }, { status: 401 });

@@ -1,13 +1,13 @@
 // The terms of service and the privacy policy (src/terms.js): no Notre
 // Ligue admin account without accepting them; the acceptance and its
-// version are kept; an account with none on record is asked once, at its
-// next sign-in (/accept-terms), then goes on. SMBHL's admin key is not an
+// version are kept; an account with none on record, or one of an older
+// version, is asked once, at its next sign-in (/accept-terms), then goes on. SMBHL's admin key is not an
 // account and is never asked.
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { hashPassword } from '../src/auth.js';
-import { LEGAL_UPDATED } from '../src/legal.js';
+import { LEGAL_VERSION } from '../src/legal.js';
 
 let ip = 0;
 const post = (path, body, headers = {}) => SELF.fetch('http://example.com' + path, {
@@ -44,7 +44,7 @@ describe('sign-up', () => {
     const res = await post('/auth/signup', { email: 'yes.terms@p202.example', password: 'a-strong-password-1', accept_terms: true });
     expect(res.status).toBe(200);
     const a = await acceptance('yes.terms@p202.example');
-    expect(a.version).toBe(LEGAL_UPDATED);
+    expect(a.version).toBe(LEGAL_VERSION);
     expect(Date.parse(a.at)).toBeGreaterThan(Date.now() - 60000);
   });
 
@@ -74,12 +74,13 @@ describe('an existing account with no acceptance on record', () => {
     expect(html).toContain('id="at_terms"');
     expect(html).toContain('href="/confidentialite"');
     expect(html).toContain('Avant de continuer');
+    expect(html).toContain('Nous avons publié nos conditions');
     // Not checked: refused. No CSRF token: refused.
     expect((await post('/auth/accept-terms', {}, { cookie: s.cookie, 'x-csrf-token': s.csrf })).status).toBe(400);
     expect((await post('/auth/accept-terms', { accept_terms: true }, { cookie: s.cookie })).status).toBe(403);
     // Accepted.
     expect((await post('/auth/accept-terms', { accept_terms: true }, { cookie: s.cookie, 'x-csrf-token': s.csrf })).status).toBe(200);
-    expect((await acceptance(email)).version).toBe(LEGAL_UPDATED);
+    expect((await acceptance(email)).version).toBe(LEGAL_VERSION);
     // Once: the screen now sends straight on, and sign-in no longer asks.
     const again = await SELF.fetch('http://example.com/accept-terms?next=%2Fleague%2Froster', { headers: { cookie: s.cookie }, redirect: 'manual' });
     expect(again.status).toBe(302);
@@ -96,6 +97,40 @@ describe('an existing account with no acceptance on record', () => {
   it('the sign-in page sends to the screen when asked', async () => {
     const html = await (await SELF.fetch('http://example.com/login')).text();
     expect(html).toContain("if (data.termsNeeded) { window.location.href = '/accept-terms?next=' + encodeURIComponent(");
+  });
+});
+
+describe('an account that accepted an older version', () => {
+  const email = 'older.version@p202.example';
+  beforeAll(async () => {
+    await env.DB.prepare(`INSERT INTO users (id, email, password_hash, created_at, email_verified_at, last_login_at, session_epoch) VALUES ('u-p202-older', ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL, 0)`)
+      .bind(email, await hashPassword('older-version-password')).run();
+    // The terms published before 2026-10-02's second change.
+    await env.DB.prepare('INSERT INTO settings (key, value) VALUES (?, ?)')
+      .bind('terms_acceptance:u-p202-older', JSON.stringify({ at: '2026-10-01T12:00:00.000Z', version: '2026-10-02' })).run();
+  });
+
+  it('is asked once to accept the new version, told the texts were updated, then goes on', async () => {
+    expect(LEGAL_VERSION).not.toBe('2026-10-02');
+    const login = await post('/auth/login', { email, password: 'older-version-password' });
+    expect(await login.clone().json()).toMatchObject({ ok: true, termsNeeded: true });
+    const s = session(login);
+    const page = await SELF.fetch('http://example.com/accept-terms?next=%2Fdashboard', { headers: { cookie: s.cookie }, redirect: 'manual' });
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain('id="at_terms"');
+    expect(html).toContain("Nous avons mis à jour nos conditions d'utilisation et notre politique de confidentialité. Accepte-les pour continuer.".replace("'", '&#39;'));
+    expect(html).toContain('We have updated our terms of service and our privacy policy. Accept them to continue.');
+    expect((await post('/auth/accept-terms', { accept_terms: true }, { cookie: s.cookie, 'x-csrf-token': s.csrf })).status).toBe(200);
+    expect((await acceptance(email)).version).toBe(LEGAL_VERSION);
+    const again = await SELF.fetch('http://example.com/accept-terms?next=%2Fdashboard', { headers: { cookie: s.cookie }, redirect: 'manual' });
+    expect(again.status).toBe(302);
+    expect(await (await post('/auth/login', { email, password: 'older-version-password' })).json()).toMatchObject({ termsNeeded: false });
+  });
+
+  it('an account that accepted the current version at sign-up is not asked again', async () => {
+    const login = await post('/auth/login', { email: 'yes.terms@p202.example', password: 'a-strong-password-1' });
+    expect(await login.clone().json()).toMatchObject({ termsNeeded: false });
   });
 });
 

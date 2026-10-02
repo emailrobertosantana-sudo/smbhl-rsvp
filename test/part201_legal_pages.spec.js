@@ -23,11 +23,11 @@ afterAll(() => { delete env.LEAGUE_PRODUCT; });
 describe('the pages, on the Notre Ligue host', () => {
   beforeAll(() => { env.LEAGUE_PRODUCT = 'true'; });
 
-  // The privacy policy changed on 2026-10-02 (support access, section 5);
-  // the terms did not.
+  // The privacy policy changed on 2026-10-02 (support access, section 5),
+  // the terms the same day (the launch-day trial sentence gone).
   for (const [path, fr, en, line, dateFr, dateEn] of [
     ['/confidentialite', 'Notre Ligue : Politique de confidentialité', 'Notre Ligue: Privacy Policy', 'Nous ne vendons aucun renseignement et ne les utilisons pas pour de la publicité.', '2 octobre 2026', 'October 2, 2026'],
-    ['/conditions', "Notre Ligue : Conditions d'utilisation", 'Notre Ligue: Terms of Service', 'Tu peux annuler en tout temps.', '1er octobre 2026', 'October 1, 2026']
+    ['/conditions', "Notre Ligue : Conditions d'utilisation", 'Notre Ligue: Terms of Service', 'Tu peux annuler en tout temps.', '2 octobre 2026', 'October 2, 2026']
   ]) {
     it(`${path}: French, then English, the date, no review note`, async () => {
       const res = await get(path);
@@ -51,6 +51,13 @@ describe('the pages, on the Notre Ligue host', () => {
     const html = await (await get('/confidentialite')).text();
     expect(html).toContain('Pour offrir du soutien, Notre Ligue peut consulter les données d&#39;une ligue en lecture seule. Chaque consultation est enregistrée.');
     expect(html).toContain('To provide support, Notre Ligue may view a league&#39;s data in read-only mode. Every such access is logged.');
+  });
+
+  it('the terms no longer say when the trial of a league that joined before billing launched starts (section 8)', async () => {
+    const html = await (await get('/conditions')).text();
+    expect(html).toContain('Chaque ligue a droit à un essai gratuit de 2 mois, sans carte de crédit.</li>');
+    expect(html).toContain('Each league gets a 2-month free trial, with no credit card.</li>');
+    expect(html).not.toMatch(/lancement de la facturation|jour du lancement|billing launched|launch day/);
   });
 
   it('/privacy and /terms redirect, permanently', async () => {

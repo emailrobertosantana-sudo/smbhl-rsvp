@@ -1,20 +1,24 @@
 // Acceptance of the terms of service and the privacy policy (src/legal.js),
 // for Notre Ligue admin accounts. Required to create an account (sign-up,
 // and a co-admin invitation that creates one); an account with none on
-// record is asked once, at its next sign-in (/accept-terms). SMBHL's own
-// admin key is not an account and is never asked.
+// record, or with one of an older version, is asked once, at its next
+// sign-in (/accept-terms). SMBHL's own admin key is not an account and is
+// never asked.
 //
 // Stored in the settings table, one row per account, no migration:
 //   key    terms_acceptance:<user id>
-//   value  { "at": "<ISO time>", "version": "<LEGAL_UPDATED>" }
-import { LEGAL_UPDATED } from './legal.js';
+//   value  { "at": "<ISO time>", "version": "<LEGAL_VERSION>" }
+import { LEGAL_VERSION } from './legal.js';
 
 export const termsKey = userId => `terms_acceptance:${userId}`;
 
 export async function recordTermsAcceptance(db, userId, now = new Date()) {
   await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-    .bind(termsKey(userId), JSON.stringify({ at: now.toISOString(), version: LEGAL_UPDATED })).run();
+    .bind(termsKey(userId), JSON.stringify({ at: now.toISOString(), version: LEGAL_VERSION })).run();
 }
+
+// An acceptance of the texts as published now.
+export const termsAcceptanceCurrent = acceptance => !!acceptance && acceptance.version === LEGAL_VERSION;
 
 export async function getTermsAcceptance(db, userId) {
   try {
