@@ -279,9 +279,18 @@ describe('Schedule', () => {
     expect(m.weight).toBeGreaterThanOrEqual(700);
     expect(m.size).toBeGreaterThan(v.size);
     expect(m.color).not.toBe(v.color);
-    expect(v.top).toBeGreaterThan(m.top);             // the venue under it, not beside it
-    expect(m.left).toBeGreaterThanOrEqual(when.right); // beside the date, in the same line
-    expect(m.top).toBeLessThan(when.bottom);
+    // Onboarding batch, item 6 (2026-10-02): the venue is its own line under
+    // the time, in the date's block; on a phone the matchup has its own row
+    // under that block (beside it, it was squeezed and the venue ran over
+    // the date).
+    expect(v.top).toBeGreaterThan(when.top);
+    expect(v.top).toBeLessThan(when.bottom);
+    if (width >= 1000) {
+      expect(m.left).toBeGreaterThanOrEqual(when.right); // beside the date, in the same line
+      expect(m.top).toBeLessThan(when.bottom);
+    } else {
+      expect(m.top).toBeGreaterThanOrEqual(when.bottom - 1); // its own row, under the date block
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(errors).toEqual([]);
     await close();
