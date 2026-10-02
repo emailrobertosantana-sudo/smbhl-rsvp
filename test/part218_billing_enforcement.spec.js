@@ -451,6 +451,6 @@ describe('the cron, and billing off', () => {
   });
 
   it('who gets what: payment and card notices the owner, the rest every admin', () => {
-    expect([...OWNER_NOTICES].sort()).toEqual(['grace_start', 'over_100', 'payment_failed', 'tier_change', 'trial_7d', 'trial_day']);
+    expect([...OWNER_NOTICES].sort()).toEqual(['free_drop', 'grace_start', 'over_100', 'payment_failed', 'tier_change', 'trial_7d', 'trial_day']);
   });
 });

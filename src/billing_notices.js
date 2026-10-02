@@ -14,8 +14,8 @@ import { assembleBilingualEmail, nlEmailButton } from './design_system.js';
 import { nlLegalEmailWrap } from './legal.js';
 import { PRICE_CENTS, money } from './billing_actions.js';
 
-export const NOTICE_KINDS = ['trial_7d', 'trial_day', 'trial_end', 'grace_start', 'grace_end', 'tier_change', 'payment_failed', 'over_100', 'deletion_30d', 'deletion_7d'];
-export const OWNER_NOTICES = new Set(['trial_7d', 'trial_day', 'grace_start', 'tier_change', 'payment_failed', 'over_100']);
+export const NOTICE_KINDS = ['trial_7d', 'trial_day', 'trial_end', 'grace_start', 'grace_end', 'tier_change', 'free_drop', 'payment_failed', 'over_100', 'deletion_30d', 'deletion_7d'];
+export const OWNER_NOTICES = new Set(['trial_7d', 'trial_day', 'grace_start', 'tier_change', 'free_drop', 'payment_failed', 'over_100']);
 export const BILLING_NOTICE_KIND = 'billing_notice';
 
 const NB = ' ';
@@ -178,6 +178,28 @@ export function noticeContent(kind, v) {
           paragraphs: [
             `${L} now has ${N} regular players. Your plan will change from ${PLAN.en[v.oldTier]} to ${PLAN.en[v.newTier]} on ${D.en}, your next billing date, at ${price(v.newTier, v.interval, 'en')} before tax.`,
             'Nothing changes until then.'
+          ],
+          button: see.en
+        }
+      };
+    // A paid league back under 15 that holds the free slot: the
+    // subscription ends at the next billing date (src/billing_enforcement.js
+    // freeDropStep).
+    case 'free_drop':
+      return {
+        fr: {
+          subject: `${L}${NB}: ta ligue redevient gratuite le ${D.fr}`,
+          paragraphs: [
+            `${L} compte maintenant ${N} joueurs réguliers, moins de 15${NB}: une ligue de cette taille est gratuite. Ton abonnement prendra fin le ${D.fr}, ta prochaine date de facturation, et tu ne paieras plus rien.`,
+            "Si la ligue revient à 15 joueurs réguliers ou plus avant cette date, l'abonnement continue."
+          ],
+          button: see.fr
+        },
+        en: {
+          subject: `${L}: your league becomes free on ${D.en}`,
+          paragraphs: [
+            `${L} now has ${N} regular players, fewer than 15: a league this size is free. Your subscription will end on ${D.en}, your next billing date, and you will pay nothing more.`,
+            'If the league is back at 15 or more regular players before then, the subscription continues.'
           ],
           button: see.en
         }

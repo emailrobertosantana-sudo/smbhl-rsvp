@@ -22,8 +22,8 @@
 //     days after the second.
 // Nothing at all while BILLING_LAUNCH_AT is unset: the first thing it does
 // is return. SMBHL is never read.
-import { billingEnabled, SMBHL_ID, planTierForCount, classifyLeague, freeSlotsByOwner, isFreeEligible, addMonths, leagueStateFor, GRACE_DAYS, INACTIVE_DELETE_MONTHS } from './billing.js';
-import { subscriptionHasCard, resumeIfCardAdded } from './stripe_webhook.js';
+import { billingEnabled, SMBHL_ID, planTierForCount, classifyLeague, freeSlotsByOwner, loadHeldFreeSlots, saveHeldFreeSlots, isFreeEligible, addMonths, leagueStateFor, GRACE_DAYS, INACTIVE_DELETE_MONTHS } from './billing.js';
+import { subscriptionHasCard, resumeIfCardAdded, writeSubscription } from './stripe_webhook.js';
 import { renderBillingNotice, OWNER_NOTICES, BILLING_NOTICE_KIND } from './billing_notices.js';
 import { performLeagueHardDelete } from './hard_delete.js';
 import { stripeRequest, stripeId } from './stripe.js';
@@ -42,7 +42,11 @@ export async function runBillingEnforcement(env, host, now = new Date()) {
   ).bind(SMBHL_ID).all()).results || [];
   const rows = (await env.DB.prepare('SELECT * FROM league_billing').all()).results || [];
   const byId = new Map(rows.map(r => [r.league_id, r]));
-  const slots = freeSlotsByOwner(leagues, byId);
+  // The free slot never swaps: who holds it is kept from pass to pass.
+  const held = await loadHeldFreeSlots(env.DB);
+  const slots = freeSlotsByOwner(leagues, byId, held);
+  try { await saveHeldFreeSlots(env.DB, slots, held); }
+  catch (e) { console.error(`[billing] free slots not saved: ${e.message}`); }
   for (const league of leagues) {
     if (league.deactivated_at) continue;
     const row = byId.get(league.id) || null;
@@ -84,6 +88,18 @@ async function enforceLeague(env, host, league, row, freeEligible, now) {
   const live = !!(row && row.stripe_subscription_id && ['active', 'past_due', 'paused'].includes(row.status));
   const nowMs = now.getTime();
 
+  // A paid league back under 15 that holds its owner's free slot (or the
+  // free exception): its subscription ends at the next billing date, and the
+  // owner is told; back at 15 or more before then, the app withdraws its own
+  // cancellation (never one the owner chose). Item 3a, freeDropStep below.
+  if (live && row.status === 'active' && env.STRIPE_SECRET_KEY) {
+    try {
+      const r = await freeDropStep(env, league, row, state, freeEligible, now, send);
+      if (r) row = r;
+    } catch (e) { console.error(`[billing] free drop for ${league.id}: ${e.message}`); }
+  }
+  const becomesFree = state.countTier === 'free' && freeEligible;
+
   // The trial ends in 7 days, and on the day (within its last 24 hours):
   // to the owner, unless the league will be free or is above 100. Subscribed
   // with a card: nothing to do. Subscribed without one: add a card.
@@ -92,7 +108,9 @@ async function enforceLeague(env, host, league, row, freeEligible, now) {
   const left = state.trialEnd ? Date.parse(state.trialEnd) - nowMs : 0;
   const trialing = (state.status === 'trial' && !live) || (state.status === 'active' && live);
   if (trialing && left > 0 && left <= 7 * DAY) {
-    const needsPlan = live || !(state.countTier === 'free' && freeEligible);
+    // A subscription set to end because the league is free again needs
+    // nothing more.
+    const needsPlan = !becomesFree || (live && !row.cancel_at_period_end);
     const kind = left <= DAY ? 'trial_day' : 'trial_7d';
     if (needsPlan && !(await noticeSent(env, league.id, kind, state.trialEnd))) {
       // Subscribed: only when no card is on file (Stripe, asked once per notice).
@@ -214,6 +232,60 @@ async function sendOnce(env, host, league, kind, periodKey, vars, now) {
     throw e;
   }
   return true;
+}
+
+// Item 3a (Roberto, 2026-10-02): a paid league whose count drops under 15
+// and that holds its owner's free slot (or the free exception) becomes free
+// at its next billing date. The app sets cancel_at_period_end=true on the
+// subscription (POST /subscriptions/{id}, idempotency key), with
+// metadata[nl_cancel_reason]=under_15, and records the cancellation in
+// billing_notices (kind free_drop_cancel, period_key the subscription's
+// canceled_at, the time of the request as Stripe answers it). Back at 15 or
+// more (or no longer eligible) before that date, the app withdraws it
+// (cancel_at_period_end=false, metadata cleared), but only a cancellation
+// that is its own: Stripe still says nl_cancel_reason under_15 AND the
+// subscription's canceled_at is the one the app recorded. A cancellation
+// the owner chose in the portal has no such record (or a later canceled_at,
+// when the owner renewed then cancelled again), and is never withdrawn.
+// When the period ends, Stripe cancels the subscription; the league is
+// then free (classifyLeague: under 15 and eligible comes before
+// "cancelled"), never read-only, and its 12-month clock is cleared by
+// writeFlags. A league whose slot is taken by another league is left as
+// it is (it keeps its plan). Returns the row as it now is, or null.
+export const FREE_DROP_CANCEL = 'free_drop_cancel';
+async function freeDropStep(env, league, row, state, freeEligible, now, send) {
+  const subId = row.stripe_subscription_id;
+  const path = `/subscriptions/${stripeId(subId)}`;
+  const small = state.countTier === 'free' && freeEligible;
+  const reread = () => env.DB.prepare('SELECT * FROM league_billing WHERE league_id = ?').bind(league.id).first();
+  if (small && !row.cancel_at_period_end) {
+    const sub = await stripeRequest(env, 'POST', path,
+      { cancel_at_period_end: 'true', metadata: { nl_cancel_reason: 'under_15' } },
+      { idempotencyKey: `free-drop:on:${subId}:${row.regular_count_at || row.current_period_end || ''}` });
+    const stamp = sub && sub.canceled_at ? String(sub.canceled_at) : 'none';
+    await recordNotice(env, league.id, FREE_DROP_CANCEL, stamp, now);
+    await writeSubscription(env, subId, { leagueId: league.id });
+    const fresh = await reread();
+    const end = (fresh && fresh.current_period_end) || row.current_period_end;
+    if (end) await send('free_drop', stamp, { date: end, count: state.count });
+    return fresh;
+  }
+  if (!small && row.cancel_at_period_end) {
+    // Only when the app ever scheduled one for this league (no Stripe call
+    // otherwise).
+    const mine = await env.DB.prepare('SELECT 1 FROM billing_notices WHERE league_id = ? AND kind = ? LIMIT 1').bind(league.id, FREE_DROP_CANCEL).first();
+    if (!mine) return null;
+    const sub = await stripeRequest(env, 'GET', path);
+    const stamp = sub && sub.canceled_at ? String(sub.canceled_at) : 'none';
+    const recorded = await noticeSent(env, league.id, FREE_DROP_CANCEL, stamp);
+    if (!sub || !sub.cancel_at_period_end || !sub.metadata || sub.metadata.nl_cancel_reason !== 'under_15' || !recorded) return null;
+    await stripeRequest(env, 'POST', path,
+      { cancel_at_period_end: 'false', metadata: { nl_cancel_reason: '' } },
+      { idempotencyKey: `free-drop:off:${subId}:${stamp}` });
+    await writeSubscription(env, subId, { leagueId: league.id });
+    return await reread();
+  }
+  return null;
 }
 
 // The clock: inactive_since + 12 months. The 30-day notice first; the

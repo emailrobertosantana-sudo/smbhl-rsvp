@@ -163,7 +163,13 @@ export function freeSlotLeagueId(leagues) {
 // never take the slot). leagues: [{ id, created_at, created_by,
 // deactivated_at }]; rowsById: Map of league_billing rows. Returns a Map
 // owner -> the league holding the slot.
-export function freeSlotsByOwner(leagues, rowsById) {
+//
+// The slot never swaps (Roberto, 2026-10-02): held (Map owner -> league id,
+// loadHeldFreeSlots) is the league that holds it now; it keeps it while it
+// still qualifies (under 15, active, no exception), even when an older
+// league of the same owner drops back under 15. Only a vacant slot goes to
+// the oldest qualifying league.
+export function freeSlotsByOwner(leagues, rowsById, held = new Map()) {
   const byOwner = new Map();
   for (const l of leagues || []) {
     if (!l || l.id === SMBHL_ID || l.deactivated_at) continue;
@@ -174,7 +180,42 @@ export function freeSlotsByOwner(leagues, rowsById) {
     if (!byOwner.has(owner)) byOwner.set(owner, []);
     byOwner.get(owner).push({ id: l.id, created_at: l.created_at, count: r ? r.regular_count : 0 });
   }
-  return new Map([...byOwner].map(([o, ls]) => [o, freeSlotLeagueId(ls)]));
+  return new Map([...byOwner].map(([o, ls]) => {
+    const keep = held && held.get(o);
+    if (keep && ls.some(x => x.id === keep && tierForCount(x.count) === 'free')) return [o, keep];
+    return [o, freeSlotLeagueId(ls)];
+  }));
+}
+
+// Who holds each owner's free slot, kept in settings (no migration): key
+// billing_free_slot:<owner>, value the league id, league_id the league (so
+// deleting the league removes the row). Written only by the daily job
+// (saveHeldFreeSlots); read by everything that classifies a league. A
+// database without the row (or a failure) gives an empty map: the slot then
+// goes to the oldest qualifying league, as before.
+export const FREE_SLOT_KEY_PREFIX = 'billing_free_slot:';
+export async function loadHeldFreeSlots(db, owner = null) {
+  const out = new Map();
+  try {
+    const rows = owner
+      ? (await db.prepare('SELECT key, value FROM settings WHERE key = ?').bind(FREE_SLOT_KEY_PREFIX + owner).all()).results || []
+      : (await db.prepare('SELECT key, value FROM settings WHERE substr(key, 1, ?) = ?').bind(FREE_SLOT_KEY_PREFIX.length, FREE_SLOT_KEY_PREFIX).all()).results || [];
+    for (const r of rows) if (r.value) out.set(r.key.slice(FREE_SLOT_KEY_PREFIX.length), r.value);
+  } catch (_) {}
+  return out;
+}
+export async function saveHeldFreeSlots(db, slots, held) {
+  for (const [owner, leagueId] of slots) {
+    if ((held.get(owner) || null) === (leagueId || null)) continue;
+    if (leagueId) {
+      await db.prepare(
+        `INSERT INTO settings (key, value, league_id) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, league_id = excluded.league_id`
+      ).bind(FREE_SLOT_KEY_PREFIX + owner, leagueId, leagueId).run();
+    } else {
+      await db.prepare('DELETE FROM settings WHERE key = ?').bind(FREE_SLOT_KEY_PREFIX + owner).run();
+    }
+  }
 }
 
 // Free: a count under 15 and either the free exception or the owner's free
@@ -252,7 +293,8 @@ export async function leagueStateFor(env, league, row, now = new Date()) {
            FROM leagues l LEFT JOIN league_billing b ON b.league_id = l.id
           WHERE COALESCE(b.owner_user_id, l.created_by) = ? AND l.id != ?`
       ).bind(owner, SMBHL_ID).all()).results || [];
-      freeEligible = isFreeEligible(league, row, freeSlotsByOwner(sibs, new Map(sibs.map(x => [x.id, x]))));
+      const rows = new Map(sibs.map(x => [x.id, { ...x, league_id: x.id }]));
+      freeEligible = isFreeEligible(league, row, freeSlotsByOwner(sibs, rows, await loadHeldFreeSlots(env.DB, owner)));
     }
   }
   return classifyLeague(env, league, row, { freeEligible, now });
@@ -320,7 +362,7 @@ export async function billingSummaries(env, leagues, now = new Date()) {
   const byId = new Map(rows.map(r => [r.league_id, r]));
   // The same free slot the enforcement uses (deactivated leagues and
   // exceptions never hold it).
-  const slotByOwner = freeSlotsByOwner(leagues, byId);
+  const slotByOwner = freeSlotsByOwner(leagues, byId, await loadHeldFreeSlots(env.DB));
   for (const l of leagues) {
     const r = byId.get(l.id) || null;
     const owner = (r && r.owner_user_id) || l.created_by || null;
