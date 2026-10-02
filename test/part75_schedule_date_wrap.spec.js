@@ -68,13 +68,14 @@ describe('Part 4 (live-testing task, batch 6): schedule dates no longer wrap mid
     expect(whenRule).toBeTruthy();
     expect(whenRule[0]).toContain('white-space: nowrap');
 
-    const desktopCol = html.match(/\.sc-game \{ display: grid; grid-template-columns: (\d+)px/);
+    // Onboarding batch, item 6 (2026-10-02): the date column is as wide as
+    // its date (fit-content), on phones the date block has the row to
+    // itself; test/rendered/schedule_venue_layout.spec.mjs measures it.
+    const desktopCol = html.match(/\.sc-game \{ display: grid; grid-template-columns: fit-content\((\d+)px\)/);
     expect(desktopCol).toBeTruthy();
     expect(Number(desktopCol[1])).toBeGreaterThan(96);
 
-    const mobileCol = html.match(/@media \(max-width: 640px\) \{ \.sc-game \{ grid-template-columns: (\d+)px/);
-    expect(mobileCol).toBeTruthy();
-    expect(Number(mobileCol[1])).toBeGreaterThan(72);
+    expect(html).toContain('@media (max-width: 640px) { .sc-game { grid-template-columns: 1fr auto; }');
   });
 
   it('the real served public page: .pb-g-d b (the game-list date, same shape of risk as the schedule list) also has white-space: nowrap', async () => {

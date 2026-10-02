@@ -144,7 +144,8 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
       expect(mail.html).toContain('Pas cette fois');
       expect(mail.html).toContain('Not this time');
       // Decided (sub-call bilingual fix): "FR / EN", like every other bilingual SMBHL email.
-      expect(mail.subject).toBe("Rouge a besoin d'un gardien dimanche 1 nov. / Red needs a goalie on Sunday, Nov 1");
+      // Item 7 (2026-10-02): « 1er » for the first of a month.
+      expect(mail.subject).toBe("Rouge a besoin d'un gardien dimanche 1er nov. / Red needs a goalie on Sunday, Nov 1");
     });
   });
 
