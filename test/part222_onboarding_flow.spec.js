@@ -88,12 +88,45 @@ describe('the season screen and the step count', () => {
     expect(first).not.toContain('id="ob_back"');
     const fin = await html(s, '/onboarding/season?step=6');
     expect(fin).toContain('Étape 10 sur 10');
-    expect(fin).toContain('Est-ce que ta ligue fait payer les joueurs?');
-    expect(fin).toContain('"financeTitle":"Does your league charge players?"');
+    // Item 5: tracking the money is the norm, "Oui" chosen by default.
+    expect(fin).toContain("Veux-tu suivre l&#39;argent de ta ligue?");
+    expect(fin).toContain('"financeTitle":"Do you want to track your league\'s money?"');
+    expect(fin).toContain('Les frais des joueurs, les paiements reçus et les dépenses, comme la location du gymnase.');
+    expect(fin).toContain('id="ob_finance_yes" value="yes" checked');
+    expect(fin).toContain("Non, pas pour l&#39;instant");
+    expect(fin).toContain('data-i18n="financeCostsLabel">Tes principales dépenses<');
+    expect(fin).toContain('"financeCostsLabel":"Your main expenses"');
     expect(fin).toContain('data-i18n="skipFinance" onclick="return obSkip()">Passer cette étape<');
     expect(fin).toContain('Tu pourras tout changer plus tard dans la page Finances.');
     expect(fin).toContain(`onclick="location.href='/onboarding/season?step=5'"`);
     expect(fin).toContain('href="/onboarding/season?step=summary"');
+  });
+});
+
+describe('the stats step explains each choice (item 8)', () => {
+  it('fixed with goalies: results, player stats, goalie stats, and where they are entered', async () => {
+    const { s } = await league('p222.stats@example.com', { teamNames: ['A', 'B'] });
+    await post(s, '/league/season/publish', { season_name: 'S1' });
+    await post(s, '/league/settings/structure', { min_goalies: 1 });
+    const page = await html(s, '/onboarding/season?step=5');
+    expect(page).toContain('Résultats : tu entres le pointage de chaque match, et le classement se calcule tout seul.');
+    expect(page).toContain('Statistiques des joueurs : buts et passes, entrés après le match, avec un tableau des meneurs sur ta page publique.');
+    expect(page).toContain('data-i18n="statsExplainGoalies"');
+    expect(page).toContain('Tu entres tout ça depuis la page d&#39;un match, une fois la partie commencée.');
+    expect(page).toContain(`"statsExplainResults":"Results: you enter each game's score, and the standings calculate themselves."`);
+  });
+  it('pickup: no standings promised; no teams: no results, no goalie line', async () => {
+    const pick = await league('p222.statspick@example.com', { teamStructure: 'weekly_draw', teamNames: ['A', 'B'] });
+    await post(pick.s, '/league/season/publish', { season_name: 'S1' });
+    const p = await html(pick.s, '/onboarding/season?step=3');
+    expect(p).toContain('data-i18n="statsExplainResultsPickup"');
+    expect(p).not.toContain('data-i18n="statsExplainResults"');
+    const none = await league('p222.statsnone@example.com', { teamStructure: 'headcount' });
+    await post(none.s, '/league/season/publish', { season_name: 'S1' });
+    const n = await html(none.s, '/onboarding/season?step=3');
+    expect(n).not.toContain('data-i18n="statsExplainResults');
+    expect(n).not.toContain('data-i18n="statsExplainGoalies"');
+    expect(n).toContain('data-i18n="statsExplainPlayers"');
   });
 });
 

@@ -2337,7 +2337,8 @@ function dashStyles() {
   .dash-top h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; }
   .dash-status { display: flex; align-items: center; gap: var(--space-2); margin-top: 6px; color: var(--ink-muted); font-size: 14px; flex-wrap: wrap; }
   .dash-week-when { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; font: 700 18px/24px var(--font-display); font-stretch: 118%; margin-top: 8px; }
-  .dash-week-venue { font: 400 14px/20px var(--font-sans); color: var(--ink-muted); }
+  /* Item 6: the venue on its own line under the date and time. */
+  .dash-week-venue { font: 400 14px/20px var(--font-sans); color: var(--ink-muted); flex-basis: 100%; }
   .dash-week-counts { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: 10px; }
   .dash-grid { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-5); }
   .dash-start { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 2px solid var(--primary); }
@@ -3059,10 +3060,22 @@ function buildOnboardingI18n() {
     back: 'Retour',
     seasonTitle: 'Lance ta première saison', seasonSub: 'Donne un nom à ta saison. Tes matchs et tes joueurs y seront rattachés.',
     seasonNameLabel: 'Nom de la saison', seasonNamePh: 'Ex. Automne 2026', seasonCreate: 'Créer la saison',
-    financeTitle: 'Est-ce que ta ligue fait payer les joueurs?',
+    // Item 5: tracking money is the norm (every league has costs).
+    financeTitle: "Veux-tu suivre l'argent de ta ligue?",
+    financeHelp: 'Les frais des joueurs, les paiements reçus et les dépenses, comme la location du gymnase.',
     financeSub: 'Rien ici n’est obligatoire. Tu pourras tout changer plus tard dans la page Finances.',
-    financeYes: 'Oui', financeNo: 'Non', skipFinance: 'Passer cette étape',
-    financeFeesLabel: 'Comment les joueurs paient',
+    financeYes: 'Oui', financeNo: "Non, pas pour l'instant", skipFinance: 'Passer cette étape',
+    financeFeesLabel: 'Les frais des joueurs',
+    financeCostsLabel: 'Tes principales dépenses',
+    financeCostsHelp: 'Le montant pour toute la saison.',
+    costCategory: 'Catégorie', costDescription: 'Description', costAmount: 'Montant pour la saison', costAdd: 'Ajouter une dépense',
+    catRental: 'Location de glace ou de terrain', catEquipment: 'Équipement', catTechnology: 'Technologie', catOther: 'Autre',
+    // Item 8: what each choice means, as the product does it.
+    statsExplainResults: 'Résultats : tu entres le pointage de chaque match, et le classement se calcule tout seul.',
+    statsExplainResultsPickup: "Résultats : tu entres le pointage de chaque match. Les équipes changent à chaque match, donc il n'y a pas de classement.",
+    statsExplainPlayers: 'Statistiques des joueurs : buts et passes, entrés après le match, avec un tableau des meneurs sur ta page publique.',
+    statsExplainGoalies: 'Statistiques des gardiens : buts alloués, calculés à partir du pointage, quand les résultats et les statistiques des joueurs sont activés.',
+    statsExplainWhere: "Tu entres tout ça depuis la page d'un match, une fois la partie commencée.",
     modeSeason: 'Frais de saison pour les réguliers, par match pour les remplaçants', modePerGame: 'Par match pour tout le monde',
     lblPricePlayer: 'Frais de saison (joueur)', lblPriceGoalie: 'Frais de saison (gardien)',
     lblGamePlayer: 'Par match (joueur)', lblGameGoalie: 'Par match (gardien)',
@@ -3106,10 +3119,20 @@ function buildOnboardingI18n() {
     back: 'Back',
     seasonTitle: 'Start your first season', seasonSub: 'Name your season. Your games and players will belong to it.',
     seasonNameLabel: 'Season name', seasonNamePh: 'E.g. Fall 2026', seasonCreate: 'Create the season',
-    financeTitle: 'Does your league charge players?',
+    financeTitle: "Do you want to track your league's money?",
+    financeHelp: 'Player fees, payments received and expenses, like the gym rental.',
     financeSub: 'Nothing here is required. You can change all of it later on the Finances page.',
-    financeYes: 'Yes', financeNo: 'No', skipFinance: 'Skip this step',
-    financeFeesLabel: 'How players pay',
+    financeYes: 'Yes', financeNo: 'Not for now', skipFinance: 'Skip this step',
+    financeFeesLabel: 'Player fees',
+    financeCostsLabel: 'Your main expenses',
+    financeCostsHelp: 'The amount for the whole season.',
+    costCategory: 'Category', costDescription: 'Description', costAmount: 'Amount for the season', costAdd: 'Add an expense',
+    catRental: 'Ice or field rental', catEquipment: 'Equipment', catTechnology: 'Technology', catOther: 'Other',
+    statsExplainResults: "Results: you enter each game's score, and the standings calculate themselves.",
+    statsExplainResultsPickup: "Results: you enter each game's score. Teams change every game, so there are no standings.",
+    statsExplainPlayers: 'Player stats: goals and assists, entered after the game, with a leaders table on your public page.',
+    statsExplainGoalies: 'Goalie stats: goals against, worked out from the score, when results and player stats are on.',
+    statsExplainWhere: "You enter all of it from a game's page, once the game has started.",
     modeSeason: 'Season fee for regulars, per game for subs', modePerGame: 'Per game for everyone',
     lblPricePlayer: 'Season fee (player)', lblPriceGoalie: 'Season fee (goalie)',
     lblGamePlayer: 'Per game (player)', lblGameGoalie: 'Per game (goalie)',
@@ -3477,11 +3500,22 @@ async function handleOnboardingSeasonPage(req, env, url) {
     // score to, so game results is never asked at all -- only player
     // stats. FIXED and PICKUP (weekly_draw) get both.
     const offerResults = teamStructure !== 'headcount';
+    // Item 8: what each choice does, in plain words, as the product does it.
+    // Goalie stats need results (goals against come from the score), so not
+    // for a no-teams league, nor a league whose roster asks for no goalie.
+    const hasGoalies = offerResults && (Number(leagueRow.min_goalies) > 0 || Number(leagueRow.max_goalies) > 0);
+    const resultsKey = teamStructure === 'weekly_draw' ? 'statsExplainResultsPickup' : 'statsExplainResults';
     stepHtml = `
   <div class="su-title">
     <h1 data-i18n="statsTitle">Suivre les statistiques?</h1>
     <p class="nl-help" data-i18n="statsSub">Choisis indépendamment ce que tu veux suivre. Tu pourras changer ça plus tard dans Paramètres.</p>
   </div>
+  <ul class="ob-explain" id="ob_stats_explain" style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:15px;line-height:22px;">
+    ${offerResults ? `<li data-i18n="${resultsKey}">${esc(fr[resultsKey])}</li>` : ''}
+    <li data-i18n="statsExplainPlayers">${esc(fr.statsExplainPlayers)}</li>
+    ${hasGoalies ? `<li data-i18n="statsExplainGoalies">${esc(fr.statsExplainGoalies)}</li>` : ''}
+  </ul>
+  <p class="nl-help" style="margin:0" data-i18n="statsExplainWhere">${esc(fr.statsExplainWhere)}</p>
   <div id="formErr" class="nl-error" style="display:none"></div>
   ${offerResults ? `<div class="nl-toggle">
     <div><div class="nl-label" data-i18n="lblTracksResults">Résultats des matchs</div><p class="nl-help" data-i18n="${teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickup' : 'lblTracksResultsDesc'}" style="margin:2px 0 0">${teamStructure === 'weekly_draw' ? "Le score de chaque match, gardé comme historique. Les équipes changent chaque semaine, donc pas de classement." : 'Le score de chaque match, calculé en classement (V-D-N).'}</p></div>
@@ -3496,22 +3530,33 @@ async function handleOnboardingSeasonPage(req, env, url) {
     // season's fees (the Finances page's own fields, saved through its own
     // route) and the Interac details (the Payment settings card's fields,
     // saved through its route, with its validation). Nothing is required.
+    // Item 5: tracking money is the norm -- "Oui" by default; three
+    // optional parts: the player fees, the main expenses (the Finances
+    // page's season costs: an amount for the season, by category) and the
+    // Interac details.
     const pricing = await getSeasonPricing(env.DB, leagueRow.id, currentSeason);
     const pay = await getPaymentInfo(env.DB, leagueRow.id);
-    const charges = !!((pricing && (Number(pricing.price_player) || Number(pricing.price_goalie) || Number(pricing.price_sub_player) || Number(pricing.price_sub_goalie))) || (pay && (pay.email || pay.phone)));
+    const costs = await listSeasonCosts(env.DB, leagueRow.id, currentSeason);
     const perGame = !!(pricing && pricing.pricing_mode === 'per_game');
     const val = k => (pricing && Number(pricing[k]) ? esc(String(pricing[k])) : '');
+    const catKey = { rental: 'catRental', equipment: 'catEquipment', technology: 'catTechnology', other: 'catOther' };
+    const costRow = (c = {}) => `<div class="ob-cost" data-cost-id="${esc(c.id || '')}" style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-2);padding-top:var(--space-2);border-top:1px solid var(--line);">
+      <div class="nl-field" style="grid-column:1 / -1"><label class="nl-label" data-i18n="costCategory">${esc(fr.costCategory)}</label><select class="nl-select ob-cost-cat">${COST_CATEGORIES.map(k => `<option value="${k}" data-i18n="${catKey[k]}"${(c.category || 'rental') === k ? ' selected' : ''}>${esc(fr[catKey[k]])}</option>`).join('')}</select></div>
+      <div class="nl-field"><label class="nl-label" data-i18n="costDescription">${esc(fr.costDescription)}</label><input class="nl-input ob-cost-desc" type="text" maxlength="200" value="${esc(c.description || '')}"></div>
+      <div class="nl-field"><label class="nl-label" data-i18n="costAmount">${esc(fr.costAmount)}</label><input class="nl-input ob-cost-amount" type="number" min="0" step="0.01" inputmode="decimal" value="${c.amount != null && c.id ? esc(String(c.amount)) : ''}"></div>
+    </div>`;
     stepHtml = `
   <div class="su-title">
     <h1 data-i18n="financeTitle">${esc(fr.financeTitle)}</h1>
-    <p class="nl-help" data-i18n="financeSub">${esc(fr.financeSub)}</p>
+    <p class="nl-help" data-i18n="financeHelp">${esc(fr.financeHelp)}</p>
   </div>
   <div id="formErr" class="nl-error" role="alert" style="display:none"></div>
   <div class="su-structure" id="ob_finance_choice" role="radiogroup" data-i18n-aria="financeTitle" aria-label="${esc(fr.financeTitle)}">
-    <label class="su-structure-opt${charges ? ' on' : ''}"><input type="radio" name="ob_finance" id="ob_finance_yes" value="yes"${charges ? ' checked' : ''}><span class="t" data-i18n="financeYes">Oui</span></label>
-    <label class="su-structure-opt${charges ? '' : ' on'}"><input type="radio" name="ob_finance" id="ob_finance_no" value="no"${charges ? '' : ' checked'}><span class="t" data-i18n="financeNo">Non</span></label>
+    <label class="su-structure-opt on"><input type="radio" name="ob_finance" id="ob_finance_yes" value="yes" checked><span class="t" data-i18n="financeYes">Oui</span></label>
+    <label class="su-structure-opt"><input type="radio" name="ob_finance" id="ob_finance_no" value="no"><span class="t" data-i18n="financeNo">${esc(fr.financeNo)}</span></label>
   </div>
-  <div id="ob_finance_detail" style="display:${charges ? 'flex' : 'none'};flex-direction:column;gap:var(--space-4);">
+  <p class="nl-help" style="margin:0" data-i18n="financeSub">${esc(fr.financeSub)}</p>
+  <div id="ob_finance_detail" style="display:flex;flex-direction:column;gap:var(--space-4);">
     <div class="nl-field">
       <span class="nl-label" data-i18n="financeFeesLabel">${esc(fr.financeFeesLabel)}</span>
       <div class="su-structure" role="radiogroup">
@@ -3527,6 +3572,13 @@ async function handleOnboardingSeasonPage(req, env, url) {
       <div class="nl-field"><label class="nl-label" for="ob_game_player" data-i18n="lblGamePlayer">${esc(fr.lblGamePlayer)}</label><input class="nl-input" id="ob_game_player" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_sub_player')}"></div>
       <div class="nl-field"><label class="nl-label" for="ob_game_goalie" data-i18n="lblGameGoalie">${esc(fr.lblGameGoalie)}</label><input class="nl-input" id="ob_game_goalie" type="number" min="0" step="0.01" inputmode="decimal" value="${val('price_sub_goalie')}"></div>
     </div>
+    <div class="nl-field" style="margin:0">
+      <span class="nl-label" data-i18n="financeCostsLabel">${esc(fr.financeCostsLabel)}</span>
+      <p class="nl-help" style="margin:0" data-i18n="financeCostsHelp">${esc(fr.financeCostsHelp)}</p>
+    </div>
+    <div id="ob_costs" style="display:flex;flex-direction:column;gap:var(--space-2);">${(costs.length ? costs : [{}]).map(c => costRow(c)).join('')}</div>
+    <template id="ob_cost_tpl">${costRow()}</template>
+    <div><button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" id="ob_cost_add" data-i18n="costAdd" onclick="obAddCost()">${esc(fr.costAdd)}</button></div>
     <div class="nl-field">
       <span class="nl-label" data-i18n="financePayLabel">${esc(fr.financePayLabel)}</span>
       <p class="nl-help" style="margin:0" data-i18n="payHelp">${esc(fr.payHelp)}</p>
@@ -3645,6 +3697,15 @@ function obFinanceUpdate() {
   document.querySelectorAll('.su-structure-opt').forEach(function(opt) { var r = opt.querySelector('input'); opt.classList.toggle('on', !!(r && r.checked)); });
 }
 document.querySelectorAll('input[name="ob_finance"], input[name="ob_fin_mode"]').forEach(function(r) { r.addEventListener('change', obFinanceUpdate); });
+// Item 5: one more expense row, its labels in the page's current language.
+function obAddCost() {
+  var tpl = document.getElementById('ob_cost_tpl');
+  var row = tpl.content.firstElementChild.cloneNode(true);
+  var dict = window.__pageDict();
+  row.querySelectorAll('[data-i18n]').forEach(function(el) { var k = el.getAttribute('data-i18n'); if (dict[k] != null) el.textContent = dict[k]; });
+  document.getElementById('ob_costs').appendChild(row);
+  row.querySelector('.ob-cost-desc').focus();
+}
 async function obSubmit() {
   document.getElementById('formErr').style.display = 'none';
   var btn = document.getElementById('ob_submit');
@@ -3747,6 +3808,20 @@ async function obSubmit() {
         if (finMode === 'per_game') { fees[0] = ''; fees[1] = ''; }
         if (fees.some(function(v) { return v !== ''; })) {
           await obSave('/league/finances/pricing', { season: OB_SEASON_NAME, mode: finMode, price_player: fees[0] || 0, price_goalie: fees[1] || 0, price_game_player: fees[2] || 0, price_game_goalie: fees[3] || 0 });
+        }
+        // Item 5: the main expenses (the Finances page's own route). A row
+        // counts once it has an amount; with no description, its category
+        // names it. A row already saved keeps its id (an update).
+        var costRows = document.querySelectorAll('#ob_costs .ob-cost');
+        for (var ci = 0; ci < costRows.length; ci++) {
+          var row = costRows[ci];
+          var amount = row.querySelector('.ob-cost-amount').value.trim();
+          if (amount === '') continue;
+          var catSel = row.querySelector('.ob-cost-cat');
+          var desc = row.querySelector('.ob-cost-desc').value.trim() || catSel.options[catSel.selectedIndex].text;
+          var costBody = { season: OB_SEASON_NAME, category: catSel.value, description: desc, amount: amount };
+          if (row.getAttribute('data-cost-id')) costBody.id = row.getAttribute('data-cost-id');
+          await obSave('/league/finances/cost', costBody);
         }
       }
     }
@@ -5095,11 +5170,13 @@ async function handleLeaguePublicPage(req, env, url, resolvedLeagueId = null) {
   const upcomingHtml = events.length ? `
   <h2 data-i18n="upcoming">${esc(t.upcoming)}</h2>
   <div class="pb-glist">${events.map(ev => { const mu = matchupTextFor(ev); return `<div class="pb-g">
-      <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
+      <!-- Item 6 (onboarding batch): the venue on its own line under the
+           time, as in the results list below, not beside the date. -->
       <div>
-        ${mu ? `<div class="pb-g-matchup">${mu}</div>` : ''}
+        <div class="pb-g-d">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}</div>
         <div class="pb-g-venue">${ev.venue ? esc(ev.venue) : ''}${resolveEventMapLink(ev, venueMapLinks) ? ` · <a href="${esc(resolveEventMapLink(ev, venueMapLinks))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
       </div>
+      ${mu ? `<div class="pb-g-matchup">${mu}</div>` : ''}
     </div>`; }).join('')}</div>` : `<p class="nl-help" data-i18n="noEvents">${esc(t.noEvents)}</p>`;
 
   // Live-testing task (batch 6), Part 11: "past events alongside
@@ -10436,13 +10513,12 @@ async function handleLeagueSchedulePage(req, env, url) {
   const rowsHtml = events.length
     ? events.map(ev => `<div class="nl-card sc-game-row">
       <a class="sc-game" href="/league/events/detail?e=${encodeURIComponent(ev.id)}">
-        <div class="sc-when">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}${ev.date >= scheduleToday && needsEndTime(ev) ? '<span class="sc-no-end" data-i18n="noEndTag">Heure de fin à ajouter</span>' : ''}</div>
-        <!-- Who plays is the row's headline; the venue sits under it, small.
-             (Both used to be small grey text side by side, and the extra
-             cell pushed the row's grid out of line.) -->
+        <!-- Onboarding batch, item 6: the venue is its own line under the
+             time, in the date's column (it sat in the next column, which a
+             long date such as « dimanche 11 oct. » ran over). -->
+        <div class="sc-when">${dateSpanHtml('b', ev.date, 'short')}${ev.start_time ? timeSpanHtml('span', ev.start_time) : ''}${ev.date >= scheduleToday && needsEndTime(ev) ? '<span class="sc-no-end" data-i18n="noEndTag">Heure de fin à ajouter</span>' : ''}${ev.venue ? `<div class="sc-venue">${esc(ev.venue)}</div>` : ''}</div>
         <div class="sc-main-col">
           ${ev.is_playoff ? playoffLabelSpanHtml('div', (() => { try { return JSON.parse(ev.playoff_meta || 'null') || {}; } catch (_) { return {}; } })(), lang, 'class="sc-matchup"') : (ev.home_team && ev.away_team ? `<div class="sc-matchup">${esc(ev.home_team)} <span class="sc-vs" data-i18n="matchupVsWord">contre</span> ${esc(ev.away_team)}</div>` : '')}
-          ${ev.venue ? `<div class="sc-venue">${esc(ev.venue)}</div>` : ''}
         </div>
         <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
         <span class="sc-chevron">&rsaquo;</span>
@@ -10484,7 +10560,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   .sc-top { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--space-3); flex-wrap: wrap; }
   .sc-top h1 { font: 700 32px/38px var(--font-display); font-stretch: 118%; }
   .sc-list { display: flex; flex-direction: column; gap: var(--space-2); }
-  .sc-game { display: grid; grid-template-columns: 112px 1fr auto auto; align-items: center; gap: var(--space-4); min-height: 64px; text-decoration: none; color: inherit; padding: var(--space-3) var(--space-4); }
+  .sc-game { display: grid; grid-template-columns: fit-content(240px) 1fr auto auto; align-items: center; gap: var(--space-4); min-height: 64px; text-decoration: none; color: inherit; padding: var(--space-3) var(--space-4); }
   /* Live-testing task (batch 6), Part 4: dates broke mid-date ("Thu
      Sep" / "17") -- this column was a fixed 96px (72px on mobile,
      below), too narrow for the longest real date this format
@@ -10497,7 +10573,9 @@ async function handleLeagueSchedulePage(req, env, url) {
   .sc-when b { display: block; font: 700 18px/22px var(--font-display); font-stretch: 118%; white-space: nowrap; }
   .sc-when span { font-size: 13px; color: var(--ink-muted); white-space: nowrap; }
   .sc-when .sc-no-end { display: block; color: var(--ink); font-weight: 600; }
-  .sc-venue { font-size: 14px; color: var(--ink-muted); }
+  /* Item 6: the date column is as wide as its date (a date never wraps), and
+     the venue under the time wraps inside it instead of widening it. */
+  .sc-when .sc-venue { display: block; font-size: 13px; line-height: 18px; color: var(--ink-muted); white-space: normal; overflow-wrap: anywhere; margin-top: 2px; }
   .sc-main-col { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .sc-matchup { font: 700 18px/24px var(--font-display); font-stretch: 112%; color: var(--ink); overflow-wrap: anywhere; }
   .sc-vs { font-weight: 500; font-size: 14px; color: var(--ink-muted); margin: 0 4px; }
@@ -10515,7 +10593,9 @@ async function handleLeagueSchedulePage(req, env, url) {
      the panel came right back up expanded, reading as "keep adding
      events" rather than "created, here's your list". Now collapsible
      on every screen size, same as .sc-bulk-panel already was. */
-  @media (max-width: 640px) { .sc-game { grid-template-columns: 92px 1fr auto; } .sc-game .sc-chevron { display: none; } }
+  /* Item 6, phones: the date block and the state badge share the first
+     row; who plays (when set) gets its own row under them. */
+  @media (max-width: 640px) { .sc-game { grid-template-columns: 1fr auto; } .sc-game .sc-main-col { grid-column: 1 / -1; grid-row: 2; } .sc-game .sc-main-col:not(:has(*)) { display: none; } .sc-game .sc-chevron { display: none; } }
   .sc-needs-season { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5); border: 2px solid var(--primary); }
   .sc-needs-season h2 { font: 700 22px/28px var(--font-display); font-stretch: 118%; }
   /* Live-testing task (batch 2), Part 6: two fixes for this row.

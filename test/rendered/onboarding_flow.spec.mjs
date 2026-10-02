@@ -35,9 +35,21 @@ describe('the finance step', () => {
     const { s, league } = await leagueAtFinance('fin.yes@example.com');
     const { context, page, errors } = await open(s.cookie);
     await page.goto(h.baseUrl + '/onboarding/season?step=6');
+    // Item 5: "Oui" is chosen from the start; "Non, pas pour l'instant" hides the parts.
+    expect(await page.isChecked('#ob_finance_yes')).toBe(true);
+    expect(await page.isVisible('#ob_finance_detail')).toBe(true);
+    await page.check('#ob_finance_no');
     expect(await page.isVisible('#ob_finance_detail')).toBe(false);
     await page.check('#ob_finance_yes');
     expect(await page.isVisible('#ob_finance_detail')).toBe(true);
+    // The main expenses: the gym rental, and one more row added.
+    await page.selectOption('#ob_costs .ob-cost:nth-child(1) .ob-cost-cat', 'rental');
+    await page.fill('#ob_costs .ob-cost:nth-child(1) .ob-cost-amount', '1800');
+    await page.click('#ob_cost_add');
+    expect(await page.textContent('#ob_costs .ob-cost:nth-child(2) .nl-label')).toBe('Catégorie');
+    await page.selectOption('#ob_costs .ob-cost:nth-child(2) .ob-cost-cat', 'equipment');
+    await page.fill('#ob_costs .ob-cost:nth-child(2) .ob-cost-desc', 'Balles et filets');
+    await page.fill('#ob_costs .ob-cost:nth-child(2) .ob-cost-amount', '150');
     await page.fill('#ob_price_player', '120');
     await page.fill('#ob_price_goalie', '60');
     await page.fill('#ob_game_player', '15');
@@ -50,6 +62,8 @@ describe('the finance step', () => {
     const pay = await setting(`payment_info:${league.id}`);
     expect(pay.value).toContain('paiements@example.com');
     expect(pay.value).toContain('5145551234');
+    const costs = (await h.db.prepare('SELECT category, description, amount FROM season_costs WHERE league_id = ? ORDER BY amount DESC').bind(league.id).all()).results;
+    expect(costs.map(c => [c.category, c.description, Number(c.amount)])).toEqual([['rental', 'Location de glace ou de terrain', 1800], ['equipment', 'Balles et filets', 150]]);
     expect(errors).toEqual([]);
     await context.close();
   }, 60000);
@@ -74,9 +88,11 @@ describe('the finance step', () => {
     const { s, league } = await leagueAtFinance('fin.no@example.com');
     const { context, page } = await open(s.cookie);
     await page.goto(h.baseUrl + '/onboarding/season?step=6');
+    await page.fill('#ob_costs .ob-cost-amount', '500');
     await page.check('#ob_finance_no');
     await Promise.all([page.waitForURL(/step=summary/), page.click('#ob_submit')]);
     expect(await pricingRow(league.id)).toBeNull();
+    expect((await h.db.prepare('SELECT COUNT(*) AS c FROM season_costs WHERE league_id = ?').bind(league.id).first()).c).toBe(0);
     expect(await setting(`payment_info:${league.id}`)).toBeNull();
     expect(JSON.parse((await setting(`onboarding_done:${league.id}`)).value)).toContain('finance');
     await context.close();

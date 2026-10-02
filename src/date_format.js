@@ -24,6 +24,13 @@ const MONTH_ABBR_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', '
 const MONTH_FULL_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 const MONTH_FULL_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+// French writes the first day of a month « 1er » (« dimanche 1er nov. »,
+// « samedi 1er mars 2027 »); every other day is the plain number. English
+// is unchanged ("Sunday, Nov 1").
+function dayFr(d) {
+  return d === 1 ? '1er' : String(d);
+}
+
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
@@ -62,7 +69,7 @@ export function formatEventDate(dateISO, lang = 'fr', style = 'short', capitaliz
   const month = isEn ? MONTH_ABBR_EN[p.m - 1] : monthAbbrFrDot(p.m);
   let day = dayList[p.dow];
   if (capitalizeFirst || isEn) day = capitalize(day);
-  return isEn ? `${day} ${month} ${p.d}` : `${day} ${p.d} ${month}`;
+  return isEn ? `${day} ${month} ${p.d}` : `${day} ${dayFr(p.d)} ${month}`;
 }
 
 // A full day + full month, used sparingly (e.g. a formal confirmation
@@ -74,7 +81,7 @@ export function formatEventDateFull(dateISO, lang = 'fr', capitalizeFirst = true
   let day = (isEn ? DAY_FULL_EN : DAY_FULL_FR)[p.dow];
   if (capitalizeFirst || isEn) day = capitalize(day);
   const month = (isEn ? MONTH_FULL_EN : MONTH_FULL_FR)[p.m - 1];
-  return isEn ? `${day}, ${month} ${p.d}` : `${day} ${p.d} ${month}`;
+  return isEn ? `${day}, ${month} ${p.d}` : `${day} ${dayFr(p.d)} ${month}`;
 }
 
 // timeHHMM: 'HH:MM', 24-hour, as stored throughout this app.
@@ -109,7 +116,7 @@ export function sentenceDate(dateISO, lang = 'fr') {
   if (!p) return '';
   return lang === 'en'
     ? `${DAY_FULL_EN[p.dow]}, ${MONTH_ABBR_EN[p.m - 1]} ${p.d}`
-    : `${DAY_FULL_FR[p.dow]} ${p.d} ${monthAbbrFrDot(p.m)}`;
+    : `${DAY_FULL_FR[p.dow]} ${dayFr(p.d)} ${monthAbbrFrDot(p.m)}`;
 }
 // « dimanche 15 nov. à 10 h 30 » / "Sunday, Nov 15 at 10:30 AM"; joiner
 // ', ' gives « dimanche 11 janv., 10 h 30 » (the sub call's own form).
@@ -172,8 +179,8 @@ export function formatPageDate(dateISO, lang = 'fr', style = 'short') {
   const p = dateParts(dateISO);
   if (!p) return '';
   return style === 'long'
-    ? `${DAY_FULL_FR[p.dow]} ${p.d} ${MONTH_FULL_FR[p.m - 1]} ${p.y}`
-    : `${DAY_FULL_FR[p.dow]} ${p.d} ${monthAbbrFrDot(p.m)}`;
+    ? `${DAY_FULL_FR[p.dow]} ${dayFr(p.d)} ${MONTH_FULL_FR[p.m - 1]} ${p.y}`
+    : `${DAY_FULL_FR[p.dow]} ${dayFr(p.d)} ${monthAbbrFrDot(p.m)}`;
 }
 export function formatPageDateTime(dateISO, timeHHMM, lang = 'fr', style = 'short') {
   const d = formatPageDate(dateISO, lang, style);
@@ -195,8 +202,9 @@ export const PAGE_DATE_JS = `(function() {
     var y = Number(s.slice(0, 4)), m = Number(s.slice(5, 7)), d = Number(s.slice(8, 10));
     if (!y || !m || !d) return '';
     var dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-    if (style === 'long') return DAYS[dow] + ' ' + d + ' ' + FULL[m - 1] + ' ' + y;
-    return DAYS[dow] + ' ' + d + ' ' + (ABBR[m - 1] === FULL[m - 1] ? ABBR[m - 1] : ABBR[m - 1] + '.');
+    var dd = d === 1 ? '1er' : String(d);
+    if (style === 'long') return DAYS[dow] + ' ' + dd + ' ' + FULL[m - 1] + ' ' + y;
+    return DAYS[dow] + ' ' + dd + ' ' + (ABBR[m - 1] === FULL[m - 1] ? ABBR[m - 1] : ABBR[m - 1] + '.');
   };
   window.__nlTime = function(t) {
     var s = String(t || ''), i = s.indexOf(':');
