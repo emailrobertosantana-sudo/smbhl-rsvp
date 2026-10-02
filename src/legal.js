@@ -9,9 +9,11 @@
 import { nlDocument, nlEmailWrap } from './design_system.js';
 import { LEGAL_TEXT } from './legal_text.js';
 
-// The publication date of the current texts: shown as "last updated" on
-// both pages.
-export const LEGAL_UPDATED = '2026-10-01';
+// Each text's publication date, shown as "last updated" on its page. The
+// privacy policy changed on 2026-10-02 (support access, section 5).
+export const LEGAL_UPDATED_BY_KIND = { privacy: '2026-10-02', terms: '2026-10-01' };
+// The latest of them: the version an account's acceptance records (src/terms.js).
+export const LEGAL_UPDATED = Object.values(LEGAL_UPDATED_BY_KIND).sort().slice(-1)[0];
 
 export const LEGAL_PATHS = { privacy: '/confidentialite', terms: '/conditions' };
 export const LEGAL_REDIRECTS = { '/privacy': '/confidentialite', '/terms': '/conditions' };
@@ -106,11 +108,11 @@ export function renderLegalPage(kind) {
 <header class="lg-head"><a href="/">Notre Ligue</a></header>
 <main class="lg-main">
   <h1>${esc(frTitle)}</h1>
-  <p class="lg-meta"><span>${L.fr.updated} : ${legalDate(LEGAL_UPDATED, 'fr')}</span><a href="#en" lang="en-CA">${L.fr.jump}</a></p>
+  <p class="lg-meta"><span>${L.fr.updated} : ${legalDate(LEGAL_UPDATED_BY_KIND[kind] || LEGAL_UPDATED, 'fr')}</span><a href="#en" lang="en-CA">${L.fr.jump}</a></p>
   ${legalMarkdownToHtml(t.fr)}
   <section id="en" lang="en-CA">
     <h2>${esc(enFull)}</h2>
-    <p class="lg-meta"><span>${L.en.updated}: ${legalDate(LEGAL_UPDATED, 'en')}</span><a href="#top" lang="fr-CA">${L.en.back}</a></p>
+    <p class="lg-meta"><span>${L.en.updated}: ${legalDate(LEGAL_UPDATED_BY_KIND[kind] || LEGAL_UPDATED, 'en')}</span><a href="#top" lang="fr-CA">${L.en.back}</a></p>
     ${legalMarkdownToHtml(t.en)}
   </section>
 </main>

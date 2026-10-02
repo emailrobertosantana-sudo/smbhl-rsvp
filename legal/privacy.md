@@ -1,6 +1,6 @@
 # Notre Ligue : Politique de confidentialité / Privacy Policy
 
-Oct 1, 2026 · @Roberto
+Oct 2, 2026 · @Roberto
 
 ## Version française
 
@@ -38,6 +38,8 @@ Nous conservons aussi les adresses IP utilisées pour les inscriptions, les conn
 - Facturer les abonnements.
 - Protéger le service et prévenir les abus.
 - Envoyer aux administrateurs des nouvelles ou des conseils sur Notre Ligue, avec la possibilité de se désabonner en tout temps.
+
+Pour offrir du soutien, Notre Ligue peut consulter les données d'une ligue en lecture seule. Chaque consultation est enregistrée.
 
 Nous ne vendons aucun renseignement et ne les utilisons pas pour de la publicité.
 
@@ -131,6 +133,8 @@ We also keep the IP addresses used for sign-ups, sign-ins and password resets, f
 - To bill subscriptions.
 - To protect the service and prevent abuse.
 - To send admins news or tips about Notre Ligue, with the option to unsubscribe at any time.
+
+To provide support, Notre Ligue may view a league's data in read-only mode. Every such access is logged.
 
 We sell no information and do not use it for advertising.
 

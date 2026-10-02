@@ -23,9 +23,11 @@ afterAll(() => { delete env.LEAGUE_PRODUCT; });
 describe('the pages, on the Notre Ligue host', () => {
   beforeAll(() => { env.LEAGUE_PRODUCT = 'true'; });
 
-  for (const [path, fr, en, line] of [
-    ['/confidentialite', 'Notre Ligue : Politique de confidentialité', 'Notre Ligue: Privacy Policy', 'Nous ne vendons aucun renseignement et ne les utilisons pas pour de la publicité.'],
-    ['/conditions', "Notre Ligue : Conditions d'utilisation", 'Notre Ligue: Terms of Service', 'Tu peux annuler en tout temps.']
+  // The privacy policy changed on 2026-10-02 (support access, section 5);
+  // the terms did not.
+  for (const [path, fr, en, line, dateFr, dateEn] of [
+    ['/confidentialite', 'Notre Ligue : Politique de confidentialité', 'Notre Ligue: Privacy Policy', 'Nous ne vendons aucun renseignement et ne les utilisons pas pour de la publicité.', '2 octobre 2026', 'October 2, 2026'],
+    ['/conditions', "Notre Ligue : Conditions d'utilisation", 'Notre Ligue: Terms of Service', 'Tu peux annuler en tout temps.', '1er octobre 2026', 'October 1, 2026']
   ]) {
     it(`${path}: French, then English, the date, no review note`, async () => {
       const res = await get(path);
@@ -33,17 +35,23 @@ describe('the pages, on the Notre Ligue host', () => {
       const html = await res.text();
       expect(html).toContain('<html lang="fr-CA">');
       expect(html).toContain(`<h1>${fr.replace("'", '&#39;')}</h1>`);
-      expect(html).toContain('Dernière mise à jour : 1er octobre 2026');
+      expect(html).toContain(`Dernière mise à jour : ${dateFr}`);
       expect(html).toContain('<a href="#en" lang="en-CA">English version</a>');
       expect(html).toContain(`<section id="en" lang="en-CA">`);
       expect(html).toContain(`<h2>${en}</h2>`);
-      expect(html).toContain('Last updated: October 1, 2026');
+      expect(html).toContain(`Last updated: ${dateEn}`);
       expect(html.indexOf('Last updated')).toBeGreaterThan(html.indexOf('Dernière mise à jour'));
       expect(html).toContain(line.replace("'", '&#39;'));
       for (const note of ['Statut / Status', 'Ébauche', 'Draft, not yet in force', '@Roberto', 'avocat']) expect(html).not.toContain(note);
       expect(html).toContain('<a href="mailto:bonjour@notreligue.ca">bonjour@notreligue.ca</a>');
     });
   }
+
+  it('the privacy policy says support access is read-only and logged, in both languages (section 5)', async () => {
+    const html = await (await get('/confidentialite')).text();
+    expect(html).toContain('Pour offrir du soutien, Notre Ligue peut consulter les données d&#39;une ligue en lecture seule. Chaque consultation est enregistrée.');
+    expect(html).toContain('To provide support, Notre Ligue may view a league&#39;s data in read-only mode. Every such access is logged.');
+  });
 
   it('/privacy and /terms redirect, permanently', async () => {
     for (const [from, to] of [['/privacy', '/confidentialite'], ['/terms', '/conditions']]) {
