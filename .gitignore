@@ -174,3 +174,6 @@ copy-audit/
 
 # The onboarding walkthrough screenshots: local review, not part of the repo
 onboarding-review/
+
+# The season simulation: local findings, not part of the repo
+league-sim/
