@@ -523,7 +523,6 @@ const I18N_HOME = {
     heroTitle: 'Tes joueurs répondent sans compte et sans application.',
     heroBody: 'Chaque semaine, Notre Ligue demande qui joue, compte les réponses et trouve des remplaçants quand il manque du monde. Toi, tu joues.',
     cta: 'Créer ma ligue', proof: 'Prêt en 5 minutes. 2 mois gratuits, sans carte. Gratuit sous 15 joueurs.',
-    beta: 'Ligues bêta\u00a0: ton essai de 2 mois commence le jour du lancement de la facturation.',
     eyebrow1: 'Ce qu\'on prend en charge', heading1: "Le travail ennuyeux d'une ligue, fait automatiquement.",
     f1Title: 'Présence en un clic', f1Body: "Chaque semaine, tes joueurs reçoivent un message et répondent oui ou non d'un clic.",
     f2Title: 'Remplaçants automatiques', f2Body: "Il manque du monde? On invite ta liste de remplaçants à un rythme raisonnable, avec une liste d'attente.",
@@ -555,7 +554,6 @@ const I18N_HOME = {
     heroTitle: 'Your players answer without an account or an app.',
     heroBody: "Every week, Notre Ligue asks who's playing, counts the answers and finds subs when you're short. You just play.",
     cta: 'Create my league', proof: 'Ready in 5 minutes. 2 months free, no card. Free under 15 players.',
-    beta: 'Beta leagues: your 2-month trial starts the day billing launches.',
     eyebrow1: 'What we handle for you', heading1: 'The boring league work, done automatically.',
     f1Title: 'Attendance in one tap', f1Body: 'Every week, players get a message and answer yes or no with one tap.',
     f2Title: 'Automatic subs', f2Body: 'Short on players? We invite your sub list at a steady pace, with a waitlist.',
@@ -715,8 +713,7 @@ function renderMarketingHomepage(req, forcedLang = null) {
   .home-tier .nl-badge { align-self: flex-start; }
   .home-tier .go { margin-top: auto; }
   .home-tier .go a { text-decoration: underline; font-weight: 600; color: var(--ink); }
-  .home-beta-note { margin-top: var(--space-5); color: var(--ink-muted); font-size: 15px; }
-  .home-fine { margin-top: var(--space-3); color: var(--ink-muted); font-size: 13px; line-height: 19px; max-width: 760px; }
+  p.home-fine { margin-top: var(--space-5); color: var(--ink-muted); font-size: 13px; line-height: 19px; max-width: 760px; }
   .home-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-6); }
   .home-num { font: 800 64px/1 var(--font-display); font-stretch: 118%; color: var(--ink); box-shadow: inset 0 -14px 0 var(--yellow); align-self: flex-start; padding: 0 4px; letter-spacing: -.02em; }
   .home-step h3 { font: 600 20px/26px var(--font-display); font-stretch: 118%; }
@@ -735,7 +732,7 @@ function renderMarketingHomepage(req, forcedLang = null) {
   .home-footer { padding: var(--space-5) 0; font-size: 13px; color: var(--ink-muted); border-top: 1px solid var(--line); }
   .home-operator { flex-basis: 100%; }
   .home-hero h1, .home-sec-h, .home-final h2, .home-step h3, .home-feat h3 { text-wrap: balance; }
-  .home-hero p, .home-proof, .home-feat p, .home-step p, .home-sub, .home-fine, .home-beta-note { text-wrap: pretty; }
+  .home-hero p, .home-proof, .home-feat p, .home-step p, .home-sub, .home-fine { text-wrap: pretty; }
   .home-tier .go a { display: inline-block; min-height: 44px; line-height: 44px; }
   .home-footer .home-in { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
   @media (max-width: 900px) { .home-hero { grid-template-columns: 1fr; } .home-mock { display: none; } .home-feats, .home-tiers { grid-template-columns: 1fr 1fr; } .home-steps { grid-template-columns: 1fr; } }
@@ -788,7 +785,6 @@ function renderMarketingHomepage(req, forcedLang = null) {
       <p data-i18n="heroBody">${T.heroBody}</p>
       <div class="home-cta"><a class="nl-btn nl-btn--primary nl-btn--lg" href="/signup" data-i18n="cta">${T.cta}</a></div>
       <div class="home-proof" data-i18n="proof">${T.proof}</div>
-      <div class="home-proof home-beta" data-i18n="beta">${T.beta}</div>
     </div>
     <div class="home-mock" aria-hidden="true">
       <div class="blk1"></div><div class="blk2"></div>
@@ -825,7 +821,6 @@ function renderMarketingHomepage(req, forcedLang = null) {
     <div class="home-tier"><h3 data-i18n="t3Name">${T.t3Name}</h3><div class="range" data-i18n="t3Range">${T.t3Range}</div><div class="price" data-i18n="t3Price">${T.t3Price}</div><span class="nl-badge" data-i18n="soon">${T.soon}</span><div class="go"><a href="/signup" data-i18n="cta">${T.cta}</a></div></div>
     <div class="home-tier"><h3 data-i18n="t4Name">${T.t4Name}</h3><div class="range" data-i18n="t4Range">${T.t4Range}</div><div class="go"><a href="mailto:bonjour@notreligue.ca" data-i18n="writeUs">${T.writeUs}</a></div></div>
   </div>
-  <p class="home-beta-note" data-i18n="beta">${T.beta}</p>
   <p class="home-fine" data-i18n="priceNote">${T.priceNote}</p>
 </div></section>
 

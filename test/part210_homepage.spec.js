@@ -52,12 +52,13 @@ describe('item 1: the copy', () => {
       'Chaque semaine, Notre Ligue demande qui joue, compte les réponses et trouve des remplaçants quand il manque du monde. Toi, tu joues.',
       'href="/signup" data-i18n="cta">Créer ma ligue</a>',
       'Prêt en 5 minutes. 2 mois gratuits, sans carte. Gratuit sous 15 joueurs.',
-      'Ligues bêta : ton essai de 2 mois commence le jour du lancement de la facturation.',
       'Créer ta ligue', "Le nom, ta formule de jeu, l'adresse de ta page. Cinq minutes.",
       'Ajouter tes joueurs', 'Un nom et un courriel. Importe une liste si tu en as une.',
       "On s'occupe du reste", 'Invitations, rappels, remplaçants. Tu reçois une alerte seulement si quelque chose coince.'
     ]) expect(html).toContain(s);
     expect(html).not.toContain('En français et en anglais');
+    // Billing launched on 2026-10-02: no beta wording anywhere on the page.
+    expect(html).not.toMatch(/b[eê]ta|lancement de la facturation/i);
   });
 
   it('English', async () => {
@@ -67,12 +68,12 @@ describe('item 1: the copy', () => {
       "Every week, Notre Ligue asks who's playing, counts the answers and finds subs when you're short. You just play.",
       '>Create my league</a>',
       'Ready in 5 minutes. 2 months free, no card. Free under 15 players.',
-      'Beta leagues: your 2-month trial starts the day billing launches.',
       'Create your league', 'Name, how it runs, your page address. Five minutes.',
       'Add your players', 'A name and an email. Import a list if you have one.',
       'We handle the rest', "Invites, reminders, subs. You get an alert only if something's stuck."
     ]) expect(html).toContain(s);
     expect(html).not.toContain('In French and English');
+    expect(html).not.toMatch(/\bbeta\b|billing launches/i);
   });
 });
 
@@ -119,7 +120,6 @@ describe('item 3: the pricing section', () => {
       'Standard', '15 à 50 joueurs', '9,99 $ CAD par mois, ou 99,90 $ par an',
       'Plus', '51 à 100 joueurs', '19,99 $ CAD par mois, ou 199,90 $ par an',
       'Sur mesure', 'Plus de 100 joueurs', '<a href="mailto:bonjour@notreligue.ca" data-i18n="writeUs">Écris-nous</a>',
-      'Ligues bêta : ton essai de 2 mois commence le jour du lancement de la facturation.',
       'Prix avant taxes. Seuls les joueurs réguliers avec un courriel comptent. 2 mois gratuits pour chaque ligue, sans carte. Les forfaits mensuels peuvent être mis en pause pendant la saison morte.'
     ]) expect(sec).toContain(s);
     expect(sec.match(/Facturation bientôt disponible/g)).toHaveLength(2);
