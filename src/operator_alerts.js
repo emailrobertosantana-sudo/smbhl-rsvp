@@ -18,7 +18,7 @@
 // masked as the super-admin shows it (maskEmail, 'o***@example.com');
 // postWebhook also masks any full address left in the text.
 // Without ALERT_WEBHOOK_URL nothing is read or written.
-import { postWebhook } from './health.js';
+import { postWebhook, postWebhookResult } from './health.js';
 import { maskEmail } from './contact_name.js';
 import { SMBHL_LEAGUE_ID } from './league_ids.js';
 import { stripeId } from './stripe.js';
@@ -28,6 +28,7 @@ export const SUBSCRIBED_KEY = (id, subId) => `ops_alert:subscribed:${id}:${subId
 
 export const LEAGUE_CREATED_TITLE = 'Notre Ligue : nouvelle ligue / new league';
 export const SUBSCRIBED_TITLE = 'Notre Ligue : nouvel abonnement / new subscription';
+export const TEST_ALERT_TITLE = "Notre Ligue : test d'alerte / alert test";
 
 // The labels the onboarding summary uses (src/index.js
 // onboardingSummaryScreen, SUMMARY_LANGUAGE), without the sentence ending.
@@ -183,4 +184,14 @@ export async function alertSubscriptionActive(env, { leagueId, sub, status, tier
     console.error(`[ops-alert] subscription: ${e && e.message}`);
     return false;
   }
+}
+
+// The super-admin's « Envoyer une alerte test » button: one push through the
+// same webhook call as 1a and 1b (same timeout), nothing written. Returns
+// what the webhook answered and how long it took (postWebhookResult), and
+// whether an access token was sent (never the token itself).
+export async function sendTestAlert(env) {
+  const body = "Alerte test envoyée depuis le super-admin. Rien à faire.\n\n---\n\nTest alert sent from the super-admin. Nothing to do.";
+  const r = await postWebhookResult(env, TEST_ALERT_TITLE, body, { tags: 'test_tube', timeoutMs: ALERT_TIMEOUT_MS });
+  return { ...r, configured: !!(env && env.ALERT_WEBHOOK_URL), token: !!(env && env.ALERT_WEBHOOK_TOKEN), timeoutMs: ALERT_TIMEOUT_MS };
 }

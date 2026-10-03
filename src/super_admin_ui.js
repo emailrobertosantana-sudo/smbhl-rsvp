@@ -59,7 +59,11 @@ export const LIST_I18N = {
     pauseSince: 'depuis le {d}', pauseHeld: '{n|# courriel retenu|# courriels retenus}',
     release: 'Relâcher', cancelHeld: 'Annuler les courriels retenus',
     rule_2a: 'Même courriel en boucle', rule_2b: 'Une personne inondée', rule_2c: 'Ligue bien au-dessus de sa normale',
-    rule_2d: "Trop de courriels d'un coup", rule_2e: 'Rebonds en hausse'
+    rule_2d: "Trop de courriels d'un coup", rule_2e: 'Rebonds en hausse',
+    // The operator webhook's test (src/operator_alerts.js sendTestAlert).
+    testAlert: 'Envoyer une alerte test', testAlertSent: 'Envoyée : réponse {status} en {ms} ms.',
+    testAlertFailed: 'Pas envoyée : {error} (réponse {status}, {ms} ms).', testAlertNoHook: "Aucun webhook d'alerte configuré.",
+    testAlertToken: "jeton d'accès : {v}", yesWord: 'oui', noWord: 'non'
   },
   en: {
     ...COMMON.en,
@@ -74,7 +78,10 @@ export const LIST_I18N = {
     pauseSince: 'since {d}', pauseHeld: '{n|# email held|# emails held}',
     release: 'Release', cancelHeld: 'Cancel the held emails',
     rule_2a: 'Same email in a loop', rule_2b: 'One person flooded', rule_2c: 'League far above its normal',
-    rule_2d: 'Everything at once', rule_2e: 'Bounces spiking'
+    rule_2d: 'Everything at once', rule_2e: 'Bounces spiking',
+    testAlert: 'Send a test alert', testAlertSent: 'Sent: response {status} in {ms} ms.',
+    testAlertFailed: 'Not sent: {error} (response {status}, {ms} ms).', testAlertNoHook: 'No alert webhook configured.',
+    testAlertToken: 'access token: {v}', yesWord: 'yes', noWord: 'no'
   }
 };
 
@@ -359,6 +366,18 @@ $('sa-pauses-list').addEventListener('click', function(e) {
     .then(reload)
     .catch(function(err) { $('sa-err').textContent = T('err') + err.message; b.disabled = false; });
 });
+$('sa-test-alert').addEventListener('click', function() {
+  var b = $('sa-test-alert');
+  b.disabled = true;
+  $('sa-test-alert-out').textContent = '';
+  api('/super-admin/alert/test', { method: 'POST', body: {} }).then(function(r) {
+    var line = !r.configured ? T('testAlertNoHook')
+      : fill(T(r.sent ? 'testAlertSent' : 'testAlertFailed'), { status: r.status || '0', ms: r.ms, error: r.error || '' });
+    if (r.configured) line += ' · ' + fill(T('testAlertToken'), { v: T(r.token ? 'yesWord' : 'noWord') });
+    $('sa-test-alert-out').textContent = line;
+    b.disabled = false;
+  }).catch(function(err) { $('sa-err').textContent = T('err') + err.message; b.disabled = false; });
+});
 $('sa-tbody').addEventListener('click', function(e) {
   if (e.target.closest('a')) return;
   var tr = e.target.closest('tr.sa-row');
@@ -392,6 +411,8 @@ ${header()}
       <h2 data-i18n="pausesTitle">${esc(T.pausesTitle)}</h2>
       <div id="sa-pauses-list"></div>
     </section>
+    <div class="sa-actions"><button type="button" class="nl-btn nl-btn--secondary" id="sa-test-alert" data-i18n="testAlert">${esc(T.testAlert)}</button></div>
+    <p class="sa-muted" id="sa-test-alert-out" role="status"></p>
     <div class="sa-tools">
       <label><span data-i18n="periodLabel">${esc(T.periodLabel)}</span>
         <span class="sa-period"><input id="sa-from" class="nl-input" type="date" value="${esc(period.from)}"><span aria-hidden="true">–</span><input id="sa-to" class="nl-input" type="date" value="${esc(period.to)}"></span></label>

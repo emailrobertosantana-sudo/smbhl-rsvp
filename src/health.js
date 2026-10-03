@@ -160,15 +160,22 @@ export function scrubForWebhook(s) {
 // that long (the operator alerts run inside a sign-up or a Stripe event,
 // which must not wait on the webhook: on demo a Worker's POST to ntfy.sh
 // once took 20 s to end in a 522).
-export async function postWebhook(env, title, text, { tags = 'warning', timeoutMs = 0 } = {}) {
+export async function postWebhook(env, title, text, opts = {}) {
+  return (await postWebhookResult(env, title, text, opts)).sent;
+}
+// The same call, with what happened: { sent, status (the webhook's HTTP
+// status, 0 when no answer came), ms, error }. The super-admin's test
+// alert (src/operator_alerts.js sendTestAlert) shows it.
+export async function postWebhookResult(env, title, text, { tags = 'warning', timeoutMs = 0 } = {}) {
   const url = env.ALERT_WEBHOOK_URL;
-  if (!url) return false;
+  if (!url) return { sent: false, status: 0, ms: 0, error: 'no_webhook' };
   title = scrubForWebhook(title);
   text = scrubForWebhook(text);
+  const started = Date.now();
+  let res = null;
   try {
     const host = new URL(url).hostname;
     const signal = timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {};
-    let res;
     if (/ntfy/.test(host)) {
       // ALERT_WEBHOOK_TOKEN (optional): an ntfy access token. ntfy.sh limits
       // anonymous publishes per IP, and Workers share their outgoing IPs
@@ -181,8 +188,13 @@ export async function postWebhook(env, title, text, { tags = 'warning', timeoutM
       res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: `${title}\n${text}`.slice(0, 3900) }), ...signal });
     }
     if (!res.ok) throw new Error(`webhook ${res.status}`);
-    return true;
-  } catch (e) { console.error(`[health] webhook failed: ${e.message}`); return false; }
+    return { sent: true, status: res.status, ms: Date.now() - started, error: '' };
+  } catch (e) {
+    console.error(`[health] webhook failed: ${e.message}`);
+    // The webhook URL is a secret: never in the error shown.
+    const msg = (e && e.name === 'TimeoutError') ? 'timeout' : String((e && e.message) || 'error').split(url).join('[webhook]');
+    return { sent: false, status: res ? res.status : 0, ms: Date.now() - started, error: msg.slice(0, 120) };
+  }
 }
 
 /* ---------- client-side script errors ---------- */

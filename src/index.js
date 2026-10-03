@@ -59,6 +59,7 @@ import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail, a
 import { readSupportSession, supportEnv, supportResponse, startSupport, endSupport, clearSupportCookieHeader, readSupportLog } from './support_mode.js';
 import { writeRefusal, isWriteRequest, writeAllowed } from './write_guard.js';
 import { superAdminListPage, superAdminLeaguePage, LEAGUE_PAGE_CONSTANTS } from './super_admin_ui.js';
+import { sendTestAlert } from './operator_alerts.js';
 import { prepareOpsDigest, deliverOpsDigest, OPS_DIGEST_TO, OPS_DIGEST_KIND } from './ops_digest.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -34744,6 +34745,14 @@ async function handleFetch(req, env, ctx) {
         if (!/^(global|league:[A-Za-z0-9-]{1,80}|addr:[0-9a-f]{24})$/.test(scope)) return Response.json({ ok: false, errorKey: 'BAD_SCOPE' }, { status: 400 });
         if (url.pathname.endsWith('/release')) return Response.json({ ok: true, released: await releaseScope(env, scope) });
         return Response.json({ ok: true, cancelled: await cancelScope(env, scope) });
+      }
+      // The super-admin's « Envoyer une alerte test »: one push through the
+      // operator webhook, with its status and time (src/operator_alerts.js).
+      if (url.pathname === '/super-admin/alert/test' && req.method === 'POST') {
+        const auth = checkAdminAuth(req, env);
+        if (auth !== 'ok') return adminAuthResponse(auth);
+        if (env.LEAGUE_PRODUCT !== 'true') return new Response('Not found', { status: 404 });
+        return Response.json({ ok: true, ...(await sendTestAlert(env)) }, { headers: { 'cache-control': 'no-store' } });
       }
       // Billing: the Stripe configuration, read only (src/billing_check.js).
       if (url.pathname === '/super-admin/billing/check' && req.method === 'GET') {
