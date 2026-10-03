@@ -60,6 +60,7 @@ import { readSupportSession, supportEnv, supportResponse, startSupport, endSuppo
 import { writeRefusal, isWriteRequest, writeAllowed } from './write_guard.js';
 import { superAdminListPage, superAdminLeaguePage, LEAGUE_PAGE_CONSTANTS } from './super_admin_ui.js';
 import { sendTestAlert } from './operator_alerts.js';
+import { operatorEmailConfigured, flushOperatorSummaries } from './operator_mail.js';
 import { prepareOpsDigest, deliverOpsDigest, OPS_DIGEST_TO, OPS_DIGEST_KIND } from './ops_digest.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -15426,7 +15427,7 @@ async function bouncedTwice(env, m, to) {
 // The operator's own inboxes: never held (item 1e).
 function isOperatorAddress(env, to) {
   const t = String(to || '').trim().toLowerCase();
-  return !!t && [OPS_DIGEST_TO, env.ADMIN_EMAIL || ADMIN_EMAIL, env.OPS_ALERT_EMAIL].filter(Boolean).some(a => String(a).trim().toLowerCase() === t);
+  return !!t && [OPS_DIGEST_TO, env.ADMIN_EMAIL || ADMIN_EMAIL, env.OPS_ALERT_EMAIL, env.OPERATOR_ALERT_EMAIL].filter(Boolean).some(a => String(a).trim().toLowerCase() === t);
 }
 
 // One outbox row through the sending guard (src/mail_guard.js). Returns
@@ -17477,6 +17478,23 @@ async function deadMan(env) {
   if (fresh.length) {
     const list = fresh.map(f => `- ${f.p}`).join('\n');
     const listFr = fresh.map(f => `- ${frWording.get(f.p) || f.p}`).join('\n');
+    // Email alerts batch: with OPERATOR_ALERT_EMAIL, one operator alert
+    // (src/operator_mail.js: straight to the provider, never capped or
+    // queued, and the webhook too), raised once it is told.
+    if (operatorEmailConfigured(env)) {
+      const told = await postWebhook(env, 'SMBHL : le système a manqué quelque chose / something did not run',
+        `Quelque chose ne s'est pas exécuté :\n\n${listFr}\n\n` +
+        `À vérifier : l'onglet Comms (filtre des échecs) et la table des tâches (jobs).\n\n` +
+        `Something did not run:\n\n${list}\n\n` +
+        `Check: the Comms tab (Failed filter) and the jobs table.`);
+      if (told) {
+        for (const f of fresh) {
+          await env.DB.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)')
+            .bind(f.key, now.toISOString()).run();
+        }
+      } else console.error('[deadMan] operator alert failed, will retry next pass');
+      return problems;
+    }
     // Also by webhook (src/health.js): this email is about mail not going
     // out, and may not go out itself.
     await postWebhook(env, 'SMBHL : le système a manqué quelque chose / something did not run', list);
@@ -33981,6 +33999,11 @@ async function runCronPass(env) {
   const failures = [];
   let passOk = true, passError = null;
   try { await recordHeartbeat(env, 'start'); } catch (e) { console.error(`[health] heartbeat start: ${e.message}`); }
+  // Email alerts batch: the summary of a finished hour's grouped operator
+  // alerts (src/operator_mail.js), when alerts go by email.
+  if (operatorEmailConfigured(env)) {
+    try { await flushOperatorSummaries(env); } catch (e) { console.error('[ops-mail] summary not sent this pass'); }
+  }
   // Schema guard before the pass (src/schema_guard.js checkSchemaForPass):
   // a database behind this deployment skips the whole pass -- no mail sent
   // that the database can't record -- and says so in the heartbeat

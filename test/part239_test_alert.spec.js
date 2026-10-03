@@ -41,8 +41,9 @@ describe('Send a test alert', () => {
     const res = await press();
     expect(res.status).toBe(200);
     const r = await res.json();
-    expect(r).toMatchObject({ ok: true, sent: true, status: 200, configured: true, token: false, error: '' });
-    expect(typeof r.ms).toBe('number');
+    // Email alerts batch: one answer per channel; no alert email here.
+    expect(r).toMatchObject({ ok: true, email: { configured: false }, webhook: { configured: true, sent: true, status: 200, token: false, error: '' } });
+    expect(typeof r.webhook.ms).toBe('number');
     expect(calls).toHaveLength(1);
     expect(calls[0].title).toBe("Notre Ligue : test d'alerte / alert test");
     expect(calls[0].title).toBe(TEST_ALERT_TITLE);
@@ -59,7 +60,7 @@ describe('Send a test alert', () => {
     env.ALERT_WEBHOOK_TOKEN = 'tk_p239_secret';
     try {
       const r = await (await press()).json();
-      expect(r.token).toBe(true);
+      expect(r.webhook.token).toBe(true);
       expect(calls[0].auth).toBe('Bearer tk_p239_secret');
       expect(JSON.stringify(r)).not.toContain('tk_p239_secret');
     } finally { delete env.ALERT_WEBHOOK_TOKEN; }
@@ -68,14 +69,14 @@ describe('Send a test alert', () => {
   it("a refusal shows the webhook's status", async () => {
     answer = 429;
     const r = await (await press()).json();
-    expect(r).toMatchObject({ ok: true, sent: false, status: 429, error: 'webhook 429' });
+    expect(r.webhook).toMatchObject({ sent: false, status: 429, error: 'webhook 429' });
   });
 
   it('a failed connection: status 0, and the webhook URL never in the error', async () => {
     answer = 'throw';
     const r = await (await press()).json();
-    expect(r).toMatchObject({ sent: false, status: 0 });
-    expect(r.error).toContain('[webhook]');
+    expect(r.webhook).toMatchObject({ sent: false, status: 0 });
+    expect(r.webhook.error).toContain('[webhook]');
     expect(JSON.stringify(r)).not.toContain('p239-secret-topic');
   });
 
@@ -83,7 +84,7 @@ describe('Send a test alert', () => {
     delete env.ALERT_WEBHOOK_URL;
     try {
       const r = await (await press()).json();
-      expect(r).toMatchObject({ sent: false, configured: false, error: 'no_webhook' });
+      expect(r).toMatchObject({ email: { configured: false }, webhook: { configured: false } });
       expect(calls).toHaveLength(0);
     } finally { env.ALERT_WEBHOOK_URL = HOOK; }
   });

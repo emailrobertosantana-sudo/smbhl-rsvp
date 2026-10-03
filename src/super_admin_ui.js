@@ -61,8 +61,8 @@ export const LIST_I18N = {
     rule_2a: 'Même courriel en boucle', rule_2b: 'Une personne inondée', rule_2c: 'Ligue bien au-dessus de sa normale',
     rule_2d: "Trop de courriels d'un coup", rule_2e: 'Rebonds en hausse',
     // The operator webhook's test (src/operator_alerts.js sendTestAlert).
-    testAlert: 'Envoyer une alerte test', testAlertSent: 'Envoyée : réponse {status} en {ms} ms.',
-    testAlertFailed: 'Pas envoyée : {error} (réponse {status}, {ms} ms).', testAlertNoHook: "Aucun webhook d'alerte configuré.",
+    testAlert: 'Envoyer une alerte test', chEmail: 'Courriel', chWebhook: 'Webhook (ntfy)', chColon: ' : ', chOff: 'non configuré',
+    chSent: 'envoyé (réponse {status}, {ms} ms)', chNotSent: 'pas envoyé : {error} (réponse {status}, {ms} ms)',
     testAlertToken: "jeton d'accès : {v}", yesWord: 'oui', noWord: 'non'
   },
   en: {
@@ -79,8 +79,8 @@ export const LIST_I18N = {
     release: 'Release', cancelHeld: 'Cancel the held emails',
     rule_2a: 'Same email in a loop', rule_2b: 'One person flooded', rule_2c: 'League far above its normal',
     rule_2d: 'Everything at once', rule_2e: 'Bounces spiking',
-    testAlert: 'Send a test alert', testAlertSent: 'Sent: response {status} in {ms} ms.',
-    testAlertFailed: 'Not sent: {error} (response {status}, {ms} ms).', testAlertNoHook: 'No alert webhook configured.',
+    testAlert: 'Send a test alert', chEmail: 'Email', chWebhook: 'Webhook (ntfy)', chColon: ': ', chOff: 'not configured',
+    chSent: 'sent (response {status}, {ms} ms)', chNotSent: 'not sent: {error} (response {status}, {ms} ms)',
     testAlertToken: 'access token: {v}', yesWord: 'yes', noWord: 'no'
   }
 };
@@ -371,10 +371,16 @@ $('sa-test-alert').addEventListener('click', function() {
   b.disabled = true;
   $('sa-test-alert-out').textContent = '';
   api('/super-admin/alert/test', { method: 'POST', body: {} }).then(function(r) {
-    var line = !r.configured ? T('testAlertNoHook')
-      : fill(T(r.sent ? 'testAlertSent' : 'testAlertFailed'), { status: r.status || '0', ms: r.ms, error: r.error || '' });
-    if (r.configured) line += ' · ' + fill(T('testAlertToken'), { v: T(r.token ? 'yesWord' : 'noWord') });
-    $('sa-test-alert-out').textContent = line;
+    // One line per channel: the email, then the webhook.
+    function chLine(label, c) {
+      if (!c || !c.configured) return T(label) + T('chColon') + T('chOff');
+      return T(label) + T('chColon') + fill(T(c.sent ? 'chSent' : 'chNotSent'), { status: c.status || '0', ms: c.ms, error: c.error || '' });
+    }
+    var hook = chLine('chWebhook', r.webhook);
+    if (r.webhook && r.webhook.configured) hook += ' · ' + fill(T('testAlertToken'), { v: T(r.webhook.token ? 'yesWord' : 'noWord') });
+    var out = $('sa-test-alert-out');
+    out.textContent = '';
+    [chLine('chEmail', r.email), hook].forEach(function(t) { var d = document.createElement('div'); d.textContent = t; out.appendChild(d); });
     b.disabled = false;
   }).catch(function(err) { $('sa-err').textContent = T('err') + err.message; b.disabled = false; });
 });

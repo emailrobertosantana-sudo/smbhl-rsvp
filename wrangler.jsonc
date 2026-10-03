@@ -61,6 +61,11 @@
         // and every environment without this var, stays on Resend. See
         // src/mail_provider.js and the README's "Mail provider" section.
         "MAIL_PROVIDER": "cloudflare",
+        // Operator alerts by email (src/operator_mail.js): every alert to
+        // Roberto, « [Notre Ligue] » in the subject, from
+        // alertes@mail.notreligue.ca. ntfy.sh refuses Cloudflare's shared
+        // addresses. Production has none: its alerts stay as they are.
+        "OPERATOR_ALERT_EMAIL": "bonjour@notreligue.ca",
         // Notre Ligue billing (src/billing.js, docs/billing.md): the four
         // prices (CAD, tax exclusive) and the pinned Stripe API version.
         // Demo only: production gets none of these. The secrets

@@ -17,8 +17,11 @@
 // Privacy: the webhook is a third party (ntfy.sh). The owner's address is
 // masked as the super-admin shows it (maskEmail, 'o***@example.com');
 // postWebhook also masks any full address left in the text.
-// Without ALERT_WEBHOOK_URL nothing is read or written.
-import { postWebhook, postWebhookResult } from './health.js';
+// Without ALERT_WEBHOOK_URL nor OPERATOR_ALERT_EMAIL (email alerts batch:
+// the alert is also an email, src/operator_mail.js) nothing is read or
+// written.
+import { postWebhook, operatorAlert, OPERATOR_WEBHOOK_TIMEOUT_MS } from './health.js';
+import { operatorEmailConfigured } from './operator_mail.js';
 import { maskEmail } from './contact_name.js';
 import { SMBHL_LEAGUE_ID } from './league_ids.js';
 import { stripeId } from './stripe.js';
@@ -56,6 +59,8 @@ const INTERVAL = {
 // The alert waits at most this long for the webhook: a sign-up or a Stripe
 // event never hangs on it (src/health.js postWebhook).
 const ALERT_TIMEOUT_MS = 4000;
+// A channel to tell Roberto through: the webhook, the alert email, or both.
+const alertChannel = env => !!env.ALERT_WEBHOOK_URL || operatorEmailConfigured(env);
 const isLeague = id => !!id && id !== 'system' && id !== SMBHL_LEAGUE_ID;
 const ordinalEn = n => {
   const m100 = n % 100, m10 = n % 10;
@@ -88,7 +93,7 @@ export function leagueCreatedAlert({ name, teamStructure, languageMode, ownerMas
 // Never throws: league creation does not depend on it.
 export async function alertLeagueCreated(env, leagueId) {
   try {
-    if (!env || !env.ALERT_WEBHOOK_URL || !env.DB || !isLeague(leagueId)) return false;
+    if (!env || !alertChannel(env) || !env.DB || !isLeague(leagueId)) return false;
     const row = await env.DB.prepare(
       `SELECT l.id, l.name, l.team_structure, l.language_mode, l.created_by, u.email
          FROM leagues l LEFT JOIN users u ON u.id = l.created_by WHERE l.id = ?`
@@ -163,7 +168,7 @@ export async function subscriptionIsFullyDiscounted(env, sub, request) {
 // on it.
 export async function alertSubscriptionActive(env, { leagueId, sub, status, tier, interval, prev, request }) {
   try {
-    if (!env || !env.ALERT_WEBHOOK_URL || !env.DB || !isLeague(leagueId) || !sub || !sub.id) return false;
+    if (!env || !alertChannel(env) || !env.DB || !isLeague(leagueId) || !sub || !sub.id) return false;
     if (status !== 'active') return false;
     if (prev && prev.stripe_subscription_id === sub.id && prev.status === 'active') return false;
     if (!(await claim(env.DB, SUBSCRIBED_KEY(leagueId, sub.id), leagueId))) return false;
@@ -186,12 +191,18 @@ export async function alertSubscriptionActive(env, { leagueId, sub, status, tier
   }
 }
 
-// The super-admin's « Envoyer une alerte test » button: one push through the
-// same webhook call as 1a and 1b (same timeout), nothing written. Returns
-// what the webhook answered and how long it took (postWebhookResult), and
-// whether an access token was sent (never the token itself).
+// The super-admin's « Envoyer une alerte test » button: one alert through
+// the same path as every operator alert (the email, and the webhook with
+// its 4 s limit), not counted by the hourly email limit, nothing else
+// written. Returns each channel: configured, sent or not, the provider's
+// status, the time in ms. Never the address, the URL or the token (only
+// whether a token was sent).
 export async function sendTestAlert(env) {
-  const body = "Alerte test envoyée depuis le super-admin. Rien à faire.\n\n---\n\nTest alert sent from the super-admin. Nothing to do.";
-  const r = await postWebhookResult(env, TEST_ALERT_TITLE, body, { tags: 'test_tube', timeoutMs: ALERT_TIMEOUT_MS });
-  return { ...r, configured: !!(env && env.ALERT_WEBHOOK_URL), token: !!(env && env.ALERT_WEBHOOK_TOKEN), timeoutMs: ALERT_TIMEOUT_MS };
+  const body = 'Alerte test envoyée depuis le super-admin. Rien à faire.' + '\n\n---\n\n' + 'Test alert sent from the super-admin. Nothing to do.';
+  const r = await operatorAlert(env, TEST_ALERT_TITLE, body, { tags: 'test_tube', timeoutMs: OPERATOR_WEBHOOK_TIMEOUT_MS, bypassLimit: true });
+  const e = r.email, w = r.webhook;
+  return {
+    email: e ? { configured: true, sent: !!e.sent, provider: e.provider || '', status: e.status, ms: e.ms, error: e.error || '' } : { configured: false },
+    webhook: w ? { configured: true, sent: !!w.sent, status: w.status, ms: w.ms, error: w.error || '', token: !!env.ALERT_WEBHOOK_TOKEN } : { configured: false }
+  };
 }

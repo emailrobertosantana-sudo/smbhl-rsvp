@@ -41,6 +41,7 @@ import { sentenceWhen } from './date_format.js';
 import { leagueAutoMailStopped } from './billing.js';
 import { dailyCapFromEnv, readDailyCount, OUTBOX_DUE_WHERE } from './mail_queue.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, advancedStepHourOfDay, cadenceStepDue, usesAdvancedReminders, getEmailSettings } from './reminders.js';
+import { sendOperatorEmail, operatorEmailConfigured } from './operator_mail.js';
 
 // The cron runs every 5 min (SMBHL) / 15 min (league product): stale after
 // about three missed passes.
@@ -160,12 +161,31 @@ export function scrubForWebhook(s) {
 // that long (the operator alerts run inside a sign-up or a Stripe event,
 // which must not wait on the webhook: on demo a Worker's POST to ntfy.sh
 // once took 20 s to end in a 522).
+//
+// Email alerts batch: postWebhook is the operator alert. With
+// OPERATOR_ALERT_EMAIL set it is also an email (src/operator_mail.js),
+// sent at the same time as the webhook, so the webhook never delays or
+// blocks it, and the webhook then waits at most 4 s. Told when either
+// channel took it. Without the variable: the webhook alone, as before.
 export async function postWebhook(env, title, text, opts = {}) {
-  return (await postWebhookResult(env, title, text, opts)).sent;
+  return (await operatorAlert(env, title, text, opts)).sent;
 }
-// The same call, with what happened: { sent, status (the webhook's HTTP
-// status, 0 when no answer came), ms, error }. The super-admin's test
-// alert (src/operator_alerts.js sendTestAlert) shows it.
+// Both channels, with what each did: { sent, email, webhook } (email or
+// webhook null when not configured). opts.bypassLimit: the super-admin's
+// test, neither counted nor grouped by the hourly email limit.
+export async function operatorAlert(env, title, text, opts = {}) {
+  const mail = operatorEmailConfigured(env);
+  const timeoutMs = opts.timeoutMs || (mail ? OPERATOR_WEBHOOK_TIMEOUT_MS : 0);
+  const [email, webhook] = await Promise.all([
+    mail ? sendOperatorEmail(env, title, text, { bypassLimit: !!opts.bypassLimit })
+      .catch(e => ({ sent: false, grouped: false, provider: '', status: 0, ms: 0, error: scrubForWebhook(e && e.message).slice(0, 160) })) : null,
+    env.ALERT_WEBHOOK_URL ? postWebhookResult(env, title, text, { ...opts, timeoutMs }) : null
+  ]);
+  return { sent: !!((email && (email.sent || email.grouped)) || (webhook && webhook.sent)), email, webhook };
+}
+export const OPERATOR_WEBHOOK_TIMEOUT_MS = 4000;
+// The webhook alone, with what happened: { sent, status (the webhook's
+// HTTP status, 0 when no answer came), ms, error }.
 export async function postWebhookResult(env, title, text, { tags = 'warning', timeoutMs = 0 } = {}) {
   const url = env.ALERT_WEBHOOK_URL;
   if (!url) return { sent: false, status: 0, ms: 0, error: 'no_webhook' };
@@ -190,9 +210,9 @@ export async function postWebhookResult(env, title, text, { tags = 'warning', ti
     if (!res.ok) throw new Error(`webhook ${res.status}`);
     return { sent: true, status: res.status, ms: Date.now() - started, error: '' };
   } catch (e) {
-    console.error(`[health] webhook failed: ${e.message}`);
-    // The webhook URL is a secret: never in the error shown.
+    // The webhook URL is a secret: never in the error shown or logged.
     const msg = (e && e.name === 'TimeoutError') ? 'timeout' : String((e && e.message) || 'error').split(url).join('[webhook]');
+    console.error(`[health] webhook failed: ${msg}`);
     return { sent: false, status: res ? res.status : 0, ms: Date.now() - started, error: msg.slice(0, 120) };
   }
 }
@@ -472,10 +492,12 @@ export async function notifyAlerts(env, host, alerts, now = new Date()) {
     const linesEn = pendingOps.map(a => `- [${leagueName(names, a.scope)}] ${a.en}`).join('\n');
     const title = `${productName(env)} : ${pendingOps.length} ${pendingOps.length > 1 ? 'alertes' : 'alerte'} / ${pendingOps.length === 1 ? 'alert' : 'alerts'}`;
     const body = `${lines}\n\n---\n\n${linesEn}\n\n${host.publicUrl || ''}/health/status`;
-    // The channel that does not go through Resend first.
+    // The channel that does not go through Resend first. With
+    // OPERATOR_ALERT_EMAIL it is also the alert email (src/operator_mail.js),
+    // so the capped email below is not sent too.
     const hooked = await postWebhook(env, title, body);
     let mailed = false;
-    if (await takeEmailAllowance(env, now)) {
+    if (!operatorEmailConfigured(env) && await takeEmailAllowance(env, now)) {
       try { await host.sendMail(env, host.opsEmail, title, body); mailed = true; }
       catch (e) { mailed = !!(e && e.deferred); if (!mailed) console.error(`[health] ops email failed: ${e.message}`); }
     }
@@ -537,6 +559,9 @@ export async function checkCronOnRequest(env, host, now = new Date()) {
   const title = `${productName(env)} : cron ${status.product} arrêté / stopped`;
   const text = `Le cron ne roule plus : dernier passage réussi il y a ${status.age_minutes} min.\n\nThe cron has stopped: last successful pass ${status.age_minutes} min ago.`;
   await postWebhook(env, title, text);
-  try { await host.sendMail(env, host.opsEmail, title, text); } catch (e) { console.error(`[health] stale-cron email failed: ${e.message}`); }
+  // With OPERATOR_ALERT_EMAIL, postWebhook already emailed it.
+  if (!operatorEmailConfigured(env)) {
+    try { await host.sendMail(env, host.opsEmail, title, text); } catch (e) { console.error(`[health] stale-cron email failed: ${e.message}`); }
+  }
   return status;
 }
