@@ -156,21 +156,25 @@ export function scrubForWebhook(s) {
     .replace(/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b/gi, '[IP]');
 }
 // tags: ntfy's emoji tags (default 'warning'; the operator's good-news
-// alerts, src/operator_alerts.js, pass their own).
-export async function postWebhook(env, title, text, { tags = 'warning' } = {}) {
+// alerts, src/operator_alerts.js, pass their own). timeoutMs: give up after
+// that long (the operator alerts run inside a sign-up or a Stripe event,
+// which must not wait on the webhook: on demo a Worker's POST to ntfy.sh
+// once took 20 s to end in a 522).
+export async function postWebhook(env, title, text, { tags = 'warning', timeoutMs = 0 } = {}) {
   const url = env.ALERT_WEBHOOK_URL;
   if (!url) return false;
   title = scrubForWebhook(title);
   text = scrubForWebhook(text);
   try {
     const host = new URL(url).hostname;
+    const signal = timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {};
     let res;
     if (/ntfy/.test(host)) {
-      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain; charset=utf-8', Title: encodeURIComponent(title).slice(0, 200), Tags: tags }, body: text.slice(0, 3900) });
+      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain; charset=utf-8', Title: encodeURIComponent(title).slice(0, 200), Tags: tags }, body: text.slice(0, 3900), ...signal });
     } else if (/discord/.test(host)) {
-      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content: `**${title}**\n${text}`.slice(0, 1900) }) });
+      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content: `**${title}**\n${text}`.slice(0, 1900) }), ...signal });
     } else {
-      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: `${title}\n${text}`.slice(0, 3900) }) });
+      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: `${title}\n${text}`.slice(0, 3900) }), ...signal });
     }
     if (!res.ok) throw new Error(`webhook ${res.status}`);
     return true;

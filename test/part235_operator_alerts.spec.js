@@ -24,6 +24,7 @@ const mails = [];
 let stripeObjects = {};
 let stripeExpanded = {};
 let originalFetch;
+let hookHangs = false;
 
 // Any full address (not the masked o***@example.com form).
 const FULL_ADDRESS = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
@@ -38,6 +39,10 @@ beforeAll(async () => {
   globalThis.fetch = async (url, opts = {}) => {
     const u = String(url && url.url ? url.url : url);
     if (u.includes('api.resend.com')) { const b = JSON.parse(opts.body); mails.push({ to: Array.isArray(b.to) ? b.to[0] : b.to, subject: b.subject, text: b.text || '', html: b.html || '' }); return new Response('{"id":"x"}', { status: 200 }); }
+    if (u === HOOK && hookHangs) {
+      // ntfy.sh unreachable from the Worker (seen on demo: a 522 after 20 s).
+      return new Promise((_, reject) => { if (opts.signal) opts.signal.addEventListener('abort', () => reject(new Error('aborted'))); });
+    }
     if (u === HOOK) { hooks.push({ title: decodeURIComponent((opts.headers && opts.headers.Title) || ''), tags: opts.headers && opts.headers.Tags, body: String(opts.body || '') }); return new Response('ok', { status: 200 }); }
     if (u.startsWith('https://api.stripe.com/')) {
       const parsed = new URL(u);
@@ -119,6 +124,19 @@ describe('1a. A new league', () => {
     expect((await res.json()).ok).toBe(true);
     expect(hooks).toHaveLength(0);
   });
+
+  it('an unreachable webhook holds the creation at most 4 s, and the league is made', async () => {
+    const h = await admin('p235hang');
+    hookHangs = true;
+    try {
+      const t = performance.now();
+      const created = await must(h.post('/leagues/create', { name: 'Webhook muet', teamNames: ['A', 'B'] }), 'create');
+      const waited = performance.now() - t;
+      expect(created.league.name).toBe('Webhook muet');
+      expect(waited).toBeLessThan(9000);
+      expect(hooks).toHaveLength(0);
+    } finally { hookHangs = false; }
+  }, 20000);
 
   it('SMBHL never alerts', async () => {
     expect(await alertLeagueCreated(env, 'smbhl')).toBe(false);

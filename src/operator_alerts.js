@@ -52,6 +52,9 @@ const INTERVAL = {
   year: { fr: 'annuel', en: 'yearly' }
 };
 
+// The alert waits at most this long for the webhook: a sign-up or a Stripe
+// event never hangs on it (src/health.js postWebhook).
+const ALERT_TIMEOUT_MS = 4000;
 const isLeague = id => !!id && id !== 'system' && id !== SMBHL_LEAGUE_ID;
 const ordinalEn = n => {
   const m100 = n % 100, m10 = n % 10;
@@ -100,7 +103,7 @@ export async function alertLeagueCreated(env, leagueId) {
       ownerMasked: maskEmail(row.email || ''), ownerLeagueCount: count,
       link: `${base}/super-admin/league?id=${encodeURIComponent(leagueId)}`
     });
-    return await postWebhook(env, a.title, a.body, { tags: 'tada' });
+    return await postWebhook(env, a.title, a.body, { tags: 'tada', timeoutMs: ALERT_TIMEOUT_MS });
   } catch (e) {
     console.error(`[ops-alert] league created: ${e && e.message}`);
     return false;
@@ -175,7 +178,7 @@ export async function alertSubscriptionActive(env, { leagueId, sub, status, tier
       name: row ? row.name : leagueId,
       tier: tier || (row && row.tier), interval: interval || (row && row.billing_interval), promo
     });
-    return await postWebhook(env, a.title, a.body, { tags: 'moneybag' });
+    return await postWebhook(env, a.title, a.body, { tags: 'moneybag', timeoutMs: ALERT_TIMEOUT_MS });
   } catch (e) {
     console.error(`[ops-alert] subscription: ${e && e.message}`);
     return false;
