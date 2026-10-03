@@ -16193,11 +16193,15 @@ async function quietHoldIsSensible(env, ev, leagueId, at = Date.now()) {
   return end > at && end <= st.getTime() - QUIET_HOLD_MARGIN_HOURS * 3600000;
 }
 
+// skipQuietHours: SEND_NOW_ADMIN for an admin's own button, which goes when
+// pressed; true for a call a player's answer set off, which can wait.
+const SEND_NOW_ADMIN = 'admin';
 async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false, requireActive = false, quietLeagueId = null, emptyPools = null) {
   if (emptyPools && emptyPools.has(need)) return 0;
   // A league's call made now, inside quiet hours: it waits for their end
   // when the game leaves time (problem C2); an urgent one still goes now.
-  if (skipQuietHours && leagueId !== SMBHL_LEAGUE_ID && await quietHoldIsSensible(env, ev, leagueId)) {
+  const holdable = skipQuietHours === true;
+  if (holdable && leagueId !== SMBHL_LEAGUE_ID && await quietHoldIsSensible(env, ev, leagueId)) {
     skipQuietHours = false;
     quietLeagueId = leagueId;
   }
@@ -16267,12 +16271,12 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
     // A league's later wave that would land in quiet hours waits for their
     // end too, when the game leaves time (C2: waves queued at 21:43 went
     // at 22:43 and 23:43).
-    const holdWave = skipQuietHours && leagueId !== SMBHL_LEAGUE_ID && delayMin > 0
+    const holdWave = holdable && leagueId !== SMBHL_LEAGUE_ID && delayMin > 0
       && await quietHoldIsSensible(env, ev, leagueId, Date.now() + delayMin * 60000);
     await enqueue(env, { kind: 'sub_call', event_id: ev.id, player_id: p.player_id,
       team, dedup_key: `call:${ev.id}:${need}:${p.player_id}`,
       payload: { need }, delayMin, league_id: leagueId,
-      skipQuietHours: holdWave ? false : skipQuietHours, quietLeagueId: holdWave ? leagueId : quietLeagueId });
+      skipQuietHours: holdWave ? false : !!skipQuietHours, quietLeagueId: holdWave ? leagueId : quietLeagueId });
   }
   return pool.length;
 }
@@ -24079,13 +24083,6 @@ async function maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, 
 // except a league on the advanced reminder model, whose automatic waves
 // are held for its quiet hours (quietHours: true, src/reminders.js).
 async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId = null, team = null, dedupKey = null, to, mail, identity = null, quietHours = false, delayMin = 0 }) {
-  // The admin's "short of players" alert found in quiet hours waits for
-  // their end when the game leaves time (C2: one went at 23:00 for a game
-  // three days away).
-  if (!quietHours && kind === 'short_alert' && leagueId && leagueId !== SMBHL_LEAGUE_ID && eventId) {
-    const ev = await getEvent(env.DB, eventId);
-    if (ev && await quietHoldIsSensible(env, ev, leagueId, Date.now() + delayMin * 60000)) quietHours = true;
-  }
   await enqueue(env, {
     kind, event_id: eventId, player_id: playerId, team, dedup_key: dedupKey, league_id: leagueId, delayMin,
     skipQuietHours: !quietHours, quietLeagueId: quietHours ? leagueId : null,
@@ -24221,8 +24218,10 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
   let failedToQueue = 0;
   // Season simulation, 2026-10-02 (problem C2): a noon game's 12-hour
   // details went out at midnight. Inside quiet hours, the wave waits for
-  // their end when that still leaves time before the game.
-  if (!quietHours && await quietHoldIsSensible(env, ev, leagueRow.id)) quietHours = true;
+  // their end when that still leaves time before the game. The details
+  // step only: the asks keep their own timing, and the admin's "send now"
+  // (the 72-hour ask) goes when pressed.
+  if (!quietHours && kind === 'logistics_12h' && await quietHoldIsSensible(env, ev, leagueRow.id)) quietHours = true;
   for (const contact of recipients) {
     try {
       const mine = contact.games || [ev];
@@ -25428,8 +25427,9 @@ async function handleLeagueInviteSubs(req, env, url) {
   // there unsent forever -- not delayed, never sent, on the actual
   // deployed product. skipQuietHours: true for the same reason as
   // maybeInviteSubsForShortage (enqueue's own comment) -- a real admin
-  // just clicked a real "do this now" button.
-  const invited = await callSubs(env, ev, inviteTeamLabel, need, 0, leagueId, sportHasGoalie(cfg.sportType), true, true);
+  // just clicked a real "do this now" button. SEND_NOW_ADMIN: not held
+  // for quiet hours either (those holds are for automatic calls, C2).
+  const invited = await callSubs(env, ev, inviteTeamLabel, need, 0, leagueId, sportHasGoalie(cfg.sportType), SEND_NOW_ADMIN, true);
   await drain(env, 40, ev.id);
   return Response.json({ ok: true, league_id: leagueId, event_id: eventId, team: inviteTeamLabel, need, invited });
 }

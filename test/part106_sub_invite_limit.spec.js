@@ -4,7 +4,7 @@
 // extra (/admin/subs/extra-invite), once per sub per event. Enforced at
 // send time in drain(), so no current or future trigger can slip past.
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { wideSubCallWindow } from './support/wide_sub_call_window.js'; // the 8-day sub-call window these tests were written for
 import { runSchedule, drain } from '../src/index.js';
@@ -114,6 +114,10 @@ describe('The manual third invite', () => {
 });
 
 describe('League product: the same limit', () => {
+  // Midday: a league's automatic sub call made in quiet hours now waits for
+  // 07:00 (season simulation fix C2), so these real-clock steps failed at night.
+  beforeAll(() => { const d = new Date(); d.setUTCHours(17, 0, 0, 0); vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(d); });
+  afterAll(() => { vi.useRealTimers(); });
   function extractCookie(res) { return (res.headers.get('set-cookie') || '').split(';')[0]; }
   function extractCsrf(res) { const c = res.headers.getSetCookie().find(x => x.startsWith('csrf_token=')); return c ? c.split(';')[0].split('=')[1] : ''; }
 

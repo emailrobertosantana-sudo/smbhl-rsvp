@@ -24,7 +24,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { applyRealSchema } from './support/real_schema.js';
 import { admin, must } from './support/league_season.js';
 import { answerViaEmailLink } from './support/email_link.js';
-import { drain, runCronPass, acceptAvailability, teamState, expected, syncDualRoles, callSubs, callSubsForShortfall, sendLeagueReminderKind } from '../src/index.js';
+import { drain, runCronPass, acceptAvailability, teamState, expected, syncDualRoles, callSubs, sendLeagueReminderKind } from '../src/index.js';
 import { getLeagueSeasonConfig } from '../src/leagues.js';
 import { evaluateHealth, HEALTH_RULES, billingStale } from '../src/league_health.js';
 import { collectProblems } from '../src/health.js';
@@ -331,15 +331,13 @@ describe('C2: quiet hours for a league', () => {
     for (const t of after) expect(t < local('2026-10-14', '23:00') || t >= local('2026-10-15', '07:00')).toBe(true);
   });
 
-  it("the admin's short-of-players alert found at 23:00 for a game three days away waits for 07:00", async () => {
-    const L = await twoTeams('pc2s');
+  it("the admin's own buttons are not held: Invite subs at 23:30 goes at once", async () => {
+    const L = await twoTeams('pc2m');
+    await add(L.a, { name: 'Sub One pc2m', email: 'sub1.pc2m@p229.example', role: 'sub_skater', is_goalie: false });
     const gid = await game(L.a, '2026-10-17', '19:00', '20:00', { home_team: 'A', away_team: 'B' });
-    for (const s of L.p.A.skaters) await say(L.id, gid, s, 'out', 'A');
-    vi.setSystemTime(new Date(local('2026-10-14', '23:00')));
-    await callSubsForShortfall(env, await ev(gid));
-    const alerts = await rows("SELECT send_after FROM outbox WHERE event_id = ? AND kind = 'short_alert'", gid);
-    expect(alerts.length).toBeGreaterThan(0);
-    for (const a of alerts) expect(Date.parse(a.send_after)).toBeGreaterThanOrEqual(local('2026-10-15', '07:00'));
+    vi.setSystemTime(new Date(local('2026-10-14', '23:30')));
+    await must(L.a.post('/league/events/invite-subs', { event_id: gid, team: 'A', need: 'skater' }), 'invite');
+    expect(sent.map(m => m.to)).toContain('sub1.pc2m@p229.example');
   });
 });
 
