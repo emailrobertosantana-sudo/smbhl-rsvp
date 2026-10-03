@@ -141,6 +141,10 @@ describe('1f: an empty schedule', () => {
     expect(empty).toContain('Commence par créer les matchs de ta saison : un par semaine, même heure et même lieu.');
     expect(empty).toContain("Start by creating your season's games: one a week, same time and place.");
     expect(empty).toMatch(/id="sc_empty_bulk"[^>]*data-i18n="bulkCreateBtn">Créer plusieurs matchs/);
+    // The empty state holds the main action: one weekly-series button, and
+    // « Créer un match » as a secondary one.
+    expect(empty.split('onclick="openBulkPanel()"').length - 1).toBe(1);
+    expect(empty).toContain('class="nl-btn nl-btn--secondary" onclick="openSchedulePanel()"');
     expect(empty).not.toContain('onclick="toggleMatchupsPanel()" data-i18n="matchupsGenBtn">Assigner les affrontements</button>\n      <button');
     await must(a.post('/league/events', { date: day(10), start_time: '19:00', end_time: '20:00', venue: 'Aréna', season: 'S1' }), 'event');
     const one = (await a.get('/league/schedule')).text;

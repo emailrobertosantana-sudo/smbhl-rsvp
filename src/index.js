@@ -11117,9 +11117,11 @@ async function handleLeagueSchedulePage(req, env, url) {
   <div class="sc-top">
     <h1 data-i18n="title">Horaire</h1>
     ${needsSeason ? '' : `<div style="display:flex;gap:var(--space-2);flex-wrap:wrap;">
-      <button type="button" class="nl-btn nl-btn--secondary" onclick="openBulkPanel()" data-i18n="bulkCreateBtn">Créer plusieurs matchs</button>
+      <!-- Onboarding review 1f: with no games, the empty state below holds
+           the main action (the weekly series); one game alone stays here. -->
+      ${events.length ? `<button type="button" class="nl-btn nl-btn--secondary" onclick="openBulkPanel()" data-i18n="bulkCreateBtn">Créer plusieurs matchs</button>` : ''}
       ${showMatchupsPanel && events.length ? `<button type="button" class="nl-btn nl-btn--secondary" onclick="toggleMatchupsPanel()" data-i18n="matchupsGenBtn">Assigner les affrontements</button>` : ''}
-      <button type="button" class="nl-btn nl-btn--primary" onclick="openSchedulePanel()" data-i18n="createEvent">Créer un match</button>
+      <button type="button" class="nl-btn nl-btn--${events.length ? 'primary' : 'secondary'}" onclick="openSchedulePanel()" data-i18n="createEvent">Créer un match</button>
     </div>`}
   </div>
   ${needsSeason ? `
