@@ -317,7 +317,7 @@ async function outboxProblems(env, leagueIds, now, { afterStartOnly = false } = 
   const late = new Map();
   for (const r of rows) {
     if (!leagueIds.has(r.league_id)) continue;
-    const start = eventStart({ id: r.eid, start_time: r.start_time });
+    const start = eventStart({ id: r.eid, date: r.date, start_time: r.start_time });
     if (!start || now.getTime() - start.getTime() > 24 * 3600000) continue;
     const sendAt = Math.max(Date.parse(r.send_after) || 0, Date.parse(r.next_attempt_at || '') || 0);
     if (Date.parse(r.created_at) < start.getTime() && sendAt > start.getTime()) {

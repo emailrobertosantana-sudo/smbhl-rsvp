@@ -234,8 +234,19 @@ export function localParts(d = new Date()) {
 export function eventHasStarted(ev, now = Date.now()) {
   const st = eventStart(ev);
   if (st) return st.getTime() <= now;
-  const dateStr = ev.date && /^\d{4}-\d{2}-\d{2}$/.test(ev.date) ? ev.date : eventDateFromId(ev.id);
-  return dateStr <= localParts(new Date(now)).date;
+  return eventDate(ev) <= localParts(new Date(now)).date;
+}
+
+// Stage 2, item 2d: a game's day is its stored date. A Notre Ligue game can
+// move to another day and keep its id (its RSVP links name the id), so the
+// date in the id is only the day it was created on. The id is read only
+// when the stored date is not an ISO date: SMBHL's own rows, whose date
+// column holds text ("Sunday September 27 2099") and whose id is the ISO
+// date, read exactly as before.
+export function eventDate(ev) {
+  if (!ev) return '';
+  const d = String(ev.date || '');
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : eventDateFromId(ev.id);
 }
 
 export function eventStart(ev) {
@@ -245,7 +256,8 @@ export function eventStart(ev) {
   // may instead be league-prefixed ('smbhl:2026-10-04') — eventDateFromId()
   // recovers the trailing date either way, so this keeps working unchanged
   // for old ids and correctly for new ones.
-  const dateStr = eventDateFromId(ev.id);
+  // Stage 2, item 2d: the stored date first (eventDate, below).
+  const dateStr = eventDate(ev);
   const [hh, mm] = ev.start_time.split(':').map(Number);
   // CPU: the same two guesses (EDT, EST) as before, checked by arithmetic
   // -- "does this instant read back as that local wall-clock time" is

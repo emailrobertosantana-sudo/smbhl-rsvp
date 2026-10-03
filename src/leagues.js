@@ -1220,7 +1220,7 @@ async function createLeagueEventRow(env, leagueId, body, leagueData) {
   ).bind(eventId, season, week, date, venue, venueId, startTime || null, endTime || null, leagueId, autoRemindersEnabled, homeTeam, awayTeam, isPlayoff ? 1 : 0, playoffMeta, venueAddress, venueMapLink).run();
 
   if (autoRemindersEnabled) {
-    await applyReminderWindowSkipRule(env, leagueId, { id: eventId, start_time: startTime || null });
+    await applyReminderWindowSkipRule(env, leagueId, { id: eventId, date, start_time: startTime || null });
   }
 
   return {
@@ -1552,6 +1552,25 @@ export async function handleLeagueEventUpdate(req, env) {
   if (!startTime) return Response.json({ ok: false, error: 'start_time is required.', errorKey: 'START_TIME_REQUIRED' }, { status: 400 });
   if (!endTime) return Response.json({ ok: false, error: 'end_time is required.', errorKey: 'END_TIME_REQUIRED' }, { status: 400 });
 
+  // Stage 2, item 2d: a game can move to another day and keep its id, so
+  // every RSVP, link, stat and reminder log stays attached to it; every
+  // reader takes the stored date (league_ids.js eventDate). Not a game that
+  // has started (its result belongs to the day it was played), and not to
+  // a day already past. No date, or the same one: unchanged, as before.
+  const sentDate = body.date === undefined || body.date === null ? '' : String(body.date).trim();
+  if (sentDate && !/^\d{4}-\d{2}-\d{2}$/.test(sentDate)) {
+    return Response.json({ ok: false, error: 'date must be in YYYY-MM-DD format.', errorKey: 'DATE_REQUIRED' }, { status: 400 });
+  }
+  const newDate = sentDate && sentDate !== existing.date ? sentDate : existing.date;
+  if (newDate !== existing.date) {
+    if (existing.state === 'cancelled' || eventHasStarted(existing)) {
+      return Response.json({ ok: false, error: 'A game that has started or was cancelled cannot move to another day.', errorKey: 'EVENT_MOVE_STARTED' }, { status: 409 });
+    }
+    if (eventHasStarted({ id: eventId, date: newDate, start_time: startTime })) {
+      return Response.json({ ok: false, error: 'A game cannot move to a day and time already past.', errorKey: 'EVENT_MOVE_PAST' }, { status: 409 });
+    }
+  }
+
   // Same venue_id resolution as createLeagueEventRow: optional, must be
   // one of THIS league's own saved venues, and its name is copied into
   // events.venue as a denormalized snapshot so every existing read site
@@ -1598,7 +1617,17 @@ export async function handleLeagueEventUpdate(req, env) {
 
   // Nights (D1): an edit may not put a team, or a player, in two games at
   // once.
-  const edited = { ...existing, start_time: startTime, end_time: endTime, home_team: homeTeam, away_team: awayTeam };
+  const edited = { ...existing, date: newDate, start_time: startTime, end_time: endTime, home_team: homeTeam, away_team: awayTeam };
+  // Item 2d: on its new day, the same double-booking rule as a new game.
+  if (newDate !== existing.date) {
+    const slotConflict = await env.DB.prepare(
+      `SELECT 1 FROM events WHERE league_id = ? AND date = ? AND id != ?
+         AND COALESCE(venue, '') = COALESCE(?, '') AND COALESCE(start_time, '') = COALESCE(?, '')`
+    ).bind(leagueId, newDate, eventId, venue, startTime || null).first();
+    if (slotConflict) {
+      return Response.json({ ok: false, error: 'An event already exists for this date, venue, and time in your league.', errorKey: 'EVENT_SLOT_EXISTS' }, { status: 409 });
+    }
+  }
   if (isFixedEvent && homeTeam && awayTeam && await teamClash(env.DB, leagueId, edited, [homeTeam, awayTeam])) {
     return Response.json({ ok: false, error: 'One of these teams already plays a game at the same time.', errorKey: 'MATCHUP_TEAM_BUSY' }, { status: 409 });
   }
@@ -1608,8 +1637,8 @@ export async function handleLeagueEventUpdate(req, env) {
   }
 
   await env.DB.prepare(
-    `UPDATE events SET start_time = ?, end_time = ?, venue = ?, venue_id = ?, home_team = ?, away_team = ?, venue_address = ?, venue_map_link = ? WHERE id = ? AND league_id = ?`
-  ).bind(startTime || null, endTime || null, venue, venueId, homeTeam, awayTeam, venueAddress, venueMapLink, eventId, leagueId).run();
+    `UPDATE events SET date = ?, start_time = ?, end_time = ?, venue = ?, venue_id = ?, home_team = ?, away_team = ?, venue_address = ?, venue_map_link = ? WHERE id = ? AND league_id = ?`
+  ).bind(newDate, startTime || null, endTime || null, venue, venueId, homeTeam, awayTeam, venueAddress, venueMapLink, eventId, leagueId).run();
 
   // Reminder-safety (see this route's own top comment, and the CAUTION
   // in this task): start_time is one of the two inputs
@@ -1623,12 +1652,12 @@ export async function handleLeagueEventUpdate(req, env) {
   // cleared, and a step that already genuinely sent is never touched.
   // Only relevant when reminders are armed for this event at all.
   if (existing.auto_reminders_enabled) {
-    await applyReminderWindowSkipRule(env, leagueId, { id: eventId, start_time: startTime || null });
+    await applyReminderWindowSkipRule(env, leagueId, { id: eventId, date: newDate, start_time: startTime || null });
   }
 
   return Response.json({
     ok: true,
-    event: { id: eventId, venue, venue_id: venueId, start_time: startTime || null, end_time: endTime || null, home_team: homeTeam, away_team: awayTeam }
+    event: { id: eventId, date: newDate, venue, venue_id: venueId, start_time: startTime || null, end_time: endTime || null, home_team: homeTeam, away_team: awayTeam }
   });
 }
 

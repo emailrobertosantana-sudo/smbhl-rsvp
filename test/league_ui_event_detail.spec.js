@@ -163,12 +163,13 @@ describe('UI task Part U: GET /league/events/detail', () => {
   // read-only (server-enforced, not just a disabled input), and saved-
   // venue selection.
   describe('C2: event editing (everything except the date)', () => {
-    it('the edit view shows the date as a real disabled input, with a note that it cannot be changed yet', async () => {
+    // Stage 2, item 2d: the date can now change (the game keeps its id).
+    it('the edit view shows the date as an editable input, with a note that the answers are kept', async () => {
       const res = await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventA)}`, { headers: { cookie: cookieA } });
       const html = await res.text();
-      expect(html).toContain(`id="ev_edit_date" type="date" value="2026-12-06" disabled`);
+      expect(html).toContain(`id="ev_edit_date" type="date" value="2026-12-06">`);
       expect(html).toContain('data-i18n="editDateNote"');
-      expect(html).toContain("La date ne peut pas encore être modifiée.");
+      expect(html).toContain('Changer la date garde les réponses des joueurs.');
     });
 
     it('POST /league/events/update actually changes start/end time and free-text venue', async () => {
@@ -192,7 +193,8 @@ describe('UI task Part U: GET /league/events/detail', () => {
       expect(row.id).toBe(eventA);
     });
 
-    it('the date can never be changed through this route, even if a caller sends one -- id and date both stay exactly as they were', async () => {
+    // Stage 2, item 2d: the date moves, the id stays (part238 covers the rest).
+    it('a date sent through this route moves the game and keeps its id', async () => {
       const before = await env.DB.prepare('SELECT date, id FROM events WHERE id = ?').bind(eventA).first();
       const res = await SELF.fetch('http://example.com/league/events/update', {
         method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
@@ -200,8 +202,14 @@ describe('UI task Part U: GET /league/events/detail', () => {
       });
       expect(res.status).toBe(200);
       const after = await env.DB.prepare('SELECT date, id FROM events WHERE id = ?').bind(eventA).first();
-      expect(after.date).toBe(before.date);
+      expect(after.date).toBe('2099-01-01');
       expect(after.id).toBe(before.id);
+      // Back to its day, for the tests after this one.
+      const back = await SELF.fetch('http://example.com/league/events/update', {
+        method: 'POST', headers: { cookie: cookieA, 'content-type': 'application/json', 'x-csrf-token': csrfTokenA },
+        body: JSON.stringify(withGameTimes({ event_id: eventA, date: before.date, start_time: '20:00' }))
+      });
+      expect(back.status).toBe(200);
       // The one field that WAS sent and IS editable did apply -- proves
       // the route works at all, isolating "date specifically never
       // changes" from "nothing happened".

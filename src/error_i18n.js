@@ -236,6 +236,9 @@ export const ERROR_I18N = {
   // server's own English text. A count or a name the server puts in its
   // own text is left out: the page cannot fill it in.
   EVENT_SLOT_EXISTS: { fr: 'Un match existe déjà à cette date, à ce lieu et à cette heure dans ta ligue.', en: 'A game already exists for this date, venue and time in your league.' },
+  // Stage 2, item 2d: moving a game to another day.
+  EVENT_MOVE_STARTED: { fr: "Un match commencé ou annulé ne peut pas changer de jour.", en: "A game that has started or was cancelled can't move to another day." },
+  EVENT_MOVE_PAST: { fr: 'Choisis un jour et une heure à venir.', en: 'Choose a day and time still to come.' },
   EVENT_HAS_RSVPS: { fr: 'Des joueurs ont déjà répondu pour ce match. Le supprimer effacera leurs réponses. Confirme pour continuer.', en: 'Players have already answered for this game. Deleting it will lose their answers. Confirm to proceed.' },
   SEASON_CLOSED: { fr: "Cette saison est fermée, en lecture seule. Lance une nouvelle saison au lieu de republier une saison fermée.", en: 'This season is closed and read-only. Start a new season instead of republishing a closed one.' },
   SEASON_MOVE_SAME: { fr: "La saison de départ et la saison d'arrivée doivent être différentes.", en: 'The season to move from and the season to move to must be different.' },

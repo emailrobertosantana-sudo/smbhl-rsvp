@@ -12448,7 +12448,7 @@ ${tabbar}`;
       // date -- see handleLeagueEventUpdate's own comment (leagues.js)
       // for why the date specifically stays out of scope.
       editBtn: 'Modifier', saveBtn: 'Enregistrer', cancelEdit: 'Annuler',
-      editDateLabel: 'Date', editDateNote: "La date ne peut pas encore être modifiée.",
+      editDateLabel: 'Date', editDateNote: 'Changer la date garde les réponses des joueurs.',
       startOpt: 'Heure de début', endOpt: 'Heure de fin',
       venueOpt: 'Lieu (facultatif)', venueSelectOpt: 'Lieu enregistré (facultatif)', venueSelectNone: 'Aucun (texte libre ci-dessous)',
       lblVenueAddress: 'Adresse (facultatif)', lblVenueMapLink: 'Lien vers une carte (facultatif)',
@@ -12527,7 +12527,7 @@ ${tabbar}`;
       noUnassigned: 'Every confirmed player is assigned.',
       assignTo: 'Assign to…', assign: 'Assign', randomDraw: 'Random draw',
       editBtn: 'Edit', saveBtn: 'Save', cancelEdit: 'Cancel',
-      editDateLabel: 'Date', editDateNote: "The date can't be changed yet.",
+      editDateLabel: 'Date', editDateNote: "Changing the date keeps the players' answers.",
       startOpt: 'Start time', endOpt: 'End time',
       venueOpt: 'Venue (optional)', venueSelectOpt: 'Saved venue (optional)', venueSelectNone: 'None (free text below)',
       lblVenueAddress: 'Address (optional)', lblVenueMapLink: 'Map link (optional)',
@@ -12904,18 +12904,15 @@ ${tabbar}`;
     <p class="nl-help" style="margin-top:4px" id="ev_venue_display">${ev.venue ? esc(ev.venue) : ''}${venueMapLink ? ` · <a href="${esc(venueMapLink)}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</p>
     <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" style="margin-top:6px" id="ev_edit_toggle" data-i18n="editBtn" onclick="toggleEventEdit()">Modifier</button>
   </div>
-  <!-- C2 (schedule/events polish task): everything except the date is
-       editable -- start/end time, venue (saved or free text). The date
-       field is a real, visibly disabled input (not just text) with an
-       explicit note, matching this route's own backend refusal
-       (handleLeagueEventUpdate, leagues.js) to accept a date change --
-       see that function's own comment for why (id-rename would break
-       already-issued RSVP links; a separate, later task). -->
+  <!-- C2 (schedule/events polish task): start/end time, venue (saved or
+       free text). Stage 2, item 2d: the date too; the game keeps its id,
+       so its RSVPs and links stay (handleLeagueEventUpdate, leagues.js).
+       Disabled once the game has started or was cancelled. -->
   <section class="nl-card nl-card--pad-lg" id="ev_edit_panel" style="display:none;">
     <div id="editFormErr" class="nl-error" style="display:none"></div>
     <div class="nl-field">
       <label class="nl-label" for="ev_edit_date" data-i18n="editDateLabel">Date</label>
-      <input class="nl-input" id="ev_edit_date" type="date" value="${esc(ev.date)}" disabled>
+      <input class="nl-input" id="ev_edit_date" type="date" value="${esc(ev.date)}"${gameStarted || ev.state === 'cancelled' ? ' disabled' : ''}>
       <p class="nl-help" data-i18n="editDateNote">La date ne peut pas encore être modifiée.</p>
     </div>
     <div class="sc-two">
@@ -13093,6 +13090,7 @@ async function submitEventEdit() {
   var venueMapLinkEl = document.getElementById('ev_edit_venue_map_link');
   var payload = {
     event_id: ${JSON.stringify(ev.id)},
+    date: document.getElementById('ev_edit_date').value,
     start_time: document.getElementById('ev_edit_start').value,
     end_time: document.getElementById('ev_edit_end').value,
     venue: document.getElementById('ev_edit_venue').value,
@@ -23620,8 +23618,9 @@ async function leagueMatchupSnapshot(req, env, url) {
   }
 }
 
-// A game's time and place, as a player would read it.
-const gameWhere = g => `${g.start_time}-${g.end_time}@${g.venue_id || g.venue || ''}`;
+// A game's time and place, as a player would read it. Stage 2, item 2d: its
+// day too (a game can move to another day and keep its id).
+const gameWhere = g => `${g.date} ${g.start_time}-${g.end_time}@${g.venue_id || g.venue || ''}`;
 
 async function afterLeagueMatchupChange(env, snap, res) {
   if (!snap || !res || res.status !== 200) return res;
@@ -23641,14 +23640,17 @@ async function afterLeagueMatchupChange(env, snap, res) {
       if (moved) changed.push(...was, ...now);
       if (!changed.length && !moved) continue;
       const key = `${g.date}|${g.season || ''}`;
-      if (!nights.has(key)) nights.set(key, { game: g, teams: new Set(), moved: new Set() });
+      if (!nights.has(key)) nights.set(key, { game: g, teams: new Set(), moved: new Set(), fromOtherDay: [] });
       for (const t of changed) nights.get(key).teams.add(t);
       if (moved) nights.get(key).moved.add(g.id);
+      // Item 2d: a game moved here from another day comes with its answers
+      // (its RSVP rows keep its id) and as it was, for « (avant : …) ».
+      if (b.date !== g.date) nights.get(key).fromOtherDay.push(b);
     }
-    for (const { game, teams, moved } of nights.values()) {
+    for (const { game, teams, moved, fromOtherDay } of nights.values()) {
       const cfg = await getLeagueSeasonConfig(env, snap.leagueId, game.season);
       const nightNow = await nightGamesOf(env, game);
-      const nightBefore = snap.games.filter(g => g.date === game.date && (g.season || '') === (game.season || ''));
+      const nightBefore = [...snap.games.filter(g => g.date === game.date && (g.season || '') === (game.season || '')), ...fromOtherDay];
       if ((cfg.teamStructure || 'fixed') === 'fixed') {
         for (const team of teams) await carryTeamNight(env, snap.leagueId, team, nightBefore, nightNow);
       } else if (moved.size) {
@@ -34820,10 +34822,10 @@ async function handleFetch(req, env, ctx) {
               ev = await env.DB.prepare("SELECT * FROM events WHERE league_id = ? AND state='open' ORDER BY week LIMIT 1").bind(leagueId).first();
             }
             if (!ev) {
-              ev = await env.DB.prepare('SELECT * FROM events WHERE league_id = ? ORDER BY id DESC LIMIT 1').bind(leagueId).first();
+              ev = await env.DB.prepare('SELECT * FROM events WHERE league_id = ? ORDER BY date DESC, id DESC LIMIT 1').bind(leagueId).first();
             }
             const events = (await env.DB.prepare(
-              `SELECT id, week, date, state FROM events WHERE league_id = ? ORDER BY id DESC LIMIT 10`
+              `SELECT id, week, date, state FROM events WHERE league_id = ? ORDER BY date DESC, id DESC LIMIT 10`
             ).bind(leagueId).all()).results || [];
             const leagueData = await getLeagueDataJson(env, leagueId);
             return Response.json({ ok: true, league_id: leagueId, current_season: leagueData.current_season, event: ev || null, events });
@@ -34858,10 +34860,10 @@ async function handleFetch(req, env, ctx) {
               ev = await env.DB.prepare("SELECT * FROM events WHERE league_id = ? AND state='open' ORDER BY week LIMIT 1").bind(leagueId).first();
             }
             if (!ev) {
-              ev = await env.DB.prepare('SELECT * FROM events WHERE league_id = ? ORDER BY id DESC LIMIT 1').bind(leagueId).first();
+              ev = await env.DB.prepare('SELECT * FROM events WHERE league_id = ? ORDER BY date DESC, id DESC LIMIT 1').bind(leagueId).first();
             }
             const events = (await env.DB.prepare(
-              `SELECT id, week, date, state FROM events WHERE league_id = ? ORDER BY id DESC LIMIT 10`
+              `SELECT id, week, date, state FROM events WHERE league_id = ? ORDER BY date DESC, id DESC LIMIT 10`
             ).bind(leagueId).all()).results || [];
             const contacts = (await env.DB.prepare(
               `SELECT player_id, name, email, role, is_goalie, preferred_team
