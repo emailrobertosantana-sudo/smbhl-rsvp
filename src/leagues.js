@@ -1680,6 +1680,10 @@ export async function handleLeagueEventCancel(req, env) {
   // look at the game's state, so a reminder waiting out quiet hours or a
   // later sub-call wave went out for a game that was no longer happening.
   const dropped = await cancelUnsentEventMail(env, eventId);
+  // The cancelled game may be the last regular game still open: the
+  // playoffs are seeded now, as after a last score.
+  const evRow = await env.DB.prepare('SELECT season, is_playoff FROM events WHERE id = ?').bind(eventId).first();
+  if (evRow && !evRow.is_playoff) await resolvePlayoffSeeding(env, leagueId, evRow.season);
   return Response.json({ ok: true, event: { id: eventId, state: 'cancelled' }, cancelled_outbox: dropped });
 }
 
@@ -3517,18 +3521,17 @@ export async function handleLeagueCreate(req, env) {
     const leagueId = crypto.randomUUID();
     const now = new Date().toISOString();
 
+    // Reminders (reminder_72h_enabled/24h/12h) are ON for a new league
+    // (decision D6, commit c44bcab; the import preview and create-game warn
+    // that adding players can send). Before D6, F1 had turned them off at
+    // creation; the history of that choice follows.
     // F1 bug fix (reminders/email-safety polish task): automated
-    // reminders (reminder_72h_enabled/24h/12h) used to default ON
-    // (migrate-026.sql's own column DEFAULT 1) -- so adding players to
-    // a brand-new league with an imminent event already started
-    // emailing them mid-setup, before the admin had made any real
-    // choice about it. Explicitly OFF at creation now, overriding that
-    // schema-level default (SQLite can't ALTER a column's own DEFAULT
-    // without a full table rebuild, so this is done at the one place
-    // new rows are ever created instead -- the schema default itself
-    // stays DEFAULT 1, now dead/unreachable code for any path that
-    // still doesn't specify these columns explicitly, harmless).
-    // "Turn on reminders" is the new final Getting Started checklist
+    // reminders used to default ON (migrate-026.sql's own column DEFAULT
+    // 1) -- so adding players to a brand-new league with an imminent event
+    // already started emailing them mid-setup, before the admin had made
+    // any real choice about it. F1 set them OFF at creation, overriding
+    // that schema-level default.
+    // "Turn on reminders" was then the final Getting Started checklist
     // step (buildDashI18n/handleDashboardPage, index.js) -- a real,
     // deliberate admin choice, not a silent default.
     // D2 (settings polish task): migrate-025.sql's own schema DEFAULT
@@ -5275,8 +5278,10 @@ export async function resolvePlayoffSeeding(env, leagueId, season) {
 
   // 1. Seed round 1 (+ any bye's direct advance) from final standings,
   // once the regular season is fully played.
+  // A cancelled game is never played: it counts as done (season simulation,
+  // 2026-10-02: one cancelled game left a league's playoffs unseeded).
   const regular = await env.DB.prepare(
-    `SELECT COUNT(*) AS total, COUNT(result_entered_at) AS done FROM events
+    `SELECT COUNT(*) AS total, SUM(CASE WHEN result_entered_at IS NOT NULL OR state = 'cancelled' THEN 1 ELSE 0 END) AS done FROM events
       WHERE league_id = ? AND season = ? AND is_playoff = 0`
   ).bind(leagueId, season).first();
   if (regular.total > 0 && regular.total === regular.done) {

@@ -29,6 +29,7 @@ import { nlEmailWrap } from './design_system.js';
 import { montrealDate, lastDayBefore } from './montreal_time.js';
 import { monthUsage, markCrossed, tripsSince, tripNumbers, RULES, MONTHLY_INCLUDED } from './mail_guard.js';
 import { pluralText } from './plural.js';
+import { formatEventDateFull } from './date_format.js';
 
 export const OPS_DIGEST_TO = 'bonjour@notreligue.ca';
 export const OPS_DIGEST_KIND = 'ops_digest';
@@ -117,6 +118,9 @@ export function usageLines(usage, lang) {
 const LIGHT = { fr: { red: 'rouge', yellow: 'jaune', green: 'vert' }, en: { red: 'red', yellow: 'yellow', green: 'green' } };
 // Montreal days (src/montreal_time.js), never the UTC date of an instant.
 const day = s => montrealDate(String(s || ''));
+// In words (season simulation, cosmetic K1): « samedi 3 octobre »,
+// "Saturday, October 3".
+const dayW = (s, lang) => formatEventDateFull(day(s), lang, false) || day(s);
 
 // The email: French, then English. Pure.
 export function renderOpsDigest(pending, publicUrl = '') {
@@ -127,7 +131,7 @@ export function renderOpsDigest(pending, publicUrl = '') {
     const out = [];
     if (it.signups.length) out.push({
       title: fr ? 'Nouvelles inscriptions' : 'New sign-ups',
-      lines: it.signups.map(s => fr ? `${s.name} : inscrite le ${day(s.at)}${s.owner ? `, ${s.owner}` : ''}` : `${s.name}: signed up on ${day(s.at)}${s.owner ? `, ${s.owner}` : ''}`)
+      lines: it.signups.map(s => fr ? `${s.name} : inscrite le ${dayW(s.at, 'fr')}${s.owner ? `, ${s.owner}` : ''}` : `${s.name}: signed up on ${dayW(s.at, 'en')}${s.owner ? `, ${s.owner}` : ''}`)
     });
     if (it.worsened.length) out.push({
       title: fr ? 'Ligues passées au jaune ou au rouge' : 'Leagues that turned yellow or red',
@@ -135,7 +139,7 @@ export function renderOpsDigest(pending, publicUrl = '') {
     });
     if (it.trials.length) out.push({
       title: fr ? "Essais qui finissent dans 7 jours ou moins, sans abonnement" : 'Trials ending within 7 days, without a subscription',
-      lines: it.trials.map(t => fr ? `${t.name} : fin de l'essai le ${lastDayBefore(t.trialEndsAt)}` : `${t.name}: trial ends on ${lastDayBefore(t.trialEndsAt)}`)
+      lines: it.trials.map(t => fr ? `${t.name} : fin de l'essai le ${dayW(lastDayBefore(t.trialEndsAt), 'fr')}` : `${t.name}: trial ends on ${dayW(lastDayBefore(t.trialEndsAt), 'en')}`)
     });
     if ((it.custom || []).length) out.push({
       title: fr ? 'Plus de 100 joueurs réguliers (prix sur mesure)' : 'More than 100 regular players (custom price)',
@@ -143,15 +147,15 @@ export function renderOpsDigest(pending, publicUrl = '') {
     });
     if (it.payments.length) out.push({
       title: fr ? 'Paiements en échec' : 'Failed payments',
-      lines: it.payments.map(p => fr ? `${p.name} : le ${day(p.at)}` : `${p.name}: on ${day(p.at)}`)
+      lines: it.payments.map(p => fr ? `${p.name} : le ${dayW(p.at, 'fr')}` : `${p.name}: on ${dayW(p.at, 'en')}`)
     });
     // Caps batch, item 3: rules that tripped, then the month's sending.
     if ((it.trips || []).length) out.push({
       title: fr ? "Règles d'envoi déclenchées" : 'Sending rules tripped',
       lines: it.trips.map(t => {
         const who = t.scope === 'global' ? (fr ? 'Toutes les ligues' : 'All leagues') : (t.name || '');
-        return fr ? `${who} : ${RULES[t.rule].fr}, ${tripNumbers(t.rule, t.numbers, 'fr')} (le ${day(t.at)})`
-          : `${who}: ${RULES[t.rule].en}, ${tripNumbers(t.rule, t.numbers, 'en')} (on ${day(t.at)})`;
+        return fr ? `${who} : ${RULES[t.rule].fr}, ${tripNumbers(t.rule, t.numbers, 'fr')} (le ${dayW(t.at, 'fr')})`
+          : `${who}: ${RULES[t.rule].en}, ${tripNumbers(t.rule, t.numbers, 'en')} (on ${dayW(t.at, 'en')})`;
       })
     });
     if (pending.usage) out.push({ title: fr ? 'Envois du mois' : "This month's sending", lines: usageLines(pending.usage, lang) });
@@ -159,19 +163,19 @@ export function renderOpsDigest(pending, publicUrl = '') {
   };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const text = lang => {
-    const intro = lang === 'fr' ? `Résumé du ${pending.day} :` : `Digest for ${pending.day}:`;
+    const intro = lang === 'fr' ? `Résumé du ${dayW(pending.day, 'fr')} :` : `Digest for ${dayW(pending.day, 'en')}:`;
     const more = lang === 'fr' ? 'Toutes les ligues :' : 'Every league:';
     return [intro, '', ...sections(lang).flatMap(s => [s.title, ...s.lines.map(l => `- ${l}`), '']), `${more} ${link}`].join('\n');
   };
   const html = lang => {
-    const intro = lang === 'fr' ? `Résumé du ${pending.day} :` : `Digest for ${pending.day}:`;
+    const intro = lang === 'fr' ? `Résumé du ${dayW(pending.day, 'fr')} :` : `Digest for ${dayW(pending.day, 'en')}:`;
     const more = lang === 'fr' ? 'Toutes les ligues' : 'Every league';
     return `<div lang="${lang === 'fr' ? 'fr-CA' : 'en-CA'}"><p style="margin:0 0 12px;font-size:16px;line-height:25px;">${esc(intro)}</p>`
       + sections(lang).map(s => `<p style="margin:16px 0 4px;font-size:16px;line-height:24px;font-weight:700;">${esc(s.title)}</p><ul style="margin:0;padding-left:20px;font-size:15px;line-height:23px;">${s.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`).join('')
       + `<p style="margin:16px 0 0;font-size:15px;line-height:23px;"><a href="${esc(link)}" style="color:#16181d;">${esc(more)}</a></p></div>`;
   };
   return {
-    subject: `Notre Ligue : résumé du jour / daily digest (${pending.day})`,
+    subject: `Notre Ligue : résumé du ${dayW(pending.day, 'fr')} / daily digest, ${dayW(pending.day, 'en')}`,
     text: `${text('fr')}\n\n---\n\n${text('en')}`,
     html: nlEmailWrap({ brandName: 'Notre Ligue', bodyHtml: `${html('fr')}<hr style="border:none;border-top:1px solid #e3e3e0;margin:28px 0;">${html('en')}`, footerHtml: 'Notre Ligue' })
   };

@@ -113,7 +113,9 @@ describe('the billing page shows only the messages of its state', () => {
 
   it('paused in the trial: the first payment at the trial end, in words, FR and EN; never "Billing restarts today."', async () => {
     await setState('pausedInTrial');
-    const end = STATES.pausedInTrial.trial_ends_at.slice(0, 10);
+    // The page shows the Montreal day: taking the UTC date failed every
+    // evening from 20:00 Montreal, when the two differ.
+    const end = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto' }).format(new Date(STATES.pausedInTrial.trial_ends_at));
     const { page, context } = await openPage();
     try {
       const fr = 'Ton essai continue : premier paiement le ' + formatPageDate(end, 'fr', 'long') + '.';

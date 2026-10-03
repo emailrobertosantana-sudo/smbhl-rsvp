@@ -93,10 +93,10 @@ const byId = async () => new Map((await computeLeagueHealth(env, new Date(NOW)))
 const broken = r => r.signals.filter(s => !s.ok).map(s => s.key);
 
 describe('the health rules', () => {
-  it('are data: eight rules, each with French and English text and a level', () => {
+  it('are data: nine rules, each with French and English text and a level', () => {
     expect(HEALTH_RULES.map(r => [r.key, r.level])).toEqual([
       ['admin_signin_7', 'yellow'], ['game_window', 'yellow'], ['answers_half', 'yellow'], ['trial_not_ending', 'yellow'],
-      ['mail_ok', 'yellow'], ['setup_done', 'red'], ['admin_signin_21', 'red'], ['payment_ok', 'red']
+      ['mail_ok', 'yellow'], ['setup_done', 'red'], ['admin_signin_21', 'red'], ['payment_ok', 'red'], ['billing_ok', 'red']
     ]);
     for (const r of HEALTH_RULES) { expect(r.fr).toBeTruthy(); expect(r.en).toBeTruthy(); expect(r.fr).not.toContain(String.fromCharCode(0x2014)); }
   });
@@ -126,7 +126,7 @@ describe('the health rules', () => {
     expect(broken(m.get('lg-setup'))).toContain('setup_done');
     expect(m.get('lg-signin21').light).toBe('red');
     expect(broken(m.get('lg-signin21'))).toEqual(['admin_signin_7', 'admin_signin_21']);
-    expect([m.get('lg-pay').light, broken(m.get('lg-pay'))]).toEqual(['red', ['payment_ok']]);
+    expect([m.get('lg-pay').light, broken(m.get('lg-pay'))]).toEqual(['red', ['payment_ok', 'billing_ok']]);
   });
 
   it('a failed payment is also the last invoice event of the week being a failure', () => {

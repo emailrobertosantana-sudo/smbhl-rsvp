@@ -36,7 +36,9 @@
 //
 // STATE: settings rows, 'health:alert:<scope>:<key>' (no migration needed;
 // production's schema guard is unaffected).
-import { eventStart, localParts, SMBHL_LEAGUE_ID } from './league_ids.js';
+import { eventStart, localParts, SMBHL_LEAGUE_ID, eventDateFromId } from './league_ids.js';
+import { sentenceWhen } from './date_format.js';
+import { leagueAutoMailStopped } from './billing.js';
 import { dailyCapFromEnv, readDailyCount, OUTBOX_DUE_WHERE } from './mail_queue.js';
 import { REMINDER_WINDOW_THRESHOLD_HOURS, advancedStepHours, advancedStepHourOfDay, cadenceStepDue, usesAdvancedReminders, getEmailSettings } from './reminders.js';
 
@@ -61,6 +63,13 @@ export function productOf(env) { return env.LEAGUE_PRODUCT === 'true' ? 'leagues
 // The operator alerts name the environment that raised them.
 export function productName(env) { return productOf(env) === 'leagues' ? 'Notre Ligue' : 'SMBHL'; }
 const gameLabel = ev => `${ev.date || ''}${ev.start_time ? ' ' + ev.start_time : ''}`.trim();
+// The game in words, Montreal time (season simulation, cosmetic K1: the
+// alerts said « le match du 2026-10-04 08:00 »): « dimanche 4 oct. à 8 h »,
+// "Sunday, Oct 4 at 8 AM". A date that is not ISO is shown as it is.
+const gameWhen = (ev, lang) => {
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(String(ev.date || '')) ? ev.date : (ev.id ? eventDateFromId(ev.id) : null);
+  return iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? sentenceWhen(iso, ev.start_time || null, lang) : gameLabel(ev);
+};
 const nowIso = now => now.toISOString();
 
 // Every settings row under a key prefix. A range, not LIKE: D1 refuses a
@@ -253,8 +262,8 @@ async function missedReminders(env, leagues, now) {
       out.push({
         scope: ev.league_id,
         key: `reminder_missed:${ev.id}:${kind}`,
-        fr: `Le ${k.fr} du match du ${gameLabel(ev)} aurait dû partir et n'est pas parti.`,
-        en: `The ${k.en} for the ${gameLabel(ev)} game should have gone out and has not.`
+        fr: `Le ${k.fr} du match de ${gameWhen(ev, 'fr')} aurait dû partir et n'est pas parti.`,
+        en: `The ${k.en} for the game on ${gameWhen(ev, 'en')} should have gone out and has not.`
       });
     }
   }
@@ -302,15 +311,15 @@ async function outboxProblems(env, leagueIds, now, { afterStartOnly = false } = 
     if (!start || now.getTime() - start.getTime() > 24 * 3600000) continue;
     const sendAt = Math.max(Date.parse(r.send_after) || 0, Date.parse(r.next_attempt_at || '') || 0);
     if (Date.parse(r.created_at) < start.getTime() && sendAt > start.getTime()) {
-      const v = late.get(r.eid) || { league: r.league_id, ev: { date: r.date, start_time: r.start_time }, n: 0 };
+      const v = late.get(r.eid) || { league: r.league_id, ev: { id: r.eid, date: r.date, start_time: r.start_time }, n: 0 };
       v.n++; late.set(r.eid, v);
     }
   }
   for (const [eid, v] of late) out.push({
     scope: v.league,
     key: `outbox_after_start:${eid}`,
-    fr: `${v.n > 1 ? `${v.n} courriels pour le match du ${gameLabel(v.ev)} sont prévus` : `${v.n} courriel pour le match du ${gameLabel(v.ev)} est prévu`} après le début du match.`,
-    en: `${v.n === 1 ? '1 email' : `${v.n} emails`} for the ${gameLabel(v.ev)} game ${v.n === 1 ? 'is' : 'are'} scheduled to go out after it starts.`
+    fr: `${v.n > 1 ? `${v.n} courriels pour le match de ${gameWhen(v.ev, 'fr')} sont prévus` : `${v.n} courriel pour le match de ${gameWhen(v.ev, 'fr')} est prévu`} après le début du match.`,
+    en: `${v.n === 1 ? '1 email' : `${v.n} emails`} for the game on ${gameWhen(v.ev, 'en')} ${v.n === 1 ? 'is' : 'are'} scheduled to go out after it starts.`
   });
   return out;
 }
@@ -324,7 +333,12 @@ export async function collectProblems(env, { failures = [] } = {}, now = new Dat
   if (productOf(env) === 'leagues') {
     const leagues = (await env.DB.prepare('SELECT * FROM leagues WHERE id != ? AND deactivated_at IS NULL').bind(SMBHL_LEAGUE_ID).all()).results || [];
     try {
-      addScoped(await missedReminders(env, leagues, now));
+      // A league whose automatic emails billing stopped (read-only, or past
+      // its grace) sends no reminders on purpose: no "not sent" alert
+      // (season simulation, problem C8).
+      const sending = [];
+      for (const l of leagues) if (!(await leagueAutoMailStopped(env, l.id, now))) sending.push(l);
+      addScoped(await missedReminders(env, sending, now));
       addScoped(await outboxProblems(env, new Set(leagues.map(l => l.id)), now));
     } catch (e) {
       add('system', [{ key: 'check_failed', fr: `La vérification des ligues a échoué : ${e.message}`, en: `Checking the leagues failed: ${e.message}` }]);

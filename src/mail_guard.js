@@ -43,6 +43,7 @@ import { postWebhook } from './health.js';
 import { maskEmail } from './contact_name.js';
 import { SMBHL_LEAGUE_ID } from './league_ids.js';
 import { pluralText } from './plural.js';
+import { isBounceError } from './bounces.js';
 
 export const FREE_DAILY_CAP = 25;
 export const ADDRESS_MAX_PER_HOUR = 5;
@@ -349,7 +350,6 @@ export async function cancelFreeCapHeld(env, leagueId) {
 // ---------------------------------------------------------------- 2e
 // Once per Montreal day at most, from the cron: permanent failures that are
 // bounces (an address refused) against the day's sends.
-const BOUNCE_ERROR = /^resend 4(00|04|09|22)|^cloudflare: .*(suppress|invalid recipient|recipient.*(not allowed|rejected)|not a valid)|invalid email format/i;
 export async function checkBounces(env, now = new Date(), dayStartIso = null) {
   if (!guardOn(env)) return null;
   const db = env.DB;
@@ -359,7 +359,7 @@ export async function checkBounces(env, now = new Date(), dayStartIso = null) {
   if (sent < BOUNCE_MIN_SENT) return null;
   const from = dayStartIso || new Date(now.getTime() - 24 * HOUR).toISOString();
   const rows = (await db.prepare('SELECT error FROM outbox WHERE failed_at IS NOT NULL AND failed_at >= ?').bind(from).all()).results || [];
-  const bounced = rows.filter(r => BOUNCE_ERROR.test(String(r.error || ''))).length;
+  const bounced = rows.filter(r => isBounceError(r.error)).length;
   if (bounced <= BOUNCE_SHARE * (sent + bounced)) return null;
   const t = { scope: 'global', rule: '2e', leagueId: null, leagueName: '', numbers: { bounced, sent: sent + bounced }, since: now.toISOString() };
   await putVal(db, k.bounceAlert(day), now.toISOString());

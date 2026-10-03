@@ -79,7 +79,12 @@ export const HEALTH_RULES = [
   { key: 'payment_ok', level: 'red',
     fr: 'Aucun paiement en échec.',
     en: 'No failed payment.',
-    ok: m => !m.paymentFailed }
+    ok: m => !m.paymentFailed },
+  // Season simulation, problem C8: an unpaid, read-only league showed green.
+  { key: 'billing_ok', level: 'red',
+    fr: "La ligue n'est ni en lecture seule ni sans abonnement.",
+    en: 'The league is neither read-only nor without a subscription.',
+    ok: m => !m.readOnly }
 ];
 
 // The light and each rule's result, for one league's numbers. Pure.
@@ -225,6 +230,7 @@ export async function collectLeagueMetrics(env, now = new Date()) {
       answeredShare: inv ? ans / inv : null,
       mailFailures7: failures.get(l.id) || 0,
       paymentFailed: !!(b && b.status === 'past_due') || lastInvoice.get(l.id) === 'invoice.payment_failed',
+      readOnly: !!(b && (b.readOnly || ['unpaid', 'inactive'].includes(b.status))),
       trialEndingNoSub: trialDaysLeft != null && trialDaysLeft <= 7,
       firstInvitationAt: firstAsk.get(l.id) || null,
       firstAnswerAt: firstAnswer.get(l.id) || null,
@@ -338,7 +344,7 @@ export async function runDailyLeagueHealth(env, now = new Date(), { force = fals
 export function pickMetrics(r) {
   const keys = ['ownerMasked', 'players', 'regularCount', 'countTier', 'billingStatus', 'trialEndsAt', 'trialDaysLeft',
     'lastAdminSignInAt', 'games', 'gameInWindow', 'nextGame', 'invitations14', 'answered14', 'answeredShare',
-    'mailFailures7', 'paymentFailed', 'trialEndingNoSub', 'firstInvitationAt', 'firstAnswerAt', 'subscribed'];
+    'mailFailures7', 'paymentFailed', 'readOnly', 'trialEndingNoSub', 'firstInvitationAt', 'firstAnswerAt', 'subscribed'];
   return Object.fromEntries(keys.map(k => [k, r[k] === undefined ? null : r[k]]));
 }
 

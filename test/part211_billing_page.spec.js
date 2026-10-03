@@ -257,7 +257,7 @@ describe('pause, resume, tier change', () => {
     const before = await (await page(owner)).text();
     expect(before).toContain('id="bl-pause-ask"');
     expect(before).toContain('Mettre en pause');
-    expect(text(before)).toContain("Mettre l'abonnement en pause? Aucun paiement tant qu'il est en pause.");
+    expect(text(before)).toContain("Mettre l'abonnement en pause? Ta ligue passe en lecture seule tout de suite et ses courriels automatiques s'arrêtent, même s'il reste des jours au mois déjà payé : ces jours ne sont pas remboursés. Aucun paiement tant qu'il est en pause.");
     expect((await act(owner, 'pause')).status).toBe(200);
     const p = calls.find(x => x.method === 'POST' && x.path === '/subscriptions/sub_m').form;
     expect(p['pause_collection[behavior]']).toBe('void');

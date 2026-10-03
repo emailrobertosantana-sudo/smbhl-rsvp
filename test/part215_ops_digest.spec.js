@@ -77,9 +77,9 @@ describe('the daily digest', () => {
     await pass('2026-11-02T12:30:00Z'); // 07:30
     expect(digests()).toHaveLength(1);
     const m = digests()[0];
-    expect(m.subject).toBe('Notre Ligue : résumé du jour / daily digest (2026-11-02)');
-    expect(m.text).toContain('Nouvelles inscriptions\n- Les Castors : inscrite le 2026-11-01, o***@example.com');
-    expect(m.text).toContain('New sign-ups\n- Les Castors: signed up on 2026-11-01, o***@example.com');
+    expect(m.subject).toBe('Notre Ligue : résumé du lundi 2 novembre / daily digest, Monday, November 2');
+    expect(m.text).toContain('Nouvelles inscriptions\n- Les Castors : inscrite le dimanche 1er novembre, o***@example.com');
+    expect(m.text).toContain('New sign-ups\n- Les Castors: signed up on Sunday, November 1, o***@example.com');
     expect(m.text.indexOf('Nouvelles inscriptions')).toBeLessThan(m.text.indexOf('New sign-ups'));
     expect(m.text).not.toContain('Ligue Ancienne');
     expect(m.text).toContain('https://rsvp.notreligue.example/super-admin/leagues');
@@ -109,9 +109,9 @@ describe('the daily digest', () => {
     expect(digests()).toHaveLength(2);
     const m = digests()[1];
     expect(m.text).toContain('Ligues passées au jaune ou au rouge\n- Ligue Ancienne : rouge (était vert)');
-    expect(m.text).toContain('Paiements en échec\n- Ligue Ancienne : le 2026-11-03');
+    expect(m.text).toContain('Paiements en échec\n- Ligue Ancienne : le mardi 3 novembre');
     expect(m.text).toContain('Leagues that turned yellow or red\n- Ligue Ancienne: red (was green)');
-    expect(m.text).toContain('Failed payments\n- Ligue Ancienne: on 2026-11-03');
+    expect(m.text).toContain('Failed payments\n- Ligue Ancienne: on Tuesday, November 3');
     expect(m.text).not.toContain('Nouvelles inscriptions');
   });
 
@@ -126,7 +126,7 @@ describe('the daily digest', () => {
     // The next day: the waiting digest goes, with the sign-up it held.
     await pass('2026-11-06T12:30:00Z');
     expect(digests()).toHaveLength(3);
-    expect(digests()[2].text).toContain('Les Aurores : inscrite le 2026-11-04');
+    expect(digests()[2].text).toContain('Les Aurores : inscrite le mercredi 4 novembre');
   });
 
   it('nothing with HEALTH_ALERTS off (the recorded-behaviour tests), and nothing on SMBHL', async () => {
@@ -148,8 +148,8 @@ describe('the daily digest', () => {
     // Montreal days (billing fixes, item 4): a trial ending at 00:00 Montreal
     // on November 16 has November 15 as its last day.
     const m = renderOpsDigest({ day: '2026-11-09', items: { signups: [], worsened: [], payments: [], trials: [{ id: 'a', name: 'Les Hiboux', trialEndsAt: '2026-11-16T05:00:00.000Z' }] } }, 'https://x.example');
-    expect(m.text).toContain("Essais qui finissent dans 7 jours ou moins, sans abonnement\n- Les Hiboux : fin de l'essai le 2026-11-15");
-    expect(m.text).toContain('Trials ending within 7 days, without a subscription\n- Les Hiboux: trial ends on 2026-11-15');
+    expect(m.text).toContain("Essais qui finissent dans 7 jours ou moins, sans abonnement\n- Les Hiboux : fin de l'essai le dimanche 15 novembre");
+    expect(m.text).toContain('Trials ending within 7 days, without a subscription\n- Les Hiboux: trial ends on Sunday, November 15');
   });
 
   it('Montreal days, not UTC ones: around midnight UTC and midnight Montreal', () => {
@@ -158,9 +158,9 @@ describe('the daily digest', () => {
       worsened: [], payments: [{ id: 'p', name: 'Ligue Paie', at: '2026-11-01T03:30:00.000Z' }],
       trials: [{ id: 't', name: 'Ligue Essai', trialEndsAt: '2026-11-15T00:00:00.000Z' }]
     } }, 'https://x.example');
-    expect(m.text).toContain('Ligue Soir : inscrite le 2026-11-03');
-    expect(m.text).toContain('Ligue Matin : inscrite le 2026-11-04');
-    expect(m.text).toContain('Ligue Paie : le 2026-10-31');
-    expect(m.text).toContain("Ligue Essai : fin de l'essai le 2026-11-14");
+    expect(m.text).toContain('Ligue Soir : inscrite le mardi 3 novembre');
+    expect(m.text).toContain('Ligue Matin : inscrite le mercredi 4 novembre');
+    expect(m.text).toContain('Ligue Paie : le samedi 31 octobre');
+    expect(m.text).toContain("Ligue Essai : fin de l'essai le samedi 14 novembre");
   });
 });

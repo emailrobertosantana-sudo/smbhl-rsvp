@@ -45,6 +45,7 @@ import { runBillingEnforcement } from './billing_enforcement.js';
 import { BILLING_NOTICE_KIND } from './billing_notices.js';
 import { montrealDate, montrealMidnight, addDays as addMontrealDays } from './montreal_time.js';
 import { freeCapBannerHtml } from './mail_limit_banner.js';
+import { BOUNCE_STOP_AFTER, isBounceError, recordBounce, addressStopped, stoppedContacts, clearBounce } from './bounces.js';
 import { guardOn, checkSend, recordSend, HELD_UNTIL, FREE_CAP_REASON, heldReason, freeCapHeldCount, cancelFreeCapHeld, listPauses, releaseScope, cancelScope, checkBounces, pruneGuardState } from './mail_guard.js';
 import { checkStripeConfig } from './billing_check.js';
 import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS, ownerOf } from './billing_actions.js';
@@ -228,15 +229,17 @@ function playoffLabelSpanHtml(tag, meta, lang, extraAttrs) {
   try { fr = playoffRoleLabel(meta || {}, 'fr'); en = playoffRoleLabel(meta || {}, 'en'); } catch (_) {}
   return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(lang === 'en' ? en : fr)}</${tag}>`;
 }
-function timeSpanHtml(tag, timeHHMM, extraAttrs) {
+// lang: the text shown before the page's script runs (an English-only
+// league's page: English, season simulation cosmetic K2).
+function timeSpanHtml(tag, timeHHMM, extraAttrs, lang = 'fr') {
   const fr = formatEventTime(timeHHMM, 'fr');
   const en = formatEventTime(timeHHMM, 'en');
-  return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(fr)}</${tag}>`;
+  return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(lang === 'en' ? en : fr)}</${tag}>`;
 }
-function dateTimeSpanHtml(tag, dateISO, timeHHMM, style, extraAttrs) {
+function dateTimeSpanHtml(tag, dateISO, timeHHMM, style, extraAttrs, lang = 'fr') {
   const fr = formatPageDateTime(dateISO, timeHHMM, 'fr', style);
   const en = formatEventDateTime(dateISO, timeHHMM, 'en', style);
-  return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(fr)}</${tag}>`;
+  return `<${tag}${extraAttrs ? ' ' + extraAttrs : ''} data-date-fr="${esc(fr)}" data-date-en="${esc(en)}">${esc(lang === 'en' ? en : fr)}</${tag}>`;
 }
 
 async function getStandingsTooltip(env) {
@@ -5859,7 +5862,9 @@ async function handleLeagueCommsBroadcast(req, env, url) {
 
   const picked = await leagueBroadcastRecipients(env, leagueId, leagueRow, target, eventId);
   if (picked.error) return Response.json({ ok: false, error: picked.error, errorKey: picked.errorKey }, { status: 400 });
-  const recipients = picked.recipients;
+  // An address refused twice gets nothing more (src/bounces.js, problem C1).
+  const stopped = await stoppedContacts(env.DB, leagueId);
+  const recipients = picked.recipients.filter(r => !stopped.has(r.player_id));
 
   // Real per-league send identity (Bug 1 fix, an earlier task this
   // session) -- the league's own verified-domain from-address and its
@@ -5870,7 +5875,7 @@ async function handleLeagueCommsBroadcast(req, env, url) {
   let sent = 0, failed = 0, deferred = 0, blocked = 0;
   for (const r of recipients) {
     try {
-      await sendMail(env, r.email, subject, text, html, null, cfg.league, { leagueId, kind: 'broadcast', eventId: eventId || null, toPlayer: true });
+      await sendMail(env, r.email, subject, text, html, null, cfg.league, { leagueId, kind: 'broadcast', eventId: eventId || null, toPlayer: true, unsubscribeUrl: await leagueUnsubscribeUrl(env, leagueId, r.player_id) });
       sent++;
     } catch (e) {
       // Deferred = queued for when the daily limit resets (or held by the
@@ -5881,6 +5886,26 @@ async function handleLeagueCommsBroadcast(req, env, url) {
   }
 
   return Response.json({ ok: true, sent_count: sent, failed_count: failed, deferred_count: deferred, blocked_count: blocked, total: recipients.length });
+}
+
+// POST /league/contacts/bounce/clear { player_id } (problem C1): the admin
+// says a twice-refused address is right; emails to it start again.
+async function handleLeagueBounceClear(req, env, url) {
+  const session = await checkUserSession(req, env);
+  if (!session) return leagueAccessResponse('unauthenticated');
+  if (!(await checkCsrfToken(req, env, session))) {
+    return Response.json({ ok: false, error: 'Invalid or missing CSRF token.', errorKey: 'CSRF_INVALID' }, { status: 403 });
+  }
+  const leagueId = await resolveSessionLeagueId(req, env, url);
+  if (!leagueId) return Response.json({ ok: false, error: 'No league found for this account.', errorKey: 'NO_LEAGUE_FOUND' }, { status: 404 });
+  const access = await checkLeagueAccess(req, env, leagueId);
+  if (access !== 'ok') return leagueAccessResponse(access);
+  if (leagueId === SMBHL_LEAGUE_ID) return Response.json({ ok: false, errorKey: 'NOT_FOUND' }, { status: 404 });
+  const body = await req.json().catch(() => ({}));
+  const playerId = String(body.player_id || '');
+  const c = await env.DB.prepare('SELECT 1 FROM contacts WHERE player_id = ? AND league_id = ?').bind(playerId, leagueId).first();
+  if (!c) return Response.json({ ok: false, error: 'Player not found.', errorKey: 'PLAYER_NOT_FOUND' }, { status: 404 });
+  return Response.json({ ok: true, cleared: await clearBounce(env.DB, leagueId, playerId) });
 }
 
 // POST /league/mail/held/cancel (caps batch, item 1c): the emails a free
@@ -6837,8 +6862,10 @@ const I18N_BILLING = {
     taxNote: 'Prix avant taxes.',
     subscribe: "S'abonner",
     manage: 'Gérer mon abonnement',
-    pause: 'Mettre en pause', pauseConfirm: "Mettre l'abonnement en pause? Aucun paiement tant qu'il est en pause.", pauseYes: 'Oui, mettre en pause', cancelBtn: 'Annuler',
-    resume: 'Reprendre', resumeNote: 'La facturation reprend aujourd’hui.',
+    // Season simulation, problem C7: what a pause and a resume do to the
+    // month already paid (docs/billing.md; the charging itself unchanged).
+    pause: 'Mettre en pause', pauseConfirm: "Mettre l'abonnement en pause? Ta ligue passe en lecture seule tout de suite et ses courriels automatiques s'arrêtent, même s'il reste des jours au mois déjà payé : ces jours ne sont pas remboursés. Aucun paiement tant qu'il est en pause.", pauseYes: 'Oui, mettre en pause', cancelBtn: 'Annuler',
+    resume: 'Reprendre', resumeNote: "La facturation reprend aujourd'hui : un nouveau mois commence et il est payé aujourd'hui, même s'il restait des jours au mois payé avant la pause.",
     paused: 'Abonnement en pause. Ta ligue est en lecture seule.',
     pastDue: "Le dernier paiement n'est pas passé. Mets ta carte à jour avec « Gérer mon abonnement ».",
     ownerOnly: "Seul le propriétaire de la ligue peut gérer l'abonnement.",
@@ -6860,8 +6887,8 @@ const I18N_BILLING = {
     taxNote: 'Prices before tax.',
     subscribe: 'Subscribe',
     manage: 'Manage my subscription',
-    pause: 'Pause', pauseConfirm: 'Pause the subscription? No payment while it is paused.', pauseYes: 'Yes, pause', cancelBtn: 'Cancel',
-    resume: 'Resume', resumeNote: 'Billing restarts today.',
+    pause: 'Pause', pauseConfirm: 'Pause the subscription? Your league becomes read-only right away and its automatic emails stop, even if days remain in the month already paid: those days are not refunded. No payment while it is paused.', pauseYes: 'Yes, pause', cancelBtn: 'Cancel',
+    resume: 'Resume', resumeNote: 'Billing restarts today: a new month starts and is charged today, even if days remained in the month paid before the pause.',
     paused: 'Subscription paused. Your league is read-only.',
     pastDue: "The last payment didn't go through. Update your card with “Manage my subscription”.",
     ownerOnly: 'Only the league owner can manage the subscription.',
@@ -9170,6 +9197,8 @@ async function handleLeagueRosterPage(req, env, url) {
   // `inactiveContacts` only feeds the new collapsed section.
   const contacts = allContacts.filter(c => c.is_active !== 0);
   const inactiveContacts = allContacts.filter(c => c.is_active === 0);
+  // Addresses refused twice, flagged in the player's row (src/bounces.js).
+  const bounceStopped = await stoppedContacts(env.DB, leagueId);
 
   // Live-testing task (batch 6), Part 6: onboarding used to stall
   // right here -- after adding a player, submitContact() just
@@ -9324,6 +9353,10 @@ async function handleLeagueRosterPage(req, env, url) {
       // to reactivate. Not a tab alongside All/Subs -- a collapsed
       // section, hidden by default.
       inactiveSectionTitle: 'Joueurs inactifs', reactivateBtn: 'Réactiver', deactivateBtn: 'Marquer inactif',
+      // Season simulation fixes (C1, C6).
+      bounceFlag: "Courriel refusé 2 fois : on n'écrit plus à cette adresse. Corrige-la avec « Modifier ».",
+      bounceClear: "L'adresse est bonne",
+      removeHelp: "Pour retirer un joueur, marque-le inactif (« Modifier ») : il ne reçoit plus rien et son historique reste.",
       players: 'Joueurs', unassigned: 'Non assigné', noPlayers: "Aucun joueur pour l'instant.",
       weeklyDrawNote: "Les équipes sont assignées à chaque match, pas ici : voir la page d'un match.",
       // E1 bug fix (players polish task): "Gardien ou joueur?" as a
@@ -9415,6 +9448,9 @@ async function handleLeagueRosterPage(req, env, url) {
       teamOpt: 'Team (optional)', teamUnassigned: 'Unassigned', addBtn: 'Add', cancel: 'Cancel',
       editPlayerBtn: 'Edit', saveEdit: 'Save',
       inactiveSectionTitle: 'Inactive players', reactivateBtn: 'Reactivate', deactivateBtn: 'Mark inactive',
+      bounceFlag: "Email refused twice: we no longer write to this address. Fix it with Edit.",
+      bounceClear: 'The address is right',
+      removeHelp: 'To remove a player, mark them inactive (Edit): they get nothing more, and their history stays.',
       players: 'Players', unassigned: 'Unassigned', noPlayers: 'No players yet.',
       weeklyDrawNote: 'Teams are assigned per game, not here: see a game’s own page.',
       goalieAxis: 'Position', axisPlayer: 'Player', axisGoalie: 'Goalie', axisBoth: 'Both', playRoleLabel: 'Position',
@@ -9549,8 +9585,9 @@ async function handleLeagueRosterPage(req, env, url) {
         </div>
       </td>
     </tr>`;
+    const bounceFlag = bounceStopped.has(c.player_id) ? `<span class="ro-bounce" data-bounce="${esc(c.player_id)}"><span data-i18n="bounceFlag">${esc(I18N_ROSTER.fr.bounceFlag)}</span> <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm" data-i18n="bounceClear" onclick="clearBounce('${esc(c.player_id)}', this)">${esc(I18N_ROSTER.fr.bounceClear)}</button></span>` : '';
     return `<tr data-row-filter="${esc(filterAttr)}">
-      <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}${editBtn}</td>
+      <td class="ro-who"><b>${esc(c.name)}</b>${c.email || c.phone ? `<span>${esc(c.email || c.phone)}</span>` : ''}${bounceFlag}${editBtn}</td>
       ${showTeams ? `<td>${teamSelect}</td>` : ''}
       <td>${roleBtn}</td>
       ${showGoalieAxis ? `<td>${goalieBtn}${backupGoalieBadge}</td>` : ''}
@@ -9578,6 +9615,7 @@ async function handleLeagueRosterPage(req, env, url) {
   .ro-table-wrap tr:last-child td { border-bottom: 0; }
   .ro-who b { display: block; font-weight: 600; }
   .ro-who span { font-size: 13px; color: var(--ink-muted); }
+  .ro-who .ro-bounce { display: block; margin-top: 4px; color: var(--danger, #b3122e); font-weight: 600; }
   .ro-panel { display: none; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-5); flex-direction: column; gap: var(--space-4); width: 100%; max-width: 640px; margin: 0 auto; } /* item 9: same shape as the schedule forms */
   /* D1 (forms polish task): this panel's visibility is governed
      entirely by the .open class (added server-side when the roster is
@@ -9658,6 +9696,7 @@ async function handleLeagueRosterPage(req, env, url) {
       </table>
       ${!contacts.length ? `<p class="nl-help" style="padding:var(--space-4);margin:0;" data-i18n="noPlayers">Aucun joueur pour l'instant.</p>` : ''}
       ${teamStructure === 'weekly_draw' ? `<p class="nl-help" style="padding:var(--space-4);margin:0;border-top:1px solid var(--line);" data-i18n="weeklyDrawNote">Les équipes sont assignées à chaque match, pas ici : voir la page d'un match.</p>` : ''}
+      ${contacts.length ? `<p class="nl-help" style="padding:var(--space-4);margin:0;border-top:1px solid var(--line);" data-i18n="removeHelp">${esc(I18N_ROSTER.fr.removeHelp)}</p>` : ''}
     </div>
     ${inactiveContacts.length ? `<div class="ro-table-wrap">
       <button type="button" class="ro-inactive-toggle" id="ro_inactive_toggle" onclick="toggleInactiveSection()" aria-expanded="false">
@@ -10313,6 +10352,24 @@ async function setPlayerActive(playerId, isActive, btn) {
 }
 function deactivatePlayer(playerId, btn) { return setPlayerActive(playerId, false, btn); }
 function reactivatePlayer(playerId, btn) { return setPlayerActive(playerId, true, btn); }
+// An address refused twice: the admin says it is right (problem C1).
+async function clearBounce(playerId, btn) {
+  btn.disabled = true;
+  try {
+    var res = await fetch('/league/contacts/bounce/clear', {
+      method: 'POST', credentials: 'same-origin',
+      headers: Object.assign({ 'content-type': 'application/json' }, window.__csrfHeader()),
+      body: JSON.stringify({ player_id: playerId })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { alert(window.__errorText(data.errorKey, data.error)); btn.disabled = false; return; }
+    var flag = document.querySelector('[data-bounce="' + playerId + '"]');
+    if (flag) flag.remove();
+  } catch (e) {
+    alert(window.__errorText('NETWORK_ERROR'));
+    btn.disabled = false;
+  }
+}
 // ---- the warning before players are emailed (its own step) ----
 // The server answers an add or an import that would email someone with
 // needsEmailChoice and the count, and creates nothing. This dialog asks;
@@ -13278,8 +13335,8 @@ async function sendMail(env, to, subject, text, html = null, attachments = null,
     // environment says so (src/mail_provider.js). Everything around the send
     // (outbox, retries, quiet hours, caps) is the same for both.
     const fromAddr = (leagueCfg && leagueCfg.fromEmail) || defaultMailIdentity(env).from;
-    if (chooseMailProvider(env, fromAddr) === 'cloudflare') await sendMailViaCloudflare(env, to, subject, text, html, attachments, leagueCfg);
-    else await sendMailViaResend(env, to, subject, text, html, attachments, leagueCfg);
+    if (chooseMailProvider(env, fromAddr) === 'cloudflare') await sendMailViaCloudflare(env, to, subject, text, html, attachments, leagueCfg, opts.unsubscribeUrl || null);
+    else await sendMailViaResend(env, to, subject, text, html, attachments, leagueCfg, opts.unsubscribeUrl || null);
   } catch (e) {
     if (!opts.fromQueue && env.DB && isResendQuotaError(e)) {
       const until = await queueDeferredDirectMail(env, { to, subject, text, html, attachments, leagueCfg, ...opts });
@@ -13345,7 +13402,16 @@ async function queueDeferredDirectMail(env, { to, subject, text, html, attachmen
   return until;
 }
 
-async function sendMailViaResend(env, to, subject, text, html = null, attachments = null, leagueCfg = null) {
+// The List-Unsubscribe headers: the league's one-click link when the email
+// is to a league player (problem C6), then the sender's mailto, as before.
+function unsubscribeHeaders(fromAddr, unsubscribeUrl) {
+  const mailto = `<mailto:${extractEmailAddress(fromAddr)}?subject=unsubscribe>`;
+  return unsubscribeUrl
+    ? { 'List-Unsubscribe': `<${unsubscribeUrl}>, ${mailto}`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' }
+    : { 'List-Unsubscribe': mailto };
+}
+
+async function sendMailViaResend(env, to, subject, text, html = null, attachments = null, leagueCfg = null, unsubscribeUrl = null) {
   if (!env.RESEND_API_KEY) throw new Error('RESEND_API_KEY not set');
   const check = sanitizeAndValidateEmail(to);
   if (!check.valid) throw new Error(`invalid email format: "${to}"`);
@@ -13359,9 +13425,7 @@ async function sendMailViaResend(env, to, subject, text, html = null, attachment
     reply_to: replyTo,
     subject,
     text,
-    headers: {
-      'List-Unsubscribe': `<mailto:${extractEmailAddress(fromAddr)}?subject=unsubscribe>`
-    }
+    headers: unsubscribeHeaders(fromAddr, unsubscribeUrl)
   };
   if (html) payload.html = html;
   if (attachments && Array.isArray(attachments) && attachments.length > 0) {
@@ -13384,7 +13448,7 @@ async function sendMailViaResend(env, to, subject, text, html = null, attachment
 // anything else) is thrown as "cloudflare: <reason>": the outbox classifies
 // it (src/mail_queue.js classifySendError), retries or marks it failed, and
 // the health alerts report failures. Nothing falls back to Resend.
-async function sendMailViaCloudflare(env, to, subject, text, html = null, attachments = null, leagueCfg = null) {
+async function sendMailViaCloudflare(env, to, subject, text, html = null, attachments = null, leagueCfg = null, unsubscribeUrl = null) {
   if (!env.SEND_EMAIL || typeof env.SEND_EMAIL.send !== 'function') throw new Error('cloudflare: the SEND_EMAIL binding is not set for this environment');
   const check = sanitizeAndValidateEmail(to);
   if (!check.valid) throw new Error(`invalid email format: "${to}"`);
@@ -13398,7 +13462,7 @@ async function sendMailViaCloudflare(env, to, subject, text, html = null, attach
     replyTo: parseAddress(replyTo).email,
     subject,
     text,
-    headers: { 'List-Unsubscribe': `<mailto:${from.email}?subject=unsubscribe>` }
+    headers: unsubscribeHeaders(from.email, unsubscribeUrl)
   };
   if (html) message.html = html;
   if (attachments && Array.isArray(attachments) && attachments.length > 0) {
@@ -14829,6 +14893,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
   // Notre Ligue's sending guard (src/mail_guard.js): one billing-state cache per drain.
   const guardCache = new Map();
   for (const m of due) {
+    let sendTo = null;
     if (!m.quiet_exempt) {
       const until = await quietUntil(m.league_id);
       if (until > now) {
@@ -14851,6 +14916,8 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       // queued and sent exactly as stored.
       if (payload.prerendered) {
         const pm = payload.prerendered;
+        sendTo = pm.to;
+        if (await bouncedTwice(env, m, pm.to)) continue;
         const g = pm.guard || {};
         const allowed = await guardOutboxRow(env, m, {
           leagueId: g.leagueId || m.league_id, kind: g.kind || m.kind, eventId: g.eventId || m.event_id, address: pm.to,
@@ -14860,7 +14927,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
         if (!allowed) continue;
         if (!budget.take()) break;
         if (!(await claimOutboxRow(env.DB, m.id))) { budget.refund(); continue; } // another drain has it
-        await sendMail(env, pm.to, pm.subject, pm.text, pm.html, pm.attachments || null, pm.identity || null, { fromQueue: true, guard: allowed.record });
+        await sendMail(env, pm.to, pm.subject, pm.text, pm.html, pm.attachments || null, pm.identity || null, { fromQueue: true, guard: allowed.record, unsubscribeUrl: await leagueUnsubscribeUrl(env, m.league_id, m.player_id) });
         if (daily) daily.sent++;
         await recordSendSuccess(env.DB, m.id);
         sent++;
@@ -14878,6 +14945,8 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
         sent++; continue;
       }
       const { to, msg, leagueCfg } = prep;
+      sendTo = to;
+      if (await bouncedTwice(env, m, to)) continue;
       const allowed = await guardOutboxRow(env, m, {
         leagueId: m.league_id, kind: m.kind, eventId: m.event_id, address: to, toPlayer: !!m.player_id,
         subject: msg.subject, text: msg.text, essential: isOperatorAddress(env, to), cache: guardCache
@@ -14898,7 +14967,7 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       // after it stay queued, untouched, for the next pass.
       if (!budget.take()) break;
       if (!(await claimOutboxRow(env.DB, m.id))) { budget.refund(); continue; } // another drain has it
-      await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg, { subCall: m.kind === 'sub_call', fromQueue: true, guard: allowed.record });
+      await sendMail(env, to, msg.subject, msg.text, msg.html, null, leagueCfg, { subCall: m.kind === 'sub_call', fromQueue: true, guard: allowed.record, unsubscribeUrl: await leagueUnsubscribeUrl(env, m.league_id, m.player_id) });
       if (daily) { daily.sent++; if (m.kind === 'sub_call') daily.subCalls++; }
       // Resend accepted it: it is sent, whatever happens next. (The
       // sub-call bookkeeping below used to run BEFORE this, so a failure
@@ -14934,12 +15003,27 @@ async function drain(env, limit = MAIL_SENDS_PER_INVOCATION, filterEventId = nul
       const state = await recordSendFailure(env.DB, m, e);
       failed++;
       if (state === 'retrying') retrying++;
+      // A league player's address refused for good (problem C1).
+      if (state === 'failed' && m.player_id && isBounceError(e && e.message)) {
+        try { await recordBounce(env.DB, m.league_id, m.player_id, sendTo); }
+        catch (err) { console.error(`[drain] bounce not recorded for ${m.player_id}: ${err.message}`); }
+      }
       // The platform refused a subrequest: every later send in this
       // invocation would fail the same way. Stop; the rest stay queued.
       if (isSubrequestLimitError(e)) { budget.halt(); break; }
     }
   }
   return { due: due.length, sent, failed, retrying, deferred };
+}
+
+// A league player's address that bounced BOUNCE_STOP_AFTER times
+// (src/bounces.js): the row is dropped, not sent. True when dropped.
+async function bouncedTwice(env, m, to) {
+  if (!m.player_id || !m.league_id || m.league_id === SMBHL_LEAGUE_ID || m.league_id === 'system') return false;
+  if (!(await addressStopped(env.DB, m.player_id, to))) return false;
+  await env.DB.prepare('UPDATE outbox SET cancelled = 1, error = ?, next_attempt_at = NULL WHERE id = ?')
+    .bind(`not sent: this address was refused ${BOUNCE_STOP_AFTER} times`, m.id).run();
+  return true;
 }
 
 // The operator's own inboxes: never held (item 1e).
@@ -15006,6 +15090,40 @@ async function rosterReserveToday(env, now = new Date()) {
 
 /* ---------- shortage ---------- */
 
+// Season simulation, 2026-10-02 (fixes 1b, 1c). In a league, a player who
+// has not answered has no rsvp row (SMBHL seeds a pending one), so a
+// rostered goalie who simply had not answered read as "out": a dual-role
+// player went in goal and a goalie sub was placed on that team. A league's
+// rostered goalie who has not answered still counts for the team until the
+// last 24 hours before the game (the last reminder has gone; the shortage
+// rules count only who said yes from then on). Their ids; [] for SMBHL.
+const UNANSWERED_GOALIE_HOLDS_UNTIL_HOURS = 24;
+async function unansweredRosterGoalies(db, eventId, team) {
+  if (!team || team === HEADCOUNT_TEAM_NAME) return [];
+  const ev = await db.prepare('SELECT id, date, start_time, league_id FROM events WHERE id = ?').bind(eventId).first();
+  if (!ev || !ev.league_id || ev.league_id === SMBHL_LEAGUE_ID) return [];
+  const st = eventStart(ev);
+  if (st && (st.getTime() - Date.now()) / 3600000 <= UNANSWERED_GOALIE_HOLDS_UNTIL_HOURS) return [];
+  const rows = (await db.prepare(
+    `SELECT c.player_id FROM contacts c
+      WHERE c.league_id = ? AND c.role = 'roster' AND c.is_goalie = 1 AND COALESCE(c.is_active, 1) = 1 AND c.opted_out = 0
+        AND c.preferred_team = ?
+        AND c.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)`
+  ).bind(ev.league_id, team, eventId).all()).results || [];
+  return rows.map(r => r.player_id);
+}
+// Who may stand in for a missing goalie: a dual-role regular, or a sub who
+// plays both positions only once they said yes to a goalie call (fix 1b: a
+// sub confirmed as a skater is never put in goal without being asked).
+async function eligibleBackupGoalies(db, eventId, backups) {
+  const subs = backups.filter(r => r.role === 'sub' && r.player_id);
+  if (!subs.length) return backups;
+  const yes = new Set(((await db.prepare(
+    `SELECT player_id FROM availability WHERE event_id = ? AND need = 'goalie' AND status = 'yes'`
+  ).bind(eventId).all()).results || []).map(r => r.player_id));
+  return backups.filter(r => r.role !== 'sub' || yes.has(r.player_id));
+}
+
 export async function teamState(db, eventId, team, cfg) {
   const targetGoalies = cfg ? cfg.goaliesPerTeam : TARGET_GOALIES;
   // Live-testing task, Part 5: the CAP on confirmed goalies counted
@@ -15040,14 +15158,18 @@ export async function teamState(db, eventId, team, cfg) {
   // rsvp row is what puts them on the team, their role doesn't matter.
   const primaryIns = ins.filter(r => r.is_goalie === 1);
   let goalieRows = [];
+  // A league's goalie who has not answered yet still holds the net (fix
+  // 1c): the team is not short a goalie for that.
+  let netHeld = 0;
   if (primaryIns.length > 0) {
     goalieRows = primaryIns.slice(0, maxGoalies);
   } else {
     // If starting goalie is not in (or out), check if a backup goalie is confirmed in
     const primaryRow = uniqueRows.find(r => r.is_goalie === 1);
-    const primaryIsOut = !primaryRow || primaryRow.status === 'out';
+    netHeld = primaryRow ? 0 : Math.min((await unansweredRosterGoalies(db, eventId, team)).length, maxGoalies);
+    const primaryIsOut = primaryRow ? primaryRow.status === 'out' : !netHeld;
     if (primaryIsOut) {
-      goalieRows = ins.filter(r => r.is_backup_goalie === 1).slice(0, maxGoalies);
+      goalieRows = (await eligibleBackupGoalies(db, eventId, ins.filter(r => r.is_backup_goalie === 1))).slice(0, maxGoalies);
     }
   }
   const goalies = goalieRows.length;
@@ -15058,9 +15180,9 @@ export async function teamState(db, eventId, team, cfg) {
     // team page labels and counts from this, so it can never disagree
     // with the admin (both read teamState).
     goalieIds: goalieRows.map(r => r.player_id).filter(Boolean),
-    shortGoalie: goalies < targetGoalies,
+    shortGoalie: goalies + netHeld < targetGoalies,
     shortSkaters: skaters < minSkaters,
-    short: goalies < targetGoalies || skaters < minSkaters
+    short: goalies + netHeld < targetGoalies || skaters < minSkaters
   };
 }
 
@@ -15300,6 +15422,9 @@ async function availableForTeam(env, ev, team, cfg, isHeadcount) {
           ${isHeadcount ? '' : 'AND c.preferred_team = ?'}
           AND c.player_id NOT IN (SELECT player_id FROM rsvp WHERE event_id = ? AND player_id IS NOT NULL)`
     ).bind(...(isHeadcount ? [leagueId, ev.id] : [leagueId, team, ev.id])).all()).results || [];
+    // The unanswered goalie expected() already counts in goal (fix 1c).
+    const already = new Set(e.unansweredGoalieIds || []);
+    for (let i = rows.length - 1; i >= 0; i--) if (already.has(rows[i].player_id)) rows.splice(i, 1);
     const counted = isHeadcount
       ? await concurrentWaitingShare(env, ev, rows, g => (g ? (cfg.maxGoalies != null ? cfg.maxGoalies : (cfg.goaliesPerTeam || 0)) : (cfg.skatersPerTeam || 0)))
       : rows;
@@ -16053,8 +16178,28 @@ function subPoolOrderBinds(ev) {
 
 // emptyPools: needs whose pool already came back empty for this game in
 // the caller's loop (callSubsForShortfall) -- not read again.
+// Whether a league email due now, inside quiet hours, can wait for their
+// end (07:00 by default) and still arrive QUIET_HOLD_MARGIN_HOURS before
+// the game (problem C2: a late "out" called every sub at 23:45, a noon
+// game's details went out at midnight). Not SMBHL, which keeps its rules.
+const QUIET_HOLD_MARGIN_HOURS = 3;
+async function quietHoldIsSensible(env, ev, leagueId) {
+  if (!leagueId || leagueId === SMBHL_LEAGUE_ID || !ev) return false;
+  const st = eventStart(ev);
+  if (!st) return false;
+  const now = Date.now();
+  const end = (await afterQuiet(env, new Date(now), leagueId)).getTime();
+  return end > now && end <= st.getTime() - QUIET_HOLD_MARGIN_HOURS * 3600000;
+}
+
 async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false, requireActive = false, quietLeagueId = null, emptyPools = null) {
   if (emptyPools && emptyPools.has(need)) return 0;
+  // A league's call made now, inside quiet hours: it waits for their end
+  // when the game leaves time (problem C2); an urgent one still goes now.
+  if (skipQuietHours && leagueId !== SMBHL_LEAGUE_ID && await quietHoldIsSensible(env, ev, leagueId)) {
+    skipQuietHours = false;
+    quietLeagueId = leagueId;
+  }
   const poolCondition = usesIndependentGoalieAxis
     ? (need === 'goalie' ? `c.role = 'sub_skater' AND c.is_goalie = 1` : `c.role = 'sub_skater' AND c.is_goalie != 1`)
     : `c.role = ?`;
@@ -16112,11 +16257,14 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
   if (hrs < CUTOFF_HOURS) return 0;
   const gap = hrs < RUSH_HOURS ? 0 : WAVE_GAP_MIN;
   pool.forEach((p, i) => { p.wave = gap ? Math.floor(i / WAVE_SIZE) : 0; });
+  // A league's later waves never go past the cutoff (season simulation,
+  // cosmetic K5: waves were queued for after the game had started).
+  const lastMin = leagueId !== SMBHL_LEAGUE_ID ? Math.max(0, Math.floor((hrs - CUTOFF_HOURS) * 60)) : Infinity;
 
   for (const p of pool) {
     await enqueue(env, { kind: 'sub_call', event_id: ev.id, player_id: p.player_id,
       team, dedup_key: `call:${ev.id}:${need}:${p.player_id}`,
-      payload: { need }, delayMin: startDelay + p.wave * gap, league_id: leagueId, skipQuietHours, quietLeagueId });
+      payload: { need }, delayMin: Math.min(startDelay + p.wave * gap, lastMin), league_id: leagueId, skipQuietHours, quietLeagueId });
   }
   return pool.length;
 }
@@ -16165,17 +16313,22 @@ export async function expected(db, eventId, team, cfg) {
 
   const primaryKeepers = rows.filter(r => r.is_goalie === 1);
   let goalies = 0;
+  // A league's rostered goalie who has not answered yet (no row): expected
+  // in goal, so the team has no open goalie spot (fix 1c).
+  let unansweredGoalieIds = [];
   if (primaryKeepers.length > 0) {
     goalies = Math.min(primaryKeepers.length, maxGoalies);
+  } else if ((unansweredGoalieIds = await unansweredRosterGoalies(db, eventId, team)).length) {
+    unansweredGoalieIds = unansweredGoalieIds.slice(0, maxGoalies);
   } else {
     // If starting goalie is out, backup goalie can satisfy the goalie spot
-    const backupKeepers = rows.filter(r => r.is_backup_goalie === 1);
+    const backupKeepers = await eligibleBackupGoalies(db, eventId, rows.filter(r => r.is_backup_goalie === 1));
     if (backupKeepers.length > 0) {
       goalies = Math.min(backupKeepers.length, maxGoalies);
     }
   }
   const skaters = rows.length - goalies;
-  return { goalies, skaters, rows };
+  return { goalies: goalies + unansweredGoalieIds.length, skaters, rows, unansweredGoalieIds };
 }
 
 async function openSpots(db, eventId, team, need, cfg) {
@@ -16265,7 +16418,11 @@ export async function acceptAvailability(env, ev, playerId, need) {
   // who have no team yet) -- if the pool still has room for their position.
   if ((cfg.teamStructure || 'fixed') === 'weekly_draw' && !(await pickupDrawn(env, ev))) {
     const t = pickupPoolTargets(cfg);
-    const inPool = await pickupPool(env, ev, cfg, { confirmedOnly: true });
+    // The regulars who have not answered keep their spots (season
+    // simulation, problem C9: a sub's yes took the last spot and a regular
+    // answering minutes later went to the waitlist): a sub gets a spot only
+    // when the pool is short counting them too.
+    const inPool = await pickupPool(env, ev, cfg, { confirmedOnly: false });
     const have = need === 'goalie' ? inPool.goalies : inPool.skaters;
     const room = need === 'goalie' ? t.maxGoalies : t.maxSkaters;
     if (have >= room) return { placed: null };
@@ -16484,6 +16641,30 @@ async function dualGoalieOptions(env, ev, cfg) {
       ORDER BY c.name`
   ).bind(ev.id).all()).results || [];
   const players = rows.filter(r => r.team && !short.includes(r.team) && !goalieIds.has(r.player_id));
+  // A league's dual-role regulars playing another game that night that does
+  // not overlap this one (fix 1b: the admin's own fix used to be refused):
+  // free at this game's time. otherGame: the game they are in.
+  if (ev.league_id && ev.league_id !== SMBHL_LEAGUE_ID) {
+    const busy = await playersInOverlappingGames(env, ev);
+    const seen = new Set(players.map(p => p.player_id));
+    const night = (await dayGamesOf(env, ev)).filter(g => g.id !== ev.id && g.state === 'open');
+    const cfgOf = seasonConfigCache(env, ev.league_id);
+    for (const g of night) {
+      const gCfg = await cfgOf(g.season);
+      const gGoalies = new Set();
+      for (const t of gameTeamNames(g, gCfg)) for (const id of (await teamState(env.DB, g.id, t, gCfg)).goalieIds) gGoalies.add(id);
+      const others = (await env.DB.prepare(
+        `SELECT r.player_id, r.team, c.name FROM rsvp r JOIN contacts c ON c.player_id = r.player_id
+          WHERE r.event_id = ? AND r.status = 'in' AND c.role = 'roster' AND c.is_backup_goalie = 1 AND COALESCE(c.is_goalie, 0) = 0
+          ORDER BY c.name`
+      ).bind(g.id).all()).results || [];
+      for (const o of others) {
+        if (seen.has(o.player_id) || busy.has(o.player_id) || gGoalies.has(o.player_id) || !o.team) continue;
+        seen.add(o.player_id);
+        players.push({ ...o, otherGame: g.id });
+      }
+    }
+  }
   return { short, players };
 }
 
@@ -16559,6 +16740,22 @@ async function dualGoalieAction(env, ev, playerId, team, action) {
     return { ok: true, asked: true };
   }
   if (action !== 'switch') return { ok: false, error: 'Unknown action.', errorKey: 'DUAL_ACTION_UNKNOWN' };
+  if (p.otherGame) {
+    // Playing another game that night: they join this one in goal too,
+    // placed by the admin (a goalie "yes", so teamState counts them in goal).
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO rsvp (event_id, player_id, team, status, role, status_by, updated_at, league_id) VALUES (?, ?, ?, 'in', 'sub', 'manager', ?, ?)
+       ON CONFLICT(event_id, player_id) DO UPDATE SET team = excluded.team, status = 'in', role = 'sub', status_by = 'manager', updated_at = excluded.updated_at`
+    ).bind(ev.id, playerId, team, now, ev.league_id).run();
+    await env.DB.prepare(
+      `INSERT INTO availability (event_id, player_id, need, status, answered_at, league_id) VALUES (?, ?, 'goalie', 'yes', ?, ?)
+       ON CONFLICT(event_id, player_id, need) DO UPDATE SET status = 'yes'`
+    ).bind(ev.id, playerId, now, ev.league_id).run();
+    if (await openSpots(env.DB, ev.id, team, 'goalie', cfg) < 1) await stopWaves(env, ev.id, 'goalie', cfg);
+    await syncDualRoles(env, ev);
+    return { ok: true, switched: true, from: p.team, to: team };
+  }
   await env.DB.prepare('UPDATE rsvp SET team = ?, status_by = ?, updated_at = ? WHERE event_id = ? AND player_id = ?')
     .bind(team, 'manager', new Date().toISOString(), ev.id, playerId).run();
   // The goalie spot is filled: no more goalie calls for this game.
@@ -22492,7 +22689,39 @@ async function writeLeagueRsvpStatus(env, leagueId, eventId, playerId, contact, 
      ON CONFLICT(event_id, player_id) DO UPDATE SET
        status = excluded.status, status_by = excluded.status_by, updated_at = excluded.updated_at`
   ).bind(eventId, playerId, team, status, role, statusBy, now, leagueId).run();
+  if (teamStructure === 'weekly_draw' && status === 'in' && leagueId !== SMBHL_LEAGUE_ID) {
+    try { await placeAfterDraw(env, leagueId, eventId, playerId); }
+    catch (e) { console.error(`[pickup] placing ${playerId} after the draw failed: ${e.message}`); }
+  }
   return { ok: true };
+}
+
+// A pickup game already drawn (season simulation, problem C10: a yes after
+// the draw never got a team): the player joins the team with the fewest
+// players of their position (the first in the team order on a tie), and is
+// told it once the game's details email has gone (team-assigned email).
+// A full pool never reaches here: the night puts them on its waitlist.
+async function placeAfterDraw(env, leagueId, eventId, playerId) {
+  const row = await env.DB.prepare('SELECT team, status FROM rsvp WHERE event_id = ? AND player_id = ?').bind(eventId, playerId).first();
+  if (!row || row.status !== 'in' || row.team) return null;
+  const ev = await env.DB.prepare('SELECT * FROM events WHERE id = ? AND league_id = ?').bind(eventId, leagueId).first();
+  if (!ev || !(await pickupDrawn(env, ev))) return null;
+  const cfg = await getLeagueSeasonConfig(env, leagueId, ev.season);
+  const c = await env.DB.prepare('SELECT is_goalie FROM contacts WHERE player_id = ?').bind(playerId).first();
+  const goalie = c && c.is_goalie === 1 ? 1 : 0;
+  let best = null;
+  for (const team of getTeamNames(cfg)) {
+    const n = (await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM rsvp r LEFT JOIN contacts c ON c.player_id = r.player_id
+        WHERE r.event_id = ? AND r.team = ? AND r.status = 'in' AND COALESCE(c.is_goalie, 0) = ?`
+    ).bind(eventId, team, goalie).first()).n;
+    if (!best || n < best.n) best = { team, n };
+  }
+  if (!best) return null;
+  await env.DB.prepare('UPDATE rsvp SET team = ? WHERE event_id = ? AND player_id = ? AND team IS NULL').bind(best.team, eventId, playerId).run();
+  const leagueRow = await env.DB.prepare('SELECT * FROM leagues WHERE id = ?').bind(leagueId).first();
+  if (leagueRow) await maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, best.team);
+  return best.team;
 }
 
 /* ---------- Nights (D1): a league's games on the same day ----------
@@ -23437,21 +23666,29 @@ function renderLeagueReminderEmail({ kind, leagueName, leagueColor, firstName, d
 // assembler as renderLeagueReminderEmail above -- see its own comment.
 // newTeam (team_assigned): a short heading above the shared details says
 // the player is now on that team.
-function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang, games = null, role = null, newTeam = false }) {
+// subPlaced (season simulation, 2026-10-02): a sub the league just placed
+// on a team. The same details email, opened by « Tu joues avec {team} »,
+// and the league's own sub fee for the game when it charges one (subFee:
+// a number, or null for none). A league sub used to get SMBHL's game-day
+// email instead.
+function renderLeagueLogisticsEmail({ leagueName, leagueColor, firstName, dayLabel, ev, team, optOutLink, forcedLang, games = null, role = null, newTeam = false, subPlaced = false, subFee = null }) {
   const barColor = leagueFillColor(leagueColor || '#b3122e');
   const roleLine = l => { const r = dualRoleText(role, ev); return r ? r[l] : ''; };
-  const newTeamLine = l => (newTeam && team ? (l === 'fr' ? `Tu fais maintenant partie de ${team}` : `You're now on ${team}`) : '');
+  const newTeamLine = l => (subPlaced && team ? (l === 'fr' ? `Tu joues avec ${team}` : `You're playing with ${team}`)
+    : newTeam && team ? (l === 'fr' ? `Tu fais maintenant partie de ${team}` : `You're now on ${team}`) : '');
+  const feeLine = l => (subPlaced && Number(subFee) > 0 ? (l === 'fr' ? `Frais de remplaçant : ${formatMoneyFr(subFee)} pour ce match.` : `Sub fee: ${formatMoneyEn(subFee)} for this game.`) : '');
   const toContent = l => {
     const d = leagueReminderDict(l, { firstName, dayLabel: dayLabelFor(dayLabel, l), ev, team, games });
     const rl = roleLine(l);
     const nt = newTeamLine(l);
+    const fee = feeLine(l);
     return {
       subject: d.logisticsSubject,
-      text: `${nt ? `${nt}\n\n` : ''}${d.logisticsHeadline}\n${d.logisticsBody}${d.teamLine ? `\n${d.teamLine}` : ''}${d.venue ? `\n${d.venue}` : ''}${rl ? `\n${rl}` : ''}\n${d.optOut}${l === 'fr' ? ' :' : ':'} ${optOutLink}`,
+      text: `${nt ? `${nt}\n\n` : ''}${d.logisticsHeadline}\n${d.logisticsBody}${d.teamLine ? `\n${d.teamLine}` : ''}${d.venue ? `\n${d.venue}` : ''}${rl ? `\n${rl}` : ''}${fee ? `\n${fee}` : ''}\n${d.optOut}${l === 'fr' ? ' :' : ':'} ${optOutLink}`,
       html: `${nt ? `
     <p style="margin:0 0 8px;font-size:16px;line-height:24px;font-weight:700;color:#16181d;">${esc(nt)}</p>` : ''}
     <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${d.logisticsHeadline}</h1>
-    <p style="margin:0 0 20px;font-size:16px;line-height:25px;">${esc(d.logisticsBody)}${d.teamLine ? `<br>${esc(d.teamLine)}` : ''}${d.venue ? `<br>${esc(d.venue)}` : ''}</p>${rl ? `
+    <p style="margin:0 0 20px;font-size:16px;line-height:25px;">${esc(d.logisticsBody)}${d.teamLine ? `<br>${esc(d.teamLine)}` : ''}${d.venue ? `<br>${esc(d.venue)}` : ''}${fee ? `<br>${esc(fee)}` : ''}</p>${rl ? `
     <p style="margin:0 0 20px;font-size:16px;line-height:25px;font-weight:700;">${rl}</p>` : ''}
     <p style="margin:0;font-size:13px;line-height:19px;color:#55585f;"><a href="${optOutLink}" style="color:#55585f;">${d.optOut}</a></p>`,
       poweredBy: d.poweredBy
@@ -23696,7 +23933,10 @@ async function leagueGameTeams(env, leagueId, eventId, teamStructure) {
 
 async function getNonResponders(env, leagueId, eventId, season = null) {
   const teamStructure = await getLeagueTeamStructure(env, leagueId, season);
-  const rosterCondition = teamStructure === 'fixed' ? 'c.preferred_team IS NOT NULL' : "c.role = 'roster'";
+  // A sub is a sub whatever their preferred team (season simulation,
+  // 2026-10-02: subs with a preferred team got the regulars' asks, and a
+  // page with no answer button). A fixed league's regulars need a team.
+  const rosterCondition = teamStructure === 'fixed' ? "c.role = 'roster' AND c.preferred_team IS NOT NULL" : "c.role = 'roster'";
   const gameTeams = await leagueGameTeams(env, leagueId, eventId, teamStructure);
   return (await env.DB.prepare(
     `SELECT c.player_id, c.name, c.email, c.token_salt, c.preferred_team
@@ -23861,7 +24101,9 @@ async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId =
 // senders queue it; the Comms preview shows it.
 // games: the player's games that night when more than one (D1); ev is the
 // first of them, the one the links are signed for.
-async function renderLeagueReminderForContact(env, leagueRow, ev, contact, kind, team = null, games = null) {
+// kind 'sub_placed': a sub just placed on `team` (opts.subFee: the league's
+// per-game sub fee, or null).
+async function renderLeagueReminderForContact(env, leagueRow, ev, contact, kind, team = null, games = null, opts = {}) {
   const forcedLang = leagueRow.language_mode && leagueRow.language_mode !== 'both' ? leagueRow.language_mode : null;
   // Item 6f: a dual-role player's role for the night, in the details email.
   let role = null;
@@ -23879,7 +24121,35 @@ async function renderLeagueReminderForContact(env, leagueRow, ev, contact, kind,
     ? renderLeagueReminderEmail({ kind, leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, inLink, outLink, forcedLang, games })
     // A no-teams league's single pool (HEADCOUNT_TEAM_NAME, 'Tous') is internal:
     // the details email said 'Équipe Tous / Team Tous'.
-    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: team === HEADCOUNT_TEAM_NAME ? null : team, optOutLink, forcedLang, games, role, newTeam: kind === 'team_assigned' });
+    : renderLeagueLogisticsEmail({ leagueName: leagueRow.name, leagueColor: leagueRow.color, firstName, dayLabel, ev, team: team === HEADCOUNT_TEAM_NAME ? null : team, optOutLink, forcedLang, games, role, newTeam: kind === 'team_assigned', subPlaced: kind === 'sub_placed', subFee: opts.subFee ?? null });
+}
+
+// A league's sub fee for one game (the season's per-game sub price, the
+// goalie's for a goalie), or null when the league charges none. Never
+// SMBHL's default.
+async function leagueSubFee(env, leagueId, season, isGoalie) {
+  const p = await getSeasonPricing(env.DB, leagueId, season);
+  const fee = p ? Number(isGoalie ? p.price_sub_goalie : p.price_sub_player) : 0;
+  return fee > 0 ? fee : null;
+}
+
+// A league sub placed on a team (tellSubOfPlacement): the league's own
+// email, in its language, with its links and fee. Returns false when there
+// is nobody to tell.
+async function enqueueLeagueSubPlaced(env, ev, playerId, team) {
+  const leagueRow = await env.DB.prepare('SELECT id, name, color, language_mode FROM leagues WHERE id = ?').bind(ev.league_id).first();
+  const contact = await env.DB.prepare(
+    'SELECT player_id, name, email, token_salt, is_goalie FROM contacts WHERE player_id = ? AND league_id = ? AND opted_out = 0 AND email IS NOT NULL'
+  ).bind(playerId, ev.league_id).first();
+  if (!leagueRow || !contact) return false;
+  const cfg = await getLeagueSeasonConfig(env, ev.league_id, ev.season);
+  const subFee = await leagueSubFee(env, ev.league_id, ev.season, contact.is_goalie === 1);
+  const mail = await renderLeagueReminderForContact(env, leagueRow, ev, contact, 'sub_placed', team, null, { subFee });
+  await enqueuePrerenderedMail(env, {
+    kind: 'sub_placed', leagueId: ev.league_id, eventId: ev.id, playerId, team,
+    dedupKey: `sub-placed:${ev.id}:${playerId}`, to: contact.email, mail, identity: cfg.league
+  });
+  return true;
 }
 
 // night: the night's games when there is more than one (D1), ev first:
@@ -23934,6 +24204,10 @@ async function sendLeagueReminderKind(env, leagueRow, cfg, ev, kind, { writeLog 
   // per league after all its waves, sharing one budget (runLeagueReminders).
   let queued = 0;
   let failedToQueue = 0;
+  // Season simulation, 2026-10-02 (problem C2): a noon game's 12-hour
+  // details went out at midnight. Inside quiet hours, the wave waits for
+  // their end when that still leaves time before the game.
+  if (!quietHours && await quietHoldIsSensible(env, ev, leagueRow.id)) quietHours = true;
   for (const contact of recipients) {
     try {
       const mine = contact.games || [ev];
@@ -24220,6 +24494,56 @@ function leagueRsvpNotice(fr, en) {
   });
 }
 
+// ---- unsubscribing from a league (season simulation, problem C6) ----
+// A player had no way to stop a league's emails: the List-Unsubscribe
+// header was a mailto to the league's sender. A league player's email now
+// carries a one-click link (RFC 8058: the mail client POSTs to it); opened
+// in a browser, it asks first. Unsubscribed = contacts.opted_out, which
+// every send path already honours; the admin still sees the player.
+const unsubscribeMsg = (leagueId, playerId, salt) => `unsub:${leagueId}:${playerId}:${salt || ''}`;
+// null when there is none to give (SMBHL, no contact, no signing secret):
+// the email then goes with the mailto alone, never not at all.
+async function leagueUnsubscribeUrl(env, leagueId, playerId) {
+  if (!leagueId || leagueId === SMBHL_LEAGUE_ID || leagueId === 'system' || !playerId || !env.RSVP_SECRET) return null;
+  try {
+    const c = await env.DB.prepare('SELECT token_salt FROM contacts WHERE player_id = ? AND league_id = ?').bind(playerId, leagueId).first();
+    if (!c) return null;
+    const t = await hmac(env.RSVP_SECRET, unsubscribeMsg(leagueId, playerId, c.token_salt));
+    return `${env.PUBLIC_URL || 'https://rsvp.notreligue.ca'}/league/unsubscribe?league=${encodeURIComponent(leagueId)}&p=${encodeURIComponent(playerId)}&t=${t}`;
+  } catch (e) {
+    console.error(`[unsubscribe] no link for ${playerId}: ${e.message}`);
+    return null;
+  }
+}
+async function handleLeagueUnsubscribe(req, env, url) {
+  const leagueId = url.searchParams.get('league') || '';
+  const playerId = url.searchParams.get('p') || '';
+  const t = url.searchParams.get('t') || '';
+  const c = await env.DB.prepare('SELECT player_id, token_salt FROM contacts WHERE player_id = ? AND league_id = ?').bind(playerId, leagueId).first();
+  const league = c ? await env.DB.prepare('SELECT name, language_mode FROM leagues WHERE id = ?').bind(leagueId).first() : null;
+  if (!c || !league || !t || !same(t, await hmac(env.RSVP_SECRET, unsubscribeMsg(leagueId, playerId, c.token_salt)))) {
+    return leagueRsvpNotice('Ce lien est invalide.', 'This link is invalid.');
+  }
+  if (req.method === 'POST') {
+    await env.DB.prepare('UPDATE contacts SET opted_out = 1 WHERE player_id = ? AND league_id = ?').bind(playerId, leagueId).run();
+    await env.DB.prepare(
+      `UPDATE outbox SET cancelled = 1, error = 'unsubscribed' WHERE player_id = ? AND sent_at IS NULL AND cancelled = 0 AND failed_at IS NULL`
+    ).bind(playerId).run();
+    return leagueRsvpNotice(`C'est fait : tu ne recevras plus de courriels de ${league.name}.`, `Done: you won't get emails from ${league.name} anymore.`);
+  }
+  const fr = { q: `Ne plus recevoir les courriels de ${league.name}?`, help: "L'organisateur te voit encore dans la liste des joueurs.", btn: 'Me désabonner' };
+  const en = { q: `Stop getting emails from ${league.name}?`, help: 'The organizer still sees you in the player list.', btn: 'Unsubscribe' };
+  const lang = league.language_mode === 'en' ? 'en' : 'fr';
+  const p = lang === 'en' ? en : fr;
+  const other = league.language_mode === 'both' ? `<p class="nl-help">${esc(en.q)} ${esc(en.help)}</p>` : '';
+  const bodyHtml = `<style>.nl{display:flex;align-items:center;justify-content:center;min-height:100dvh;text-align:center;padding:var(--space-5)}</style>
+<div><h1 style="font:700 26px/32px var(--font-display);font-stretch:118%;">${esc(p.q)}</h1><p class="nl-help">${esc(p.help)}</p>${other}
+<form method="post" action="${esc(url.pathname + url.search)}"><button type="submit" class="nl-btn nl-btn--primary">${esc(league.language_mode === 'both' ? `${fr.btn} / ${en.btn}` : p.btn)}</button></form></div>`;
+  return new Response(nlDocument({ title: p.q, description: '', bodyHtml, lang }), {
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' }
+  });
+}
+
 function weekdayLabel(dateStr, lang) {
   try {
     const d = new Date(dateStr + 'T12:00:00');
@@ -24345,7 +24669,7 @@ async function leagueRsvpGet(req, env, url) {
         confirmAnswerOutNight: 'Tu vas répondre : je ne peux pas, pour toute la journée.'
       } : {})
     } : {
-      question: `${firstName}, are you playing${dayLabel ? ' ' + dayLabel.toLowerCase() : ''}?`,
+      question: `${firstName}, are you playing${dayLabel ? ' ' + dayLabel : ''}?`,
       btnIn: "I'm in", btnOut: "Can't make it",
       lockedMsg: 'This event is no longer accepting responses.',
       doneInTitle: "Got it, you're in.",
@@ -24392,16 +24716,16 @@ async function leagueRsvpGet(req, env, url) {
   const lang = forcedLang || 'fr';
   const t = RSVP_I18N[lang];
 
-  const overline = dateTimeSpanHtml('span', ev.date, ev.start_time, 'long');
+  const overline = dateTimeSpanHtml('span', ev.date, ev.start_time, 'long', '', lang);
   const metaHtml = `<div class="rv-meta">
     ${team ? `<div><b>${esc(team)}</b></div>` : ''}
-    <div class="rv-where">${ev.venue ? esc(ev.venue) : ''}${ev.start_time && ev.end_time ? ` · ${timeSpanHtml('span', ev.start_time)} – ${timeSpanHtml('span', ev.end_time)}` : ''}${venueMapLink ? ` · <a href="${esc(venueMapLink)}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
+    <div class="rv-where">${ev.venue ? esc(ev.venue) : ''}${ev.start_time && ev.end_time ? ` · ${timeSpanHtml('span', ev.start_time, '', lang)} – ${timeSpanHtml('span', ev.end_time, '', lang)}` : ''}${venueMapLink ? ` · <a href="${esc(venueMapLink)}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}</div>
   </div>`;
 
   // Nights (D1): with more than one game, the meta lists them, with what
   // a yes means for this league.
   const cfgOfGame = g => night.cfgs.get(g.id) || cfg;
-  const gameLineHtml = g => `${timeSpanHtml('span', g.start_time)}${g.end_time ? ` – ${timeSpanHtml('span', g.end_time)}` : ''}${g.venue ? ` · ${esc(g.venue)}` : ''}${(cfgOfGame(g).teamStructure || 'fixed') === 'fixed' && g.home_team && g.away_team ? ` · ${esc(g.home_team)} – ${esc(g.away_team)}` : ''}`;
+  const gameLineHtml = g => `${timeSpanHtml('span', g.start_time, '', lang)}${g.end_time ? ` – ${timeSpanHtml('span', g.end_time, '', lang)}` : ''}${g.venue ? ` · ${esc(g.venue)}` : ''}${(cfgOfGame(g).teamStructure || 'fixed') === 'fixed' && g.home_team && g.away_team ? ` · ${esc(g.home_team)} – ${esc(g.away_team)}` : ''}`;
   const byTeams = teamStructure === 'fixed' && !!contact.preferred_team;
   const nightNotes = multi ? [byTeams ? 'nightNoteTeams' : 'nightNotePool',
     ...(!byTeams && night.clusters.some(c => c.length > 1) ? ['nightNoteConcurrent'] : []),
@@ -25143,6 +25467,15 @@ async function teamLinksRoute(req, env, url) {
 // Sent now (no quiet-hours hold): these follow a person's own action.
 async function tellSubOfPlacement(env, ev, playerId, team, { manual = false } = {}) {
   const inside24 = hoursOut(ev) <= 24;
+  // A league's sub (season simulation, 2026-10-02): the league's own email,
+  // never SMBHL's game-day or "you're playing with" templates (SMBHL links,
+  // its 5 $ sub fee, both languages). Same timing as SMBHL's.
+  if (ev.league_id && ev.league_id !== SMBHL_LEAGUE_ID) {
+    if (!inside24 && !manual) return false;
+    if (!(await enqueueLeagueSubPlaced(env, ev, playerId, team))) return false;
+    await drain(env, MAIL_SENDS_PER_INVOCATION, ev.id);
+    return true;
+  }
   if (inside24) {
     await cancelPending(env, `placed:${ev.id}:${playerId}`);
     await enqueue(env, { kind: 'gameday', event_id: ev.id, player_id: playerId, team,
@@ -33781,6 +34114,10 @@ async function handleFetch(req, env, ctx) {
         return await handleLeagueCommsBroadcast(req, env, url);
       if (url.pathname === '/league/mail/held/cancel' && req.method === 'POST' && env.LEAGUE_PRODUCT === 'true')
         return await handleLeagueHeldMailCancel(req, env, url);
+      if (url.pathname === '/league/contacts/bounce/clear' && req.method === 'POST')
+        return await handleLeagueBounceClear(req, env, url);
+      if (url.pathname === '/league/unsubscribe' && (req.method === 'GET' || req.method === 'POST'))
+        return await handleLeagueUnsubscribe(req, env, url);
       // Email preview: what an email would look like now, sending nothing.
       if (url.pathname === '/league/comms/preview' && req.method === 'POST')
         return await handleLeagueCommsPreview(req, env, url);

@@ -86,7 +86,11 @@ describe('Part 16 (live-testing task, batch 2): mail-queue quiet-hours fix', () 
     await applyRealSchema(env); await wideSubCallWindow(env);
   });
 
-  it('an immediate shortage-created sub-call is queued with send_after <= now, regardless of the current hour', async () => {
+  // Season simulation fix C2 (2026-10-02): a league's shortage call made in
+  // quiet hours for a game days away now waits for 07:00 (it used to go at
+  // once, waking every sub); an urgent one still goes at once
+  // (test/part229).
+  it('a shortage-created sub-call at 23:30 for a game days away waits for the end of quiet hours', async () => {
     const { cookie, csrfToken } = await signup('mailqueue.immediate@example.com', '203.0.174.001');
     const league = await createLeague(cookie, csrfToken, { name: 'Mail Queue Immediate League', teamNames: ['Otters', 'Falcons'], tracksStats: true });
     await SELF.fetch('http://example.com/league/season/publish', {
@@ -130,23 +134,16 @@ describe('Part 16 (live-testing task, batch 2): mail-queue quiet-hours fix', () 
       })
     );
 
-    // Deterministic at any hour -- this is the direct regression test
-    // for the fix (this exact scenario, at this exact test-run time,
-    // reproduced the pre-fix bug 100% of the time during quiet hours).
-    expect(sentMails.length).toBe(1);
-    expect(sentMails[0].to).toEqual(['sub1@mailqueue.com']);
-
+    // Nothing at 23:30; queued for 07:00 Montreal.
+    expect(sentMails.length).toBe(0);
     const outboxRow = await env.DB.prepare(
       `SELECT * FROM outbox WHERE event_id = ? AND kind = 'sub_call'`
     ).bind(eventId).first();
     expect(outboxRow).toBeTruthy();
-    expect(outboxRow.sent_at).not.toBeNull();
-    // send_after was set to "now" (skipQuietHours), never pushed past
-    // quiet hours -- allow a few seconds of test-execution slack, but
-    // it must never be hours in the future the way afterQuiet() would
-    // push it if this test happens to run at night.
+    expect(outboxRow.sent_at).toBeNull();
     const sendAfterMs = new Date(outboxRow.send_after).getTime();
-    expect(sendAfterMs - beforeEnqueue.getTime()).toBeLessThan(5000);
+    expect(sendAfterMs).toBeGreaterThan(beforeEnqueue.getTime());
+    expect(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(sendAfterMs))).toBe('07:00');
   });
 
   it('the manual "Invite Subs" admin button now actually sends mail -- it used to enqueue and never drain, so it silently never sent in production', async () => {

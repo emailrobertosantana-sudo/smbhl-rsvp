@@ -168,7 +168,9 @@ describe('The cron: the flagged league on the advanced model, the other on the s
     expect(r.next_attempt_at).toBeTruthy();
   });
 
-  it("quiet hours: at 23:00 the flagged league's new sub call waits for its 08:00; the other league's goes now", async () => {
+  // Season simulation fix C2 (2026-10-02): the simple league's call made at
+  // 23:00 for a game days away waits for 07:00 too (it used to go at once).
+  it("quiet hours: at 23:00 the flagged league's new sub call waits for its 08:00; the other league's for 07:00", async () => {
     at('2026-11-18T04:00:00Z'); // Tue 23:00 Montreal
     await F.contact('FS7', 'sub_skater', null);
     await U.contact('US7', 'sub_skater', null);
@@ -176,7 +178,7 @@ describe('The cron: the flagged league on the advanced model, the other on the s
     const f = await env.DB.prepare(`SELECT send_after, created_at FROM outbox WHERE player_id = 'FS7' AND kind = 'sub_call'`).first();
     const u = await env.DB.prepare(`SELECT send_after, created_at FROM outbox WHERE player_id = 'US7' AND kind = 'sub_call'`).first();
     expect(f.send_after).toBe('2026-11-18T13:00:00.000Z'); // 08:00 Montreal, the league's own quiet_hours_end
-    expect(u.send_after).toBe(u.created_at);
+    expect(u.send_after).toBe('2026-11-18T12:00:00.000Z'); // 07:00 Montreal, the default end
   });
 
   it("the daily cap holds for the flagged league: with today's budget spent, its held sub call is deferred, not sent or failed", async () => {

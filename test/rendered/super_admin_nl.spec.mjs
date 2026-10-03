@@ -79,7 +79,7 @@ describe('the super-admin on Notre Ligue', () => {
     const { context, page, errors } = await open(`/super-admin/league?id=${encodeURIComponent(id)}`);
     await page.waitForSelector('#sa-signals tr');
     expect(await page.title()).toBe('Les Castors | Notre Ligue');
-    expect(await page.$$eval('#sa-signals tr', trs => trs.length)).toBe(8);
+    expect(await page.$$eval('#sa-signals tr', trs => trs.length)).toBe(9);
     expect(await page.$$eval('#sa-timeline li', lis => lis.length)).toBe(6);
     expect(await page.textContent('#sa-timeline')).toContain('Inscription');
     expect(await page.textContent('#sa-log')).toContain('Aucun accès de soutien.');

@@ -103,43 +103,43 @@ exports[`The league product's cron, recorded before the migration > reproduces t
       {
         "asked_streak": 2,
         "dormant": 0,
-        "last_asked": "2026-11-14T04:05:00.000Z",
+        "last_asked": "2026-11-14T13:00:00.000Z",
         "player_id": "FS009",
       },
       {
         "asked_streak": 2,
         "dormant": 0,
-        "last_asked": "2026-11-14T04:05:00.000Z",
+        "last_asked": "2026-11-14T13:00:00.000Z",
         "player_id": "FS010",
       },
       {
         "asked_streak": 2,
         "dormant": 0,
-        "last_asked": "2026-11-14T04:05:00.000Z",
+        "last_asked": "2026-11-14T13:00:00.000Z",
         "player_id": "FS011",
       },
       {
         "asked_streak": 2,
         "dormant": 0,
-        "last_asked": "2026-11-14T04:05:00.000Z",
+        "last_asked": "2026-11-14T13:00:00.000Z",
         "player_id": "FS012",
       },
       {
         "asked_streak": 2,
         "dormant": 0,
-        "last_asked": "2026-11-14T04:05:00.000Z",
+        "last_asked": "2026-11-14T13:00:00.000Z",
         "player_id": "FS013",
       },
       {
         "asked_streak": 2,
         "dormant": 0,
-        "last_asked": "2026-11-14T04:05:00.000Z",
+        "last_asked": "2026-11-14T13:00:00.000Z",
         "player_id": "FS014",
       },
       {
         "asked_streak": 2,
         "dormant": 0,
-        "last_asked": "2026-11-14T04:05:00.000Z",
+        "last_asked": "2026-11-14T13:00:00.000Z",
         "player_id": "FS015",
       },
       {
@@ -535,8 +535,8 @@ exports[`The league product's cron, recorded before the migration > reproduces t
         "next_attempt_at": null,
         "payload": "{"need":"skater"}",
         "player_id": "FS009",
-        "send_after": "2026-11-14T04:05:00.000Z",
-        "sent_at": "2026-11-14T04:05:00.000Z",
+        "send_after": "2026-11-14T12:05:00.000Z",
+        "sent_at": "2026-11-14T13:00:00.000Z",
         "team": "Bears",
       },
       {
@@ -554,8 +554,8 @@ exports[`The league product's cron, recorded before the migration > reproduces t
         "next_attempt_at": null,
         "payload": "{"need":"skater"}",
         "player_id": "FS010",
-        "send_after": "2026-11-14T04:05:00.000Z",
-        "sent_at": "2026-11-14T04:05:00.000Z",
+        "send_after": "2026-11-14T12:05:00.000Z",
+        "sent_at": "2026-11-14T13:00:00.000Z",
         "team": "Bears",
       },
       {
@@ -573,8 +573,8 @@ exports[`The league product's cron, recorded before the migration > reproduces t
         "next_attempt_at": null,
         "payload": "{"need":"skater"}",
         "player_id": "FS011",
-        "send_after": "2026-11-14T04:05:00.000Z",
-        "sent_at": "2026-11-14T04:05:00.000Z",
+        "send_after": "2026-11-14T12:05:00.000Z",
+        "sent_at": "2026-11-14T13:00:00.000Z",
         "team": "Bears",
       },
       {
@@ -592,8 +592,8 @@ exports[`The league product's cron, recorded before the migration > reproduces t
         "next_attempt_at": null,
         "payload": "{"need":"skater"}",
         "player_id": "FS012",
-        "send_after": "2026-11-14T04:05:00.000Z",
-        "sent_at": "2026-11-14T04:05:00.000Z",
+        "send_after": "2026-11-14T12:05:00.000Z",
+        "sent_at": "2026-11-14T13:00:00.000Z",
         "team": "Bears",
       },
       {
@@ -611,8 +611,8 @@ exports[`The league product's cron, recorded before the migration > reproduces t
         "next_attempt_at": null,
         "payload": "{"need":"skater"}",
         "player_id": "FS013",
-        "send_after": "2026-11-14T04:05:00.000Z",
-        "sent_at": "2026-11-14T04:05:00.000Z",
+        "send_after": "2026-11-14T12:05:00.000Z",
+        "sent_at": "2026-11-14T13:00:00.000Z",
         "team": "Bears",
       },
       {
@@ -630,8 +630,8 @@ exports[`The league product's cron, recorded before the migration > reproduces t
         "next_attempt_at": null,
         "payload": "{"need":"skater"}",
         "player_id": "FS014",
-        "send_after": "2026-11-14T04:05:00.000Z",
-        "sent_at": "2026-11-14T04:05:00.000Z",
+        "send_after": "2026-11-14T12:05:00.000Z",
+        "sent_at": "2026-11-14T13:00:00.000Z",
         "team": "Bears",
       },
       {
@@ -649,8 +649,8 @@ exports[`The league product's cron, recorded before the migration > reproduces t
         "next_attempt_at": null,
         "payload": "{"need":"skater"}",
         "player_id": "FS015",
-        "send_after": "2026-11-14T04:05:00.000Z",
-        "sent_at": "2026-11-14T04:05:00.000Z",
+        "send_after": "2026-11-14T12:05:00.000Z",
+        "sent_at": "2026-11-14T13:00:00.000Z",
         "team": "Bears",
       },
       {
@@ -1159,7 +1159,65 @@ exports[`The league product's cron, recorded before the migration > reproduces t
     {
       "at": "2026-11-14T04:05:00Z",
       "log": [
-        "league-reminders cron: lg-fixed:lg-fixed:2026-11-14 shortfall: 7 sub call(s) queued | lg-fixed drain sent=7 failed=1 retrying=1",
+        "league-reminders cron: lg-fixed:lg-fixed:2026-11-14 shortfall: 7 sub call(s) queued | lg-fixed drain sent=0 failed=1 retrying=1",
+      ],
+      "outbox": [
+        {
+          "kind": "reminder_72h",
+          "league_id": "lg-draw",
+          "n": 4,
+          "state": "sent",
+        },
+        {
+          "kind": "reminder_72h",
+          "league_id": "lg-fixed",
+          "n": 1,
+          "state": "cancelled",
+        },
+        {
+          "kind": "reminder_72h",
+          "league_id": "lg-fixed",
+          "n": 1,
+          "state": "retrying",
+        },
+        {
+          "kind": "reminder_72h",
+          "league_id": "lg-fixed",
+          "n": 4,
+          "state": "sent",
+        },
+        {
+          "kind": "sub_call",
+          "league_id": "lg-fixed",
+          "n": 7,
+          "state": "queued",
+        },
+        {
+          "kind": "sub_call",
+          "league_id": "lg-fixed",
+          "n": 7,
+          "state": "sent",
+        },
+        {
+          "kind": "direct_mail",
+          "league_id": "system",
+          "n": 1,
+          "state": "sent",
+        },
+      ],
+      "sent": [
+        {
+          "from": "Golden Fixed <golden-fixed@mail.notreligue.ca>",
+          "h": "a4ba04cf8a93e0c2",
+          "subject": "Otters, as-tu décidé pour dimanche 15 nov.? / Otters, have you decided for Sunday Nov 15?",
+          "to": "flaky-f002@example.com",
+        },
+      ],
+    },
+    {
+      "at": "2026-11-14T13:00:00Z",
+      "log": [
+        "league-reminders cron: lg-fixed drain sent=7 failed=1 retrying=1",
       ],
       "outbox": [
         {
@@ -1247,58 +1305,6 @@ exports[`The league product's cron, recorded before the migration > reproduces t
           "h": "7596329d50d4faaa",
           "subject": "Golden Fixed a besoin d'un remplaçant samedi 14 nov. / Golden Fixed needs a sub on Saturday, Nov 14",
           "to": "fs7@example.com",
-        },
-      ],
-    },
-    {
-      "at": "2026-11-14T13:00:00Z",
-      "log": [
-        "league-reminders cron: lg-fixed drain sent=0 failed=1 retrying=1",
-      ],
-      "outbox": [
-        {
-          "kind": "reminder_72h",
-          "league_id": "lg-draw",
-          "n": 4,
-          "state": "sent",
-        },
-        {
-          "kind": "reminder_72h",
-          "league_id": "lg-fixed",
-          "n": 1,
-          "state": "cancelled",
-        },
-        {
-          "kind": "reminder_72h",
-          "league_id": "lg-fixed",
-          "n": 1,
-          "state": "retrying",
-        },
-        {
-          "kind": "reminder_72h",
-          "league_id": "lg-fixed",
-          "n": 4,
-          "state": "sent",
-        },
-        {
-          "kind": "sub_call",
-          "league_id": "lg-fixed",
-          "n": 14,
-          "state": "sent",
-        },
-        {
-          "kind": "direct_mail",
-          "league_id": "system",
-          "n": 1,
-          "state": "sent",
-        },
-      ],
-      "sent": [
-        {
-          "from": "Golden Fixed <golden-fixed@mail.notreligue.ca>",
-          "h": "a4ba04cf8a93e0c2",
-          "subject": "Otters, as-tu décidé pour dimanche 15 nov.? / Otters, have you decided for Sunday Nov 15?",
-          "to": "flaky-f002@example.com",
         },
       ],
     },

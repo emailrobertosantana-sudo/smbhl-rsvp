@@ -424,7 +424,7 @@ function valueFor(key, m) {
   if (key === 'trial_not_ending') return m.trialEndsAt && m.billingStatus === 'trial' ? lastDay(m.trialEndsAt) : T('v_noTrial');
   if (key === 'mail_ok') return fill(T('v_failures'), { n: m.mailFailures7 || 0 });
   if (key === 'setup_done') return fill(T('v_players_games'), { p: m.players || 0, g: m.games || 0 });
-  if (key === 'payment_ok') return statusText(m);
+  if (key === 'payment_ok' || key === 'billing_ok') return statusText(m);
   return '';
 }
 function renderSignals(h) {
