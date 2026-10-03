@@ -105,13 +105,13 @@ describe('an account that accepted an older version', () => {
   beforeAll(async () => {
     await env.DB.prepare(`INSERT INTO users (id, email, password_hash, created_at, email_verified_at, last_login_at, session_epoch) VALUES ('u-p202-older', ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL, 0)`)
       .bind(email, await hashPassword('older-version-password')).run();
-    // The terms published before 2026-10-02's second change.
+    // The version before the terms' email limits (2026-10-03).
     await env.DB.prepare('INSERT INTO settings (key, value) VALUES (?, ?)')
-      .bind('terms_acceptance:u-p202-older', JSON.stringify({ at: '2026-10-01T12:00:00.000Z', version: '2026-10-02' })).run();
+      .bind('terms_acceptance:u-p202-older', JSON.stringify({ at: '2026-10-01T12:00:00.000Z', version: '2026-10-02.2' })).run();
   });
 
   it('is asked once to accept the new version, told the texts were updated, then goes on', async () => {
-    expect(LEGAL_VERSION).not.toBe('2026-10-02');
+    expect(LEGAL_VERSION).not.toBe('2026-10-02.2');
     const login = await post('/auth/login', { email, password: 'older-version-password' });
     expect(await login.clone().json()).toMatchObject({ ok: true, termsNeeded: true });
     const s = session(login);

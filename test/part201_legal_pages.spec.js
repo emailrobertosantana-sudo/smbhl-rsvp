@@ -24,10 +24,11 @@ describe('the pages, on the Notre Ligue host', () => {
   beforeAll(() => { env.LEAGUE_PRODUCT = 'true'; });
 
   // The privacy policy changed on 2026-10-02 (support access, section 5),
-  // the terms the same day (the launch-day trial sentence gone).
+  // the terms the same day (the launch-day trial sentence gone), then the
+  // terms on 2026-10-03 (section 7, the email limits).
   for (const [path, fr, en, line, dateFr, dateEn] of [
     ['/confidentialite', 'Notre Ligue : Politique de confidentialité', 'Notre Ligue: Privacy Policy', 'Nous ne vendons aucun renseignement et ne les utilisons pas pour de la publicité.', '2 octobre 2026', 'October 2, 2026'],
-    ['/conditions', "Notre Ligue : Conditions d'utilisation", 'Notre Ligue: Terms of Service', 'Tu peux annuler en tout temps.', '2 octobre 2026', 'October 2, 2026']
+    ['/conditions', "Notre Ligue : Conditions d'utilisation", 'Notre Ligue: Terms of Service', 'Tu peux annuler en tout temps.', '3 octobre 2026', 'October 3, 2026']
   ]) {
     it(`${path}: French, then English, the date, no review note`, async () => {
       const res = await get(path);

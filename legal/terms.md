@@ -1,6 +1,6 @@
 # Notre Ligue : Conditions d'utilisation / Terms of Service
 
-Oct 2, 2026 · @Roberto
+Oct 3, 2026 · @Roberto
 
 ## Version française
 
@@ -47,6 +47,7 @@ Tu acceptes de ne pas :
 - Les forfaits et leurs prix sont publiés sur la page des prix de notreligue.ca. Les prix sont indiqués avant taxes; les taxes applicables s'ajoutent.
 - Le forfait dépend du nombre de joueurs réguliers ayant une adresse courriel. Les remplaçants, les joueurs archivés et les joueurs sans adresse courriel ne comptent pas.
 - Une ligue de moins de 15 joueurs réguliers est gratuite. Chaque compte d'administrateur a droit à une seule ligue gratuite.
+- Une ligue gratuite peut envoyer jusqu'à 25 courriels par jour à ses joueurs et remplaçants; les courriels de plus partent le lendemain. Les ligues abonnées n'ont pas de limite quotidienne. Pour prévenir les erreurs ou les abus, Notre Ligue peut mettre des envois en pause, sans jamais bloquer les avis de facturation ni les courriels de compte.
 
 ### 8. Essai gratuit
 
@@ -158,6 +159,7 @@ You agree not to:
 - Plans and their prices are published on the pricing page at notreligue.ca. Prices are shown before tax; applicable taxes are added.
 - The plan depends on the number of regular players with an email address. Subs, archived players and players without an email address do not count.
 - A league with fewer than 15 regular players is free. Each admin account is entitled to one free league.
+- A free league can send up to 25 emails a day to its players and subs; any extra emails go out the next day. Subscribed leagues have no daily limit. To prevent mistakes or abuse, Notre Ligue may pause sending, without ever blocking billing notices or account emails.
 
 ### 8. Free trial
 
