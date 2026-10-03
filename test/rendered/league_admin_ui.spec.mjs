@@ -300,7 +300,14 @@ describe('Schedule', () => {
   it('Edit matchup changes that one game from the Schedule row, nothing else', async () => {
     const ev = await h.db.prepare("SELECT id FROM events WHERE league_id = ? AND date = '2099-01-05'").bind(league.league.id).first();
     const { page, errors, close } = await open('/league/schedule');
-    await page.click(`[onclick="toggleMatchupEdit('${ev.id}')"]`);
+    // Onboarding review 3a: the row's main action when the game has no
+    // matchup yet, its « … » menu when it has one.
+    if (await page.$(`[onclick="toggleMatchupEdit('${ev.id}')"]`)) {
+      await page.click(`[onclick="toggleMatchupEdit('${ev.id}')"]`);
+    } else {
+      await page.click(`[id="more_${ev.id}"]`);
+      await page.click(`[data-act="matchup"][data-ev="${ev.id}"]`);
+    }
     expect(await page.isVisible(`[id="mx_edit_${ev.id}"]`)).toBe(true);
     await page.selectOption(`[id="mx_home_${ev.id}"]`, 'Bears');
     await page.selectOption(`[id="mx_away_${ev.id}"]`, 'Otters');

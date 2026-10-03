@@ -204,6 +204,8 @@ describe('Part 7 (live-testing task): duplicate event (POST /league/events/dupli
     expect(html).toContain('id="sc_bulk_panel"');
     expect(html).toContain('/league/events/bulk');
     expect(html).toContain('/league/events/duplicate');
-    expect(html).toContain("toggleDuplicateRow('");
+    // Onboarding review 3a: Duplicate is in each game's « … » menu.
+    expect(html).toContain('data-act="duplicate"');
+    expect(html).toContain('function toggleDuplicateRow(');
   });
 });

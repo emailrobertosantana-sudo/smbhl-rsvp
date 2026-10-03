@@ -10842,7 +10842,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       lblStartDate: 'Première date', lblOccurrences: 'Nombre de matchs',
       lblEndDate: 'ou date de fin (facultatif)', bulkCreateSubmit: 'Créer la série',
       duplicateBtn: 'Dupliquer', duplicateConfirmBtn: 'Confirmer',
-      cancelEventBtn: 'Annuler le match', deleteEventBtn: 'Supprimer',
+      cancelEventBtn: 'Annuler le match', deleteEventBtn: 'Supprimer', viewGameBtn: 'Voir le match', moreActions: "Plus d'actions",
       cancelEventConfirm: "Annuler ce match? Les joueurs qui ont dit qu'ils seraient là et ceux qui n'ont pas répondu recevront un courriel.",
       deleteConfirmPlain: 'Supprimer ce match?', deleteConfirmBtn: 'Supprimer définitivement',
       // D3 (forms polish task): a 10h00 start / 00h30 end used to be
@@ -10932,7 +10932,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       lblStartDate: 'First date', lblOccurrences: 'Number of events',
       lblEndDate: 'or end date (optional)', bulkCreateSubmit: 'Create the series',
       duplicateBtn: 'Duplicate', duplicateConfirmBtn: 'Confirm',
-      cancelEventBtn: 'Cancel game', deleteEventBtn: 'Delete',
+      cancelEventBtn: 'Cancel game', deleteEventBtn: 'Delete', viewGameBtn: 'View the game', moreActions: 'More actions',
       cancelEventConfirm: "Cancel this game? Players who said they're in, and those who haven't answered, will get an email.",
       deleteConfirmPlain: 'Delete this game?', deleteConfirmBtn: 'Delete permanently',
       longGameWarning: 'This game would last {d} ({start} to {end}). Continue anyway?',
@@ -10980,7 +10980,22 @@ async function handleLeagueSchedulePage(req, env, url) {
       </a>
       <div class="sc-dup-wrap">
         ${resolveEventMapLink(ev, venueMapLinks) ? `<a class="nl-help" href="${esc(resolveEventMapLink(ev, venueMapLinks))}" target="_blank" rel="noopener" data-i18n="viewOnMap">Voir sur la carte</a>` : ''}
-        ${!needsSeason && showMatchupsPanel && !ev.is_playoff ? `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="${ev.home_team && ev.away_team ? 'editMatchupBtn' : 'setMatchupBtn'}" onclick="toggleMatchupEdit('${esc(ev.id)}')">${ev.home_team && ev.away_team ? "Modifier l'affrontement" : "Choisir l'affrontement"}</button>
+        <!-- Onboarding review 3a: one main action, the rest in a « … » menu,
+             at every width. The main action: choose the matchup when a
+             fixed-teams game has none, otherwise the game itself. -->
+        ${!needsSeason && showMatchupsPanel && !ev.is_playoff && !(ev.home_team && ev.away_team)
+          ? `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm sc-main-act" data-i18n="setMatchupBtn" onclick="toggleMatchupEdit('${esc(ev.id)}')">Choisir l'affrontement</button>`
+          : `<a class="nl-btn nl-btn--secondary nl-btn--sm sc-main-act" href="/league/events/detail?e=${encodeURIComponent(ev.id)}" data-i18n="viewGameBtn">Voir le match</a>`}
+        ${needsSeason ? '' : `<div class="sc-more-wrap">
+          <button type="button" class="nl-btn nl-btn--ghost nl-btn--sm sc-more" id="more_${esc(ev.id)}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu_${esc(ev.id)}" data-i18n-aria="moreActions" aria-label="Plus d'actions" onclick="toggleRowMenu('${esc(ev.id)}')">…</button>
+          <div class="sc-menu" role="menu" id="menu_${esc(ev.id)}" aria-labelledby="more_${esc(ev.id)}" hidden>
+            ${showMatchupsPanel && !ev.is_playoff && ev.home_team && ev.away_team ? `<button type="button" role="menuitem" tabindex="-1" data-act="matchup" data-ev="${esc(ev.id)}" data-i18n="editMatchupBtn" onclick="rowMenuAct(this)">Modifier l'affrontement</button>` : ''}
+            <button type="button" role="menuitem" tabindex="-1" data-act="duplicate" data-ev="${esc(ev.id)}" data-i18n="duplicateBtn" onclick="rowMenuAct(this)">Dupliquer</button>
+            ${ev.state !== 'cancelled' ? `<button type="button" role="menuitem" tabindex="-1" data-act="cancel" data-ev="${esc(ev.id)}" data-i18n="cancelEventBtn" onclick="rowMenuAct(this)">Annuler le match</button>` : ''}
+            <button type="button" role="menuitem" tabindex="-1" data-act="delete" data-ev="${esc(ev.id)}" data-i18n="deleteEventBtn" onclick="rowMenuAct(this)">Supprimer</button>
+          </div>
+        </div>`}
+        ${!needsSeason && showMatchupsPanel && !ev.is_playoff ? `
         <div class="sc-dup-inline sc-mx-edit" id="mx_edit_${esc(ev.id)}" style="display:none;">
           <select class="nl-select" id="mx_home_${esc(ev.id)}" data-i18n-aria="matchupTeam1" aria-label="Équipe 1">${scheduleTeamNames.map(t => `<option value="${esc(t)}"${ev.home_team === t ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>
           <span data-i18n="matchupVsWord">contre</span>
@@ -10988,8 +11003,7 @@ async function handleLeagueSchedulePage(req, env, url) {
           <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" onclick="saveMatchup('${esc(ev.id)}')" data-i18n="matchupSaveBtn">Enregistrer</button>
           <p class="nl-error" id="mx_err_${esc(ev.id)}" style="display:none;margin:0;"></p>
         </div>` : ''}
-        ${needsSeason ? '' : `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="duplicateBtn" onclick="toggleDuplicateRow('${esc(ev.id)}')">Dupliquer</button>
-        <div class="sc-dup-inline" id="dup_${esc(ev.id)}" style="display:none;">
+        ${needsSeason ? '' : `<div class="sc-dup-inline" id="dup_${esc(ev.id)}" style="display:none;">
           <input type="date" class="nl-input" id="dup_date_${esc(ev.id)}">
           <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" onclick="confirmDuplicate('${esc(ev.id)}')" data-i18n="duplicateConfirmBtn">Confirmer</button>
         </div>`}
@@ -11000,8 +11014,6 @@ async function handleLeagueSchedulePage(req, env, url) {
              starts blank and gets its real, current RSVP-loss warning
              (if any) from the route's own first response -- never
              guessed client-side. -->
-        ${ev.state !== 'cancelled' ? `<button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="cancelEventBtn" onclick="cancelEvent('${esc(ev.id)}', this)">Annuler le match</button>` : ''}
-        <button type="button" class="nl-btn nl-btn--secondary nl-btn--sm" data-i18n="deleteEventBtn" onclick="toggleDeleteRow('${esc(ev.id)}')">Supprimer</button>
         <div class="sc-dup-inline" id="del_${esc(ev.id)}" style="display:none;">
           <p class="nl-help" id="del_msg_${esc(ev.id)}" data-i18n="deleteConfirmPlain">Supprimer ce match?</p>
           <button type="button" class="nl-btn nl-btn--primary nl-btn--sm" style="color:var(--danger,#b3122e);border-color:var(--danger,#b3122e);" onclick="confirmDeleteEvent('${esc(ev.id)}')" data-i18n="deleteConfirmBtn">Supprimer définitivement</button>
@@ -11074,6 +11086,23 @@ async function handleLeagueSchedulePage(req, env, url) {
   .nl a.sc-game { flex: 1 1 auto; padding: var(--space-3) var(--space-4); text-decoration: none; color: inherit; }
   .sc-dup-wrap { padding: var(--space-3) var(--space-4) var(--space-3) 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .sc-dup-inline { display: flex; gap: 8px; align-items: center; }
+  /* Onboarding review 3a: the « … » menu of a game's other actions. */
+  .sc-more-wrap { position: relative; }
+  .sc-more { min-width: 44px; font-weight: 700; letter-spacing: .08em; text-decoration: none !important; }
+  .sc-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px; display: flex; flex-direction: column; padding: var(--space-1) 0; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-sheet); }
+  .sc-menu[hidden] { display: none; }
+  .sc-menu.up { top: auto; bottom: calc(100% + 4px); }
+  .sc-menu [role="menuitem"] { display: block; width: 100%; min-height: 44px; padding: var(--space-3) var(--space-4); border: 0; background: none; text-align: left; font: 600 15px/20px var(--font-sans); color: var(--ink); cursor: pointer; }
+  .sc-menu [role="menuitem"]:hover, .sc-menu [role="menuitem"]:focus-visible { background: var(--surface-sunken); }
+  .sc-menu [data-act="delete"] { color: var(--danger); border-top: 1px solid var(--line); }
+  /* On a phone the button can sit anywhere on its line: the menu spans the
+     card under it instead, so it never leaves the screen. */
+  @media (max-width: 600px) {
+    .sc-game-row { position: relative; }
+    .sc-more-wrap { position: static; }
+    .sc-menu { left: var(--space-3); right: var(--space-3); top: calc(100% - var(--space-2)); min-width: 0; }
+    .sc-menu.up { top: auto; bottom: calc(100% - var(--space-2)); }
+  }
   .sc-mx-edit { flex-wrap: wrap; }
   .sc-mx-edit .nl-select { width: auto; min-width: 7em; }
   .sc-dist-table { overflow-x: auto; margin-top: var(--space-3); }
@@ -11916,6 +11945,79 @@ function toggleDeleteRow(eventId) {
   var row = document.getElementById('del_' + eventId);
   if (row) row.style.display = row.style.display === 'none' ? 'flex' : 'none';
 }
+// Onboarding review 3a: each game's other actions in a « … » menu (the
+// menu button pattern: the arrows open it and move through it, Home and
+// End jump, Escape closes it back on its button, Tab or a click outside
+// closes it).
+function rowMenuItems(menu) { return Array.prototype.slice.call(menu.querySelectorAll('[role="menuitem"]')); }
+function closeRowMenus(except) {
+  document.querySelectorAll('.sc-menu').forEach(function(m) {
+    if (m === except || m.hidden) return;
+    m.hidden = true;
+    var b = document.getElementById(m.getAttribute('aria-labelledby'));
+    if (b) b.setAttribute('aria-expanded', 'false');
+  });
+}
+function toggleRowMenu(eventId, focusLast) {
+  var menu = document.getElementById('menu_' + eventId);
+  var btn = document.getElementById('more_' + eventId);
+  if (!menu || !btn) return;
+  var opening = menu.hidden;
+  closeRowMenus(menu);
+  menu.hidden = !opening;
+  btn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+  if (opening) {
+    // All of it in view, above the phone's bottom tab bar.
+    var bar = document.querySelector('.nl-tabbar');
+    var limit = bar && bar.getBoundingClientRect().height ? bar.getBoundingClientRect().top : window.innerHeight;
+    menu.classList.remove('up');
+    var over = menu.getBoundingClientRect().bottom - limit + 8;
+    if (over > 0) window.scrollBy(0, over);
+    // Still no room below (the end of the page): it opens upward.
+    if (menu.getBoundingClientRect().bottom > limit) menu.classList.add('up');
+    var items = rowMenuItems(menu);
+    if (items.length) items[focusLast ? items.length - 1 : 0].focus({ preventScroll: true });
+  }
+}
+function rowMenuAct(item) {
+  var id = item.getAttribute('data-ev');
+  var act = item.getAttribute('data-act');
+  var btn = document.getElementById('more_' + id);
+  closeRowMenus(null);
+  if (act === 'matchup') toggleMatchupEdit(id);
+  else if (act === 'duplicate') toggleDuplicateRow(id);
+  else if (act === 'cancel') { if (btn) btn.focus(); cancelEvent(id, null); }
+  else if (act === 'delete') {
+    toggleDeleteRow(id);
+    var confirmBtn = document.querySelector('#del_' + CSS.escape(id) + ' button');
+    if (confirmBtn) confirmBtn.focus();
+  }
+}
+document.addEventListener('keydown', function(e) {
+  var t = e.target;
+  if (t && t.classList && t.classList.contains('sc-more') && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    e.preventDefault();
+    var openId = t.id.slice(5);
+    var m = document.getElementById('menu_' + openId);
+    if (m && m.hidden) toggleRowMenu(openId, e.key === 'ArrowUp');
+    return;
+  }
+  var menu = t && t.closest ? t.closest('.sc-menu') : null;
+  if (!menu) return;
+  var items = rowMenuItems(menu);
+  var i = items.indexOf(t);
+  var owner = document.getElementById(menu.getAttribute('aria-labelledby'));
+  if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+  else if (e.key === 'Home') { e.preventDefault(); items[0].focus(); }
+  else if (e.key === 'End') { e.preventDefault(); items[items.length - 1].focus(); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeRowMenus(null); if (owner) owner.focus(); }
+  else if (e.key === 'Tab') { closeRowMenus(null); }
+});
+document.addEventListener('click', function(e) {
+  var el = e.target;
+  if (!el || !el.closest || (!el.closest('.sc-menu') && !el.closest('.sc-more'))) closeRowMenus(null);
+});
 // C1: the inline confirm's own message starts as the plain "Delete
 // this game?" text -- if the route's first (unconfirmed) response
 // reports real RSVPs would be lost, this swaps in that exact count

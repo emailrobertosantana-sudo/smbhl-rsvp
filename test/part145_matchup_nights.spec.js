@@ -187,7 +187,8 @@ describe('After generating: the distribution is reported, and one matchup is edi
     // One game, in place: its row has the editor; the others and the time stay as they were.
     const rows = (await env.DB.prepare('SELECT id, home_team, away_team, start_time, end_time, venue FROM events WHERE league_id = ? ORDER BY date, start_time').bind(league.id).all()).results;
     const target = rows[0];
-    expect(html).toContain(`onclick="toggleMatchupEdit('${target.id}')"`);
+    // Onboarding review 3a: a game with a matchup edits it from its « … » menu.
+    expect(html).toContain(`data-act="matchup" data-ev="${target.id}"`);
     const other = rows.find(r => r.home_team !== target.home_team || r.away_team !== target.away_team);
     const newAway = ['Red', 'White', 'Blue'].find(t => t !== target.home_team && t !== target.away_team);
     const res = await (await post(s, '/league/events/matchup', { event_id: target.id, home_team: target.home_team, away_team: newAway })).json();
