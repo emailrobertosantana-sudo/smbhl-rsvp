@@ -55,15 +55,16 @@ describe('B. the share image', () => {
     expect(dv.getUint32(20)).toBe(630);
   });
 
-  it('/, /fr and /en name it, with its size and alt, and a large Twitter card', async () => {
-    for (const path of ['/', '/fr', '/en']) {
+  // Since the homepage polish batch (item 1), /en names its own English
+  // image (test/part230); / and /fr keep the French one.
+  it('/, /fr and /en name their image, with its size, and a large Twitter card', async () => {
+    for (const [path, file] of [['/', 'notre-ligue.png'], ['/fr', 'notre-ligue.png'], ['/en', 'notre-ligue-en.png']]) {
       const html = await (await get(`https://notreligue.ca${path}`)).text();
-      expect(html, path).toContain('<meta property="og:image" content="https://notreligue.ca/share/notre-ligue.png">');
+      expect(html, path).toContain(`<meta property="og:image" content="https://notreligue.ca/share/${file}">`);
       expect(html).toContain('<meta property="og:image:width" content="1200">');
       expect(html).toContain('<meta property="og:image:height" content="630">');
-      expect(html).toContain('<meta property="og:image:alt" content="Notre Ligue">');
       expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
-      expect(html).toContain('<meta name="twitter:image" content="https://notreligue.ca/share/notre-ligue.png">');
+      expect(html).toContain(`<meta name="twitter:image" content="https://notreligue.ca/share/${file}">`);
     }
   });
 

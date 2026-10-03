@@ -15,13 +15,19 @@ import { getSubCallHours, saveSubCallHours, subCallWindowText, SUB_CALL_HOURS_CH
 import { legalRoute, nlLegalEmailWrap, legalLinksPageHtml, legalLinksEmailHtml, LEGAL_I18N } from './legal.js';
 import { TERMS_LABEL, getTermsAcceptance, termsAcceptanceCurrent } from './terms.js';
 import { ARCHIVO_WOFF2 } from './fonts_archivo.js';
-import { SHARE_IMAGE_PATH, SHARE_IMAGE_WIDTH, SHARE_IMAGE_HEIGHT, SHARE_IMAGE_PNG_BASE64 } from './share_image.js';
-// The share image's bytes, decoded once per isolate.
-let shareImageCache = null;
-function shareImageBytes() {
-  if (!shareImageCache) shareImageCache = Uint8Array.from(atob(SHARE_IMAGE_PNG_BASE64), c => c.charCodeAt(0));
-  return shareImageCache;
+import { SHARE_IMAGES, SHARE_IMAGE_WIDTH, SHARE_IMAGE_HEIGHT } from './share_image.js';
+// The share images' bytes, decoded once per isolate, per language.
+const shareImageCache = {};
+function shareImageBytes(lang) {
+  if (!shareImageCache[lang]) shareImageCache[lang] = Uint8Array.from(atob(SHARE_IMAGES[lang].base64), c => c.charCodeAt(0));
+  return shareImageCache[lang];
 }
+// A language's share image: its own when there is one, else the French one.
+function shareImageFor(lang) { return SHARE_IMAGES[lang] || SHARE_IMAGES.fr; }
+const SHARE_IMAGE_ALT = {
+  fr: 'Notre Ligue : tes joueurs répondent sans compte et sans application.',
+  en: 'Notre Ligue: your players answer without an account or an app.'
+};
 // Public pages that answer only on notreligue.ca: rsvp.notreligue.ca sends
 // them there (301), so notreligue.ca is the one canonical address.
 const NL_CANONICAL_HOST_PATHS = new Set(['/', '/fr', '/en', '/confidentialite', '/conditions', '/privacy', '/terms', '/sitemap.xml']);
@@ -661,13 +667,14 @@ function homeHeadHtml(origin, lang, canonicalPath, noindex = false) {
     `<meta property="og:url" content="${esc(canonical)}">`,
     `<meta property="og:locale" content="${locale}">`,
     `<meta property="og:locale:alternate" content="${other}">`,
-    `<meta property="og:image" content="${esc(abs(SHARE_IMAGE_PATH))}">`,
+    `<meta property="og:image" content="${esc(abs(shareImageFor(lang).path))}">`,
     `<meta property="og:image:width" content="${SHARE_IMAGE_WIDTH}">`,
     `<meta property="og:image:height" content="${SHARE_IMAGE_HEIGHT}">`,
-    '<meta property="og:image:alt" content="Notre Ligue">',
+    '<meta property="og:image:type" content="image/png">',
+    `<meta property="og:image:alt" content="${esc(SHARE_IMAGE_ALT[lang] || SHARE_IMAGE_ALT.fr)}">`,
     '<meta name="twitter:card" content="summary_large_image">',
-    `<meta name="twitter:image" content="${esc(abs(SHARE_IMAGE_PATH))}">`,
-    '<meta name="twitter:image:alt" content="Notre Ligue">',
+    `<meta name="twitter:image" content="${esc(abs(shareImageFor(lang).path))}">`,
+    `<meta name="twitter:image:alt" content="${esc(SHARE_IMAGE_ALT[lang] || SHARE_IMAGE_ALT.fr)}">`,
     `<meta name="twitter:title" content="${esc(S.title)}">`,
     `<meta name="twitter:description" content="${esc(S.description)}">`,
     '<script type="application/ld+json">' + JSON.stringify(ld).replace(/</g, '\\u003c') + '</script>'
@@ -33772,9 +33779,12 @@ async function handleFetch(req, env, ctx) {
         if (env.LEAGUE_PRODUCT === 'true')
           return new Response(nlRobotsTxt(url.origin), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
       }
-      // The share image (scripts/build_share_image.mjs), Notre Ligue only.
-      if (url.pathname === SHARE_IMAGE_PATH && (req.method === 'GET' || req.method === 'HEAD') && env.LEAGUE_PRODUCT === 'true')
-        return headAware(req, new Response(shareImageBytes(), { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' } }));
+      // The share images (scripts/build_share_image.mjs), one URL per
+      // language, Notre Ligue only. Cached 30 days: a new image gets a new
+      // file name, since Facebook keeps previews by image URL anyway.
+      const shareLang = Object.keys(SHARE_IMAGES).find(l => SHARE_IMAGES[l].path === url.pathname);
+      if (shareLang && (req.method === 'GET' || req.method === 'HEAD') && env.LEAGUE_PRODUCT === 'true')
+        return headAware(req, new Response(shareImageBytes(shareLang), { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=2592000' } }));
       if (url.pathname === '/sitemap.xml' && req.method === 'GET' && env.LEAGUE_PRODUCT === 'true' && (env.DEMO_ENV !== 'true' || nlIndexableHost(env, url)))
         return new Response(nlSitemapXml(url.origin), { headers: { 'content-type': 'application/xml; charset=utf-8' } });
       if (url.pathname.startsWith('/admin') && url.hostname.endsWith('workers.dev')) {
