@@ -32,6 +32,9 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+// Onboarding review 1d: a league's shortage shows once the game's first ask
+// went out (or inside the sub-call window): the 72-hour reminder, logged.
+const markAsked = id => env.DB.prepare("INSERT OR IGNORE INTO league_reminder_log (event_id, kind, league_id, sent_at, recipient_count) SELECT id, 'reminder_72h', league_id, ?, 0 FROM events WHERE id = ?").bind(new Date().toISOString(), id).run();
 import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part79-dashboard-week-status-secret';
@@ -136,6 +139,7 @@ describe('Part 8 (live-testing task, batch 6): dashboard home shows "current-wee
     await setRsvp(ev.id, p1.player_id, 'Otters', 'in', league.id);
     await setRsvp(ev.id, p2.player_id, 'Otters', 'out', league.id);
     // p3 never responds -- counts as no-response.
+    await markAsked(ev.id);
 
     const html = await fetchDashboard(cookie);
     expect(html).toContain('data-i18n="weekStatusTitle"');
@@ -147,8 +151,8 @@ describe('Part 8 (live-testing task, batch 6): dashboard home shows "current-wee
     expect(confirmedIdx).toBeGreaterThan(-1);
     expect(outIdx).toBeGreaterThan(-1);
     expect(noRespIdx).toBeGreaterThan(-1);
-    // Otters: min_skaters=1 satisfied by p1 alone -- Falcons: p3 hasn't
-    // confirmed, 0 < 1 minimum -- short overall.
+    // Otters: min_skaters=1 satisfied by p1 alone. Falcons: even with p3
+    // (no reply yet) counted in, no goalie for the season's one -- short.
     expect(html).toContain('data-i18n="weekStatusShort"');
   });
 
@@ -187,6 +191,7 @@ describe('Part 8 (live-testing task, batch 6): dashboard home shows "current-wee
     // 'Tous' is HEADCOUNT_TEAM_NAME (league_ids.js) -- the single
     // implicit team every headcount RSVP is written against.
     await setRsvp(ev.id, p1.player_id, 'Tous', 'in', league.id);
+    await markAsked(ev.id);
 
     const html = await fetchDashboard(cookie);
     expect(html).toContain('data-i18n="weekStatusTitle"');

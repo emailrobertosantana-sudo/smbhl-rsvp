@@ -45,13 +45,14 @@ const createEventAt = (s, date) => post(s, '/league/events', withGameTimes({ dat
 const i18n = html => JSON.parse(html.match(/var __I18N = (\{[\s\S]*?\});\n/)[1]);
 
 describe('3. The Schedule page lets you do what you came for, and names the real next step', () => {
-  it('no games yet: no nudge -- the create buttons are the step, and Create an event stays primary', async () => {
+  it('no games yet: no nudge -- the empty state holds the main action, Create an event secondary (onboarding review 1f)', async () => {
     const s = await signup('p142.sched.empty@example.com');
     await post(s, '/leagues/create', { name: 'P142 Sched Empty', teamNames: ['A', 'B'] });
     await post(s, '/league/season/publish', { season_name: 'S1' });
     const html = await page(s, '/league/schedule');
     expect(html).not.toContain('id="sc_next_step"');
-    expect(html).toContain('class="nl-btn nl-btn--primary" onclick="openSchedulePanel()" data-i18n="createEvent"');
+    expect(html).toContain('class="nl-btn nl-btn--secondary" onclick="openSchedulePanel()" data-i18n="createEvent"');
+    expect(html).toContain('id="sc_empty_bulk"');
   });
 
   it('fixed teams with games and no matchups: the next step is Assign matchups, named and explained, and secondary', async () => {

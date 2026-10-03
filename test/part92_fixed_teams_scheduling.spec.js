@@ -700,7 +700,8 @@ describe('Part 3 (schedule-generation redesign task, Group D): assigning matchup
     const html1 = await scheduleHtml(c1);
     expect(html1).toContain('id="sc_matchups_panel"');
     expect(html1).toContain('id="mx_regenerate"');
-    expect(html1).toContain('data-i18n="matchupsGenBtn"');
+    // Onboarding review 1f: its button waits for the first game.
+    expect(html1).not.toContain('data-i18n="matchupsGenBtn"');
     expect(html1).not.toContain('id="sc_playoff_panel"'); // playoffs not configured for this league
 
     const { cookie: c2, csrfToken: t2 } = await signup('p3.uiwd@example.com', '203.0.199.202');

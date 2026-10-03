@@ -5,6 +5,9 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+// Onboarding review 1d: a league's shortage shows once the game's first ask
+// went out (or inside the sub-call window): the 72-hour reminder, logged.
+const markAsked = id => env.DB.prepare("INSERT OR IGNORE INTO league_reminder_log (event_id, kind, league_id, sent_at, recipient_count) SELECT id, 'reminder_72h', league_id, ?, 0 FROM events WHERE id = ?").bind(new Date().toISOString(), id).run();
 import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-part3-event-status-ds-secret';
@@ -50,6 +53,7 @@ describe('Part 3: event status page (design system)', () => {
 
     // No players confirmed yet -- Alpha should show as short, with a
     // real invite button, and zero "in" segments in its SpotMeter.
+    await markAsked(eventId);
     const beforeHtml = await (await SELF.fetch(`http://example.com/league/events/detail?e=${encodeURIComponent(eventId)}`, { headers: { cookie } })).text();
     expect(beforeHtml).toContain('nl-badge nl-badge--short');
     expect(beforeHtml).toContain('nl-meter');

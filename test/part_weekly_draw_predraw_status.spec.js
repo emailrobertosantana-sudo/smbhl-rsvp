@@ -11,6 +11,9 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
+// Onboarding review 1d: a league's shortage shows once the game's first ask
+// went out (or inside the sub-call window): the 72-hour reminder, logged.
+const markAsked = id => env.DB.prepare("INSERT OR IGNORE INTO league_reminder_log (event_id, kind, league_id, sent_at, recipient_count) SELECT id, 'reminder_72h', league_id, ?, 0 FROM events WHERE id = ?").bind(new Date().toISOString(), id).run();
 import { withGameTimes } from './support/game_times.js';
 
 const AUTH_SECRET = 'test-weekly-draw-predraw-secret';
@@ -86,6 +89,7 @@ describe('A1/A2: weekly_draw pre-draw vs post-draw event status and invite targe
     const { cookie, csrfToken } = await signup('predraw.status@example.com', '203.0.140.001');
     const league = await createWeeklyDrawLeague(cookie, csrfToken, 'Predraw Status League');
     const eventId = await createEvent(cookie, csrfToken, '2099-05-01');
+    await markAsked(eventId);
     // 3 confirmed, no draw yet. Pool target: (4 skaters + 1 goalie)/team x 2 teams = 10.
     for (const n of ['Player One', 'Player Two', 'Player Three']) await setIn(cookie, csrfToken, eventId, (await addPlayer(cookie, csrfToken, n)).player_id);
 
@@ -106,6 +110,7 @@ describe('A1/A2: weekly_draw pre-draw vs post-draw event status and invite targe
     const { cookie, csrfToken } = await signup('postdraw.status@example.com', '203.0.140.002');
     const league = await createWeeklyDrawLeague(cookie, csrfToken, 'Postdraw Status League');
     const eventId = await createEvent(cookie, csrfToken, '2099-05-08');
+    await markAsked(eventId);
     for (const n of ['Player Four', 'Player Five', 'Player Six']) await setIn(cookie, csrfToken, eventId, (await addPlayer(cookie, csrfToken, n)).player_id);
 
     await SELF.fetch('http://example.com/league/events/random-assign', {
@@ -191,6 +196,7 @@ describe('A1/A2: weekly_draw pre-draw vs post-draw event status and invite targe
       body: JSON.stringify({ season_name: 'Fixed Unaffected Season' })
     });
     const eventId = await createEvent(cookie, csrfToken, '2099-05-29');
+    await markAsked(eventId);
 
     const html = await detailHtml(cookie, eventId);
     expect(countOccurrences(html, 'data-i18n="poolTitle"')).toBe(0);

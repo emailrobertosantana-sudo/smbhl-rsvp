@@ -228,16 +228,17 @@ describe('Playoff extension, Part 1: onboarding + Settings (fixed-teams only)', 
     await applyRealSchema(env);
   });
 
-  it('a fixed-teams league gets the conditional "playoffs" step, right between "teams" and "reminders", and the flow total becomes 8', async () => {
+  it('a fixed-teams league gets the conditional playoffs section first in the options step (onboarding review 3b), step 7 of 8', async () => {
     const { cookie, csrfToken } = await signup('p1.step@example.com', '203.0.201.001');
     await createLeague(cookie, csrfToken, { name: 'Step League', teamNames: ['A', 'B', 'C', 'D'], tracksStats: true });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const step3 = await onboardingHtml(cookie, 3);
     expect(step3).toContain('id="ob_playoffs_enabled"');
-    // Onboarding batch (2026-10-02): the season screen and the finance step
-    // joined the count (10 for fixed); playoffs is #7.
-    expect(step3).toMatch(/aria-valuenow="7" aria-valuemax="10"|aria-valuemax="10" aria-valuenow="7"/);
+    // Onboarding review 3b: playoffs, reminders and stats are one options
+    // step, #7 of 8 for fixed teams; the playoffs section comes first.
+    expect(step3).toMatch(/aria-valuenow="7" aria-valuemax="8"|aria-valuemax="8" aria-valuenow="7"/);
+    expect(step3.indexOf('id="ob_playoffs_enabled"')).toBeLessThan(step3.indexOf('id="ob_reminder_72h"'));
   });
 
   it('weekly_draw and headcount onboarding never show a playoffs step — their own flow totals (6) are unaffected', async () => {
