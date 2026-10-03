@@ -176,7 +176,11 @@ describe('Stats tracking, Part 1: two independent switches', () => {
     const step4 = await onboardingHtml(cookie, 2); // weekly_draw: roster=1, options=2, finance=3 (onboarding review 3b)
     expect(step4).toContain('id="ob_tracks_results"');
     expect(step4).toContain('id="ob_tracks_player_stats"');
-    expect(step4).toContain('data-i18n="lblTracksResultsDescPickup"');
+    // Stage 2, item 2c: the list above the switch already says the teams
+    // change every game; the switch's own line does not repeat it.
+    expect(step4).toContain('data-i18n="lblTracksResultsDescPickupShort"');
+    const shown = step4.slice(0, step4.indexOf('var __I18N'));
+    expect(shown.split('Les équipes changent à chaque match').length - 1).toBe(1);
 
     const m = step4.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);

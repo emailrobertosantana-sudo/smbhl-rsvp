@@ -3271,6 +3271,9 @@ function buildOnboardingI18n() {
     lblTracksResults: 'Résultats des matchs',
     lblTracksResultsDesc: 'Le pointage de chaque match, et le classement (V-D-N) qui en découle.',
     lblTracksResultsDescPickup: "Le pointage de chaque match, gardé comme historique. Les équipes changent à chaque match, donc pas de classement.",
+    // Stage 2, item 2c: the options step's list above already says the teams
+    // change every game; the switch under it does not say it again.
+    lblTracksResultsDescPickupShort: 'Le pointage de chaque match, gardé comme historique.',
     lblTracksPlayerStats: 'Statistiques des joueurs',
     lblTracksPlayerStatsDesc: 'Buts et passes par joueur, par match.',
     // Playoff extension, Part 1: fixed-teams only. THE MODEL -- séries
@@ -3300,7 +3303,7 @@ function buildOnboardingI18n() {
     financeCostsLabel: 'Tes principales dépenses',
     financeCostsHelp: 'Le montant pour toute la saison.',
     costCategory: 'Catégorie', costDescription: 'Description', costAmount: 'Montant pour la saison', costAdd: 'Ajouter une dépense',
-    catRental: 'Location du lieu (glace, terrain ou gymnase)', catEquipment: 'Équipement', catTechnology: 'Technologie', catOther: 'Autre',
+    catRental: 'Location du lieu (glace, terrain ou gymnase)', catRentalShort: 'Location du lieu', catEquipment: 'Équipement', catTechnology: 'Technologie', catOther: 'Autre',
     // Item 8: what each choice means, as the product does it.
     statsExplainResults: 'Résultats : tu entres le pointage de chaque match, et le classement se calcule tout seul.',
     statsExplainResultsPickup: "Résultats : tu entres le pointage de chaque match. Les équipes changent à chaque match, donc il n'y a pas de classement.",
@@ -3335,6 +3338,7 @@ function buildOnboardingI18n() {
     lblTracksResults: 'Game results',
     lblTracksResultsDesc: "Each game's score, computed into a standings table (W-L-T).",
     lblTracksResultsDescPickup: "Each game's score, kept as history. Teams change every game, so there's no standings table.",
+    lblTracksResultsDescPickupShort: "Each game's score, kept as history.",
     lblTracksPlayerStats: 'Player stats',
     lblTracksPlayerStatsDesc: 'Goals and assists per player, per game.',
     playoffsTitle: 'Are there playoffs?',
@@ -3359,7 +3363,7 @@ function buildOnboardingI18n() {
     financeCostsLabel: 'Your main expenses',
     financeCostsHelp: 'The amount for the whole season.',
     costCategory: 'Category', costDescription: 'Description', costAmount: 'Amount for the season', costAdd: 'Add an expense',
-    catRental: 'Venue rental (ice, field or gym)', catEquipment: 'Equipment', catTechnology: 'Technology', catOther: 'Other',
+    catRental: 'Venue rental (ice, field or gym)', catRentalShort: 'Venue rental', catEquipment: 'Equipment', catTechnology: 'Technology', catOther: 'Other',
     statsExplainResults: "Results: you enter each game's score, and the standings calculate themselves.",
     statsExplainResultsPickup: "Results: you enter each game's score. Teams change every game, so there are no standings.",
     statsExplainPlayers: 'Player stats: goals and assists, entered after the game, with a leaders table on your public page.',
@@ -3794,7 +3798,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
     // for a no-teams league, nor a league whose roster asks for no goalie.
     const hasGoalies = offerResults && leagueGoalies && (Number(leagueRow.min_goalies) > 0 || Number(leagueRow.max_goalies) > 0);
     const resultsKey = teamStructure === 'weekly_draw' ? 'statsExplainResultsPickup' : 'statsExplainResults';
-    const resultsDescKey = teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickup' : 'lblTracksResultsDesc';
+    const resultsDescKey = teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickupShort' : 'lblTracksResultsDesc';
     sections.push(`
   <section class="ob-opt" aria-labelledby="ob_h_stats">
   <h2 id="ob_h_stats" data-i18n="statsTitle">${esc(fr.statsTitle)}</h2>
@@ -3839,7 +3843,7 @@ async function handleOnboardingSeasonPage(req, env, url) {
     const costs = await listSeasonCosts(env.DB, leagueRow.id, currentSeason);
     const perGame = !!(pricing && pricing.pricing_mode === 'per_game');
     const val = k => (pricing && Number(pricing[k]) ? esc(String(pricing[k])) : '');
-    const catKey = { rental: 'catRental', equipment: 'catEquipment', technology: 'catTechnology', other: 'catOther' };
+    const catKey = { rental: 'catRentalShort', equipment: 'catEquipment', technology: 'catTechnology', other: 'catOther' };
     const costRow = (c = {}) => `<div class="ob-cost" data-cost-id="${esc(c.id || '')}" style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-2);padding-top:var(--space-2);border-top:1px solid var(--line);">
       <div class="nl-field" style="grid-column:1 / -1"><label class="nl-label" data-i18n="costCategory">${esc(fr.costCategory)}</label><select class="nl-select ob-cost-cat">${COST_CATEGORIES.map(k => `<option value="${k}" data-i18n="${catKey[k]}"${(c.category || 'rental') === k ? ' selected' : ''}>${esc(fr[catKey[k]])}</option>`).join('')}</select></div>
       <div class="nl-field"><label class="nl-label" data-i18n="costDescription">${esc(fr.costDescription)}</label><input class="nl-input ob-cost-desc" type="text" maxlength="200" value="${esc(c.description || '')}"></div>
@@ -4122,7 +4126,7 @@ async function obSubmit() {
           var amount = row.querySelector('.ob-cost-amount').value.trim();
           if (amount === '') continue;
           var catSel = row.querySelector('.ob-cost-cat');
-          var desc = row.querySelector('.ob-cost-desc').value.trim() || catSel.options[catSel.selectedIndex].text;
+          var desc = row.querySelector('.ob-cost-desc').value.trim() || (catSel.value === 'rental' ? window.__pageDict().catRental : catSel.options[catSel.selectedIndex].text);
           var costBody = { season: OB_SEASON_NAME, category: catSel.value, description: desc, amount: amount };
           if (row.getAttribute('data-cost-id')) costBody.id = row.getAttribute('data-cost-id');
           await obSave('/league/finances/cost', costBody);
@@ -7352,7 +7356,7 @@ async function handleLeagueFinancesPage(req, env, url) {
       lblCustomDue: 'Montant dû (vide : selon les tarifs)', lblAmountPaid: 'Montant payé', lblNotes: 'Notes',
       noPlayers: 'Personne ne doit rien pour cette saison pour le moment.',
       costsTitle: 'Dépenses', lblCategory: 'Catégorie', lblDescription: 'Description', lblAmount: 'Montant', btnAddCost: 'Ajouter', btnDelete: 'Supprimer',
-      catRental: 'Location du lieu (glace, terrain ou gymnase)', catEquipment: 'Équipement', catTechnology: 'Technologie', catOther: 'Autre',
+      catRental: 'Location du lieu (glace, terrain ou gymnase)', catRentalShort: 'Location du lieu', catEquipment: 'Équipement', catTechnology: 'Technologie', catOther: 'Autre',
       noCosts: 'Aucune dépense pour cette saison.', confirmDeleteCost: 'Supprimer cette dépense?',
       manualNote: 'Les paiements se notent à la main (virement, comptant) : aucun paiement en ligne.'
     },
@@ -7375,7 +7379,7 @@ async function handleLeagueFinancesPage(req, env, url) {
       lblCustomDue: 'Amount due (empty: from the pricing)', lblAmountPaid: 'Amount paid', lblNotes: 'Notes',
       noPlayers: 'Nobody owes anything for this season yet.',
       costsTitle: 'Costs', lblCategory: 'Category', lblDescription: 'Description', lblAmount: 'Amount', btnAddCost: 'Add', btnDelete: 'Delete',
-      catRental: 'Venue rental (ice, field or gym)', catEquipment: 'Equipment', catTechnology: 'Technology', catOther: 'Other',
+      catRental: 'Venue rental (ice, field or gym)', catRentalShort: 'Venue rental', catEquipment: 'Equipment', catTechnology: 'Technology', catOther: 'Other',
       noCosts: 'No costs for this season.', confirmDeleteCost: 'Delete this cost?',
       manualNote: 'Payments are recorded by hand (e-transfer, cash): no online payment.'
     }
@@ -7529,7 +7533,7 @@ function render() {
   var cats = { rental: d.catRental, equipment: d.catEquipment, technology: d.catTechnology, other: d.catOther };
   var catSel = document.getElementById('fin-cost-cat');
   var keep = catSel.value;
-  catSel.innerHTML = Object.keys(cats).map(function(k) { return '<option value="' + k + '">' + esc(cats[k]) + '</option>'; }).join('');
+  catSel.innerHTML = Object.keys(cats).map(function(k) { return '<option value="' + k + '">' + esc(k === 'rental' ? d.catRentalShort : cats[k]) + '</option>'; }).join('');
   if (keep) catSel.value = keep;
   document.getElementById('fin-costs').innerHTML = (data.costs || []).length
     ? '<table class="fin-table"><tbody>' + data.costs.map(function(c) {
@@ -9623,7 +9627,9 @@ async function handleLeagueRosterPage(req, env, url) {
       lblEmailCol: 'Courriel', lblPhoneCol: 'Téléphone', bulkStatusCol: 'Statut',
       bulkStatusOk: 'Sera importé', bulkStatusNoName: 'Ignoré : nom manquant ou invalide',
       bulkStatusDupeBatch: 'Ignoré : doublon dans la liste', bulkEmptyErr: 'Colle au moins une ligne.',
-      bulkSummary: '{ok} sur {total} seront importés.',
+      // Stage 2, item 2c: how many will be imported and, for fixed teams,
+      // how many of them without a team (left out at 0).
+      bulkSummary: '{n|# sera importé|# seront importés}{k||, dont # sans équipe|, dont # sans équipe}.',
       importRemTitle: 'Ces matchs enverront des rappels aux joueurs importés dans les 7 prochains jours :',
       importRemSuppress: 'Ne pas envoyer de rappels automatiques pour ces {n} matchs (tu peux les réactiver dans la page de chaque match)',
       importRemSuppressOne: 'Ne pas envoyer de rappels automatiques pour ce match (tu peux les réactiver dans la page du match)',
@@ -9698,7 +9704,7 @@ async function handleLeagueRosterPage(req, env, url) {
       lblEmailCol: 'Email', lblPhoneCol: 'Phone', bulkStatusCol: 'Status',
       bulkStatusOk: 'Will be imported', bulkStatusNoName: 'Skipped: missing or invalid name',
       bulkStatusDupeBatch: 'Skipped: duplicate in list', bulkEmptyErr: 'Paste at least one line.',
-      bulkSummary: '{ok} of {total} will be imported.',
+      bulkSummary: '{n|# will be imported|# will be imported}{k||, # of them without a team|, # of them without a team}.',
       importRemTitle: 'These games will send reminders to the imported players within the next 7 days:',
       importRemSuppress: "Don't send automatic reminders for these {n} games (you can turn them back on from each game's page)",
       importRemSuppressOne: "Don't send automatic reminders for this game (you can turn them back on from the game's page)",
@@ -10315,7 +10321,7 @@ function bulkPreview() {
   var rows = parseBulkText(document.getElementById('ro_bulk_text').value);
   if (!rows.length) { errEl.textContent = dict.bulkEmptyErr; errEl.style.display = 'block'; return; }
   var seen = {};
-  var okCount = 0;
+  var okCount = 0, teamlessCount = 0;
   BULK_ROWS = [];
   var tbody = document.getElementById('ro_bulk_tbody');
   tbody.innerHTML = '';
@@ -10328,7 +10334,7 @@ function bulkPreview() {
     var status = 'ok';
     if (!r.name || r.name.split(' ').filter(Boolean).length < 2) { status = 'noname'; }
     else if (r.email && seen[r.email.toLowerCase()]) { status = 'dupe'; }
-    if (status === 'ok') { okCount++; if (r.email) seen[r.email.toLowerCase()] = true; BULK_ROWS.push(r); }
+    if (status === 'ok') { okCount++; if (r.email) seen[r.email.toLowerCase()] = true; BULK_ROWS.push(r); if (ROSTER_TEAM_SHAPED && !(r.team && namesTeam(r.team))) teamlessCount++; }
     var statusText = status === 'ok' ? dict.bulkStatusOk : status === 'noname' ? dict.bulkStatusNoName : dict.bulkStatusDupeBatch;
     var tr = document.createElement('tr');
     tr.appendChild(bulkTableCell(r.name || '–'));
@@ -10350,7 +10356,7 @@ function bulkPreview() {
     tr.appendChild(bulkTableCell(statusText, status !== 'ok' ? 'ro-bulk-skip' : ''));
     tbody.appendChild(tr);
   });
-  document.getElementById('ro_bulk_summary').textContent = dict.bulkSummary.split('{ok}').join(String(okCount)).split('{total}').join(String(rows.length));
+  document.getElementById('ro_bulk_summary').textContent = window.__pluralText(dict.bulkSummary, { n: okCount, k: teamlessCount });
   document.getElementById('ro_bulk_preview').style.display = 'flex';
   document.getElementById('ro_bulk_confirm').disabled = okCount === 0;
   renderImportReminderNotice(okCount);
@@ -10890,7 +10896,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       remBulkSuppressOne: 'Ne pas envoyer de rappels automatiques pour ce match seulement (les autres gardent les leurs)',
       noEvents: "Aucun match pour l'instant.",
       emptySchedule: 'Commence par créer les matchs de ta saison : un par semaine, même heure et même lieu.',
-      stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
+      stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé', statePlayed: 'Joué',
        noEndTag: 'Heure de fin à ajouter', noEndNoticeTitle: "Des matchs n'ont pas d'heure de fin",
       needsSeasonTitle: "Lance ta saison d'abord",
       needsSeasonBody: "Il te faut une saison active avant de pouvoir créer des matchs.",
@@ -10985,7 +10991,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       remBulkSuppressOne: "Don't send automatic reminders for this game only (the others keep theirs)",
       noEvents: 'No events yet.',
       emptySchedule: "Start by creating your season's games: one a week, same time and place.",
-      stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled',
+      stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled', statePlayed: 'Played',
        noEndTag: 'End time needed', noEndNoticeTitle: 'Some games have no end time',
       needsSeasonTitle: 'Start your season first',
       needsSeasonBody: 'You need an active season before you can create events.',
@@ -11033,6 +11039,11 @@ async function handleLeagueSchedulePage(req, env, url) {
 
   const STATE_KEY = { open: 'stateOpen', closed: 'stateClosed', cancelled: 'stateCancelled' };
   const STATE_BADGE_TONE = { open: 'pending', closed: 'sub', cancelled: 'out' };
+  // Stage 2, item 2c: a Notre Ligue game is never closed (only SMBHL's
+  // admin closes games), so a game already played kept « Ouvert » for good.
+  // Past and not cancelled: « Joué », as the public page says.
+  const badgeKey = ev => (ev.date < scheduleToday && ev.state !== 'cancelled' ? 'statePlayed' : STATE_KEY[ev.state]);
+  const badgeTone = ev => (ev.date < scheduleToday && ev.state !== 'cancelled' ? 'in' : STATE_BADGE_TONE[ev.state]);
 
   const { header, tabbar } = dashChrome(leagueRow.name, 'schedule', await adminLeagueMenu(env, session, leagueId));
 
@@ -11046,7 +11057,7 @@ async function handleLeagueSchedulePage(req, env, url) {
         <div class="sc-main-col">
           ${ev.is_playoff ? playoffLabelSpanHtml('div', (() => { try { return JSON.parse(ev.playoff_meta || 'null') || {}; } catch (_) { return {}; } })(), lang, 'class="sc-matchup"') : (ev.home_team && ev.away_team ? `<div class="sc-matchup">${esc(ev.home_team)} <span class="sc-vs" data-i18n="matchupVsWord">contre</span> ${esc(ev.away_team)}</div>` : '')}
         </div>
-        <span class="nl-badge nl-badge--${STATE_BADGE_TONE[ev.state] || 'pending'}" data-i18n="${STATE_KEY[ev.state] || ''}">${esc((STATE_KEY[ev.state] && I18N_SCHEDULE.fr[STATE_KEY[ev.state]]) || ev.state)}</span>
+        <span class="nl-badge nl-badge--${badgeTone(ev) || 'pending'}" data-i18n="${badgeKey(ev) || ''}">${esc((badgeKey(ev) && I18N_SCHEDULE.fr[badgeKey(ev)]) || ev.state)}</span>
         <span class="sc-chevron">&rsaquo;</span>
       </a>
       <div class="sc-dup-wrap">
