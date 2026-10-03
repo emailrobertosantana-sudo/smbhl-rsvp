@@ -2433,7 +2433,42 @@ const DASH_ICON_COMMS = '<svg viewBox="0 0 20 20" fill="none" stroke="currentCol
 // per-key French fallback label lookup used to be a nested ternary
 // (fine for 3 keys, unreadable for 4+), switched to a plain map.
 const DASH_NAV_LABEL_FR = { navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Paramètres' };
-function dashChrome(leagueName, active) {
+// Stage 2, item 2a: the league menu in the admin header. An admin of several
+// leagues sees the current league's name as a menu listing the leagues they
+// run; picking one opens its dashboard through /dashboard?league_id= (the
+// switch the dashboard's own league picker uses), which makes it the current
+// league (the nl_league cookie) for every page after. One league: just the
+// name, as before. Notre Ligue only, never in support mode (one league there);
+// SMBHL's pages are unchanged.
+async function adminLeagueMenu(env, session, currentId) {
+  if (!session || !currentId || env.SUPPORT_MODE || env.LEAGUE_PRODUCT !== 'true') return null;
+  const leagues = ((await env.DB.prepare(
+    `SELECT l.id, l.name FROM league_admins la JOIN leagues l ON l.id = la.league_id
+      WHERE la.user_id = ? AND l.deactivated_at IS NULL ORDER BY l.created_at`
+  ).bind(session.userId).all()).results || []);
+  if (!leagues.some(l => l.id !== currentId)) return null;
+  return { leagues, currentId };
+}
+
+const DASH_ICON_CARET = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 8l5 5 5-5"/></svg>';
+
+// The header's brand: the league's name, or (item 2a) the league menu. A
+// <details> needs no script: the menu opens and closes on its own.
+function dashBrandHtml(leagueName, menu) {
+  if (!menu) {
+    return `<span class="nl-brand" style="max-width:280px" title="${esc(leagueName)}">${esc(leagueName)}</span>`;
+  }
+  const items = menu.leagues.map(l => `<li><a href="/dashboard?league_id=${encodeURIComponent(l.id)}"${l.id === menu.currentId ? ' aria-current="true"' : ''}>${l.id === menu.currentId ? DASH_ICON_CHECK : '<span class="nl-lm-pad"></span>'}<span>${esc(l.name)}</span></a></li>`).join('');
+  return `<details class="nl-lm" id="nl_league_menu">
+    <summary class="nl-brand" title="${esc(leagueName)}"><span class="nl-lm-name">${esc(leagueName)}</span>${DASH_ICON_CARET}</summary>
+    <div class="nl-lm-panel">
+      <p class="nl-lm-head" data-date-fr="Changer de ligue" data-date-en="Switch league">Changer de ligue</p>
+      <ul>${items}</ul>
+    </div>
+  </details>`;
+}
+
+function dashChrome(leagueName, active, menu = null) {
   const nav = [
     { key: 'home', href: '/dashboard', icon: DASH_ICON_HOME, i18n: 'navHome' },
     { key: 'roster', href: '/league/roster', icon: DASH_ICON_PLAYERS, i18n: 'navRoster' },
@@ -2450,7 +2485,7 @@ function dashChrome(leagueName, active) {
        <span> with visible, truncated text) -- decided against a
        separate short-name field, which would be new config to
        maintain for a purely cosmetic nav-width problem. -->
-  <span class="nl-brand" style="max-width:280px" title="${esc(leagueName)}">${esc(leagueName)}</span>
+  ${dashBrandHtml(leagueName, menu)}
   <nav class="nl-nav">${nav.map(n => `<a href="${n.href}"${n.key === active ? ' aria-current="page"' : ''} data-i18n="${n.i18n}">${esc(DASH_NAV_LABEL_FR[n.i18n])}</a>`).join('')}</nav>
   <div class="spacer"></div>
   <div class="nl-lang" role="group" aria-label="Langue / Language">
@@ -2510,6 +2545,21 @@ function dashStyles() {
      had no effect and the label/description ran together. */
   .su-structure-opt .d { font-size: 13px; color: var(--ink-muted); margin-top: 2px; display: block; }
   .su-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+  /* Item 2a: the league menu in the header. */
+  .nl-lm { position: relative; min-width: 0; max-width: 280px; flex: 0 1 auto; }
+  .nl-lm > summary { display: flex; align-items: center; gap: 4px; cursor: pointer; list-style: none; min-height: 44px; }
+  .nl-lm > summary::-webkit-details-marker { display: none; }
+  .nl-lm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .nl-lm > summary svg { width: 16px; height: 16px; flex: none; }
+  .nl-lm[open] > summary svg { transform: rotate(180deg); }
+  .nl-lm-panel { position: absolute; top: 100%; left: 0; z-index: 60; min-width: 240px; max-width: calc(100vw - 32px); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0,0,0,.16); padding: var(--space-2) 0; }
+  .nl-lm-head { font: 600 12px/16px var(--font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-muted); padding: 6px var(--space-4); margin: 0; }
+  .nl-lm-panel ul { list-style: none; margin: 0; padding: 0; }
+  .nl-lm-panel a { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; padding: 0 var(--space-4); color: var(--ink); text-decoration: none; font: 500 15px/20px var(--font-sans); }
+  .nl-lm-panel a span:last-child { overflow-wrap: anywhere; }
+  .nl-lm-panel a:hover, .nl-lm-panel a:focus-visible { background: var(--primary-tint); }
+  .nl-lm-panel a[aria-current] { font-weight: 700; }
+  .nl-lm-panel a svg, .nl-lm-pad { width: 16px; height: 16px; flex: none; color: var(--primary); }
   @media (min-width: 640px) { .nl-tabbar { display: none; } }
   @media (max-width: 639px) { .nl-nav { display: none; } .dash-main { padding-bottom: 76px; } .dash-grid { grid-template-columns: 1fr; } }
 </style>`;
@@ -2614,7 +2664,7 @@ async function handleDashboardPage(req, env, url) {
     // "not yet eligible" advance notice on Settings) is only ever
     // visible while a league is still active, and this one only once
     // it's deactivated -- never both at once for the same league.
-    const { header } = dashChrome(leagueRow.name, 'home');
+    const { header } = dashChrome(leagueRow.name, 'home', await adminLeagueMenu(env, session, leagueRow.id));
     bodyHtml = `${dashStyles()}${header}
 <main class="dash-main">
   <h1>${esc(leagueRow.name)}</h1>
@@ -2637,7 +2687,7 @@ async function handleDashboardPage(req, env, url) {
   <button type="button" class="nl-btn nl-btn--ghost" id="logoutBtn" data-i18n="logout" onclick="doLogout()">Se déconnecter</button>
 </main>`;
   } else {
-    const { header, tabbar } = dashChrome(leagueRow.name, 'home');
+    const { header, tabbar } = dashChrome(leagueRow.name, 'home', await adminLeagueMenu(env, session, leagueRow.id));
     const needsSeason = !currentSeason;
     // Onboarding batch: an admin of several leagues picks the one shown
     // (the same ?league_id= a league's alert email links to, which makes it
@@ -6164,7 +6214,7 @@ async function handleLeagueCommsPage(req, env, url) {
   if (access !== 'ok') return Response.redirect(url.origin + '/dashboard', 302);
 
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
-  const { header, tabbar } = dashChrome(leagueRow.name, 'comms');
+  const { header, tabbar } = dashChrome(leagueRow.name, 'comms', await adminLeagueMenu(env, session, leagueId));
 
   const I18N_COMMS = {
     fr: {
@@ -7112,7 +7162,7 @@ async function handleLeagueBillingPage(req, env, url) {
   const view = await billingView(env, ctx.leagueId);
   const leagueRow = view.league;
   const t = I18N_BILLING[lang] || I18N_BILLING.fr;
-  const { header, tabbar } = dashChrome(leagueRow.name, 'settings');
+  const { header, tabbar } = dashChrome(leagueRow.name, 'settings', await adminLeagueMenu(env, ctx.session, ctx.leagueId));
   const L = billingLines(view);
   const row = view.row || {};
   const k = key => `data-i18n="${key}">${esc(t[key])}`;
@@ -7261,7 +7311,7 @@ async function handleLeagueFinancesPage(req, env, url) {
   const access = await checkLeagueAccess(req, env, leagueId);
   if (access !== 'ok' || leagueId === SMBHL_LEAGUE_ID) return Response.redirect(url.origin + '/dashboard', 302);
   const leagueRow = await env.DB.prepare('SELECT name FROM leagues WHERE id = ?').bind(leagueId).first();
-  const { header, tabbar } = dashChrome(leagueRow.name, 'finances');
+  const { header, tabbar } = dashChrome(leagueRow.name, 'finances', await adminLeagueMenu(env, session, leagueId));
   // Onboarding batch 2, item 2b: no goalie fees for a league with no goalies.
   const finGoalies = await leagueHasGoalies(env, leagueId);
 
@@ -7633,7 +7683,7 @@ async function handleLeagueSettingsPage(req, env, url) {
   // its own comment in leagues.js).
   const venues = await getLeagueVenues(env, leagueId);
 
-  const { header, tabbar } = dashChrome(leagueRow.name, 'settings');
+  const { header, tabbar } = dashChrome(leagueRow.name, 'settings', await adminLeagueMenu(env, session, leagueId));
 
   const I18N_SETTINGS = {
     fr: {
@@ -9643,7 +9693,7 @@ async function handleLeagueRosterPage(req, env, url) {
     }
   };
 
-  const { header, tabbar } = dashChrome(leagueRow.name, 'roster');
+  const { header, tabbar } = dashChrome(leagueRow.name, 'roster', await adminLeagueMenu(env, session, leagueId));
 
   const filterPills = [
     `<button type="button" class="ro-f" data-filter="all" aria-pressed="true"><span data-i18n="filterAll">Tous</span> ${contacts.length}</button>`,
@@ -10967,7 +11017,7 @@ async function handleLeagueSchedulePage(req, env, url) {
   const STATE_KEY = { open: 'stateOpen', closed: 'stateClosed', cancelled: 'stateCancelled' };
   const STATE_BADGE_TONE = { open: 'pending', closed: 'sub', cancelled: 'out' };
 
-  const { header, tabbar } = dashChrome(leagueRow.name, 'schedule');
+  const { header, tabbar } = dashChrome(leagueRow.name, 'schedule', await adminLeagueMenu(env, session, leagueId));
 
   const rowsHtml = events.length
     ? events.map(ev => `<div class="nl-card sc-game-row">
@@ -12167,7 +12217,7 @@ async function handleLeagueEventDetailPage(req, env, url, forcedLeagueId = null)
   // real requirement instead of just the per-event column.
   const leagueRemindersArmed = !!(leagueRow.reminder_72h_enabled || leagueRow.reminder_24h_enabled || leagueRow.reminder_12h_enabled);
 
-  const { header, tabbar } = dashChrome(leagueRow.name, 'schedule');
+  const { header, tabbar } = dashChrome(leagueRow.name, 'schedule', await adminLeagueMenu(env, session, leagueId));
 
   if (!ev) {
     const I18N_404 = {
