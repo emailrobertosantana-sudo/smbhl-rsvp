@@ -68,26 +68,26 @@ describe('sign-up', () => {
 });
 
 describe('the season screen and the step count', () => {
-  it('no season yet: the wizard asks for it, counted (4 of 10 fixed, 3 of 7 otherwise)', async () => {
+  it('no season yet: the wizard asks for it, counted (4 of 8 fixed, 3 of 6 otherwise)', async () => {
     const fixed = await league('p222.fixed@example.com', { teamNames: ['A', 'B'] });
     const page = await html(fixed.s, '/onboarding/season?lang=fr');
     expect(page).toContain('id="ob_season_name"');
-    expect(page).toContain('Étape 4 sur 10');
+    expect(page).toContain('Étape 4 sur 8');
     expect(page).toContain('"seasonTitle":"Start your first season"');
     const drop = await league('p222.drop@example.com', { teamStructure: 'headcount' });
-    expect(await html(drop.s, '/onboarding/season')).toContain('Étape 3 sur 7');
+    expect(await html(drop.s, '/onboarding/season')).toContain('Étape 3 sur 6');
     // Sign-up's own step 3 counts to the same total.
-    expect(await html((await signup('p222.step3@example.com')), '/signup?step=3')).toContain('Étape 3 sur 10');
+    expect(await html((await signup('p222.step3@example.com')), '/signup?step=3')).toContain('Étape 3 sur 8');
   });
 
-  it('the steps after it: roster first, finance last (10 of 10), each with a way back but the first', async () => {
+  it('the steps after it: roster first, finance last (8 of 8), each with a way back (review 1e: the first too, to the season screen)', async () => {
     const { s } = await league('p222.steps@example.com', { teamNames: ['A', 'B'] });
     await post(s, '/league/season/publish', { season_name: 'S1' });
     const first = await html(s, '/onboarding/season?step=1');
-    expect(first).toContain('Étape 5 sur 10');
-    expect(first).not.toContain('id="ob_back"');
-    const fin = await html(s, '/onboarding/season?step=6');
-    expect(fin).toContain('Étape 10 sur 10');
+    expect(first).toContain('Étape 5 sur 8');
+    expect(first).toContain(`onclick="location.href='/onboarding/season?step=season'"`);
+    const fin = await html(s, '/onboarding/season?step=4');
+    expect(fin).toContain('Étape 8 sur 8');
     // Item 5: tracking the money is the norm, "Oui" chosen by default.
     expect(fin).toContain("Veux-tu suivre l&#39;argent de ta ligue?");
     expect(fin).toContain('"financeTitle":"Do you want to track your league\'s money?"');
@@ -98,17 +98,17 @@ describe('the season screen and the step count', () => {
     expect(fin).toContain('"financeCostsLabel":"Your main expenses"');
     expect(fin).toContain('data-i18n="skipFinance" onclick="return obSkip()">Passer cette étape<');
     expect(fin).toContain('Tu pourras tout changer plus tard dans la page Finances.');
-    expect(fin).toContain(`onclick="location.href='/onboarding/season?step=5'"`);
+    expect(fin).toContain(`onclick="location.href='/onboarding/season?step=3'"`);
     expect(fin).toContain('href="/onboarding/season?step=summary"');
   });
 });
 
-describe('the stats step explains each choice (item 8)', () => {
+describe('the stats section of the options step explains each choice (item 8, review 3b)', () => {
   it('fixed with goalies: results, player stats, goalie stats, and where they are entered', async () => {
     const { s } = await league('p222.stats@example.com', { teamNames: ['A', 'B'] });
     await post(s, '/league/season/publish', { season_name: 'S1' });
     await post(s, '/league/settings/structure', { min_goalies: 1 });
-    const page = await html(s, '/onboarding/season?step=5');
+    const page = await html(s, '/onboarding/season?step=3');
     expect(page).toContain('Résultats : tu entres le pointage de chaque match, et le classement se calcule tout seul.');
     expect(page).toContain('Statistiques des joueurs : buts et passes, entrés après le match, avec un tableau des meneurs sur ta page publique.');
     expect(page).toContain('data-i18n="statsExplainGoalies"');
@@ -118,12 +118,12 @@ describe('the stats step explains each choice (item 8)', () => {
   it('pickup: no standings promised; no teams: no results, no goalie line', async () => {
     const pick = await league('p222.statspick@example.com', { teamStructure: 'weekly_draw', teamNames: ['A', 'B'] });
     await post(pick.s, '/league/season/publish', { season_name: 'S1' });
-    const p = await html(pick.s, '/onboarding/season?step=3');
+    const p = await html(pick.s, '/onboarding/season?step=2');
     expect(p).toContain('data-i18n="statsExplainResultsPickup"');
     expect(p).not.toContain('data-i18n="statsExplainResults"');
     const none = await league('p222.statsnone@example.com', { teamStructure: 'headcount' });
     await post(none.s, '/league/season/publish', { season_name: 'S1' });
-    const n = await html(none.s, '/onboarding/season?step=3');
+    const n = await html(none.s, '/onboarding/season?step=2');
     expect(n).not.toContain('data-i18n="statsExplainResults');
     expect(n).not.toContain('data-i18n="statsExplainGoalies"');
     expect(n).toContain('data-i18n="statsExplainPlayers"');
@@ -137,10 +137,10 @@ describe('left half-way and back', () => {
     expect((await post(s, '/league/onboarding/step', { step: 'season', action: 'done' })).status).toBe(200);
     expect((await post(s, '/league/onboarding/step', { step: 'roster', action: 'done' })).status).toBe(200);
     expect((await post(s, '/league/onboarding/step', { step: 'teams', action: 'skip' })).status).toBe(200);
-    expect(await html(s, '/onboarding/season')).toContain('var OB_STEP = "playoffs"');
+    expect(await html(s, '/onboarding/season')).toContain('var OB_STEP = "options"');
     const dash = await html(s, '/dashboard');
     expect(dash).toContain('href="/onboarding/season?step=3" data-i18n="nsFinishSetup"');
-    for (const step of ['playoffs', 'reminders', 'stats', 'finance']) await post(s, '/league/onboarding/step', { step, action: 'done' });
+    for (const step of ['options', 'finance']) await post(s, '/league/onboarding/step', { step, action: 'done' });
     expect(await html(s, '/dashboard')).not.toContain('data-i18n="nsFinishSetup"');
     // Every step seen: back to the summary.
     expect(await html(s, '/onboarding/season')).toContain('id="ob_summary"');

@@ -20,7 +20,8 @@ async function open(cookie) {
   await page.route('**/*', r => (r.request().url().startsWith(h.baseUrl) ? r.continue() : r.abort()));
   return { context, page, errors };
 }
-// A fixed-teams league with its season: the finance step is step 6.
+// A fixed-teams league with its season: the finance step is step 4
+// (onboarding review 3b: roster, teams, options, finance).
 async function leagueAtFinance(email) {
   const s = await h.signup(email);
   const league = (await (await h.api('/leagues/create', { ...s, body: { name: `Ligue ${email}`, teamNames: ['A', 'B'] } })).json()).league;
@@ -34,7 +35,7 @@ describe('the finance step', () => {
   it('yes: the season fees and the Interac details are saved, then the summary', async () => {
     const { s, league } = await leagueAtFinance('fin.yes@example.com');
     const { context, page, errors } = await open(s.cookie);
-    await page.goto(h.baseUrl + '/onboarding/season?step=6');
+    await page.goto(h.baseUrl + '/onboarding/season?step=4');
     // Item 5: "Oui" is chosen from the start; "Non, pas pour l'instant" hides the parts.
     expect(await page.isChecked('#ob_finance_yes')).toBe(true);
     expect(await page.isVisible('#ob_finance_detail')).toBe(true);
@@ -71,7 +72,7 @@ describe('the finance step', () => {
   it('per game for everyone: the season fee fields are hidden and not saved', async () => {
     const { s, league } = await leagueAtFinance('fin.pergame@example.com');
     const { context, page } = await open(s.cookie);
-    await page.goto(h.baseUrl + '/onboarding/season?step=6');
+    await page.goto(h.baseUrl + '/onboarding/season?step=4');
     await page.check('#ob_finance_yes');
     await page.check('input[name="ob_fin_mode"][value="per_game"]');
     expect(await page.isVisible('#ob_price_player')).toBe(false);
@@ -87,7 +88,7 @@ describe('the finance step', () => {
   it('no: nothing is saved, the step counts as answered', async () => {
     const { s, league } = await leagueAtFinance('fin.no@example.com');
     const { context, page } = await open(s.cookie);
-    await page.goto(h.baseUrl + '/onboarding/season?step=6');
+    await page.goto(h.baseUrl + '/onboarding/season?step=4');
     await page.fill('#ob_costs .ob-cost-amount', '500');
     await page.check('#ob_finance_no');
     await Promise.all([page.waitForURL(/step=summary/), page.click('#ob_submit')]);
@@ -101,28 +102,28 @@ describe('the finance step', () => {
   it('skip: nothing is saved, remembered as skipped, and it never nags on the dashboard', async () => {
     const { s, league } = await leagueAtFinance('fin.skip@example.com');
     const { context, page } = await open(s.cookie);
-    await page.goto(h.baseUrl + '/onboarding/season?step=6');
+    await page.goto(h.baseUrl + '/onboarding/season?step=4');
     await page.check('#ob_finance_yes');
     await page.fill('#ob_price_player', '99');
     await Promise.all([page.waitForURL(/step=summary/), page.click('#ob_skip')]);
     expect(await pricingRow(league.id)).toBeNull();
     expect(JSON.parse((await setting(`onboarding_skipped:${league.id}`)).value)).toContain('finance');
     await page.goto(h.baseUrl + '/dashboard');
-    expect(await page.content()).not.toContain('step=6');
+    expect(await page.content()).not.toContain('step=4');
     await context.close();
   }, 60000);
 
   it('a bad Interac email or number: the message, nothing saved, still on the step', async () => {
     const { s, league } = await leagueAtFinance('fin.bad@example.com');
     const { context, page } = await open(s.cookie);
-    await page.goto(h.baseUrl + '/onboarding/season?step=6');
+    await page.goto(h.baseUrl + '/onboarding/season?step=4');
     await page.check('#ob_finance_yes');
     await page.fill('#ob_price_player', '120');
     await page.fill('#ob_pay_email', 'pas-un-courriel');
     await page.click('#ob_submit');
     await page.waitForSelector('#formErr', { state: 'visible' });
     expect(await page.textContent('#formErr')).toBe('Entre une adresse courriel valide.');
-    expect(page.url()).toContain('step=6');
+    expect(page.url()).toContain('step=4');
     await page.fill('#ob_pay_email', '');
     await page.fill('#ob_pay_phone', '123');
     await page.click('#ob_submit');
@@ -168,7 +169,8 @@ describe('the import team column (onboarding batch 2, item 3)', () => {
       'Dee Plain, dee.ui@example.com'
     ]);
     expect(r.teamTh).toBe(true);
-    expect(r.preview.map(row => [row[0], row[3]])).toEqual([['Ann Rouge', 'rouge'], ['Ben Ecureuil', 'ECUREUILS'], ['Cal Nowhere', 'Aigles'], ['Dee Plain', '–']]);
+    // Onboarding review 1b: a team matching none of the league's is marked before importing.
+    expect(r.preview.map(row => [row[0], row[3]])).toEqual([['Ann Rouge', 'rouge'], ['Ben Ecureuil', 'ECUREUILS'], ['Cal Nowhere', 'AiglesAucune équipe de ce nom'], ['Dee Plain', '–']]);
     expect(r.note.visible).toBe(true);
     expect(r.note.text).toBe("Ajoutés sans équipe, car l'équipe inscrite ne correspond à aucune équipe de ta ligue :");
     expect(r.note.list).toEqual(['Cal Nowhere (Aigles)']);
@@ -198,13 +200,19 @@ describe('S5: an owner creating a second league under 15 when the free slot is t
     await page.goto(h.baseUrl + '/dashboard');
     await Promise.all([page.waitForURL(/signup\?step=2/), page.click('#dash_new_league')]);
     await page.fill('#su_league_name', 'Deuxième ligue');
+    // Onboarding review 1e: step 2's total follows the structure picked.
+    expect(await page.textContent('#su_flow_label')).toBe('Étape 2 sur 8');
     await page.click('label[data-label="drop_in"]');
+    expect(await page.textContent('#su_flow_label')).toBe('Étape 2 sur 6');
+    expect(await page.getAttribute('#su_flow_prog .nl-steps', 'aria-valuemax')).toBe('6');
     await Promise.all([page.waitForURL(/step=done/), page.click('#su_submit')]);
+    // Onboarding review 1a: the done heading has its own line height, so two lines never touch.
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('.su-done h1')).lineHeight)).toBe('34px');
     await Promise.all([page.waitForURL(/onboarding\/season/), page.click('[data-i18n="startMySeason"]')]);
-    expect(await page.textContent('.overline')).toBe('Étape 3 sur 7');
+    expect(await page.textContent('.overline')).toBe('Étape 3 sur 6');
     await page.fill('#ob_season_name', 'Automne 2026');
     await Promise.all([page.waitForURL(/step=1/), page.click('#ob_submit')]);
-    for (let i = 0; i < 4; i++) { const u = page.url(); await Promise.all([page.waitForURL(x => x.toString() !== u), page.click('#ob_submit')]); }
+    for (let i = 0; i < 3; i++) { const u = page.url(); await Promise.all([page.waitForURL(x => x.toString() !== u), page.click('#ob_submit')]); }
     expect(page.url()).toContain('step=summary');
     const summary = await page.textContent('#ob_summary');
     expect(summary).toContain('Cette ligue demande un forfait.');

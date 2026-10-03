@@ -90,8 +90,11 @@ describe('A shortage is measured against the season minimum, on every surface', 
   });
 
   it('6 in: "Manque" counts what is missing to the minimum, not to the maximum', async () => {
-    const { a, ev, cs } = await tester1('p174short');
+    const { a, lg, ev, cs } = await tester1('p174short');
     for (const n of ['Mia', 'Olivia']) await must(a.post('/league/rsvp/admin', { event_id: ev.id, player_id: cs[n].player_id, status: 'out' }), n);
+    // Onboarding review 1d: a shortage shows once the game's first ask went
+    // out (or inside the sub-call window); this game is 20 days away.
+    await env.DB.prepare(`INSERT INTO league_reminder_log (event_id, kind, league_id, sent_at, recipient_count) VALUES (?, 'reminder_72h', ?, ?, 9)`).bind(ev.id, lg.id, new Date().toISOString()).run();
     const html = await page(a, ev);
     expect(html).toContain('data-short="2"'); // 5 skaters + the goalie: 2 short of 7 skaters
     expect(html).toMatch(/data-open-spots>7</); // 12 - 5

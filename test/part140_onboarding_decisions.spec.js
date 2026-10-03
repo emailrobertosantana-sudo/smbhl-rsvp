@@ -25,14 +25,16 @@ beforeAll(async () => {
 
 describe('1. The step counter waits for the structure', () => {
   // Onboarding batch (2026-10-02): the season screen and the finance step
-  // joined the count: 10 fixed, 7 for the others.
-  it('steps 1 and 2 show no total; once chosen, the real total (10 fixed, 7 pickup, 7 no teams)', async () => {
+  // joined the count. Onboarding review: steps 1 and 2 show the fixed teams
+  // total (the default choice) and step 2 follows the choice (1e); playoffs,
+  // reminders and stats are one options step (3b): 8 fixed, 6 for the others.
+  it('steps 1 and 2 show the default total; once chosen, the real total (8 fixed, 6 pickup, 6 no teams)', async () => {
     const step1 = await page(null, '/signup?step=1');
-    expect(step1).toContain('data-i18n="step1">Étape 1<');
-    expect(step1).not.toContain('role="progressbar"');
-    for (const [structure, total, extra] of [['fixed', 10, { teamNames: ['A', 'B'] }], ['weekly_draw', 7, { teamNames: ['A', 'B'] }], ['headcount', 7, {}]]) {
+    expect(step1).toContain('data-i18n="step1">Étape 1 sur 8<');
+    expect(step1).toContain('role="progressbar"');
+    for (const [structure, total, extra] of [['fixed', 8, { teamNames: ['A', 'B'] }], ['weekly_draw', 6, { teamNames: ['A', 'B'] }], ['headcount', 6, {}]]) {
       const s = await signup(`p140.count.${structure}@example.com`);
-      expect(await page(s, '/signup?step=2')).not.toContain('role="progressbar"');
+      expect(await page(s, '/signup?step=2')).toContain('aria-valuemax="8" aria-valuenow="2"');
       await post(s, '/leagues/create', { name: `P140 ${structure}`, teamStructure: structure, ...extra });
       await post(s, '/league/season/publish', { season_name: 'S1' });
       const ob = await page(s, '/onboarding/season?step=1');
@@ -60,32 +62,34 @@ describe('3. Skip advances, and what was skipped stays on the checklist', () => 
     const s = await signup('p140.skip.links@example.com');
     await post(s, '/leagues/create', { name: 'P140 Skip Links', teamNames: ['A', 'B'] });
     await post(s, '/league/season/publish', { season_name: 'S1' });
-    // fixed: roster, teams, playoffs, reminders, stats, finance (onboarding batch)
-    for (let step = 1; step <= 5; step++) {
+    // fixed: roster, teams, options, finance (onboarding review 3b)
+    for (let step = 1; step <= 3; step++) {
       expect(await page(s, `/onboarding/season?step=${step}`)).toContain(`href="/onboarding/season?step=${step + 1}" id="ob_skip"`);
     }
-    expect(await page(s, '/onboarding/season?step=6')).toContain('href="/onboarding/season?step=summary" id="ob_skip"');
+    expect(await page(s, '/onboarding/season?step=4')).toContain('href="/onboarding/season?step=summary" id="ob_skip"');
   });
 
-  it('skipped reminders, stats and playoffs appear on the dashboard checklist; done or reminders on, they go', async () => {
+  // Onboarding review 3b: one checklist item for the options step, skipped
+  // whole or (before the merge) in one of its parts.
+  it('a skipped options step, or a part of it, is one checklist item; once done, it goes', async () => {
     const s = await signup('p140.skip.list@example.com');
     await post(s, '/leagues/create', { name: 'P140 Skip List', teamNames: ['Otters', 'Bears'] });
     await post(s, '/league/season/publish', { season_name: 'S1' });
-    // Reminders start on; skipped WITH them off, the step stays on the checklist.
-    await post(s, '/league/reminders/settings', { reminder72h: false, reminder24h: false, reminder12h: false });
-    for (const step of ['playoffs', 'reminders', 'stats']) expect((await post(s, '/league/onboarding/step', { step, action: 'skip' })).status).toBe(200);
+    expect((await post(s, '/league/onboarding/step', { step: 'options', action: 'skip' })).status).toBe(200);
     let html = await page(s, '/dashboard');
-    expect(html).toContain('href="/onboarding/season?step=3" data-i18n="nsPlayoffs">Configurer les séries<');
-    expect(html).toContain('href="/onboarding/season?step=4" data-i18n="nsReminders">Choisir tes rappels<');
-    expect(html).toContain('href="/onboarding/season?step=5" data-i18n="nsStats">Choisir les statistiques<');
-    expect(html).toContain('"nsReminders":"Choose your reminders"');
-    // Stats completed later through its step; reminders turned on in Settings.
-    await post(s, '/league/onboarding/step', { step: 'stats', action: 'done' });
-    await post(s, '/league/reminders/settings', { reminder24h: true });
-    html = await page(s, '/dashboard');
-    expect(html).not.toContain('data-i18n="nsStats"');
-    expect(html).not.toContain('data-i18n="nsReminders"');
-    expect(html).toContain('data-i18n="nsPlayoffs"');
+    expect(html).toContain('href="/onboarding/season?step=3" data-i18n="nsOptions">Choisir les options de ta ligue<');
+    expect(html).toContain('"nsOptions":"Choose your league\'s options"');
+    for (const k of ['nsPlayoffs', 'nsReminders', 'nsStats']) expect(html).not.toContain(`data-i18n="${k}"`);
+    await post(s, '/league/onboarding/step', { step: 'options', action: 'done' });
+    expect(await page(s, '/dashboard')).not.toContain('data-i18n="nsOptions"');
+    // Before the merge: reminders skipped while on had nothing left to choose.
+    const t = await signup('p140.skip.parts@example.com');
+    await post(t, '/leagues/create', { name: 'P140 Skip Parts', teamNames: ['Otters', 'Bears'] });
+    await post(t, '/league/season/publish', { season_name: 'S1' });
+    await post(t, '/league/onboarding/step', { step: 'reminders', action: 'skip' });
+    expect(await page(t, '/dashboard')).not.toContain('data-i18n="nsOptions"');
+    await post(t, '/league/onboarding/step', { step: 'playoffs', action: 'skip' });
+    expect(await page(t, '/dashboard')).toContain('data-i18n="nsOptions"');
   });
 
   it('a skipped step keeps the completion card away until it is done', async () => {

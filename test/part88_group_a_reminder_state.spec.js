@@ -95,8 +95,9 @@ describe('A1: onboarding reminders copy matches the real default (on since 2026-
     await createLeague(cookie, csrfToken, { name: 'A1 Copy League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
     // Playoff extension: fixed's own step order is now roster, teams,
-    // playoffs, reminders -- reminders moved from step 3 to step 4.
-    const html = await (await SELF.fetch('http://example.com/onboarding/season?step=4', { headers: { cookie } })).text();
+    // playoffs, reminders. Onboarding review 3b: the reminders are a
+    // section of the options step, step 3.
+    const html = await (await SELF.fetch('http://example.com/onboarding/season?step=3', { headers: { cookie } })).text();
     expect(html).toContain('id="ob_reminder_72h"');
 
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);

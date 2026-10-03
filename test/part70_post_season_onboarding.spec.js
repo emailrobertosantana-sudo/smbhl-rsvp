@@ -115,24 +115,21 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(await noSeason.text()).toContain('id="ob_season_name"');
   });
 
-  it('fixed structure: 5 steps (roster, teams, playoffs, reminders, stats), pre-filled and skippable', async () => {
+  it('fixed structure: 4 steps (roster, teams, options, finance), pre-filled and skippable', async () => {
     const { cookie, csrfToken } = await signup('ob.fixed@example.com', '203.0.185.003');
     await createLeague(cookie, csrfToken, { name: 'Onboarding Fixed League', teamNames: ['Nord', 'Sud'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const step1 = await getOnboarding(cookie, 1);
-    // B1 (onboarding polish task): the stepper now counts the WHOLE
-    // flow (signup + onboarding), not onboarding's own local 1-5 --
-    // fixed's real total is 8 (signup 1,2,3 + onboarding roster,teams,
-    // playoffs,reminders,stats -- the playoffs step added by the
-    // playoff extension), and this onboarding roster step is #4 in
-    // that count.
-    // Onboarding batch (2026-10-02): the season screen (#4) and the finance
-    // step joined the count: 10 for fixed, this roster step #5.
-    expect(step1).toContain('aria-valuemax="10"');
+    // B1 (onboarding polish task): the stepper counts the WHOLE flow
+    // (signup + onboarding), not onboarding's own steps. Onboarding batch
+    // (2026-10-02): the season screen (#4) and the finance step joined the
+    // count. Onboarding review 3b: playoffs, reminders and stats are one
+    // options step: 8 for fixed, this roster step #5.
+    expect(step1).toContain('aria-valuemax="8"');
     expect(step1).toContain('aria-valuenow="5"');
     expect(step1).toContain('data-i18n="flowStepLabel"');
-    expect(step1).toMatch(/Étape 5 sur 10|Step 5 of 10/);
+    expect(step1).toMatch(/Étape 5 sur 8|Step 5 of 8/);
     expect(step1).toContain('id="ob_min_players"');
     expect(step1).toContain('data-i18n="skip"');
     // B2 (onboarding polish task): "Skip for now" is a small centered
@@ -148,28 +145,24 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(step2).toContain('value="Nord"');
     expect(step2).toContain('value="Sud"');
 
+    // The options step: playoffs, reminders (on by default, migrate-026.sql)
+    // and the two independent stats toggles (stats tracking task, Part 1).
     const step3 = await getOnboarding(cookie, 3);
     expect(step3).toContain('id="ob_playoffs_enabled"');
-
+    expect(step3).toContain('id="ob_reminder_72h"');
+    expect(step3).toMatch(/aria-checked="true" id="ob_reminder_72h"/);
+    expect(step3).toContain('id="ob_tracks_results"');
+    expect(step3).toContain('id="ob_tracks_player_stats"');
+    expect(step3).toContain('data-i18n="next"');
+    // Onboarding batch (2026-10-02): the finance step comes last, then the summary.
     const step4 = await getOnboarding(cookie, 4);
-    expect(step4).toContain('id="ob_reminder_72h"');
-    expect(step4).toContain('aria-checked="true"'); // defaults on (migrate-026.sql)
-
-    const step5 = await getOnboarding(cookie, 5);
-    // Stats tracking task (Part 1): the old single "Track stats?"
-    // toggle replaced by two independent ones.
-    expect(step5).toContain('id="ob_tracks_results"');
-    expect(step5).toContain('id="ob_tracks_player_stats"');
-    // Onboarding batch (2026-10-02): the finance step comes last now, then the summary.
-    const step6 = await getOnboarding(cookie, 6);
-    expect(step6).toContain('id="ob_finance_yes"');
-    expect(step6).toContain('href="/onboarding/season?step=summary" id="ob_skip"');
-    expect(step5).toContain('data-i18n="next"');
+    expect(step4).toContain('id="ob_finance_yes"');
+    expect(step4).toContain('href="/onboarding/season?step=summary" id="ob_skip"');
   });
 
   // Onboarding item 4: pickup teams are drawn fresh each game -- no
   // team-names step (names stay editable in Settings).
-  it('weekly_draw structure: no team-names step -- roster, reminders, stats', async () => {
+  it('weekly_draw structure: no team-names step -- roster, options, finance', async () => {
     const { cookie, csrfToken } = await signup('ob.weekly@example.com', '203.0.185.004');
     await createLeague(cookie, csrfToken, { name: 'Onboarding Weekly League', teamStructure: 'weekly_draw', teamNames: ['Équipe 1', 'Équipe 2'] });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
@@ -251,32 +244,29 @@ describe('Part 6 (live-testing task, batch 5): onboarding continues after the fi
     expect(step1).toContain('id="ob_min_goalies" type="number" min="0" value="2"');
   });
 
-  it('headcount structure: only 3 steps — team names step is skipped entirely', async () => {
+  it('headcount structure: only 3 steps (roster, options, finance), the team names step skipped entirely', async () => {
     const { cookie, csrfToken } = await signup('ob.headcount@example.com', '203.0.185.005');
     await createLeague(cookie, csrfToken, { name: 'Onboarding Headcount League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 16 });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const step1 = await getOnboarding(cookie, 1);
-    // Item 2: headcount's flow-wide total is 5 (signup 1,2 + onboarding
-    // roster,reminders,stats), and this roster step -- where the player
-    // count is asked, once -- is #3.
-    // Onboarding batch: 7 now (the season screen #3, the finance step #7).
-    expect(step1).toContain('aria-valuemax="7"');
+    // Item 2: the player count is asked once, at this roster step. Onboarding
+    // batch: the season screen is #3 and the finance step last. Onboarding
+    // review 3b: reminders and stats are one options step: 6 in all.
+    expect(step1).toContain('aria-valuemax="6"');
     expect(step1).toContain('aria-valuenow="4"');
-    expect(step1).toMatch(/Étape 4 sur 7|Step 4 of 7/);
+    expect(step1).toMatch(/Étape 4 sur 6|Step 4 of 6/);
 
-    // step=2 for headcount is 'reminders' (teams was skipped), not 'teams'
+    // step=2 for headcount is 'options' (no team names), not 'teams'
     const step2 = await getOnboarding(cookie, 2);
     expect(step2).toContain('id="ob_reminder_72h"');
     expect(step2).not.toContain('id="ob_teams"');
-
-    const step3 = await getOnboarding(cookie, 3);
     // Stats tracking task (Part 1): NO TEAMS (headcount) never gets
     // the game-results question -- no sides to attach a score to.
-    expect(step3).not.toContain('id="ob_tracks_results"');
-    expect(step3).toContain('id="ob_tracks_player_stats"');
-    // Onboarding batch: the finance step comes last now (step 4 here).
-    expect(await getOnboarding(cookie, 4)).toContain('id="ob_finance_yes"');
+    expect(step2).not.toContain('id="ob_tracks_results"');
+    expect(step2).toContain('id="ob_tracks_player_stats"');
+    // Onboarding batch: the finance step comes last (step 3 here).
+    expect(await getOnboarding(cookie, 3)).toContain('id="ob_finance_yes"');
   });
 
   it('the roster step\'s two-call mechanism (settings/structure + season/publish) genuinely applies to the CURRENT season, not just future ones', async () => {

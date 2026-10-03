@@ -937,10 +937,12 @@ const I18N_SIGNUP = {
     // Onboarding item 1: steps 1 and 2 come before the team structure is
     // chosen, and the real total depends on it (10 fixed teams, 7 for the
     // others, FLOW_TOTAL_STEPS) -- so no total until it is known.
-    step1: 'Étape 1', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.', termsAccept: TERMS_LABEL.fr,
+    // Review 1e: the fixed teams total (FLOW_TOTAL_STEPS.fixed), the structure
+    // picked by default; step 2 updates it with the choice.
+    step1: 'Étape 1 sur 8', title1: 'Créons ton compte', sub1: 'Deux minutes, promis.', termsAccept: TERMS_LABEL.fr,
     lblEmail: 'Courriel', lblPassword: 'Mot de passe', showPw: 'Afficher', hidePw: 'Cacher',
     pwHelp: '8 caractères minimum.', continueBtn: 'Continuer', alreadySignedUp: 'Déjà inscrit?', login: 'Se connecter',
-    step2: 'Étape 2', title2: 'Parle-nous de ta ligue',
+    step2: 'Étape 2 sur 8', title2: 'Parle-nous de ta ligue',
     lblLeagueName: 'Nom de la ligue', lblSlug: 'Adresse de ta page',
     // A2 bug fix (onboarding polish task): the old text ("tu peux la
     // changer") was actively wrong -- true only before submitting; once
@@ -973,7 +975,7 @@ const I18N_SIGNUP = {
     langHelp: 'La langue des courriels et des pages de tes joueurs. Tu peux la changer plus tard dans les Paramètres.',
     goaliesLabel: 'Ta ligue a des gardiens?', goaliesYes: 'Oui', goaliesNo: 'Non',
     back: 'Retour', cancelNew: 'Annuler',
-    step3:'Étape 3 sur 10', title3: "Combien d'équipes?",
+    step3:'Étape 3 sur 8', title3: "Combien d'équipes?",
     teamCountGroupAria: "Nombre d'équipes", decreaseTeamsAria: 'Moins', increaseTeamsAria: 'Plus',
     teamPlaceholder: 'Équipe ',
     teamCountHelp: 'Tu nommeras tes équipes pendant la configuration de ta ligue.',
@@ -1009,10 +1011,10 @@ const I18N_SIGNUP = {
     already: 'Déjà inscrit?'
   },
   en: {
-    step1: 'Step 1', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.', termsAccept: TERMS_LABEL.en,
+    step1: 'Step 1 of 8', title1: 'Let\'s create your account', sub1: 'Two minutes, promise.', termsAccept: TERMS_LABEL.en,
     lblEmail: 'Email', lblPassword: 'Password', showPw: 'Show', hidePw: 'Hide',
     pwHelp: '8 characters minimum.', continueBtn: 'Continue', alreadySignedUp: 'Already signed up?', login: 'Log in',
-    step2: 'Step 2', title2: 'Tell us about your league',
+    step2: 'Step 2 of 8', title2: 'Tell us about your league',
     lblLeagueName: 'League name', lblSlug: 'Your page address',
     slugHelp: "Becomes permanent once your league is created. That guarantees the links you share always keep working.",
     structureLabel: 'How are your teams organized?',
@@ -1024,7 +1026,7 @@ const I18N_SIGNUP = {
     langHelp: "The language of your players' emails and pages. You can change it later in Settings.",
     goaliesLabel: 'Does your league have goalies?', goaliesYes: 'Yes', goaliesNo: 'No',
     back: 'Back', cancelNew: 'Cancel',
-    step3:'Step 3 of 10', title3: 'How many teams?',
+    step3:'Step 3 of 8', title3: 'How many teams?',
     teamCountGroupAria: 'Number of teams', decreaseTeamsAria: 'Decrease', increaseTeamsAria: 'Increase',
     teamPlaceholder: 'Team ',
     teamCountHelp: "You'll name your teams while setting up your league.",
@@ -1089,7 +1091,11 @@ function signupStyles() {
   .su-body { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
   .su-prog { display: flex; flex-direction: column; gap: var(--space-2); }
   .su-title { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-2); }
-  .su-title h1 { font: 700 28px/34px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; }
+  /* Onboarding review 1a: every sign-up and onboarding heading has its own
+     line height ("Ta ligue est créée." took .nl's 24px under a 32px font,
+     so its two lines touched at 390 px). */
+  .su-title h1, .su-done h1 { font: 700 28px/34px var(--font-display); font-stretch: 118%; letter-spacing: -.01em; }
+  .su-body h2 { font: 700 20px/26px var(--font-display); font-stretch: 118%; }
   .su-bottom { max-width: var(--content-narrow); width: 100%; margin: 0 auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); border-top: 1px solid var(--line); }
   .su-center { text-align: center; font-size: 14px; color: var(--ink-muted); }
   .su-pw { position: relative; }
@@ -1306,7 +1312,8 @@ function renderSignupStep1(langParam, attrQS = '') {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" data-i18n="step1">Étape 1</div>
+    <div class="overline" data-i18n="step1">Étape 1 sur ${FLOW_TOTAL_STEPS.fixed}</div>
+    ${flowStepper(1, FLOW_TOTAL_STEPS.fixed)}
   </div>
   <div class="su-title">
     <h1 data-i18n="title1">Créons ton compte</h1>
@@ -1391,7 +1398,8 @@ function renderSignupStep2(langParam, another = false, attrQS = '', attr = {}) {
   const bodyHtml = `${signupStyles()}${signupHeader()}
 <main class="su-body">
   <div class="su-prog">
-    <div class="overline" data-i18n="step2">Étape 2</div>
+    <div class="overline" id="su_flow_label" data-i18n="step2">Étape 2 sur ${FLOW_TOTAL_STEPS.fixed}</div>
+    <div id="su_flow_prog">${flowStepper(2, FLOW_TOTAL_STEPS.fixed)}</div>
   </div>
   <div class="su-title"><h1 data-i18n="title2">Parle-nous de ta ligue</h1></div>
   <div id="formErr" class="nl-error" style="display:none"></div>
@@ -1471,6 +1479,22 @@ document.getElementById('su_league_name').addEventListener('input', function() {
     });
   });
 });
+// Onboarding review 1e: the step total follows the structure picked (fixed
+// teams also have the team count step), in the page's language.
+var FLOW_TOTALS = ${JSON.stringify(FLOW_TOTAL_STEPS)};
+function flowUpdate() {
+  var picked = document.querySelector('#su_structure_radio input:checked');
+  var total = FLOW_TOTALS[picked ? picked.value : 'fixed'] || FLOW_TOTALS.fixed;
+  document.getElementById('su_flow_label').textContent = window.__currentLang === 'en' ? 'Step 2 of ' + total : 'Étape 2 sur ' + total;
+  var dots = '';
+  for (var i = 1; i <= total; i++) dots += '<i class="' + (i < 2 ? 'done' : i === 2 ? 'on' : '') + '"></i>';
+  var bar = document.querySelector('#su_flow_prog .nl-steps');
+  bar.innerHTML = dots;
+  bar.setAttribute('aria-valuemax', String(total));
+}
+document.querySelectorAll('#su_structure_radio input[type=radio]').forEach(function(r) { r.addEventListener('change', flowUpdate); });
+window.addEventListener('nl_lang_changed', flowUpdate);
+flowUpdate();
 // The league's language follows the admin's own until they pick one.
 var langTouched = false;
 window.addEventListener('nl_lang_changed', function(e) {
@@ -2084,12 +2108,20 @@ async function readOnboardingSkips(env, leagueId) {
 }
 async function pendingSkippedSteps(env, leagueRow) {
   const skipped = await readOnboardingSkips(env, leagueRow.id);
-  const steps = onboardingStepsFor(leagueRow.team_structure || 'fixed');
+  const done = (await readOnboardingDone(env, leagueRow.id)) || [];
+  const structure = leagueRow.team_structure || 'fixed';
+  const steps = onboardingStepsFor(structure);
+  // Review 3b: one item for the options step (playoffs, reminders, stats),
+  // skipped as a whole or, from before the merge, in one of its parts. A
+  // league whose only skipped part was the reminders, while they are on,
+  // has nothing left to choose there (as before).
   const remindersOn = !!(leagueRow.reminder_72h_enabled || leagueRow.reminder_24h_enabled || leagueRow.reminder_12h_enabled);
-  const items = { reminders: ['nsReminders', 'Choisir tes rappels'], stats: ['nsStats', 'Choisir les statistiques'], playoffs: ['nsPlayoffs', 'Configurer les séries'] };
-  return skipped
-    .filter(k => items[k] && steps.includes(k) && !(k === 'reminders' && remindersOn))
-    .map(k => ({ key: items[k][0], fr: items[k][1], href: `/onboarding/season?step=${steps.indexOf(k) + 1}` }));
+  const parts = optionsPartsFor(structure).filter(p => skipped.includes(p) && !(p === 'reminders' && remindersOn));
+  const st = onboardingStepState('options', structure, done, skipped);
+  if (!st.done && (skipped.includes('options') || parts.length)) {
+    return [{ key: 'nsOptions', fr: 'Choisir les options de ta ligue', href: `/onboarding/season?step=${steps.indexOf('options') + 1}` }];
+  }
+  return [];
 }
 // Onboarding batch: the steps an admin answered (saved, or "Non" on the
 // finance question), kept in settings onboarding_done:<league>. The row
@@ -2111,8 +2143,9 @@ async function firstOpenOnboardingStep(env, leagueRow) {
   // before (a step reached from the checklist leaves a record too) is not.
   if (!done || !done.includes('season')) return null;
   const skipped = await readOnboardingSkips(env, leagueRow.id);
-  const steps = onboardingStepsFor(leagueRow.team_structure || 'fixed');
-  const i = steps.findIndex(k => !done.includes(k) && !skipped.includes(k));
+  const structure = leagueRow.team_structure || 'fixed';
+  const steps = onboardingStepsFor(structure);
+  const i = steps.findIndex(k => { const s = onboardingStepState(k, structure, done, skipped); return !s.done && !s.skipped; });
   return i === -1 ? 0 : i + 1;
 }
 // Onboarding batch: regular players of a fixed-teams league who are on no
@@ -2135,7 +2168,7 @@ async function handleOnboardingStepMark(req, env, url) {
   if (access !== 'ok') return leagueAccessResponse(access);
   const body = await req.json().catch(() => ({}));
   const step = String(body.step || '');
-  if (!['season', 'roster', 'teams', 'playoffs', 'reminders', 'stats', 'finance'].includes(step)) return Response.json({ ok: false, error: 'Unknown step.', errorKey: 'ONBOARDING_STEP_UNKNOWN' }, { status: 400 });
+  if (!['season', 'roster', 'teams', 'options', 'playoffs', 'reminders', 'stats', 'finance'].includes(step)) return Response.json({ ok: false, error: 'Unknown step.', errorKey: 'ONBOARDING_STEP_UNKNOWN' }, { status: 400 });
   const skipped = new Set(await readOnboardingSkips(env, leagueId));
   const done = new Set((await readOnboardingDone(env, leagueId)) || []);
   if (body.action === 'skip') { skipped.add(step); done.delete(step); } else { skipped.delete(step); done.add(step); }
@@ -2258,7 +2291,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       // naturally disappears once each is genuinely addressed.
       healthTitle: "Quelque chose n'a pas fonctionné", healthTold: "L'équipe Notre Ligue a été avertie.",
       healthCronLate: 'Les envois automatiques sont en retard.',
-      nextStepsTitle: 'Prochaines étapes', nsCreateSchedule: "Créer l'horaire", nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif", nsReminders: 'Choisir tes rappels', nsStats: 'Choisir les statistiques', nsPlayoffs: 'Configurer les séries',
+      nextStepsTitle: 'Prochaines étapes', nsCreateSchedule: "Créer l'horaire", nsAddPlayers: 'Ajouter des joueurs', nsNameTeams: 'Nommer tes équipes', nsRosterLimits: "Définir l'effectif", nsReminders: 'Choisir tes rappels', nsStats: 'Choisir les statistiques', nsPlayoffs: 'Configurer les séries', nsOptions: 'Choisir les options de ta ligue',
       nsFinishSetup: 'Terminer la configuration de ta ligue', nsAssignTeams: 'Placer tes joueurs dans une équipe',
       leagueSwitchLabel: 'Ligue', createAnotherLeague: 'Créer une autre ligue'
       // Live-testing task (batch 5), Part 7: coAdmins/invite*/
@@ -2281,7 +2314,7 @@ function buildDashI18n({ state, needsSeason, unverified, leagueName }) {
       weeklyDrawTeamsDesc: 'These teams are assigned per game, not permanently to players.',
       healthTitle: "Something didn't work", healthTold: 'The Notre Ligue team has been notified.',
       healthCronLate: 'Automatic sends are running late.',
-      nextStepsTitle: 'Next steps', nsCreateSchedule: 'Create the schedule', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size', nsReminders: 'Choose your reminders', nsStats: 'Choose what to track', nsPlayoffs: 'Set up playoffs',
+      nextStepsTitle: 'Next steps', nsCreateSchedule: 'Create the schedule', nsAddPlayers: 'Add players', nsNameTeams: 'Name your teams', nsRosterLimits: 'Set roster size', nsReminders: 'Choose your reminders', nsStats: 'Choose what to track', nsPlayoffs: 'Set up playoffs', nsOptions: "Choose your league's options",
       nsFinishSetup: 'Finish setting up your league', nsAssignTeams: 'Put your players on a team',
       leagueSwitchLabel: 'League', createAnotherLeague: 'Create another league'
     });
@@ -3079,10 +3112,27 @@ async function cancelHeldMail() {
 // Onboarding batch: a last, optional 'finance' step for every structure
 // (does the league charge players; fees and Interac details), then the
 // summary screen (?step=summary, not a step: no number, no form).
+// Onboarding review 3b: playoffs (fixed teams only), reminders and stats
+// are one "options" step, in that order.
 function onboardingStepsFor(teamStructure) {
-  if (teamStructure === 'headcount') return ['roster', 'reminders', 'stats', 'finance'];
-  if (teamStructure === 'weekly_draw') return ['roster', 'reminders', 'stats', 'finance']; // item 4: no team-names step for pickup
-  return ['roster', 'teams', 'playoffs', 'reminders', 'stats', 'finance'];
+  if (teamStructure === 'headcount') return ['roster', 'options', 'finance'];
+  if (teamStructure === 'weekly_draw') return ['roster', 'options', 'finance']; // item 4: no team-names step for pickup
+  return ['roster', 'teams', 'options', 'finance'];
+}
+// The steps the options step replaced: a league part-way through the wizard
+// before the merge has them in its done and skipped lists.
+const OPTIONS_PARTS = ['playoffs', 'reminders', 'stats'];
+function optionsPartsFor(teamStructure) { return (teamStructure || 'fixed') === 'fixed' ? OPTIONS_PARTS : ['reminders', 'stats']; }
+// Whether a step counts as done or skipped, the options step through its
+// old parts too: done when marked, or when each of its parts was answered;
+// skipped when it, or any of its parts, was skipped.
+function onboardingStepState(step, teamStructure, done, skipped) {
+  if (step !== 'options') return { done: done.includes(step), skipped: skipped.includes(step) };
+  const parts = optionsPartsFor(teamStructure);
+  return {
+    done: done.includes('options') || parts.every(p => done.includes(p)),
+    skipped: skipped.includes('options') || (!done.includes('options') && parts.some(p => skipped.includes(p)))
+  };
 }
 
 // B1 (onboarding polish task): ONE continuous step count spanning the
@@ -3106,15 +3156,19 @@ function onboardingStepsFor(teamStructure) {
 // headcount/weekly_draw are completely untouched (neither structure
 // ever sees a playoffs step, so neither total number changes).
 // Onboarding batch: the season (asked on the dashboard before) is now the
-// wizard's own screen right after sign-up, and the finance step comes last:
-//   fixed:       signup 1,2,3 + season + roster,teams,playoffs,reminders,stats,finance = 10
-//   headcount:   signup 1,2   + season + roster,reminders,stats,finance               = 7
-//   weekly_draw: signup 1,2   + season + roster,reminders,stats,finance               = 7
-const FLOW_TOTAL_STEPS = { fixed: 10, headcount: 7, weekly_draw: 7 };
+// wizard's own screen right after sign-up, and the finance step comes last.
+// Onboarding review 3b: playoffs, reminders and stats are one options step:
+//   fixed:       signup 1,2,3 + season + roster,teams,options,finance = 8
+//   headcount:   signup 1,2   + season + roster,options,finance       = 6
+//   weekly_draw: signup 1,2   + season + roster,options,finance       = 6
+// Review 1e: steps 1 and 2 show a total too; before a structure is chosen,
+// the fixed teams one (the structure picked by default), and step 2's
+// changes with the choice.
+const FLOW_TOTAL_STEPS = { fixed: 8, headcount: 6, weekly_draw: 6 };
 const FLOW_STEP_NUMBER = {
-  fixed: { signup3: 3, season: 4, roster: 5, teams: 6, playoffs: 7, reminders: 8, stats: 9, finance: 10 },
-  headcount: { season: 3, roster: 4, reminders: 5, stats: 6, finance: 7 },
-  weekly_draw: { season: 3, roster: 4, reminders: 5, stats: 6, finance: 7 }
+  fixed: { signup3: 3, season: 4, roster: 5, teams: 6, options: 7, finance: 8 },
+  headcount: { season: 3, roster: 4, options: 5, finance: 6 },
+  weekly_draw: { season: 3, roster: 4, options: 5, finance: 6 }
 };
 function flowStepLabel(lang, current, total) {
   return lang === 'en' ? `Step ${current} of ${total}` : `Étape ${current} sur ${total}`;
@@ -3179,6 +3233,7 @@ function buildOnboardingI18n() {
     // Onboarding batch: the way back, the season screen (moved in from the
     // dashboard), the finance step (item 3) and the closing summary (item 2).
     back: 'Retour',
+    optionsTitle: 'Options de ta ligue',
     seasonTitle: 'Lance ta première saison', seasonSub: 'Donne un nom à ta saison. Tes matchs et tes joueurs y seront rattachés.',
     seasonNameLabel: 'Nom de la saison', seasonNamePh: 'Ex. Automne 2026', seasonCreate: 'Créer la saison',
     // Item 5: tracking money is the norm (every league has costs).
@@ -3204,7 +3259,7 @@ function buildOnboardingI18n() {
     payHelp: 'Affiché dans les rappels de paiement. Laisse vide pour masquer.',
     payEmailLabel: 'Courriel pour virement Interac', payPhoneLabel: 'Cellulaire pour virement Interac',
     sumTitle: "Ta ligue en un coup d'œil", sumSub: 'Voici où en est ta ligue. Tu peux tout changer plus tard.',
-    sumStructure: 'Structure', sumLanguage: 'Langue', sumPlayers: 'Joueurs', sumGames: 'Matchs', sumBilling: 'Abonnement', sumFirstGame: 'Premier match :',
+    sumStructure: 'Structure', sumLanguage: 'Langue', sumPlayers: 'Joueurs', sumGames: 'Matchs', sumBilling: 'Abonnement', sumFirstGame: 'Premier match :', sumFinance: 'Finances',
     actSchedule: 'Créer ton horaire', actSeeSchedule: 'Voir ton horaire', actPlayers: 'Ajouter tes joueurs', actSeePlayers: 'Voir tes joueurs',
     actTeams: 'Placer tes joueurs dans une équipe', actBilling: "Voir l'abonnement", actPublic: 'Voir ta page publique'
   };
@@ -3238,6 +3293,7 @@ function buildOnboardingI18n() {
     thirdPlaceLabel: 'Third-place game?',
     reservedSlotsLabel: 'How many games do you need to reserve?',
     back: 'Back',
+    optionsTitle: "Your league's options",
     seasonTitle: 'Start your first season', seasonSub: 'Name your season. Your games and players will belong to it.',
     seasonNameLabel: 'Season name', seasonNamePh: 'E.g. Fall 2026', seasonCreate: 'Create the season',
     financeTitle: "Do you want to track your league's money?",
@@ -3261,7 +3317,7 @@ function buildOnboardingI18n() {
     payHelp: 'Shown in payment reminders. Leave empty to hide.',
     payEmailLabel: 'e-Transfer email', payPhoneLabel: 'e-Transfer mobile number',
     sumTitle: 'Your league at a glance', sumSub: "Here's where your league stands. You can change all of it later.",
-    sumStructure: 'Structure', sumLanguage: 'Language', sumPlayers: 'Players', sumGames: 'Games', sumBilling: 'Subscription', sumFirstGame: 'First game:',
+    sumStructure: 'Structure', sumLanguage: 'Language', sumPlayers: 'Players', sumGames: 'Games', sumBilling: 'Subscription', sumFirstGame: 'First game:', sumFinance: 'Finances',
     actSchedule: 'Create your schedule', actSeeSchedule: 'See your schedule', actPlayers: 'Add your players', actSeePlayers: 'See your players',
     actTeams: 'Put your players on a team', actBilling: 'See the subscription', actPublic: 'See your public page'
   };
@@ -3271,7 +3327,10 @@ function buildOnboardingI18n() {
 // Onboarding batch: the wizard's own season screen, while the league has
 // none (it was a form on the dashboard, outside the flow). The same route
 // as before (/league/season/publish); then the first onboarding step.
-function onboardingSeasonScreen(leagueRow, teamStructure, lang, { fr, en }, showFlow) {
+// existingSeason: the season already created (Back from the first step):
+// its name shown, not editable here (publishing a new name would start a
+// second season), and Continue goes on to the first step.
+function onboardingSeasonScreen(leagueRow, teamStructure, lang, { fr, en }, showFlow, existingSeason = null) {
   const flowTotal = FLOW_TOTAL_STEPS[teamStructure] || FLOW_TOTAL_STEPS.fixed;
   const flowStep = (FLOW_STEP_NUMBER[teamStructure] || FLOW_STEP_NUMBER.fixed).season;
   const t = lang === 'en' ? en : fr;
@@ -3288,11 +3347,14 @@ function onboardingSeasonScreen(leagueRow, teamStructure, lang, { fr, en }, show
   <div id="formErr" class="nl-error" role="alert" style="display:none"></div>
   <div class="nl-field">
     <label class="nl-label" for="ob_season_name" data-i18n="seasonNameLabel">${esc(t.seasonNameLabel)}</label>
-    <input class="nl-input" id="ob_season_name" type="text" maxlength="80" data-i18n-ph="seasonNamePh" placeholder="${esc(t.seasonNamePh)}">
+    <input class="nl-input" id="ob_season_name" type="text" maxlength="80" data-i18n-ph="seasonNamePh" placeholder="${esc(t.seasonNamePh)}"${existingSeason ? ` value="${esc(existingSeason)}" readonly` : ''}>
   </div>
 </main>
 <div class="su-bottom">
-  <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="ob_submit" data-i18n="seasonCreate" onclick="obCreateSeason()">${esc(t.seasonCreate)}</button>
+  ${existingSeason
+    ? `<a class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="ob_submit" href="/onboarding/season?step=1" data-i18n="next">${esc(t.next)}</a>`
+    : `<button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="ob_submit" data-i18n="seasonCreate" onclick="obCreateSeason()">${esc(t.seasonCreate)}</button>`}
+  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" id="ob_back" data-i18n="back" onclick="location.href='/signup?step=done'">${esc(t.back)}</button>
 </div>`;
   const flowI18n = showFlow ? {
     fr: { ...fr, flowStepLabel: flowStepLabel('fr', flowStep, flowTotal) },
@@ -3325,10 +3387,41 @@ async function obCreateSeason() {
     err.textContent = window.__errorText('NETWORK_ERROR'); err.style.display = 'block'; btn.disabled = false;
   }
 }
-document.getElementById('ob_season_name').addEventListener('keydown', function(e) { if (e.key === 'Enter') obCreateSeason(); });`;
+${existingSeason ? '' : "document.getElementById('ob_season_name').addEventListener('keydown', function(e) { if (e.key === 'Enter') obCreateSeason(); });"}`;
   return new Response(nlDocument({ titles: { fr: `Bienvenue | ${leagueRow.name}`, en: `Welcome | ${leagueRow.name}` }, description: '', bodyHtml: bodyHtml + `<script>${script}</script>`, lang }), {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
   });
+}
+
+// Onboarding review 1c: the summary's finance line, in both languages:
+// « Frais de saison : 120 $ (joueur), 60 $ (gardien). Par match : 15 $.
+// Dépenses : 1 800 $ pour la saison. », or not tracked for now.
+function summaryMoney(n, lang) {
+  const whole = Number.isInteger(Number(n));
+  const opts = { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 };
+  return lang === 'en' ? '$' + Number(n).toLocaleString('en-CA', opts) : Number(n).toLocaleString('fr-CA', opts) + ' $';
+}
+async function onboardingFinanceLine(env, leagueId, season) {
+  const pricing = await getSeasonPricing(env.DB, leagueId, season);
+  const costs = await listSeasonCosts(env.DB, leagueId, season);
+  const spent = costs.reduce((t, c) => t + (Number(c.amount) || 0), 0);
+  const num = k => (pricing && Number(pricing[k]) > 0 ? Number(pricing[k]) : 0);
+  const perGameMode = !!(pricing && pricing.pricing_mode === 'per_game');
+  const fees = (player, goalie, lang) => {
+    const role = lang === 'en' ? { p: 'player', g: 'goalie' } : { p: 'joueur', g: 'gardien' };
+    if (player && goalie) return `${summaryMoney(player, lang)} (${role.p}), ${summaryMoney(goalie, lang)} (${role.g})`;
+    if (goalie) return `${summaryMoney(goalie, lang)} (${role.g})`;
+    return summaryMoney(player, lang);
+  };
+  const line = lang => {
+    const parts = [];
+    const season = !perGameMode && (num('price_player') || num('price_goalie'));
+    if (season) parts.push(lang === 'en' ? `Season fees: ${fees(num('price_player'), num('price_goalie'), 'en')}.` : `Frais de saison : ${fees(num('price_player'), num('price_goalie'), 'fr')}.`);
+    if (num('price_sub_player') || num('price_sub_goalie')) parts.push(lang === 'en' ? `Per game: ${fees(num('price_sub_player'), num('price_sub_goalie'), 'en')}.` : `Par match : ${fees(num('price_sub_player'), num('price_sub_goalie'), 'fr')}.`);
+    if (spent > 0) parts.push(lang === 'en' ? `Expenses: ${summaryMoney(spent, 'en')} for the season.` : `Dépenses : ${summaryMoney(spent, 'fr')} pour la saison.`);
+    return parts.length ? parts.join(' ') : (lang === 'en' ? 'Not tracked for now.' : "Pas de suivi pour l'instant.");
+  };
+  return { fr: line('fr'), en: line('en') };
 }
 
 // Onboarding batch 2, item 1: the league's language, in the summary.
@@ -3384,6 +3477,10 @@ async function onboardingSummaryScreen(env, url, leagueRow, season, lang, { fr, 
       console.error(`[onboarding] billing summary for ${leagueRow.id}: ${e.message}`);
     }
   }
+  // Onboarding review 1c: the money the finance step recorded, or not
+  // tracked (the step skipped or answered "Non"). Whole amounts without
+  // cents, as people write them.
+  const financeLine = await onboardingFinanceLine(env, leagueRow.id, season);
   const slug = await getOrCreateLeagueSlug(env, leagueRow);
   const publicUrl = slug ? `${url.origin}/${slug}` : `${url.origin}/league/public?league=${encodeURIComponent(leagueRow.id)}`;
   const bi = (line, tag = 'span') => `<${tag} data-date-fr="${esc(line.fr)}" data-date-en="${esc(line.en)}">${esc(line[lang] || line.fr)}</${tag}>`;
@@ -3408,6 +3505,7 @@ async function onboardingSummaryScreen(env, url, leagueRow, season, lang, { fr, 
     ${row('sumLanguage', bi(SUMMARY_LANGUAGE[leagueRow.language_mode] || SUMMARY_LANGUAGE.both))}
     ${row('sumPlayers', bi(playersLine))}
     ${row('sumGames', bi(gamesLine) + (first ? ` <span data-i18n="sumFirstGame">${esc(t.sumFirstGame)}</span> ${dateTimeSpanHtml('span', first.date, first.start_time, 'long')}${first.venue ? `, ${esc(first.venue)}` : ''}.` : ''))}
+    ${row('sumFinance', bi(financeLine))}
     ${billingLines ? row('sumBilling', billingLines.map(l => bi(l)).join(' ')) : ''}
   </dl>
   <div class="ob-acts">
@@ -3475,6 +3573,9 @@ async function handleOnboardingSeasonPage(req, env, url) {
 
   const steps = onboardingStepsFor(teamStructure);
   const stepParam = url.searchParams.get('step');
+  // Onboarding review 1e: Back from the first step shows the season screen
+  // again, with the season already named.
+  if (stepParam === 'season') return onboardingSeasonScreen(leagueRow, teamStructure, lang, { fr, en }, showFlow, currentSeason);
   // Onboarding batch: the summary closes the flow.
   if (stepParam === 'summary') return onboardingSummaryScreen(env, url, leagueRow, currentSeason, lang, { fr, en });
   // Onboarding batch: with no ?step=, picks up at the first step not
@@ -3551,9 +3652,13 @@ async function handleOnboardingSeasonPage(req, env, url) {
   <div class="su-teams" id="ob_teams">
     ${teamNames.map((t, i) => `<div class="su-team-in"><span class="n">${i + 1}</span><input class="nl-input" data-idx="${i}" value="${esc(t)}"></div>`).join('')}
   </div>`;
-  } else if (step === 'playoffs') {
-    // Playoff extension, Part 1: fixed-teams only (onboardingStepsFor's
-    // own gate already guarantees teamStructure === 'fixed' here).
+  } else if (step === 'options') {
+    // Onboarding review 3b: the playoffs (fixed teams only), reminders and
+    // stats screens as three sections of one step, each with its own
+    // switches and help text, in that order.
+    const sections = [];
+    if (teamStructure === 'fixed') {
+    // Playoff extension, Part 1: fixed-teams only.
     // Questions 1-4, in order: are there playoffs at all (if no,
     // everything below is skipped -- every slot is regular season);
     // which format; how many teams (ASKED, never derived -- capped at
@@ -3563,12 +3668,10 @@ async function handleOnboardingSeasonPage(req, env, url) {
     // in the script below) -- a real bracket fact, not static copy.
     const realTeamNames = teamNames.filter(Boolean);
     const teamCountOptions = Array.from({ length: Math.max(0, realTeamNames.length - 1) }, (_, i) => i + 2); // 2..N
-    stepHtml = `
-  <div class="su-title">
-    <h1 data-i18n="playoffsTitle">Y a-t-il des séries éliminatoires?</h1>
-    <p class="nl-help" data-i18n="playoffsSub">Les séries consomment des créneaux de ta ligue : l'horaire de la saison régulière est calculé en fonction de ce qui reste.</p>
-  </div>
-  <div id="formErr" class="nl-error" style="display:none"></div>
+    sections.push(`
+  <section class="ob-opt" aria-labelledby="ob_h_playoffs">
+  <h2 id="ob_h_playoffs" data-i18n="playoffsTitle">${esc(fr.playoffsTitle)}</h2>
+  <p class="nl-help" data-i18n="playoffsSub">${esc(fr.playoffsSub)}</p>
   <div class="nl-toggle">
     <div class="nl-label" data-i18n="playoffsEnabledLabel">Il y a des séries éliminatoires</div>
     <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.playoffs_enabled ? 'true' : 'false'}" id="ob_playoffs_enabled" onclick="obToggle(this); obPlayoffsUpdate();"></button>
@@ -3602,27 +3705,27 @@ async function handleOnboardingSeasonPage(req, env, url) {
       <label class="nl-label" for="ob_reserved_slots" data-i18n="reservedSlotsLabel">Combien de matchs faut-il réserver?</label>
       <input class="nl-input" id="ob_reserved_slots" type="number" min="1" value="${esc(leagueRow.playoff_reserved_slots ? String(leagueRow.playoff_reserved_slots) : '')}">
     </div>
-  </div>`;
-  } else if (step === 'reminders') {
-    stepHtml = `
-  <div class="su-title">
-    <h1 data-i18n="remindersTitle">Rappels automatiques</h1>
-    <p class="nl-help" data-i18n="remindersSub">Activés par défaut. Désactive ceux que tu ne veux pas. Tu peux changer ça n'importe quand dans les réglages.</p>
   </div>
-  <div id="formErr" class="nl-error" style="display:none"></div>
+  </section>`);
+    }
+    sections.push(`
+  <section class="ob-opt" aria-labelledby="ob_h_reminders">
+  <h2 id="ob_h_reminders" data-i18n="remindersTitle">${esc(fr.remindersTitle)}</h2>
+  <p class="nl-help" data-i18n="remindersSub">${esc(fr.remindersSub)}</p>
   <div class="nl-toggle">
-    <div class="nl-label" data-i18n="reminder72Label">Rappel 72 h avant (sans réponse)</div>
+    <div class="nl-label" data-i18n="reminder72Label">${esc(fr.reminder72Label)}</div>
     <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_72h_enabled ? 'true' : 'false'}" id="ob_reminder_72h" onclick="obToggle(this)"></button>
   </div>
   <div class="nl-toggle">
-    <div class="nl-label" data-i18n="reminder24Label">Rappel 24 h avant (sans réponse)</div>
+    <div class="nl-label" data-i18n="reminder24Label">${esc(fr.reminder24Label)}</div>
     <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_24h_enabled ? 'true' : 'false'}" id="ob_reminder_24h" onclick="obToggle(this)"></button>
   </div>
   <div class="nl-toggle">
-    <div class="nl-label" data-i18n="reminder12Label">Détails 12 h avant (confirmés)</div>
+    <div class="nl-label" data-i18n="reminder12Label">${esc(fr.reminder12Label)}</div>
     <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.reminder_12h_enabled ? 'true' : 'false'}" id="ob_reminder_12h" onclick="obToggle(this)"></button>
-  </div>`;
-  } else if (step === 'stats') {
+  </div>
+  </section>`);
+    {
     // Stats tracking task (Part 1): the old single "Track stats?"
     // question replaced by two independent ones -- a fixed-teams
     // league may want standings and never track individuals; a
@@ -3636,26 +3739,37 @@ async function handleOnboardingSeasonPage(req, env, url) {
     // for a no-teams league, nor a league whose roster asks for no goalie.
     const hasGoalies = offerResults && leagueGoalies && (Number(leagueRow.min_goalies) > 0 || Number(leagueRow.max_goalies) > 0);
     const resultsKey = teamStructure === 'weekly_draw' ? 'statsExplainResultsPickup' : 'statsExplainResults';
-    stepHtml = `
-  <div class="su-title">
-    <h1 data-i18n="statsTitle">Suivre les statistiques?</h1>
-    <p class="nl-help" data-i18n="statsSub">Choisis indépendamment ce que tu veux suivre. Tu pourras changer ça plus tard dans Paramètres.</p>
-  </div>
+    const resultsDescKey = teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickup' : 'lblTracksResultsDesc';
+    sections.push(`
+  <section class="ob-opt" aria-labelledby="ob_h_stats">
+  <h2 id="ob_h_stats" data-i18n="statsTitle">${esc(fr.statsTitle)}</h2>
+  <p class="nl-help" data-i18n="statsSub">${esc(fr.statsSub)}</p>
   <ul class="ob-explain" id="ob_stats_explain" style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:15px;line-height:22px;">
     ${offerResults ? `<li data-i18n="${resultsKey}">${esc(fr[resultsKey])}</li>` : ''}
     <li data-i18n="statsExplainPlayers">${esc(fr.statsExplainPlayers)}</li>
     ${hasGoalies ? `<li data-i18n="statsExplainGoalies">${esc(fr.statsExplainGoalies)}</li>` : ''}
   </ul>
   <p class="nl-help" style="margin:0" data-i18n="statsExplainWhere">${esc(fr.statsExplainWhere)}</p>
-  <div id="formErr" class="nl-error" style="display:none"></div>
   ${offerResults ? `<div class="nl-toggle">
-    <div><div class="nl-label" data-i18n="lblTracksResults">Résultats des matchs</div><p class="nl-help" data-i18n="${teamStructure === 'weekly_draw' ? 'lblTracksResultsDescPickup' : 'lblTracksResultsDesc'}" style="margin:2px 0 0">${teamStructure === 'weekly_draw' ? "Le score de chaque match, gardé comme historique. Les équipes changent chaque semaine, donc pas de classement." : 'Le score de chaque match, calculé en classement (V-D-N).'}</p></div>
+    <div><div class="nl-label" data-i18n="lblTracksResults">${esc(fr.lblTracksResults)}</div><p class="nl-help" data-i18n="${resultsDescKey}" style="margin:2px 0 0">${esc(fr[resultsDescKey])}</p></div>
     <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_results ? 'true' : 'false'}" id="ob_tracks_results" onclick="obToggle(this)"></button>
   </div>` : ''}
   <div class="nl-toggle">
-    <div><div class="nl-label" data-i18n="lblTracksPlayerStats">Statistiques des joueurs</div><p class="nl-help" data-i18n="lblTracksPlayerStatsDesc" style="margin:2px 0 0">Buts et passes par joueur, par match.</p></div>
+    <div><div class="nl-label" data-i18n="lblTracksPlayerStats">${esc(fr.lblTracksPlayerStats)}</div><p class="nl-help" data-i18n="lblTracksPlayerStatsDesc" style="margin:2px 0 0">${esc(fr.lblTracksPlayerStatsDesc)}</p></div>
     <button type="button" class="nl-switch" role="switch" aria-checked="${leagueRow.tracks_player_stats ? 'true' : 'false'}" id="ob_tracks_player_stats" onclick="obToggle(this)"></button>
-  </div>`;
+  </div>
+  </section>`);
+    }
+    stepHtml = `
+  <div class="su-title">
+    <h1 data-i18n="optionsTitle">${esc(fr.optionsTitle)}</h1>
+  </div>
+  <div id="formErr" class="nl-error" role="alert" style="display:none"></div>
+  <style>
+    .ob-opt { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-4); border-top: 1px solid var(--line); }
+    .ob-opt:first-of-type { border-top: 0; padding-top: 0; }
+  </style>
+  ${sections.join('\n')}`;
   } else if (step === 'finance') {
     // Onboarding batch, item 3: optional. "Non" moves on; "Oui" opens the
     // season's fees (the Finances page's own fields, saved through its own
@@ -3737,7 +3851,8 @@ async function handleOnboardingSeasonPage(req, env, url) {
   <!-- Onboarding batch: the last step now leads to the summary, not the
        dashboard; every step after the first has a way back. -->
   <button type="button" class="nl-btn nl-btn--primary nl-btn--lg nl-btn--block" id="ob_submit" data-i18n="next" onclick="obSubmit()">Continuer</button>
-  ${stepNum > 1 ? `<button type="button" class="nl-btn nl-btn--ghost nl-btn--block" id="ob_back" data-i18n="back" onclick="location.href='/onboarding/season?step=${stepNum - 1}'">Retour</button>` : ''}
+  <!-- Onboarding review 1e: the first step too, back to the season screen. -->
+  <button type="button" class="nl-btn nl-btn--ghost nl-btn--block" id="ob_back" data-i18n="back" onclick="location.href='/onboarding/season?step=${stepNum > 1 ? stepNum - 1 : 'season'}'">Retour</button>
   <!-- B2 (onboarding polish task): was a full-width .nl-btn--ghost.nl-btn--block,
        the same width/shape as the primary above it -- visually competing
        with it rather than reading as the lower-priority escape hatch it
@@ -3806,7 +3921,7 @@ function obPlayoffsUpdate() {
     document.getElementById('ob_third_place_wrap').style.display = n >= 4 ? '' : 'none';
   }
 }
-if (OB_STEP === 'playoffs') { obPlayoffsUpdate(); }
+if (OB_STEP === 'options') { obPlayoffsUpdate(); }
 function showErr(msg) { var el = document.getElementById('formErr'); el.textContent = msg; el.style.display = 'block'; }
 async function obSave(path, payload) {
   var res = await fetch(path, {
@@ -3892,7 +4007,10 @@ async function obSubmit() {
         await obSave('/league/settings/teams', { teamNames: teamNames, teamColors: teamNames.map(function(_, idx) { return OB_TEAM_COLORS[idx % OB_TEAM_COLORS.length]; }) });
         await obSave('/league/season/teams', { season_name: OB_SEASON_NAME, teamNames: teamNames });
       }
-    } else if (OB_STEP === 'playoffs') {
+    } else if (OB_STEP === 'options') {
+      // Onboarding review 3b: the three sections, saved in order through
+      // their own routes. The playoffs section exists for fixed teams only.
+      if (document.getElementById('ob_playoffs_enabled')) {
       // Playoff extension, Part 1: question 1's "no" answer needs no
       // further payload -- handleLeagueUpdatePlayoffs' own "not
       // enabled" branch clears everything else server-side.
@@ -3910,13 +4028,12 @@ async function obSubmit() {
         }
       }
       await obSave('/league/settings/playoffs', payload);
-    } else if (OB_STEP === 'reminders') {
+      }
       await obSave('/league/reminders/settings', {
         reminder72h: document.getElementById('ob_reminder_72h').getAttribute('aria-checked') === 'true',
         reminder24h: document.getElementById('ob_reminder_24h').getAttribute('aria-checked') === 'true',
         reminder12h: document.getElementById('ob_reminder_12h').getAttribute('aria-checked') === 'true'
       });
-    } else if (OB_STEP === 'stats') {
       // Partial update -- handleLeagueUpdateIdentity only touches fields
       // actually present in the body, so this leaves name/color/theme/
       // publicPageEnabled completely untouched. tracksResults' own
@@ -9416,7 +9533,7 @@ async function handleLeagueRosterPage(req, env, url) {
       addNoticeTeamlessOne: "1 de ces joueurs n'a pas d'équipe : il ne recevra aucun rappel tant que tu ne lui en donnes pas une.",
       addNoticeBtn: '{n|Ajouter le joueur|Ajouter les joueurs}',
       bulkImportHelp: "Colle une liste copiée d'un tableur (Excel, Google Sheets) : une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est correcte, elle sera ignorée. Colonnes : nom, courriel, téléphone et, en dernier, l'équipe (optionnelle, équipes fixes seulement). Exemple : Marie Tremblay, marie@example.com, 514-555-0100, Rouge",
-      lblTeamCol: 'Équipe',
+      lblTeamCol: 'Équipe', bulkTeamUnknown: 'Aucune équipe de ce nom',
       importTeamUnmatched: "Ajoutés sans équipe, car l'équipe inscrite ne correspond à aucune équipe de ta ligue :",
       importTeamIgnored: "La colonne d'équipe a été ignorée : ta ligue n'a pas d'équipes fixes.",
       importNoteClose: 'Fermer',
@@ -9491,7 +9608,7 @@ async function handleLeagueRosterPage(req, env, url) {
       addNoticeTeamlessOne: '1 of these players has no team: they get no reminder until you give them one.',
       addNoticeBtn: '{n|Add the player|Add the players}',
       bulkImportHelp: 'Paste a list copied from a spreadsheet (Excel, Google Sheets): one person per line, columns separated by a tab or comma. A header row is fine, it will be skipped. Columns: name, email, phone and, last, the team (optional, fixed teams only). Example: John Smith, john@example.com, 514-555-0100, Red',
-      lblTeamCol: 'Team',
+      lblTeamCol: 'Team', bulkTeamUnknown: 'No team by that name',
       importTeamUnmatched: "Added without a team, because the team given matches none of your league's teams:",
       importTeamIgnored: 'The team column was ignored: your league has no fixed teams.',
       importNoteClose: 'Close',
@@ -9965,6 +10082,9 @@ var BULK_HEADER_WORDS = ['name', 'nom', 'full name', 'nom complet', 'email', 'e-
 // Onboarding batch 2, item 3: the optional team column. A league's teams,
 // matched regardless of case and accents (the server matches the same way).
 var ROSTER_TEAMS = ${JSON.stringify(teamNames).replace(/</g, '\\u003c')};
+// Onboarding review 1b: a fixed-teams league's preview always has the team
+// column; other structures ignore it (the note after the import says so).
+var ROSTER_TEAM_SHAPED = ${showTeams ? 'true' : 'false'};
 var ACCENTS = new RegExp('[' + String.fromCharCode(0x300) + '-' + String.fromCharCode(0x36f) + ']', 'g');
 function teamKey(t) { return String(t || '').normalize('NFD').replace(ACCENTS, '').toLowerCase().split(' ').filter(Boolean).join(' '); }
 function namesTeam(t) { var k = teamKey(t); return !!k && ROSTER_TEAMS.some(function(x) { return teamKey(x) === k; }); }
@@ -10118,7 +10238,7 @@ function bulkPreview() {
   BULK_ROWS = [];
   var tbody = document.getElementById('ro_bulk_tbody');
   tbody.innerHTML = '';
-  var anyTeam = rows.some(function(r) { return !!r.team; });
+  var anyTeam = ROSTER_TEAM_SHAPED || rows.some(function(r) { return !!r.team; });
   document.getElementById('ro_bulk_team_th').style.display = anyTeam ? '' : 'none';
   rows.forEach(function(r) {
     var status = 'ok';
@@ -10130,7 +10250,19 @@ function bulkPreview() {
     tr.appendChild(bulkTableCell(r.name || '–'));
     tr.appendChild(bulkTableCell(r.email || '–'));
     tr.appendChild(bulkTableCell(r.phone || '–'));
-    if (anyTeam) tr.appendChild(bulkTableCell(r.team || '–'));
+    if (anyTeam) {
+      var teamCell = bulkTableCell(r.team || '–');
+      // Marked before importing: the player is added with no team.
+      if (ROSTER_TEAM_SHAPED && r.team && !namesTeam(r.team)) {
+        var miss = document.createElement('span');
+        miss.className = 'ro-bulk-skip ro-bulk-noteam';
+        miss.setAttribute('data-i18n', 'bulkTeamUnknown');
+        miss.textContent = dict.bulkTeamUnknown;
+        teamCell.appendChild(document.createElement('br'));
+        teamCell.appendChild(miss);
+      }
+      tr.appendChild(teamCell);
+    }
     tr.appendChild(bulkTableCell(statusText, status !== 'ok' ? 'ro-bulk-skip' : ''));
     tbody.appendChild(tr);
   });
@@ -10673,6 +10805,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       remBulkSuppress: 'Ne pas envoyer de rappels automatiques pour ces {n} matchs seulement (les autres gardent les leurs)',
       remBulkSuppressOne: 'Ne pas envoyer de rappels automatiques pour ce match seulement (les autres gardent les leurs)',
       noEvents: "Aucun match pour l'instant.",
+      emptySchedule: 'Commence par créer les matchs de ta saison : un par semaine, même heure et même lieu.',
       stateOpen: 'Ouvert', stateClosed: 'Fermé', stateCancelled: 'Annulé',
        noEndTag: 'Heure de fin à ajouter', noEndNoticeTitle: "Des matchs n'ont pas d'heure de fin",
       needsSeasonTitle: "Lance ta saison d'abord",
@@ -10767,6 +10900,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       remBulkSuppress: "Don't send automatic reminders for these {n} games only (the others keep theirs)",
       remBulkSuppressOne: "Don't send automatic reminders for this game only (the others keep theirs)",
       noEvents: 'No events yet.',
+      emptySchedule: "Start by creating your season's games: one a week, same time and place.",
       stateOpen: 'Open', stateClosed: 'Closed', stateCancelled: 'Cancelled',
        noEndTag: 'End time needed', noEndNoticeTitle: 'Some games have no end time',
       needsSeasonTitle: 'Start your season first',
@@ -10780,7 +10914,7 @@ async function handleLeagueSchedulePage(req, env, url) {
       distTitle: 'Game distribution', distColTeam: 'Team', distColGames: 'Games', distColDoubles: 'Nights with two or more games',
       editMatchupBtn: 'Edit matchup', setMatchupBtn: 'Set matchup', matchupSaveBtn: 'Save',
       goToDashboard: 'Go to dashboard',
-      bulkCreateBtn: 'Create multiple events', bulkCreateTitle: 'Create multiple events',
+      bulkCreateBtn: 'Create multiple games', bulkCreateTitle: 'Create multiple games',
       bulkCreateHelp: 'Create a weekly series of events, same time and venue each week.',
       lblStartDate: 'First date', lblOccurrences: 'Number of events',
       lblEndDate: 'or end date (optional)', bulkCreateSubmit: 'Create the series',
@@ -10861,7 +10995,13 @@ async function handleLeagueSchedulePage(req, env, url) {
         </div>
       </div>
     </div>`).join('')
-    : `<p class="nl-help" data-i18n="noEvents">Aucun match pour l'instant.</p>`;
+    // Onboarding review 1f: an empty schedule says where to start, with
+    // the weekly series as its main action (no matchups to assign yet).
+    : needsSeason ? `<p class="nl-help" data-i18n="noEvents">Aucun match pour l'instant.</p>`
+    : `<section class="nl-card nl-card--pad-lg" id="sc_empty" style="display:flex;flex-direction:column;gap:var(--space-3);align-items:flex-start;">
+      <p style="margin:0" data-i18n="emptySchedule">Commence par créer les matchs de ta saison : un par semaine, même heure et même lieu.</p>
+      <button type="button" class="nl-btn nl-btn--primary" id="sc_empty_bulk" onclick="openBulkPanel()" data-i18n="bulkCreateBtn">Créer plusieurs matchs</button>
+    </section>`;
 
   const bodyHtml = `${dashStyles()}<style>
   .sc-main { max-width: var(--content-wide); width: 100%; margin: 0 auto; padding: var(--space-5) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
@@ -10936,7 +11076,7 @@ async function handleLeagueSchedulePage(req, env, url) {
     <h1 data-i18n="title">Horaire</h1>
     ${needsSeason ? '' : `<div style="display:flex;gap:var(--space-2);flex-wrap:wrap;">
       <button type="button" class="nl-btn nl-btn--secondary" onclick="openBulkPanel()" data-i18n="bulkCreateBtn">Créer plusieurs matchs</button>
-      ${showMatchupsPanel ? `<button type="button" class="nl-btn nl-btn--secondary" onclick="toggleMatchupsPanel()" data-i18n="matchupsGenBtn">Assigner les affrontements</button>` : ''}
+      ${showMatchupsPanel && events.length ? `<button type="button" class="nl-btn nl-btn--secondary" onclick="toggleMatchupsPanel()" data-i18n="matchupsGenBtn">Assigner les affrontements</button>` : ''}
       <button type="button" class="nl-btn nl-btn--primary" onclick="openSchedulePanel()" data-i18n="createEvent">Créer un match</button>
     </div>`}
   </div>
@@ -12341,13 +12481,17 @@ ${tabbar}`;
     // reached, "Minimum atteint" while spots remain, "Complet" only at the
     // maximum. "places libres" is the spots left to the maximum.
     const missing = Math.max(0, (cfg.goaliesPerTeam || 0) - st.goalies) + Math.max(0, (cfg.minSkaters || 0) - st.skaters);
+    // Review 1d: the alarm only when the shortage is real (shortageIsReal);
+    // before that no badge, the counts below unchanged.
+    const shortShown = st.short && await shortageIsReal(env, ev, cfg, isHeadcount ? null : team);
     const spotsLeft = Math.max(openGoalies, 0) + Math.max(openSkaters, 0);
     teamCards.push(`
-    <section class="nl-card nl-card--pad-lg${st.short ? ' nl-card--short' : ''} ev-team"${isHeadcount ? ' style="grid-column:1/-1"' : ''}>
+    <section class="nl-card nl-card--pad-lg${shortShown ? ' nl-card--short' : ''} ev-team"${isHeadcount ? ' style="grid-column:1/-1"' : ''}>
       <div class="ev-th">
         <h2>${isHeadcount ? `<span data-i18n="poolTitle">Joueurs</span>` : `<span class="nl-dot" style="background:${resolveTeamColor(leagueRow.team_colors, i)}"></span>${esc(team)}`}</h2>
-        ${st.short
+        ${shortShown
           ? `<span class="nl-badge nl-badge--short" data-short="${missing}">${BADGE_ICON_ALERT}<span data-i18n="short">Manque</span> ${missing}</span>`
+          : st.short ? ''
           : spotsLeft > 0
           ? `<span class="nl-badge nl-badge--in" data-short="0">${BADGE_ICON_CHECK}<span data-i18n="minReached">Minimum atteint</span></span>`
           : `<span class="nl-badge nl-badge--in" data-short="0">${BADGE_ICON_CHECK}<span data-i18n="complete">Complet</span></span>`}
@@ -12422,12 +12566,14 @@ ${tabbar}`;
     // first, "Manque N" to the minimum, "places libres" to the maximum.
     const poolMissing = pool.openGoalies + pool.openSkaters;
     const poolSpotsLeft = Math.max(0, pool.meterTarget - poolCounts.in);
+    const poolShortShown = pool.short && await shortageIsReal(env, ev, cfg, null);
     poolCardHtml = `
-    <section class="nl-card nl-card--pad-lg${pool.short ? ' nl-card--short' : ''} ev-team" style="grid-column:1/-1">
+    <section class="nl-card nl-card--pad-lg${poolShortShown ? ' nl-card--short' : ''} ev-team" style="grid-column:1/-1">
       <div class="ev-th">
         <h2><span data-i18n="poolTitle">Joueurs</span></h2>
-        ${pool.short
+        ${poolShortShown
           ? `<span class="nl-badge nl-badge--short" data-short="${poolMissing}">${BADGE_ICON_ALERT}<span data-i18n="short">Manque</span> ${poolMissing}</span>`
+          : pool.short ? ''
           : poolSpotsLeft > 0
           ? `<span class="nl-badge nl-badge--in" data-short="0">${BADGE_ICON_CHECK}<span data-i18n="minReached">Minimum atteint</span></span>`
           : `<span class="nl-badge nl-badge--in" data-short="0">${BADGE_ICON_CHECK}<span data-i18n="complete">Complet</span></span>`}
@@ -15290,7 +15436,44 @@ function gameTeamNames(ev, cfg) {
   return all;
 }
 
+// Onboarding review 1d: a league's shortage shows on the dashboard and the
+// game page only when it is real. Inside the sub-call window, the shortage
+// that calls subs (confirmed players only). Before it, only once the first
+// ask for the game has gone out (a 72 h or 24 h reminder, or its log), and
+// only if the team would still be short with everyone who has not answered
+// counted in. Before any ask, nobody could answer yet: no alarm, the
+// counts stay. SMBHL keeps its own board.
+async function shortageIsReal(env, ev, cfg, team) {
+  const leagueId = (ev && ev.league_id) || SMBHL_LEAGUE_ID;
+  if (leagueId === SMBHL_LEAGUE_ID) return true;
+  if (hoursOut(ev) <= await getSubCallHours(env.DB, leagueId)) return true;
+  const asked = await env.DB.prepare(
+    `SELECT 1 FROM outbox WHERE event_id = ? AND kind IN ('reminder_72h', 'reminder_24h') AND sent_at IS NOT NULL LIMIT 1`
+  ).bind(ev.id).first() || await env.DB.prepare('SELECT 1 FROM league_reminder_log WHERE event_id = ? LIMIT 1').bind(ev.id).first();
+  if (!asked) return false;
+  const structure = cfg.teamStructure || 'fixed';
+  if (structure === 'weekly_draw') {
+    const pool = await pickupPool(env, ev, cfg, { confirmedOnly: false });
+    const t = pickupPoolTargets(cfg);
+    return pool.goalies < t.minGoalies || pool.skaters < t.minSkaters;
+  }
+  const fixed = structure === 'fixed';
+  const waiting = (await env.DB.prepare(
+    `SELECT COALESCE(c.is_goalie, 0) AS g, COUNT(*) AS n FROM contacts c
+       LEFT JOIN rsvp r ON r.event_id = ? AND r.player_id = c.player_id
+      WHERE c.league_id = ? AND c.role = 'roster' AND COALESCE(c.is_active, 1) = 1
+        AND (r.player_id IS NULL OR r.status = 'pending') ${fixed ? 'AND c.preferred_team = ?' : ''}
+      GROUP BY COALESCE(c.is_goalie, 0)`
+  ).bind(...(fixed ? [ev.id, leagueId, team] : [ev.id, leagueId])).all()).results || [];
+  const waitingGoalies = Number((waiting.find(w => Number(w.g) === 1) || {}).n) || 0;
+  const waitingSkaters = Number((waiting.find(w => Number(w.g) !== 1) || {}).n) || 0;
+  const st = await teamState(env.DB, ev.id, fixed ? team : HEADCOUNT_TEAM_NAME, cfg);
+  return st.goalies + waitingGoalies < (cfg.goaliesPerTeam || 0) || st.skaters + waitingSkaters < (cfg.minSkaters || 0);
+}
+
 async function eventWeekStatus(env, leagueId, ev, cfg) {
+  // The dashboard's rows may not carry the league (shortageIsReal needs it).
+  if (!ev.league_id) ev = { ...ev, league_id: leagueId };
   const teamNames = gameTeamNames(ev, cfg);
   const teamStructure = cfg.teamStructure || 'fixed';
 
@@ -15304,14 +15487,15 @@ async function eventWeekStatus(env, leagueId, ev, cfg) {
   const counts = { in: 0, out: 0, pending: 0 };
   for (const r of rows) counts[r.status] = Number(r.cnt) || 0;
 
+  // Review 1d: each shortage only when it is real (shortageIsReal).
   let short = false;
   if (teamStructure === 'headcount') {
-    short = (await teamState(env.DB, ev.id, HEADCOUNT_TEAM_NAME, cfg)).short;
+    short = (await teamState(env.DB, ev.id, HEADCOUNT_TEAM_NAME, cfg)).short && await shortageIsReal(env, ev, cfg, null);
   } else if (teamStructure === 'weekly_draw') {
-    short = (await weeklyDrawPoolStatus(env, ev, cfg, counts.in)).short;
+    short = (await weeklyDrawPoolStatus(env, ev, cfg, counts.in)).short && await shortageIsReal(env, ev, cfg, null);
   } else {
     for (const team of teamNames) {
-      if ((await teamState(env.DB, ev.id, team, cfg)).short) { short = true; break; }
+      if ((await teamState(env.DB, ev.id, team, cfg)).short && await shortageIsReal(env, ev, cfg, team)) { short = true; break; }
     }
   }
 

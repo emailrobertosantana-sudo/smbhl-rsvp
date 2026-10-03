@@ -75,106 +75,95 @@ describe('B1: one continuous "STEP n OF m" count, signup through onboarding', ()
     await applyRealSchema(env);
   });
 
-  // Onboarding item 1: before the structure is chosen the real total is
-  // unknown (8 fixed, 6 pickup, 5 no teams) -- no total, no dot bar.
-  it('signup steps 1 and 2 (structure not chosen yet) show no total at all, both languages', async () => {
+  // Onboarding review 1e: steps 1 and 2 show a total too: the fixed teams
+  // one (the structure picked by default) until step 2's choice changes it.
+  it('signup steps 1 and 2 show « Étape N sur 8 » and the bar; step 2 follows the structure picked', async () => {
     const step1 = await getSignup(null, 1);
-    expect(step1).toContain('data-i18n="step1">Étape 1<');
-    expect(step1).not.toContain('role="progressbar"');
+    expect(step1).toContain('data-i18n="step1">Étape 1 sur 8<');
+    expect(stepAttrs(step1)).toEqual({ now: '1', max: '8' });
 
     const { cookie } = await signup('flow.step12@example.com', '203.0.210.001');
     const step2 = await getSignup(cookie, 2);
-    expect(step2).toContain('data-i18n="step2">Étape 2<');
-    expect(step2).not.toContain('role="progressbar"');
+    expect(step2).toContain('data-i18n="step2">Étape 2 sur 8<');
+    expect(stepAttrs(step2)).toEqual({ now: '2', max: '8' });
+    expect(step2).toContain('var FLOW_TOTALS = {"fixed":8,"headcount":6,"weekly_draw":6};');
   });
 
   it('English copy for steps 1/2 (embedded in the page\'s own __I18N dict, applied client-side)', async () => {
     const step1 = await getSignup(null, 1);
     const m = step1.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.en.step1).toBe('Step 1');
-    expect(dict.fr.step1).toBe('Étape 1');
-    expect(dict.en.step2).toBe('Step 2');
-    expect(dict.fr.step2).toBe('Étape 2');
+    expect(dict.en.step1).toBe('Step 1 of 8');
+    expect(dict.fr.step1).toBe('Étape 1 sur 8');
+    expect(dict.en.step2).toBe('Step 2 of 8');
+    expect(dict.fr.step2).toBe('Étape 2 sur 8');
   });
 
   // Onboarding batch (2026-10-02): the season screen (#4 fixed, #3 otherwise) and
-  // the finance step (last) joined the count: 10 fixed, 7 for the others.
-  it('fixed structure: signup step 3 (client-side, real total known) is 3 of 10; the full flow numbers 1-10 across every real screen, including the playoffs and finance steps', async () => {
+  // the finance step (last) joined the count. Onboarding review 3b: playoffs,
+  // reminders and stats are one options step: 8 fixed, 6 for the others.
+  it('fixed structure: signup step 3 is 3 of 8; the full flow numbers 1-8 across every real screen, the options and finance steps included', async () => {
     const { cookie, csrfToken } = await signup('flow.fixed@example.com', '203.0.210.002');
     const step3 = await getSignup(cookie, 3);
-    // Server-rendered default (fixed IS the eventual choice here, so
-    // no client-side correction needed -- confirmed via the dict/markup
-    // that would drive that correction).
     expect(step3).toContain('id="su_step3_label"');
-    expect(stepAttrs(step3)).toEqual({ now: '3', max: '10' });
+    expect(stepAttrs(step3)).toEqual({ now: '3', max: '8' });
 
     const league = await createLeague(cookie, csrfToken, { name: 'Flow Fixed League', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'Flow Fixed Season' });
 
     const obRoster = await getOnboarding(cookie, 1);
-    expect(stepAttrs(obRoster)).toEqual({ now: '5', max: '10' });
-    expect(obRoster).toMatch(/Étape 5 sur 10/);
+    expect(stepAttrs(obRoster)).toEqual({ now: '5', max: '8' });
+    expect(obRoster).toMatch(/Étape 5 sur 8/);
 
     const obTeams = await getOnboarding(cookie, 2);
-    expect(stepAttrs(obTeams)).toEqual({ now: '6', max: '10' });
+    expect(stepAttrs(obTeams)).toEqual({ now: '6', max: '8' });
     expect(obTeams).toContain('id="ob_teams"');
 
-    const obPlayoffs = await getOnboarding(cookie, 3);
-    expect(stepAttrs(obPlayoffs)).toEqual({ now: '7', max: '10' });
-    expect(obPlayoffs).toContain('id="ob_playoffs_enabled"');
+    const obOptions = await getOnboarding(cookie, 3);
+    expect(stepAttrs(obOptions)).toEqual({ now: '7', max: '8' });
+    expect(obOptions).toContain('id="ob_playoffs_enabled"');
+    expect(obOptions).toContain('id="ob_reminder_72h"');
+    expect(obOptions).toContain('id="ob_tracks_results"');
+    expect(obOptions).toContain('id="ob_tracks_player_stats"');
 
-    const obReminders = await getOnboarding(cookie, 4);
-    expect(stepAttrs(obReminders)).toEqual({ now: '8', max: '10' });
-    expect(obReminders).toContain('id="ob_reminder_72h"');
-
-    const obStats = await getOnboarding(cookie, 5);
-    expect(stepAttrs(obStats)).toEqual({ now: '9', max: '10' });
-    expect(obStats).toContain('id="ob_tracks_results"');
-    expect(obStats).toContain('id="ob_tracks_player_stats"');
-    const obFinance = await getOnboarding(cookie, 6);
-    expect(stepAttrs(obFinance)).toEqual({ now: '10', max: '10' });
+    const obFinance = await getOnboarding(cookie, 4);
+    expect(stepAttrs(obFinance)).toEqual({ now: '8', max: '8' });
     expect(obFinance).toContain('id="ob_finance_yes"');
   });
 
   // Item 2: headcount skips signup step 3 (its player count was asked there
   // AND at the roster step); like weekly_draw, the league is created at
-  // step 2 and onboarding numbers from 3. Total 5.
-  it('headcount structure: signup skips step 3, the season is 3, onboarding numbers 4 to 7; real total is 7', async () => {
+  // step 2 and onboarding numbers from 3.
+  it('headcount structure: signup skips step 3, the season is 3, onboarding numbers 4 to 6; real total is 6', async () => {
     const { cookie, csrfToken } = await signup('flow.headcount@example.com', '203.0.210.003');
     await createLeague(cookie, csrfToken, { name: 'Flow Headcount League', teamStructure: 'headcount', minPlayers: 6, maxPlayers: 10 });
     await publishSeason(cookie, csrfToken, { season_name: 'Flow Headcount Season' });
 
     const obRoster = await getOnboarding(cookie, 1);
-    expect(stepAttrs(obRoster)).toEqual({ now: '4', max: '7' });
-    expect(obRoster).toMatch(/Étape 4 sur 7/);
+    expect(stepAttrs(obRoster)).toEqual({ now: '4', max: '6' });
+    expect(obRoster).toMatch(/Étape 4 sur 6/);
 
-    const obReminders = await getOnboarding(cookie, 2);
-    expect(stepAttrs(obReminders)).toEqual({ now: '5', max: '7' });
-    expect(obReminders).not.toContain('id="ob_teams"');
-
-    const obStats = await getOnboarding(cookie, 3);
-    expect(stepAttrs(obStats)).toEqual({ now: '6', max: '7' });
-    expect(stepAttrs(await getOnboarding(cookie, 4))).toEqual({ now: '7', max: '7' });
+    const obOptions = await getOnboarding(cookie, 2);
+    expect(stepAttrs(obOptions)).toEqual({ now: '5', max: '6' });
+    expect(obOptions).not.toContain('id="ob_teams"');
+    expect(obOptions).toContain('id="ob_reminder_72h"');
+    expect(stepAttrs(await getOnboarding(cookie, 3))).toEqual({ now: '6', max: '6' });
   });
 
-  // Onboarding item 4: no team-names step for pickup -- total 5.
-  it('weekly_draw structure: signup skips step 3, no team-names step; the season is 3, onboarding numbers 4 to 7; real total is 7', async () => {
+  // Onboarding item 4: no team-names step for pickup.
+  it('weekly_draw structure: signup skips step 3, no team-names step; the season is 3, onboarding numbers 4 to 6; real total is 6', async () => {
     const { cookie, csrfToken } = await signup('flow.weekly@example.com', '203.0.210.004');
     await createLeague(cookie, csrfToken, { name: 'Flow Weekly League', teamStructure: 'weekly_draw', teamNames: ['A', 'B'] });
     await publishSeason(cookie, csrfToken, { season_name: 'Flow Weekly Season' });
 
     const obRoster = await getOnboarding(cookie, 1);
-    expect(stepAttrs(obRoster)).toEqual({ now: '4', max: '7' });
-    expect(obRoster).toMatch(/Étape 4 sur 7/);
+    expect(stepAttrs(obRoster)).toEqual({ now: '4', max: '6' });
+    expect(obRoster).toMatch(/Étape 4 sur 6/);
 
-    const obReminders = await getOnboarding(cookie, 2);
-    expect(stepAttrs(obReminders)).toEqual({ now: '5', max: '7' });
-    expect(obReminders).not.toContain('id="ob_teams"');
-
-    const obStats = await getOnboarding(cookie, 3);
-    expect(stepAttrs(obStats)).toEqual({ now: '6', max: '7' });
-    expect(stepAttrs(await getOnboarding(cookie, 4))).toEqual({ now: '7', max: '7' });
+    const obOptions = await getOnboarding(cookie, 2);
+    expect(stepAttrs(obOptions)).toEqual({ now: '5', max: '6' });
+    expect(obOptions).not.toContain('id="ob_teams"');
+    expect(stepAttrs(await getOnboarding(cookie, 3))).toEqual({ now: '6', max: '6' });
   });
 
   it('signup step 2 creates a headcount league directly (like weekly_draw), and step 3 sends a headcount draft back', async () => {
