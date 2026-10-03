@@ -21,6 +21,12 @@ A migration must keep the old code working on the new schema, and the new code w
 
 Never deploy production, never push, never write to the production database or KV, never change DNS or Cloudflare settings. Never print secrets, tokens or full email addresses. Never touch copy-audit/ or the design system files. No em dashes in code comments, commit messages, copy or the report. No migration unless the batch explicitly allows one, and then only under the rules for migrations above.
 
+## KV values (data_json)
+
+- Never write data_json, or any KV value, through PowerShell or a console: a redirect (`>`), a pipe or `--value` reads UTF-8 through the console's code page and garbles it (« Fran├ºois », September 2026).
+- Download with `curl.exe -s -o file.json https://rsvp.smbhl.com/api/data-json` and write with `npx wrangler kv key put data_json --path=file.json ...`, from a UTF-8 file.
+- The Worker's guard (src/data_json_guard.js, src/mojibake.js) and scripts/smbhl_season_config.mjs refuse garbled text: nothing is written and Roberto gets an alert.
+
 ## One codebase
 
 SMBHL and Notre Ligue share their code. No forks: build a feature once, for both products, and keep SMBHL's behaviour unchanged unless the item says otherwise.

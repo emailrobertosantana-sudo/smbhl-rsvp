@@ -61,6 +61,8 @@ import { writeRefusal, isWriteRequest, writeAllowed } from './write_guard.js';
 import { superAdminListPage, superAdminLeaguePage, LEAGUE_PAGE_CONSTANTS } from './super_admin_ui.js';
 import { sendTestAlert } from './operator_alerts.js';
 import { operatorEmailConfigured, flushOperatorSummaries } from './operator_mail.js';
+import { putDataJson, refuseDamaged } from './data_json_guard.js';
+import { isMojibake } from './mojibake.js';
 import { prepareOpsDigest, deliverOpsDigest, OPS_DIGEST_TO, OPS_DIGEST_KIND } from './ops_digest.js';
 import { HARD_DELETE_UNLOCK_DAYS, checkHardDeleteEligibility, checkSuperAdminHardDelete, validHardDeleteConfirmPhrases, handleLeagueHardDelete, handleSuperAdminLeagueHardDelete } from './hard_delete.js';
 import {
@@ -259,7 +261,7 @@ async function getStandingsTooltip(env) {
         const res = await fetch(`${env.SITE_URL || 'https://smbhl.com'}/data.json`);
         if (res.ok) {
           kv = await res.text();
-          if (env.SHEETS_KV) await env.SHEETS_KV.put('data_json', kv);
+          if (env.SHEETS_KV) await putDataJson(env, kv, 'standings cache');
         }
       } catch (e) {}
     }
@@ -22175,7 +22177,7 @@ async function peopleAction(req, env) {
             let changed = false;
             if (p.seasons && p.seasons[currentSeason]) { delete p.seasons[currentSeason]; changed = true; }
             if (p.gseasons && p.gseasons[currentSeason]) { delete p.gseasons[currentSeason]; changed = true; }
-            if (changed) await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+            if (changed) await putDataJson(env, JSON.stringify(d, null, 2), 'people page');
           }
         }
       } catch (_) {}
@@ -26823,7 +26825,7 @@ async function handleSeasonRecapSend(req, env) {
       if (s0 && s0.champion !== body.champion) {
         s0.champion = body.champion;
         d.updated = now.slice(0, 10);
-        await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+        await putDataJson(env, JSON.stringify(d, null, 2), 'season recap');
       }
     } catch (e) {
       console.error('Error updating champion in data.json:', e);
@@ -32753,7 +32755,8 @@ async function handleTeamsMove(req, env) {
     }
 
     if (env.SHEETS_KV) {
-      await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+      try { await putDataJson(env, JSON.stringify(d, null, 2), 'teams page'); }
+      catch (e) { if (e && e.dataJsonDamaged) return e.response(); throw e; }
     }
 
     await env.DB.prepare(
@@ -32782,7 +32785,8 @@ async function handleTeamsMove(req, env) {
     delete p.gseasons[season];
 
     if (env.SHEETS_KV) {
-      await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+      try { await putDataJson(env, JSON.stringify(d, null, 2), 'teams page'); }
+      catch (e) { if (e && e.dataJsonDamaged) return e.response(); throw e; }
     }
 
     const isGoalie = contact?.is_goalie === 1 || pos === 'G';
@@ -32848,7 +32852,8 @@ async function handleTeamsTrade(req, env) {
   if (pB.gseasons?.[season]) pB.gseasons[season].team = teamA;
 
   if (env.SHEETS_KV) {
-    await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+    try { await putDataJson(env, JSON.stringify(d, null, 2), 'teams page'); }
+    catch (e) { if (e && e.dataJsonDamaged) return e.response(); throw e; }
   }
 
   await env.DB.prepare('UPDATE contacts SET preferred_team = ? WHERE player_id = ?').bind(teamB, playerAId).run();
@@ -32900,6 +32905,8 @@ async function handleTeamsAdd(req, env) {
     return new Response(JSON.stringify({ error: 'Équipe cible invalide' }), { status: 400 });
   }
 
+  // The data_json guard: a garbled name is refused before the contact is made.
+  if (isMojibake(String(name || ''))) return (await refuseDamaged(env, [{ path: 'name', value: String(name) }], 'teams page')).response();
   let pid = String(player_id || '').trim();
   let contact = null;
 
@@ -32955,7 +32962,8 @@ async function handleTeamsAdd(req, env) {
   }
 
   if (env.SHEETS_KV) {
-    await env.SHEETS_KV.put('data_json', JSON.stringify(d, null, 2));
+    try { await putDataJson(env, JSON.stringify(d, null, 2), 'teams page'); }
+    catch (e) { if (e && e.dataJsonDamaged) return e.response(); throw e; }
   }
 
   await env.DB.prepare(

@@ -22,6 +22,8 @@ import {
 } from './season_config.js';
 import { SMBHL_LEAGUE_ID, makeEventId } from './league_ids.js';
 import { getSeasonPricing, saveSeasonPlayerPrices } from './finance_store.js';
+import { putDataJson, refuseDamaged } from './data_json_guard.js';
+import { findMojibake } from './mojibake.js';
 
 export const TEAM_COLORS = getTeamNames(DEFAULT_SEASON_CONFIG);
 export const TEAM_LABELS = {
@@ -1030,7 +1032,7 @@ export async function publishSeasonToProduction(env, { seasonName, startDate, ro
   }
 
   if (env.SHEETS_KV) {
-    await env.SHEETS_KV.put('data_json', JSON.stringify(dataJson, null, 2));
+    await putDataJson(env, JSON.stringify(dataJson, null, 2), 'season launch');
     // Also save backup
     await env.SHEETS_KV.put(`backup:season_launch:${seasonName}`, JSON.stringify(dataJson));
   }
@@ -1413,6 +1415,10 @@ export async function handleSeasonLaunch(req, env) {
   if (!seasonName || !startDate || !rosters || !fixtures || !events) {
     return Response.json({ ok: false, error: 'Paramètres incomplets pour le lancement de la saison' }, { status: 400 });
   }
+  // The data_json guard (src/data_json_guard.js): garbled text in the form
+  // is refused before anything is written.
+  const damaged = findMojibake(body);
+  if (damaged.length) return (await refuseDamaged(env, damaged, 'season launch')).response();
 
   try {
     const result = await publishSeasonToProduction(env, {
@@ -1426,6 +1432,7 @@ export async function handleSeasonLaunch(req, env) {
     });
     return Response.json({ ok: true, result });
   } catch (err) {
+    if (err && err.dataJsonDamaged) return err.response();
     return Response.json({ ok: false, error: err.message }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@ import { HIDDEN_ATTR_CSS } from './design_system.js';
 import PostalMime from 'postal-mime';
 import { checkAdminAuth, adminPageHeaders, generateReviewToken } from './admin_auth.js';
 import { computeWeeklyRecap } from './highlights.js';
+import { putDataJson } from './data_json_guard.js';
 import { isMailDeferred } from './mail_queue.js';
 import { sortStandings, getRegularGoalsByTeam, updatePlayoffSchedule } from './awards.js';
 import { DEFAULT_SEASON_CONFIG, getSeasonConfig, getSeasonConfigFromEnv, getTeamNames, normalizeTeamWithConfig, tracksStats, getLeagueConfig } from './season_config.js';
@@ -3299,8 +3300,10 @@ export async function handleReviewPublish(req, env, sendMailFunc = null, replyTo
   const updatedData = updateLeagueDataWithReview(originalData, weekNum, games, subPlayerIds);
   const updatedDataStr = JSON.stringify(updatedData, null, 2);
 
-  // 1. Update live data.json in KV
-  await env.SHEETS_KV.put('data_json', updatedDataStr);
+  // 1. Update live data.json in KV, unless the guard finds garbled text
+  // (src/data_json_guard.js): then nothing is written, no backup either.
+  try { await putDataJson(env, updatedDataStr, 'review publish'); }
+  catch (e) { if (e && e.dataJsonDamaged) return e.response(); throw e; }
 
   const now = new Date().toISOString();
   const timestampSafe = now.replace(/[:.]/g, '-');
