@@ -170,7 +170,11 @@ export async function postWebhook(env, title, text, { tags = 'warning', timeoutM
     const signal = timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {};
     let res;
     if (/ntfy/.test(host)) {
-      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain; charset=utf-8', Title: encodeURIComponent(title).slice(0, 200), Tags: tags }, body: text.slice(0, 3900), ...signal });
+      // ALERT_WEBHOOK_TOKEN (optional): an ntfy access token. ntfy.sh limits
+      // anonymous publishes per IP, and Workers share their outgoing IPs
+      // (demo saw a 429); with a token the limit is the account's own.
+      const auth = env.ALERT_WEBHOOK_TOKEN ? { Authorization: `Bearer ${env.ALERT_WEBHOOK_TOKEN}` } : {};
+      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain; charset=utf-8', Title: encodeURIComponent(title).slice(0, 200), Tags: tags, ...auth }, body: text.slice(0, 3900), ...signal });
     } else if (/discord/.test(host)) {
       res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content: `**${title}**\n${text}`.slice(0, 1900) }), ...signal });
     } else {

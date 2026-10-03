@@ -43,7 +43,7 @@ beforeAll(async () => {
       // ntfy.sh unreachable from the Worker (seen on demo: a 522 after 20 s).
       return new Promise((_, reject) => { if (opts.signal) opts.signal.addEventListener('abort', () => reject(new Error('aborted'))); });
     }
-    if (u === HOOK) { hooks.push({ title: decodeURIComponent((opts.headers && opts.headers.Title) || ''), tags: opts.headers && opts.headers.Tags, body: String(opts.body || '') }); return new Response('ok', { status: 200 }); }
+    if (u === HOOK) { hooks.push({ title: decodeURIComponent((opts.headers && opts.headers.Title) || ''), tags: opts.headers && opts.headers.Tags, auth: opts.headers && opts.headers.Authorization, body: String(opts.body || '') }); return new Response('ok', { status: 200 }); }
     if (u.startsWith('https://api.stripe.com/')) {
       const parsed = new URL(u);
       const path = parsed.pathname.replace('/v1', '');
@@ -137,6 +137,20 @@ describe('1a. A new league', () => {
       expect(hooks).toHaveLength(0);
     } finally { hookHangs = false; }
   }, 20000);
+
+  it('an ntfy access token, when set, goes in the Authorization header; none otherwise', async () => {
+    const h = await admin('p235token');
+    env.ALERT_WEBHOOK_TOKEN = 'tk_p235';
+    try {
+      await must(h.post('/leagues/create', { name: 'Avec jeton', teamNames: ['A', 'B'] }), 'create');
+      expect(hooks).toHaveLength(1);
+      expect(hooks[0].auth).toBe('Bearer tk_p235');
+    } finally { delete env.ALERT_WEBHOOK_TOKEN; }
+    hooks.length = 0;
+    await must(h.post('/leagues/create', { name: 'Sans jeton', teamNames: ['A', 'B'] }), 'create');
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0].auth).toBeUndefined();
+  });
 
   it('SMBHL never alerts', async () => {
     expect(await alertLeagueCreated(env, 'smbhl')).toBe(false);
