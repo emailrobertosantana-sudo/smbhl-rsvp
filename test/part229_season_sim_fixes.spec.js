@@ -24,9 +24,9 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { applyRealSchema } from './support/real_schema.js';
 import { admin, must } from './support/league_season.js';
 import { answerViaEmailLink } from './support/email_link.js';
-import { drain, runCronPass, acceptAvailability, teamState, expected, syncDualRoles, callSubs, sendLeagueReminderKind } from '../src/index.js';
+import { drain, runCronPass, acceptAvailability, teamState, expected, syncDualRoles, callSubs, callSubsForShortfall, sendLeagueReminderKind } from '../src/index.js';
 import { getLeagueSeasonConfig } from '../src/leagues.js';
-import { evaluateHealth, HEALTH_RULES } from '../src/league_health.js';
+import { evaluateHealth, HEALTH_RULES, billingStale } from '../src/league_health.js';
 import { collectProblems } from '../src/health.js';
 import { renderOpsDigest } from '../src/ops_digest.js';
 import { montrealMidnight } from '../src/montreal_time.js';
@@ -318,6 +318,29 @@ describe('C2: quiet hours for a league', () => {
     const cutoff = local('2026-10-16', '12:00');
     for (const r of await rows("SELECT send_after FROM outbox WHERE event_id = ? AND kind = 'sub_call'", gid)) expect(Date.parse(r.send_after)).toBeLessThanOrEqual(cutoff);
   });
+
+  it('a call made at 21:43 for a game days away: its later waves wait for 07:00 instead of going at 22:43 and 23:43', async () => {
+    const L = await twoTeams('pc2w');
+    for (let i = 0; i < 15; i++) await add(L.a, { name: `Sub ${i} pc2w`, email: `sub${i}.pc2w@p229.example`, role: 'sub_skater', is_goalie: false });
+    const gid = await game(L.a, '2026-10-17', '19:00', '20:00', { home_team: 'A', away_team: 'B' });
+    vi.setSystemTime(new Date(local('2026-10-14', '21:43')));
+    await callSubs(env, await ev(gid), 'A', 'skater', 0, L.id, true, true, true);
+    const after = (await rows("SELECT send_after FROM outbox WHERE event_id = ? AND kind = 'sub_call'", gid)).map(r => Date.parse(r.send_after));
+    expect(after.length).toBe(15);
+    expect(after.filter(t => t === local('2026-10-14', '21:43')).length).toBeGreaterThan(0);
+    for (const t of after) expect(t < local('2026-10-14', '23:00') || t >= local('2026-10-15', '07:00')).toBe(true);
+  });
+
+  it("the admin's short-of-players alert found at 23:00 for a game three days away waits for 07:00", async () => {
+    const L = await twoTeams('pc2s');
+    const gid = await game(L.a, '2026-10-17', '19:00', '20:00', { home_team: 'A', away_team: 'B' });
+    for (const s of L.p.A.skaters) await say(L.id, gid, s, 'out', 'A');
+    vi.setSystemTime(new Date(local('2026-10-14', '23:00')));
+    await callSubsForShortfall(env, await ev(gid));
+    const alerts = await rows("SELECT send_after FROM outbox WHERE event_id = ? AND kind = 'short_alert'", gid);
+    expect(alerts.length).toBeGreaterThan(0);
+    for (const a of alerts) expect(Date.parse(a.send_after)).toBeGreaterThanOrEqual(local('2026-10-15', '07:00'));
+  });
 });
 
 describe('C4: a game time changed after the players were asked', () => {
@@ -389,6 +412,14 @@ describe('C7 and C8: billing on the pages and in the health', () => {
     await env.DB.prepare(`INSERT INTO events (id, season, week, date, state, start_time, end_time, league_id, auto_reminders_enabled) VALUES (?, 'S1', 1, '2026-10-16', 'open', '19:00', '20:00', ?, 1)`).bind(`${L.id}:2026-10-16`, L.id).run();
     const problems = await collectProblems(env, {}, new Date(NOW));
     expect(problems.filter(p => p.scope === L.id && /reminder_missed/.test(p.key))).toEqual([]);
+  });
+
+  it("C8: a light stored green before the league went read-only gives way to the live one until the next daily pass", () => {
+    const live = { signals: [{ key: 'billing_ok', level: 'red', ok: false }] };
+    expect(billingStale({ light: 'green' }, live)).toBe(true);
+    expect(billingStale({ light: 'yellow' }, live)).toBe(true);
+    expect(billingStale({ light: 'red' }, live)).toBe(false);
+    expect(billingStale({ light: 'green' }, { signals: [{ key: 'billing_ok', level: 'red', ok: true }] })).toBe(false);
   });
 });
 

@@ -348,6 +348,12 @@ export function pickMetrics(r) {
   return Object.fromEntries(keys.map(k => [k, r[k] === undefined ? null : r[k]]));
 }
 
+// Whether a stored light predates a billing stop the live signals see.
+export function billingStale(stored, live) {
+  const now = ((live && live.signals) || []).find(g => g.key === 'billing_ok');
+  return !!(now && !now.ok && stored && stored.light !== 'red');
+}
+
 // The list's rows: live numbers, the stored light when there is one (else
 // the live one, marked). Red, then yellow, then green, then deactivated;
 // within a light, the oldest light first, then by name.
@@ -357,7 +363,9 @@ export async function leagueListRows(env, now = new Date()) {
   const order = { red: 0, yellow: 1, green: 2 };
   const rows = live.map(r => {
     const s = stored.get(r.id);
-    const useStored = !r.deactivated && s && s.light;
+    // A league that went read-only since the daily light was stored shows
+    // its live light: read-only is never green (simulation fix C8).
+    const useStored = !r.deactivated && s && s.light && !billingStale(s, r);
     return {
       ...r,
       light: r.deactivated ? null : useStored ? s.light : r.light,

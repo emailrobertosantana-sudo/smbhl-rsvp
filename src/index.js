@@ -49,7 +49,7 @@ import { BOUNCE_STOP_AFTER, isBounceError, recordBounce, addressStopped, stopped
 import { guardOn, checkSend, recordSend, HELD_UNTIL, FREE_CAP_REASON, heldReason, freeCapHeldCount, cancelFreeCapHeld, listPauses, releaseScope, cancelScope, checkBounces, pruneGuardState } from './mail_guard.js';
 import { checkStripeConfig } from './billing_check.js';
 import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS, ownerOf } from './billing_actions.js';
-import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail, attributionSummary, defaultAttributionPeriod } from './league_health.js';
+import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail, attributionSummary, defaultAttributionPeriod, billingStale } from './league_health.js';
 import { readSupportSession, supportEnv, supportResponse, startSupport, endSupport, clearSupportCookieHeader, readSupportLog } from './support_mode.js';
 import { writeRefusal, isWriteRequest, writeAllowed } from './write_guard.js';
 import { superAdminListPage, superAdminLeaguePage, LEAGUE_PAGE_CONSTANTS } from './super_admin_ui.js';
@@ -16183,13 +16183,14 @@ function subPoolOrderBinds(ev) {
 // the game (problem C2: a late "out" called every sub at 23:45, a noon
 // game's details went out at midnight). Not SMBHL, which keeps its rules.
 const QUIET_HOLD_MARGIN_HOURS = 3;
-async function quietHoldIsSensible(env, ev, leagueId) {
+// at: when the email would go (now unless told); a later sub-call wave is
+// checked at its own time.
+async function quietHoldIsSensible(env, ev, leagueId, at = Date.now()) {
   if (!leagueId || leagueId === SMBHL_LEAGUE_ID || !ev) return false;
   const st = eventStart(ev);
   if (!st) return false;
-  const now = Date.now();
-  const end = (await afterQuiet(env, new Date(now), leagueId)).getTime();
-  return end > now && end <= st.getTime() - QUIET_HOLD_MARGIN_HOURS * 3600000;
+  const end = (await afterQuiet(env, new Date(at), leagueId)).getTime();
+  return end > at && end <= st.getTime() - QUIET_HOLD_MARGIN_HOURS * 3600000;
 }
 
 async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LEAGUE_ID, usesIndependentGoalieAxis = false, skipQuietHours = false, requireActive = false, quietLeagueId = null, emptyPools = null) {
@@ -16262,9 +16263,16 @@ async function callSubs(env, ev, team, need, startDelay = 0, leagueId = SMBHL_LE
   const lastMin = leagueId !== SMBHL_LEAGUE_ID ? Math.max(0, Math.floor((hrs - CUTOFF_HOURS) * 60)) : Infinity;
 
   for (const p of pool) {
+    const delayMin = Math.min(startDelay + p.wave * gap, lastMin);
+    // A league's later wave that would land in quiet hours waits for their
+    // end too, when the game leaves time (C2: waves queued at 21:43 went
+    // at 22:43 and 23:43).
+    const holdWave = skipQuietHours && leagueId !== SMBHL_LEAGUE_ID && delayMin > 0
+      && await quietHoldIsSensible(env, ev, leagueId, Date.now() + delayMin * 60000);
     await enqueue(env, { kind: 'sub_call', event_id: ev.id, player_id: p.player_id,
       team, dedup_key: `call:${ev.id}:${need}:${p.player_id}`,
-      payload: { need }, delayMin: Math.min(startDelay + p.wave * gap, lastMin), league_id: leagueId, skipQuietHours, quietLeagueId });
+      payload: { need }, delayMin, league_id: leagueId,
+      skipQuietHours: holdWave ? false : skipQuietHours, quietLeagueId: holdWave ? leagueId : quietLeagueId });
   }
   return pool.length;
 }
@@ -18431,7 +18439,7 @@ async function superAdminLeagueData(env, leagueId) {
   if (!detail) return Response.json({ ok: false, error: 'League not found.', errorKey: 'LEAGUE_NOT_FOUND' }, { status: 404 });
   const meta = (await listLeaguesWithMetadata(env)).find(l => l.id === leagueId) || null;
   const snap = detail.snapshot;
-  const health = snap && snap.light
+  const health = snap && snap.light && !billingStale(snap, detail.league)
     ? { light: snap.light, signals: snap.signals, metrics: snap.metrics, computedAt: snap.computedAt, live: false }
     : { light: detail.league.light, signals: detail.league.signals, metrics: detail.league, computedAt: null, live: true };
   return Response.json({
@@ -24071,6 +24079,13 @@ async function maybeSendTeamAssignedFollowup(env, leagueRow, cfg, ev, playerId, 
 // except a league on the advanced reminder model, whose automatic waves
 // are held for its quiet hours (quietHours: true, src/reminders.js).
 async function enqueuePrerenderedMail(env, { kind, leagueId, eventId, playerId = null, team = null, dedupKey = null, to, mail, identity = null, quietHours = false, delayMin = 0 }) {
+  // The admin's "short of players" alert found in quiet hours waits for
+  // their end when the game leaves time (C2: one went at 23:00 for a game
+  // three days away).
+  if (!quietHours && kind === 'short_alert' && leagueId && leagueId !== SMBHL_LEAGUE_ID && eventId) {
+    const ev = await getEvent(env.DB, eventId);
+    if (ev && await quietHoldIsSensible(env, ev, leagueId, Date.now() + delayMin * 60000)) quietHours = true;
+  }
   await enqueue(env, {
     kind, event_id: eventId, player_id: playerId, team, dedup_key: dedupKey, league_id: leagueId, delayMin,
     skipQuietHours: !quietHours, quietLeagueId: quietHours ? leagueId : null,
