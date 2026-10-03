@@ -47,9 +47,9 @@ function checkHead(html, lang, canonicalPath) {
   expect(attr(html, /<meta property="og:locale:alternate" content="([^"]+)">/)).toBe(lang === 'en' ? 'fr_CA' : 'en_CA');
   expect(html).toContain('<meta property="og:type" content="website">');
   expect(html).toContain('<meta property="og:site_name" content="Notre Ligue">');
-  // The share image (test/part221_canonical_host_share.spec.js checks it in full).
+  // The share image, one per language (test/part230 checks it in full).
   expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
-  expect(html).toMatch(/<meta property="og:image" content="[^"]+\/share\/notre-ligue\.png">/);
+  expect(html).toMatch(/<meta property="og:image" content="[^"]+\/share\/notre-ligue(-en)?\.png">/);
   // Structure: one H1, section titles H2 before any H3, landmarks.
   expect(html.match(/<h1[\s>]/g)).toHaveLength(1);
   const headings = [...html.matchAll(/<h([1-6])[\s>]/g)].map(m => m[1]);
