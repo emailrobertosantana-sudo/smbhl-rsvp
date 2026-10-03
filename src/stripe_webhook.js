@@ -25,6 +25,7 @@
 import { billingEnabled, SMBHL_ID } from './billing.js';
 import { stripeRequest, stripeId } from './stripe.js';
 import { same } from './crypto_utils.js';
+import { alertSubscriptionActive } from './operator_alerts.js';
 
 export const SIGNATURE_TOLERANCE_SECONDS = 300;
 const enc = new TextEncoder();
@@ -264,6 +265,12 @@ export async function writeSubscription(env, subId, { leagueId = null, customerI
   const status = appStatusFor(sub);
   const now = new Date().toISOString();
   const periodEnd = iso(sub.current_period_end || (item && item.current_period_end));
+  // Overnight batch, item 1b: the row before this write, to tell a
+  // subscription that becomes active. Only read when the operator webhook
+  // is set (src/operator_alerts.js).
+  const prev = env.ALERT_WEBHOOK_URL
+    ? await env.DB.prepare('SELECT stripe_subscription_id, status FROM league_billing WHERE league_id = ?').bind(league).first()
+    : null;
   await env.DB.prepare(
     `INSERT INTO league_billing (league_id, owner_user_id, stripe_customer_id, stripe_subscription_id, stripe_price_id, tier,
        billing_interval, stripe_status, status, current_period_end, cancel_at_period_end, paused_at, inactive_since, last_stripe_event_at, updated_at)
@@ -304,6 +311,13 @@ export async function writeSubscription(env, subId, { leagueId = null, customerI
      WHERE league_id = ?`
   ).bind(sub.trial_start ? iso(sub.trial_start) : null, sub.trial_end ? iso(sub.trial_end) : null,
     (sub.cancel_at_period_end || cancelAt) ? 1 : 0, cancelAt, league).run();
+  // Roberto's instant alert when the subscription becomes active: once per
+  // league and subscription, whichever path writes it first (the webhook or
+  // the return from Checkout). Never fails the event.
+  await alertSubscriptionActive(env, {
+    leagueId: league, sub, status, tier, interval: (price && price.recurring && price.recurring.interval) || null,
+    prev, request: stripeRequest
+  });
   return { leagueId: league, status, subscription: sub };
 }
 

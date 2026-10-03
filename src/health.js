@@ -155,7 +155,9 @@ export function scrubForWebhook(s) {
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP]')
     .replace(/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b/gi, '[IP]');
 }
-export async function postWebhook(env, title, text) {
+// tags: ntfy's emoji tags (default 'warning'; the operator's good-news
+// alerts, src/operator_alerts.js, pass their own).
+export async function postWebhook(env, title, text, { tags = 'warning' } = {}) {
   const url = env.ALERT_WEBHOOK_URL;
   if (!url) return false;
   title = scrubForWebhook(title);
@@ -164,7 +166,7 @@ export async function postWebhook(env, title, text) {
     const host = new URL(url).hostname;
     let res;
     if (/ntfy/.test(host)) {
-      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain; charset=utf-8', Title: encodeURIComponent(title).slice(0, 200), Tags: 'warning' }, body: text.slice(0, 3900) });
+      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain; charset=utf-8', Title: encodeURIComponent(title).slice(0, 200), Tags: tags }, body: text.slice(0, 3900) });
     } else if (/discord/.test(host)) {
       res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ content: `**${title}**\n${text}`.slice(0, 1900) }) });
     } else {

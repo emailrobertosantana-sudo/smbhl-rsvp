@@ -3,7 +3,7 @@
 // never went out is detected; the cron's own death is detected on request;
 // when email itself is broken, the webhook still carries the alert.
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { applyRealSchema } from './support/real_schema.js';
 import { healthHost, runCronPass } from '../src/index.js';
 import { runHealthPass, recordHeartbeat, collectProblems, reconcileAlerts, cronStatus, CRON_STALE_MINUTES } from '../src/health.js';
@@ -65,7 +65,13 @@ beforeAll(async () => {
   env.ALERT_WEBHOOK_URL = 'https://ntfy.sh/p144-alerts';
   delete env.MAIL_DAILY_CAP;
   await applyRealSchema(env);
+  // Creating a league now pings the webhook (src/operator_alerts.js): outside
+  // mockFetch, that ping is answered here, never sent to ntfy.sh.
+  base = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => String(url).includes('ntfy.sh') ? new Response('ok') : base(url, opts);
 });
+let base;
+afterAll(() => { if (base) globalThis.fetch = base; });
 beforeEach(clearHealth);
 
 describe('1a. A league\'s failure reaches its own admin and the operator', () => {

@@ -34,6 +34,7 @@ import { recordAdminSeen } from './league_health.js';
 import { applyReminderWindowSkipRule } from './reminder_scheduling.js';
 import { usesAdvancedReminders, getEmailSettings, emailSettingsKey } from './reminders.js';
 import { concurrencyClusters, teamClash, doubleBookedPlayers } from './league_nights.js';
+import { alertLeagueCreated } from './operator_alerts.js';
 
 /* ---------- league-scoped authorization ----------
  * Bridges auth.js's session concept to "which league(s) can this user act
@@ -3587,6 +3588,10 @@ export async function handleLeagueCreate(req, env) {
         'UPDATE leagues SET angle = ?, utm_source = ?, utm_medium = ?, utm_campaign = ?, utm_content = ?, landing_language = ?, attributed_at = ? WHERE id = ?'
       ).bind(attr.angle, attr.utm_source, attr.utm_medium, attr.utm_campaign, attr.utm_content, attr.landing_language, attr.attributed_at, leagueId).run();
     }
+
+    // Overnight batch, item 1a: Roberto's instant alert (a webhook push,
+    // once per league, never an email). Never fails the creation.
+    await alertLeagueCreated(env, leagueId);
 
     return Response.json({
       ok: true,
