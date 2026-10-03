@@ -9546,7 +9546,7 @@ async function handleLeagueRosterPage(req, env, url) {
       addNoticeTeamless: "{n|Ce joueur n'a pas d'équipe : il ne recevra aucun rappel tant que tu ne lui en donnes pas une.|# de ces joueurs n'ont pas d'équipe : ils ne recevront aucun rappel tant que tu ne leur en donnes pas une.}",
       addNoticeTeamlessOne: "1 de ces joueurs n'a pas d'équipe : il ne recevra aucun rappel tant que tu ne lui en donnes pas une.",
       addNoticeBtn: '{n|Ajouter le joueur|Ajouter les joueurs}',
-      bulkImportHelp: "Colle une liste copiée d'un tableur (Excel, Google Sheets) : une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est acceptée, elle sera ignorée. Colonnes : nom, courriel, téléphone et, en dernier, l'équipe (optionnelle, équipes fixes seulement). Exemple : Marie Tremblay, marie@example.com, 514-555-0100, Rouge",
+      bulkImportHelp: "Colle une liste copiée d'un tableur (Excel, Google Sheets) : une personne par ligne, colonnes séparées par une tabulation ou une virgule. Une ligne d'en-tête est acceptée, elle sera ignorée. Colonnes : nom, courriel, téléphone et, en dernier, l'équipe (facultative, équipes fixes seulement). Exemple : Marie Tremblay, marie@example.com, 514-555-0100, Rouge",
       lblTeamCol: 'Équipe', bulkTeamUnknown: 'Aucune équipe de ce nom',
       importTeamUnmatched: "Ajoutés sans équipe, car l'équipe inscrite ne correspond à aucune équipe de ta ligue :",
       importTeamIgnored: "La colonne d'équipe a été ignorée : ta ligue n'a pas d'équipes fixes.",
@@ -9915,7 +9915,7 @@ async function handleLeagueRosterPage(req, env, url) {
         <div class="ro-bulk-summary" id="ro_bulk_summary"></div>
         <div style="max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:var(--radius-md);">
           <table class="ro-bulk-table">
-            <thead><tr><th data-i18n="colPlayer">Joueur</th><th data-i18n="lblEmailCol">Courriel</th><th data-i18n="lblPhoneCol">Téléphone</th><th data-i18n="lblTeamCol" id="ro_bulk_team_th" style="display:none">Équipe</th><th data-i18n="bulkStatusCol">Statut</th></tr></thead>
+            <thead><tr><th data-i18n="colPlayer">Joueur</th><th data-i18n="lblEmailCol">Courriel</th><th data-i18n="lblPhoneCol" id="ro_bulk_phone_th">Téléphone</th><th data-i18n="lblTeamCol" id="ro_bulk_team_th" style="display:none">Équipe</th><th data-i18n="bulkStatusCol">Statut</th></tr></thead>
             <tbody id="ro_bulk_tbody"></tbody>
           </table>
         </div>
@@ -10253,6 +10253,9 @@ function bulkPreview() {
   tbody.innerHTML = '';
   var anyTeam = ROSTER_TEAM_SHAPED || rows.some(function(r) { return !!r.team; });
   document.getElementById('ro_bulk_team_th').style.display = anyTeam ? '' : 'none';
+  // No phone in the list: no empty column pushing the team off a phone screen.
+  var anyPhone = rows.some(function(r) { return !!r.phone; });
+  document.getElementById('ro_bulk_phone_th').style.display = anyPhone ? '' : 'none';
   rows.forEach(function(r) {
     var status = 'ok';
     if (!r.name || r.name.split(' ').filter(Boolean).length < 2) { status = 'noname'; }
@@ -10262,7 +10265,7 @@ function bulkPreview() {
     var tr = document.createElement('tr');
     tr.appendChild(bulkTableCell(r.name || '–'));
     tr.appendChild(bulkTableCell(r.email || '–'));
-    tr.appendChild(bulkTableCell(r.phone || '–'));
+    if (anyPhone) tr.appendChild(bulkTableCell(r.phone || '–'));
     if (anyTeam) {
       var teamCell = bulkTableCell(r.team || '–');
       // Marked before importing: the player is added with no team.

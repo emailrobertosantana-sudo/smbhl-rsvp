@@ -179,7 +179,7 @@ describe('3. the team column in the import', () => {
   it('the import help says so, in both languages, with an example', async () => {
     const { a } = await create('imp.help', { teamNames: ['Rouge', 'Bleu'] });
     const html = await page(a, '/league/roster');
-    expect(html).toContain("Colonnes : nom, courriel, téléphone et, en dernier, l&#39;équipe (optionnelle, équipes fixes seulement). Exemple : Marie Tremblay, marie@example.com, 514-555-0100, Rouge");
+    expect(html).toContain("Colonnes : nom, courriel, téléphone et, en dernier, l&#39;équipe (facultative, équipes fixes seulement). Exemple : Marie Tremblay, marie@example.com, 514-555-0100, Rouge");
     expect(html).toContain('Columns: name, email, phone and, last, the team (optional, fixed teams only). Example: John Smith, john@example.com, 514-555-0100, Red');
   });
 });
