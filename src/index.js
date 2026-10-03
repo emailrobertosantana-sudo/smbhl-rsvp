@@ -14598,11 +14598,16 @@ ${offEn}`;
         <p style="font-size:12px; color:#94a3b8; margin:0 0 20px;">
           ${esc(offEn)}
         </p>`;
+      // The pair in the email's language(s): SMBHL's is always both.
+      const pairLabel = (fr, en) => (languageMode === 'fr' ? fr : languageMode === 'en' ? en : `${fr} / ${en}`);
+      const yesLabel = pairLabel("J'embarque", "I'm in");
+      const noLabel = pairLabel('Pas cette fois', 'Not this time');
+      const pairColon = languageMode === 'en' ? ':' : ' :';
       const pairHtml = `<div style="margin:0 0 16px;">
-          ${emailBtn(payload.yes, "J'embarque / I'm in", '#17457f', '#ffffff')}
-          ${emailBtn(payload.no, 'Pas cette fois / Not this time', '#ffffff', '#17457f', '1px solid #cbd5e1')}
+          ${emailBtn(payload.yes, yesLabel, '#17457f', '#ffffff')}
+          ${emailBtn(payload.no, noLabel, '#ffffff', '#17457f', '1px solid #cbd5e1')}
         </div>`;
-      const pairText = `\n\nJ'embarque / I'm in : ${payload.yes}\nPas cette fois / Not this time : ${payload.no}`;
+      const pairText = `\n\n${yesLabel}${pairColon} ${payload.yes}\n${noLabel}${pairColon} ${payload.no}`;
 
       // Live-testing task (batch 3), Part 1: languageMode determines
       // which block(s) render, via the one shared assembler every

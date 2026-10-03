@@ -52,8 +52,10 @@ describe('SMBHL sub call, as delivered to Resend', () => {
       expect(body, `${part}: English opt-out line`).toContain('Want off the sub list? Just reply to this email.');
     }
     const html = visibleText(m.html);
-    expect(html).toMatch(/✅ J.embarque/);
-    expect(html).toContain('❌ Not this time');
+    // Email review item 3: one bilingual pair after both languages.
+    expect(html).toMatch(/J.embarque \/ I.m in/);
+    expect(html).toContain('Pas cette fois / Not this time');
+    expect(html).toMatch(/Want off the sub list\?[\s\S]*J.embarque \/ I.m in/);
   });
 
   it('the reminder too: "(rappel) / (reminder)" and both languages', async () => {

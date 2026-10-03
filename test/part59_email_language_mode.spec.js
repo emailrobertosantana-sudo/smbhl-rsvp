@@ -85,7 +85,7 @@ async function withMailMock(fn) {
 // equivalent string overlap, and likewise for English -- avoids false
 // positives from words that are identical or embedded in both (e.g.
 // "email", team names).
-const FR_MARKERS = ['Réinitialise ton mot de passe', 'co-administrer', 'a besoin d', 'gardien', 'remplaçant', 'Pas cette fois'];
+const FR_MARKERS = ['Réinitialise ton mot de passe', 'coadministrer', 'a besoin d', 'gardien', 'remplaçant', 'Pas cette fois'];
 const EN_MARKERS = ['Reset your password', 'co-admin', 'needs a', 'goalie', 'Not this time'];
 function hasAny(haystack, markers) {
   return markers.some(m => haystack.includes(m));
@@ -169,13 +169,13 @@ describe('Part 1 (live-testing task, batch 3): every email follows the league\'s
         expect(sentMails.length).toBe(1);
         const mail = sentMails[0];
         if (mode === 'fr') {
-          expect(mail.html).toContain('co-administrer');
+          expect(mail.html).toContain('coadministrer');
           expect(mail.html).not.toContain('Co-admin invitation');
         } else if (mode === 'en') {
           expect(mail.html).toContain('Co-admin invitation');
-          expect(mail.html).not.toContain('co-administrer');
+          expect(mail.html).not.toContain('coadministrer');
         } else {
-          expect(mail.html).toContain('co-administrer');
+          expect(mail.html).toContain('coadministrer');
           expect(mail.html).toContain('Co-admin invitation');
         }
       });

@@ -49,7 +49,9 @@ describe('the sub call closing line and footer', () => {
       expect(body).toContain('Want off the sub list? Just reply to this email.');
       expect(body).not.toMatch(/substitut|Sunday Morning|Ball Hockey League/i);
     }
-    expect(visibleText(m.html)).toMatch(/Ligue du mercredi · rsvp\.notreligue\.ca/);
+    // Email review 1a and 1e: Notre Ligue's card and its player footer.
+    expect(visibleText(m.html)).toContain('Propulsé par Notre Ligue pour Ligue du mercredi');
+    expect(visibleText(m.html)).not.toMatch(/rsvp\.notreligue\.ca/);
   });
 
   it('SMBHL: « liste de substituts », "sub list" and its tagline, unchanged', async () => {
