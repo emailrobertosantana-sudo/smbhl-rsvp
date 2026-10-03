@@ -12,7 +12,8 @@
     "schema:manifest": "node scripts/generate_schema_manifest.js",
     "schema:check:demo": "node scripts/check_schema_remote.js notreligue-demo --remote --env demo",
     "schema:check:production": "node scripts/check_schema_remote.js smbhl-rsvp --remote",
-    "check:cloudflare-access": "node scripts/check_cloudflare_access.js"
+    "check:cloudflare-access": "node scripts/check_cloudflare_access.js",
+    "check:contrast": "node scripts/check-contrast.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.0.0",
