@@ -14635,10 +14635,15 @@ We no longer need you with ${team} for the game on ${w.en}. Sorry for the back a
           const no = l === 'fr' ? 'Pas cette fois' : 'Not this time';
           const off = l === 'fr' ? offFr : offEn;
           const colon = l === 'fr' ? ' :' : ':';
+          // Stage 2, item 2e-3: a heading naming the day in words, like the
+          // reminders' (« Tu embarques dimanche? » / "Are you in Sunday?").
+          const weekday = isoW ? new Date(`${isoW}T12:00:00Z`).toLocaleDateString(l === 'fr' ? 'fr-CA' : 'en-CA', { weekday: 'long', timeZone: 'UTC' }) : '';
+          const heading = l === 'fr' ? (weekday ? `Tu embarques ${weekday}?` : 'Tu embarques?') : (weekday ? `Are you in ${weekday}?` : 'Are you in?');
           return {
             subject: l === 'fr' ? subjFr : subjEn,
-            text: `${ask}${vt(l)}\n\n${yes}${colon} ${payload.yes}\n${no}${colon} ${payload.no}\n\n${off}`,
+            text: `${heading}\n${ask}${vt(l)}\n\n${yes}${colon} ${payload.yes}\n${no}${colon} ${payload.no}\n\n${off}`,
             html: `
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">${esc(heading)}</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">${esc(ask)}${vh(l)}</p>
     ${nlEmailButton(payload.yes, yes, barColor)}
     <p style="margin:16px 0 0;text-align:center;font-size:15px;line-height:22px;"><a href="${esc(payload.no)}" style="color:#16181d;font-weight:700;">${esc(no)}</a></p>
@@ -14655,27 +14660,23 @@ We no longer need you with ${team} for the game on ${w.en}. Sorry for the back a
       }
       // Email review item 3: SMBHL's answer emails all follow the invite: the
       // French text, the English text, then one pair of bilingual buttons.
-      const textFr =
-`${askFr}${vt('fr')}
-
-${offFr}`;
-      const textEn =
-`${askEn}${vt('en')}
-
-${offEn}`;
+      // Stage 2, item 2e-1: the way off the list comes after the buttons
+      // (it sat between the question and the buttons).
+      const textFr = `${askFr}${vt('fr')}`;
+      const textEn = `${askEn}${vt('en')}`;
 
       const htmlFr = `<p style="font-size:16px; margin:0 0 16px;">
           ${esc(askFr)}${vh('fr')}
-        </p>
-        <p style="font-size:12px; color:#94a3b8; margin:0 0 16px;">
-          ${esc(offFr)}
         </p>`;
-      const htmlEn = `<p style="font-size:15px; margin:0 0 16px; color:#334155;">
+      const htmlEn = `<p style="font-size:15px; margin:0 0 20px; color:#334155;">
           ${esc(askEn)}${vh('en')}
-        </p>
-        <p style="font-size:12px; color:#94a3b8; margin:0 0 20px;">
-          ${esc(offEn)}
         </p>`;
+      // The way off the list in the email's language(s), under the buttons.
+      const offLines = languageMode === 'fr' ? [offFr] : languageMode === 'en' ? [offEn] : [offFr, offEn];
+      const offHtml = offLines.map((l, i) => `<p style="font-size:12px; color:#94a3b8; margin:${i ? '4px' : '0'} 0 0;">
+          ${esc(l)}
+        </p>`).join('\n        ');
+      const offText = `\n\n${offLines.join('\n')}`;
       // The pair in the email's language(s): SMBHL's is always both.
       const pairLabel = (fr, en) => (languageMode === 'fr' ? fr : languageMode === 'en' ? en : `${fr} / ${en}`);
       const yesLabel = pairLabel("J'embarque", "I'm in");
@@ -14708,7 +14709,7 @@ ${offEn}`;
       });
       // A league's sub call ends with Notre Ligue's legal links (src/legal.js).
       const legalHtml = leagueEvent ? `<p style="font-size:12px; color:#94a3b8; margin:16px 0 0;">${legalLinksEmailHtml(languageMode)}</p>` : '';
-      return { subject: assembled.subject, text: `${assembled.text}${pairText}${sign}`, html: wrapEmail(assembled.subject, assembled.html + pairHtml + legalHtml) };
+      return { subject: assembled.subject, text: `${assembled.text}${pairText}${offText}${sign}`, html: wrapEmail(assembled.subject, assembled.html + pairHtml + offHtml + legalHtml) };
     }
 
     case 'team_short': {
@@ -23803,8 +23804,12 @@ async function renderNightMovedForContact(env, leagueRow, games, contact, team, 
     const venue = venues.length ? venueLine(venues.join(' / '), lang) : '';
     const plural = games.length > 1;
     const old = (before || []).find(b => b && b.id === ev.id) || (before || [])[0] || null;
-    const oldWhen = old && (old.date !== ev.date || (old.start_time || '') !== (ev.start_time || ''))
-      ? (sentenceWhen(eventIso(old), old.start_time, lang) || formatEventDate(old.date, lang, 'long', false)) : '';
+    // Stage 2, item 2e-2: the same day, a new time: the bracket names the old
+    // time only (« (avant : 18 h) »), not the day again.
+    const oldWhen = !old ? ''
+      : old.date === ev.date
+        ? ((old.start_time || '') !== (ev.start_time || '') && old.start_time ? formatEventTime(old.start_time, lang) : '')
+        : (sentenceWhen(eventIso(old), old.start_time, lang) || formatEventDate(old.date, lang, 'long', false));
     const was = oldWhen ? (lang === 'fr' ? ` (avant : ${oldWhen})` : ` (was ${oldWhen})`) : '';
     const d = answer === 'none' ? (lang === 'fr' ? {
       subject: `${firstName}, pas de match pour ${team} ${dayLabel || 'ce jour-là'}`,

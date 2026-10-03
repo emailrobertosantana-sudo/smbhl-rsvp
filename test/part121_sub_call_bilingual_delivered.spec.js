@@ -55,7 +55,9 @@ describe('SMBHL sub call, as delivered to Resend', () => {
     // Email review item 3: one bilingual pair after both languages.
     expect(html).toMatch(/J.embarque \/ I.m in/);
     expect(html).toContain('Pas cette fois / Not this time');
-    expect(html).toMatch(/Want off the sub list\?[\s\S]*J.embarque \/ I.m in/);
+    // Stage 2, item 2e-1: the way off the list under the buttons.
+    expect(html).toMatch(/J.embarque \/ I.m in[\s\S]*Tu ne veux plus être sur la liste de substituts\?[\s\S]*Want off the sub list\?/);
+    expect(m.text).toMatch(/Pas cette fois \/ Not this time :[^\n]*\n\nTu ne veux plus être sur la liste de substituts\? Réponds à ce courriel\.\nWant off the sub list\? Just reply to this email\./);
   });
 
   it('the reminder too: "(rappel) / (reminder)" and both languages', async () => {

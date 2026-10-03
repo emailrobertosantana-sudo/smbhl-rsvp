@@ -79,8 +79,9 @@ describe('A changed matchup carries the answers', () => {
     expect(told.map(m => m.to).sort()).toEqual([P.Blue1.email, P.Blue2.email, P.Green1.email].sort()); // Green2 said no
     const blue1 = told.find(m => m.to === P.Blue1.email);
     // Email review item 2: the old time in brackets, the answer kept.
-    expect(blue1.text).toMatch(/Blue now plays on Saturday, Oct 10 at 11:30 AM \(was Saturday, Oct 10 at [^)]+\)\.\nVenue: Rink 1/);
-    expect(blue1.text).toMatch(/Blue joue maintenant le samedi 10 oct\. à 11 h 30 \(avant : samedi 10 oct\. à [^)]+\)\.\nLieu : Rink 1/);
+    // Stage 2, item 2e-2: the same day, so the bracket names the old time only.
+    expect(blue1.text).toMatch(/Blue now plays on Saturday, Oct 10 at 11:30 AM \(was \d[^)a-z]*(AM|PM)\)\.\nVenue: Rink 1/);
+    expect(blue1.text).toMatch(/Blue joue maintenant le samedi 10 oct\. à 11 h 30 \(avant : \d+ h( \d+)?\)\.\nLieu : Rink 1/);
     expect(blue1.text).toContain("Your answer is kept: you're still playing. Nothing to do on your end.");
     expect(blue1.text).toContain('Ta réponse est conservée : tu joues toujours. Rien à faire de ton côté.');
     expect(told.find(m => m.to === P.Blue2.email).text).toContain("You haven't answered yet: tell us if you're playing.");
