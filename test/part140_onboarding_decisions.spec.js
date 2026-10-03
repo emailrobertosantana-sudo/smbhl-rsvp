@@ -51,9 +51,10 @@ describe('2. The mid-flow screen says created, not ready', () => {
     const html = await page(s, '/signup?step=done');
     expect(html).toContain('data-i18n="doneTitle">Ta ligue est créée.<');
     expect(html).toContain('data-i18n="doneNext">Il reste quelques étapes : crée ta saison, puis ton horaire et tes joueurs.<');
-    expect(html).toContain('"doneTitle":"Your league is created."');
+    // Onboarding review item 2: "Your league is ready." in English; the
+    // French screen still says created, with what is left.
+    expect(html).toContain('"doneTitle":"Your league is ready."');
     expect(html).not.toContain('est prête');
-    expect(html).not.toContain('is ready');
   });
 });
 
@@ -173,18 +174,19 @@ describe('7. Roster readiness: subs count, and the season minimum is the one in 
     await post(s, '/league/contacts', { name: 'Reg One', role: 'roster', team: 'Otters' });
     for (const n of ['Sub One', 'Sub Two']) await post(s, '/league/contacts', { name: n, role: 'sub_skater' });
     let html = await page(s, '/league/roster');
-    expect(html).toContain('<span class="tnum">3</span> <span data-i18n="rosterProgressOfWord">sur</span> <span class="tnum">4</span>');
+    expect(html).toContain('3 joueurs ajoutés sur les 4 nécessaires (2 par équipe, remplaçants compris).');
     await post(s, '/league/contacts', { name: 'Sub Three', role: 'sub_skater' });
     html = await page(s, '/league/roster');
-    expect(html).not.toContain('data-i18n="rosterProgressLabel"'); // 4 of 4: ready
+    expect(html).not.toContain('id="ro_progress"'); // 4 of 4: ready
   });
   it('the season\'s minimum wins over the league default', async () => {
     const { s } = await setup('p140.ready.season@example.com', 1); // league default: 1 per team
     await post(s, '/league/season/publish', { season_name: 'S1', min_players: 3, max_players: 20 }); // this season: 3 per team
     for (const n of ['Reg One', 'Reg Two']) await post(s, '/league/contacts', { name: n, role: 'roster', team: 'Otters' });
     const html = await page(s, '/league/roster');
-    expect(html).toContain('data-i18n="rosterProgressLabel"'); // 2 would satisfy the league default of 2
-    expect(html).toContain('<span class="tnum">2</span> <span data-i18n="rosterProgressOfWord">sur</span> <span class="tnum">6</span>');
+    // 2 would satisfy the league default of 2.
+    expect(html).toContain('2 joueurs ajoutés sur les 6 nécessaires (3 par équipe, remplaçants compris).');
+    expect(html).toContain('2 players added of the 6 needed (3 per team, subs included).');
   });
 });
 

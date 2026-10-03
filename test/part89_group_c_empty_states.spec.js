@@ -102,7 +102,8 @@ describe('C1: Schedule gets a next-step card while the roster is empty', () => {
 
     const html = await (await SELF.fetch('http://example.com/league/schedule', { headers: { cookie } })).text();
     expect(html).not.toContain('data-i18n="scheduleNudgeTitle"');
-    expect(html).toContain('data-i18n="noEvents"');
+    // Onboarding review 1f: the empty schedule says where to start.
+    expect(html).toContain('id="sc_empty"');
   });
 
   it('no season yet: the existing needsSeason empty state shows, not the new roster nudge (season is the actual blocker)', async () => {
@@ -142,7 +143,7 @@ describe('C2: the "Pickup with teams" dashboard tile explains its own number', (
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
-    expect(html).toContain('data-i18n="teamsPerGame">Sans équipes fixes<');
+    expect(html).toContain('data-i18n="teamsPerGame">Équipes formées à chaque match<');
     expect(html).toContain('<div class="stat tnum">2</div>');
     expect(html).toContain('data-i18n="teamsPerGameCount">équipes disponibles<');
 
@@ -178,7 +179,7 @@ describe('C2: the "Pickup with teams" dashboard tile explains its own number', (
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
-    expect(html).toContain('Sans équipes fixes');
+    expect(html).toContain('Équipes formées à chaque match');
     expect(html).not.toContain('Nouvelles équipes chaque match');
   });
 });

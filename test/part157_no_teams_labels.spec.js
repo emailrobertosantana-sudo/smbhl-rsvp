@@ -26,11 +26,11 @@ describe('Signup offers both labels', () => {
     expect(d.en.structureMyTeamTitle).toBe('Just my team');
     expect(d.fr.structureMyTeamDesc).toBe("Une seule équipe qui joue dans une autre ligue, celle d'une ville par exemple : présences et remplaçants, sans classement.");
     expect(d.en.structureMyTeamDesc).toBe("One team playing in someone else's league, a city or rec league for example: attendance and subs, no standings.");
-    expect(d.fr.structureHeadcountTitle).toBe('Drop-in, sans équipes attitrées');
-    expect(d.en.structureHeadcountTitle).toBe('Drop-in, no fixed teams');
+    expect(d.fr.structureHeadcountTitle).toBe('Liste des présents seulement (drop-in)');
+    expect(d.en.structureHeadcountTitle).toBe('Attendance list only (drop-in)');
     // Pickup keeps its own label, distinct from drop-in.
-    expect(d.fr.structureWeeklyTitle).toBe('Sans équipes fixes');
-    expect(d.en.structureWeeklyTitle).toBe('Pickup with teams');
+    expect(d.fr.structureWeeklyTitle).toBe('Équipes formées à chaque match');
+    expect(d.en.structureWeeklyTitle).toBe('Teams formed every game');
   });
 });
 

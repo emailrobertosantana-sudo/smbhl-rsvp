@@ -474,7 +474,7 @@ describe('B1: settings roster-size wording matches onboarding, in both cards, fo
     // (E1/E2, season-model polish task) "Démarrer une nouvelle saison".
     const occurrences = html.split('data-i18n="rosterSubTeam"').length - 1;
     expect(occurrences).toBe(3);
-    expect(html).toContain("Ces nombres s'appliquent à chaque équipe. Laisse vide si tu n'es pas prêt à décider.");
+    expect(html).toContain("Ces nombres s'appliquent à chaque équipe. Laisse vide si tu ne sais pas encore.");
   });
 
   it('weekly_draw league: all three cards show the real pool wording (rosterSubPool), not the old inaccurate "each game" text', async () => {
@@ -501,7 +501,7 @@ describe('B1: settings roster-size wording matches onboarding, in both cards, fo
     const dict = JSON.parse(m[1]);
     expect(dict.en.lblMinPlayers).toBe('Minimum total players');
     expect(dict.en.lblMaxPlayers).toBe('Maximum total players');
-    expect(dict.en.rosterSubTeam).toBe("These numbers apply to each team. Leave blank if you're not ready to decide.");
+    expect(dict.en.rosterSubTeam).toBe("These numbers apply to each team. Leave blank if you don't know yet.");
     expect(dict.en.rosterSubPool).toBe('Everyone who confirms goes into one pool and gets drawn into teams. These numbers cover the whole pool.');
     expect(dict.en.rosterSubHeadcount).toBe('Everyone who confirms counts toward this total.');
   });
@@ -551,8 +551,8 @@ describe('B2: structure option wording in both settings cards ("Cette saison" an
     for (const [key, text] of [
       ['structureFixedTitle', 'Équipes fixes'],
       ['structureFixedDesc', 'La même équipe toute la saison, comme une ligue régulière.'],
-      ['structureWeeklyTitle', 'Sans équipes fixes'],
-      ['structureWeeklyDesc', 'Les équipes sont refaites à chaque match : tirage automatique ou choisies par toi.'],
+      ['structureWeeklyTitle', 'Équipes formées à chaque match'],
+      ['structureWeeklyDesc', 'Tirage automatique ou équipes choisies par toi.'],
       // D5 (2026-09-29): one no-teams option, named for both of its uses.
       ['structureHeadcountTitle', 'Juste mon équipe, ou drop-in'],
       ['structureHeadcountDesc', 'Pas de répartition en équipes : une seule liste de joueurs, avec présences et remplaçants.']
@@ -576,8 +576,8 @@ describe('B2: structure option wording in both settings cards ("Cette saison" an
     const dict = JSON.parse(m[1]);
     expect(dict.en.structureFixedTitle).toBe('Fixed teams');
     expect(dict.en.structureFixedDesc).toBe('The same team all season, like a regular league.');
-    expect(dict.en.structureWeeklyTitle).toBe('Pickup with teams');
-    expect(dict.en.structureWeeklyDesc).toBe('Pickup, but split into teams each game, drawn automatically or set by you.');
+    expect(dict.en.structureWeeklyTitle).toBe('Teams formed every game');
+    expect(dict.en.structureWeeklyDesc).toBe('Drawn automatically or set by you.');
     expect(dict.en.structureHeadcountTitle).toBe('Just my team, or drop-in');
     expect(dict.en.structureHeadcountDesc).toBe('No split into teams: one player list, with attendance and subs.');
     expect(dict.en.structureWeeklyTitle.toLowerCase()).not.toContain('shuffle');

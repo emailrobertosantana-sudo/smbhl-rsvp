@@ -34,7 +34,7 @@ describe('Two labels, one no-teams structure', () => {
     const drop = await signupWith('drop_in', 'd5.drop@example.com', 'Drop-in du jeudi');
     // Signup follows the browser's language.
     expect(['Juste mon équipe', 'Just my team']).toContain(mine.labelText);
-    expect(['Drop-in, sans équipes attitrées', 'Drop-in, no fixed teams']).toContain(drop.labelText);
+    expect(['Liste des présents seulement (drop-in)', 'Attendance list only (drop-in)']).toContain(drop.labelText); // onboarding review item 2
     expect(mine.row.team_structure).toBe('headcount');
     expect(mine.row).toEqual(drop.row);
     expect(mine.errors).toEqual([]);

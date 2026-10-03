@@ -36,8 +36,8 @@ describe('Part 2: signup wizard, step-by-step', () => {
     expect(step1Html).toContain('id="su_email"');
     expect(step1Html).toContain('id="su_password"');
     expect(step1Html).toContain('nl-steps');
-    // Before the structure is chosen there is no total, so no progress bar.
-    expect(step1Html).toContain('data-i18n="step1">Étape 1<');
+    // Onboarding review 1e: the fixed teams total until the structure is chosen.
+    expect(step1Html).toContain('data-i18n="step1">Étape 1 sur 8<');
 
     const signupRes = await SELF.fetch('http://example.com/auth/signup', {
       method: 'POST',
@@ -54,7 +54,7 @@ describe('Part 2: signup wizard, step-by-step', () => {
     expect(step2Html).toContain('id="su_league_name"');
     expect(step2Html).toContain('id="su_slug"');
     expect(step2Html).toContain('notreligue.ca/');
-    expect(step2Html).toContain('data-i18n="step2">Étape 2<');
+    expect(step2Html).toContain('data-i18n="step2">Étape 2 sur 8<'); // onboarding review 1e
 
     const step3Res = await SELF.fetch('http://example.com/signup?step=3', { headers: { cookie } });
     expect(step3Res.status).toBe(200);
@@ -128,7 +128,7 @@ describe('Part 2: signup wizard, step-by-step', () => {
     const cookie = extractCookie(signupRes);
 
     const htmlFr = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
-    expect(htmlFr).toContain("Devient permanente à la création de ta ligue. Ça garantit que les liens que tu partages continuent toujours de fonctionner.");
+    expect(htmlFr).toContain("Elle ne pourra plus changer une fois ta ligue créée, pour que les liens que tu partages fonctionnent toujours.");
     // The address's own help never says it can be changed. (Onboarding batch
     // 2: the league's language, a separate question, can be: « Tu peux la
     // changer plus tard dans les Paramètres. »)

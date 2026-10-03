@@ -89,7 +89,7 @@ describe('the season screen and the step count', () => {
     const fin = await html(s, '/onboarding/season?step=4');
     expect(fin).toContain('Étape 8 sur 8');
     // Item 5: tracking the money is the norm, "Oui" chosen by default.
-    expect(fin).toContain("Veux-tu suivre l&#39;argent de ta ligue?");
+    expect(fin).toContain('Veux-tu faire le suivi des finances de ta ligue?');
     expect(fin).toContain('"financeTitle":"Do you want to track your league\'s money?"');
     expect(fin).toContain('Les frais des joueurs, les paiements reçus et les dépenses, comme la location du gymnase.');
     expect(fin).toContain('id="ob_finance_yes" value="yes" checked');
@@ -97,7 +97,7 @@ describe('the season screen and the step count', () => {
     expect(fin).toContain('data-i18n="financeCostsLabel">Tes principales dépenses<');
     expect(fin).toContain('"financeCostsLabel":"Your main expenses"');
     expect(fin).toContain('data-i18n="skipFinance" onclick="return obSkip()">Passer cette étape<');
-    expect(fin).toContain('Tu pourras tout changer plus tard dans la page Finances.');
+    expect(fin).toContain('Tu pourras tout changer plus tard sur la page Finances.');
     expect(fin).toContain(`onclick="location.href='/onboarding/season?step=3'"`);
     expect(fin).toContain('href="/onboarding/season?step=summary"');
   });

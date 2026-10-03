@@ -83,8 +83,8 @@ describe('Part 5 (live-testing task, batch 5): the weekly_draw team-count tile l
 
   it('buildDashI18n: teamsPerGame no longer says "shuffle" in isolation, and never reverts to the previously-rejected "(par match)" form', () => {
     const { fr, en } = buildDashI18n({ state: 'active', needsSeason: false, leagueName: 'Shuffle League' });
-    expect(fr.teamsPerGame).toBe('Sans équipes fixes');
-    expect(en.teamsPerGame).toBe('Pickup with teams');
+    expect(fr.teamsPerGame).toBe('Équipes formées à chaque match');
+    expect(en.teamsPerGame).toBe('Teams formed every game');
     expect(en.teamsPerGame.toLowerCase()).not.toContain('shuffle');
     expect(fr.teamsPerGame).not.toContain('(par match)');
     expect(en.teamsPerGame).not.toContain('(per game)');
@@ -95,7 +95,7 @@ describe('Part 5 (live-testing task, batch 5): the weekly_draw team-count tile l
     await createLeague(cookie, csrfToken, { name: 'Weekly Shuffle League', teamNames: ['A', 'B'], teamStructure: 'weekly_draw' });
     await publishSeason(cookie, csrfToken, 'Weekly Shuffle Season');
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
-    expect(html).toContain('data-i18n="teamsPerGame">Sans équipes fixes<');
+    expect(html).toContain('data-i18n="teamsPerGame">Équipes formées à chaque match<');
     expect(html).not.toContain('Équipes (par match)');
   });
 

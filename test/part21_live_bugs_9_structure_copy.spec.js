@@ -54,8 +54,9 @@ describe('Live-testing Part 3: team-structure copy is clearer and friendlier', (
     const { cookie } = await signup('bugs9.copy.step2.fr@example.com', '203.0.124.001');
     const html = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
     expect(html).toContain('La même équipe toute la saison, comme une ligue régulière.');
-    expect(html).toContain('Juste la liste des présents. Tu formes les équipes sur place.');
-    expect(html).toContain('Les équipes sont refaites à chaque match : tirage automatique ou choisies par toi.');
+    // Onboarding review item 2: the descriptions no longer repeat the new titles.
+    expect(html).toContain('Tu formes les équipes sur place.');
+    expect(html).toContain('Tirage automatique ou équipes choisies par toi.');
     // The earlier, now-superseded copy generations are gone.
     expect(html).not.toContain('Les mêmes équipes toute la saison.');
     expect(html).not.toContain("Juste une liste de joueurs, pas d'équipes.");
@@ -68,10 +69,10 @@ describe('Live-testing Part 3: team-structure copy is clearer and friendlier', (
     const { cookie } = await signup('bugs9.copy.step2.en@example.com', '203.0.124.002');
     const html = await (await SELF.fetch('http://example.com/signup?step=2', { headers: { cookie } })).text();
     expect(html).toContain('The same team all season, like a regular league.');
-    expect(html).toContain("Just a list of who's in. You sort out sides at the venue.");
+    expect(html).toContain('You sort out sides at the venue.');
     // The weekly_draw copy still communicates the app can build teams
     // automatically -- previously not communicated at all at signup.
-    expect(html).toContain('drawn automatically or set by you');
+    expect(html).toContain('Drawn automatically or set by you.');
     expect(html).not.toContain('The same teams all season.');
     expect(html).not.toContain('Just a list of players, no teams.');
     expect(html).not.toContain('Teams are different every game.');
@@ -92,6 +93,6 @@ describe('Live-testing Part 3: team-structure copy is clearer and friendlier', (
     expect(html).toContain('La même équipe toute la saison, comme une ligue régulière.');
     // D5 (2026-09-29): Settings' no-teams option names both of its uses.
     expect(html).toContain('Pas de répartition en équipes : une seule liste de joueurs, avec présences et remplaçants.');
-    expect(html).toContain('tirage automatique ou choisies par toi.');
+    expect(html).toContain('Tirage automatique ou équipes choisies par toi.');
   });
 });

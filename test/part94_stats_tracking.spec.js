@@ -148,7 +148,7 @@ describe('Stats tracking, Part 1: two independent switches', () => {
     await createLeague(cookie, csrfToken, { name: 'Fixed Stats League', teamNames: ['A', 'B'], tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
-    const step5 = await onboardingHtml(cookie, 5);
+    const step5 = await onboardingHtml(cookie, 3); // the options step (onboarding review 3b)
     expect(step5).toContain('id="ob_tracks_results"');
     expect(step5).toContain('id="ob_tracks_player_stats"');
 
@@ -173,15 +173,16 @@ describe('Stats tracking, Part 1: two independent switches', () => {
     await createLeague(cookie, csrfToken, { name: 'Pickup Stats League', teamStructure: 'weekly_draw', teamNames: ['Rouge', 'Bleu'], tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
 
-    const step4 = await onboardingHtml(cookie, 3); // weekly_draw: roster=1, reminders=2, stats=3, finance=4 (onboarding batch)
+    const step4 = await onboardingHtml(cookie, 2); // weekly_draw: roster=1, options=2, finance=3 (onboarding review 3b)
     expect(step4).toContain('id="ob_tracks_results"');
     expect(step4).toContain('id="ob_tracks_player_stats"');
     expect(step4).toContain('data-i18n="lblTracksResultsDescPickup"');
 
     const m = step4.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
-    expect(dict.fr.lblTracksResultsDescPickup).toBe("Le score de chaque match, gardé comme historique. Les équipes changent chaque semaine, donc pas de classement.");
-    expect(dict.en.lblTracksResultsDescPickup).toBe("Each game's score, kept as history. Teams change every week, so there's no standings table.");
+    // Onboarding review item 2: « pointage », and the teams change every game.
+    expect(dict.fr.lblTracksResultsDescPickup).toBe("Le pointage de chaque match, gardé comme historique. Les équipes changent à chaque match, donc pas de classement.");
+    expect(dict.en.lblTracksResultsDescPickup).toBe("Each game's score, kept as history. Teams change every game, so there's no standings table.");
   });
 
   it('a no-teams (headcount) league never offers game results at all — onboarding, Settings, and the route itself all reject it', async () => {
@@ -189,7 +190,7 @@ describe('Stats tracking, Part 1: two independent switches', () => {
     await createLeague(cookie, csrfToken, { name: 'Headcount Stats League', teamStructure: 'headcount', minPlayers: 8, maxPlayers: 12, tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1', min_players: 8, max_players: 12 });
 
-    const step3 = await onboardingHtml(cookie, 3); // headcount: roster,reminders,stats
+    const step3 = await onboardingHtml(cookie, 2); // headcount: roster, options, finance (onboarding review 3b)
     expect(step3).not.toContain('id="ob_tracks_results"');
     expect(step3).toContain('id="ob_tracks_player_stats"');
 
@@ -240,11 +241,11 @@ describe('Stats tracking, Part 1: two independent switches', () => {
     const { cookie, csrfToken } = await signup('p1.copy@example.com', '203.0.202.007');
     await createLeague(cookie, csrfToken, { name: 'Copy League', teamNames: ['A', 'B'], tracksStats: false });
     await publishSeason(cookie, csrfToken, { season_name: 'S1' });
-    const html = await onboardingHtml(cookie, 5);
+    const html = await onboardingHtml(cookie, 3);
     const m = html.match(/var __I18N = (\{[\s\S]*?\});\n/);
     const dict = JSON.parse(m[1]);
     expect(dict.fr.lblTracksResults).toBe('Résultats des matchs');
-    expect(dict.fr.lblTracksResultsDesc).toBe('Le score de chaque match, calculé en classement (V-D-N).');
+    expect(dict.fr.lblTracksResultsDesc).toBe('Le pointage de chaque match, et le classement (V-D-N) qui en découle.');
     expect(dict.fr.lblTracksPlayerStats).toBe('Statistiques des joueurs');
     expect(dict.fr.lblTracksPlayerStatsDesc).toBe('Buts et passes par joueur, par match.');
     expect(dict.en.lblTracksResults).toBe('Game results');

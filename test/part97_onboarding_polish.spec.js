@@ -127,10 +127,9 @@ describe('Onboarding polish, B4: roster readiness respects the league\'s own rea
 
     const html = await fetchRoster(cookie);
     expect(html).toContain('data-i18n="rosterNudgeTitle">Crée ton horaire.<'); // schedule first, not a "ready" claim
-    expect(html).toContain('>1</span>'); // real count
-    expect(html).toContain('>40</span>'); // real minimum: 10 on each of 4 teams
-    expect(html).toContain('data-i18n="rosterProgressOfWord"');
-    expect(html).toContain('data-i18n="rosterProgressLabel"');
+    // Real count, real minimum (10 on each of 4 teams), in one sentence (onboarding review item 2).
+    expect(html).toContain('1 joueur ajouté sur les 40 nécessaires (10 par équipe, remplaçants compris).');
+    expect(html).toContain('1 player added of the 40 needed (10 per team, subs included).');
   });
 
   it('once the real roster count reaches the configured minimum, the progress message goes away', async () => {
@@ -141,11 +140,11 @@ describe('Onboarding polish, B4: roster readiness respects the league\'s own rea
 
     // 1 per team on 2 teams: one player is not enough, two are.
     const before = await fetchRoster(cookie);
-    expect(before).toContain('data-i18n="rosterProgressLabel"');
+    expect(before).toContain('id="ro_progress"');
 
     await addContact(cookie, csrfToken, 'Player Two');
     const after = await fetchRoster(cookie);
-    expect(after).not.toContain('data-i18n="rosterProgressLabel"');
+    expect(after).not.toContain('id="ro_progress"');
   });
 
   it('a league that has never set a real minimum keeps the original behavior -- any player at all counts as ready (regression lock)', async () => {

@@ -64,7 +64,7 @@ describe('the finance step', () => {
     expect(pay.value).toContain('paiements@example.com');
     expect(pay.value).toContain('5145551234');
     const costs = (await h.db.prepare('SELECT category, description, amount FROM season_costs WHERE league_id = ? ORDER BY amount DESC').bind(league.id).all()).results;
-    expect(costs.map(c => [c.category, c.description, Number(c.amount)])).toEqual([['rental', 'Location de glace ou de terrain', 1800], ['equipment', 'Balles et filets', 150]]);
+    expect(costs.map(c => [c.category, c.description, Number(c.amount)])).toEqual([['rental', 'Location du lieu (glace, terrain ou gymnase)', 1800], ['equipment', 'Balles et filets', 150]]);
     expect(errors).toEqual([]);
     await context.close();
   }, 60000);

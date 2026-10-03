@@ -80,7 +80,7 @@ describe('Part 5 (live-testing task, batch 2): dashboard team-count label is cle
     await publishSeason(cookie, csrfToken, 'Team Label Weekly Season');
     const html = await (await SELF.fetch('http://example.com/dashboard', { headers: { cookie } })).text();
     expect(html).toContain('data-i18n="teamsPerGame"');
-    expect(html).toContain('Sans équipes fixes');
+    expect(html).toContain('Équipes formées à chaque match');
     expect(html).not.toContain('Équipes (par match)');
   });
 

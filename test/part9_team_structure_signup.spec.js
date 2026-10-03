@@ -218,8 +218,9 @@ describe('Team structure, Part 1: schema + signup', () => {
       // changent" (jargon, and inaccurate -- those leagues do form
       // teams, just at the venue) superseded by "Sans équipes"/"Sans
       // équipes fixes".
-      expect(html).toContain('Sans équipes');
-      expect(html).toContain('Sans équipes fixes');
+      // Onboarding review item 2: two names that no longer look alike.
+      expect(html).toContain('Liste des présents seulement (drop-in)');
+      expect(html).toContain('Équipes formées à chaque match');
       expect(html).not.toContain('>fixed<');
       expect(html).not.toContain('>headcount<');
     });
