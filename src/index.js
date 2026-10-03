@@ -52,7 +52,7 @@ import { BILLING_NOTICE_KIND } from './billing_notices.js';
 import { montrealDate, montrealMidnight, addDays as addMontrealDays } from './montreal_time.js';
 import { freeCapBannerHtml } from './mail_limit_banner.js';
 import { BOUNCE_STOP_AFTER, isBounceError, recordBounce, addressStopped, stoppedContacts, clearBounce } from './bounces.js';
-import { guardOn, checkSend, recordSend, HELD_UNTIL, FREE_CAP_REASON, heldReason, freeCapHeldCount, cancelFreeCapHeld, listPauses, releaseScope, cancelScope, checkBounces, pruneGuardState } from './mail_guard.js';
+import { guardOn, checkSend, recordSend, HELD_UNTIL, FREE_CAP_REASON, FREE_DAILY_CAP, heldReason, freeCapHeldCount, cancelFreeCapHeld, listPauses, releaseScope, cancelScope, checkBounces, pruneGuardState } from './mail_guard.js';
 import { checkStripeConfig } from './billing_check.js';
 import { billingView, createCheckout, syncAfterCheckout, createPortal, pauseSubscription, resumeSubscription, runTierChanges, priceIdFor, money, PRICE_CENTS, ownerOf } from './billing_actions.js';
 import { runDailyLeagueHealth, leagueListRows, filterLeagueRows, leagueDetail, attributionSummary, defaultAttributionPeriod, billingStale } from './league_health.js';
@@ -548,6 +548,9 @@ const I18N_HOME = {
     t2Name: 'Standard', t2Range: '15 à 50 joueurs', t2Price: '9,99\u00a0$ CAD par mois, ou 99,90\u00a0$ par an',
     t3Name: 'Plus', t3Range: '51 à 100 joueurs', t3Price: '19,99\u00a0$ CAD par mois, ou 199,90\u00a0$ par an',
     t4Name: 'Sur mesure', t4Range: 'Plus de 100 joueurs', writeUs: 'Écris-nous',
+    // Stage 2, item 2b: the email limit of each plan (src/mail_guard.js
+    // FREE_DAILY_CAP: a free league's emails to players and subs a day).
+    t1Mail: `Jusqu'à ${FREE_DAILY_CAP} courriels par jour aux joueurs et aux remplaçants`, paidMail: 'Courriels sans limite quotidienne',
     priceNote: 'Prix avant taxes. Seuls les joueurs réguliers avec un courriel comptent. 2 mois gratuits pour chaque ligue, sans carte. Les forfaits mensuels peuvent être mis en pause pendant la saison morte.',
     eyebrow2: 'Comment ça marche', heading2: 'Trois étapes, une fois. Ensuite ça roule tout seul.',
     s1Title: 'Créer ta ligue', s1Body: "Le nom, ta formule de jeu, l'adresse de ta page. Cinq minutes.",
@@ -578,6 +581,7 @@ const I18N_HOME = {
     t2Name: 'Standard', t2Range: '15 to 50 players', t2Price: '$9.99 CAD per month, or $99.90 per year',
     t3Name: 'Plus', t3Range: '51 to 100 players', t3Price: '$19.99 CAD per month, or $199.90 per year',
     t4Name: 'Custom', t4Range: 'Over 100 players', writeUs: 'Write to us',
+    t1Mail: `Up to ${FREE_DAILY_CAP} emails a day to players and subs`, paidMail: 'Emails with no daily limit',
     priceNote: 'Prices before tax. Only regular players with an email count. 2 months free for every league, no card. Monthly plans can pause for the off-season.',
     eyebrow2: 'How it works', heading2: 'Three steps, once. Then it runs itself.',
     s1Title: 'Create your league', s1Body: 'Name, how it runs, your page address. Five minutes.',
@@ -750,6 +754,7 @@ function renderMarketingHomepage(req, forcedLang = null) {
   .home-tier h3 { font: 700 20px/26px var(--font-display); font-stretch: 118%; }
   .home-tier .range { color: var(--ink-muted); font-size: 15px; }
   .home-tier .price { font-weight: 700; font-size: 17px; line-height: 24px; }
+  .home-tier .mail { color: var(--ink-muted); font-size: 14px; line-height: 20px; }
   .home-tier .go { margin-top: auto; }
   .home-tier .go a { text-decoration: underline; font-weight: 600; color: var(--ink); }
   p.home-fine { margin-top: var(--space-5); color: var(--ink-muted); font-size: 13px; line-height: 19px; max-width: 760px; }
@@ -855,10 +860,10 @@ function renderMarketingHomepage(req, forcedLang = null) {
   <h2 class="home-sec-h" data-i18n="headingP">${T.headingP}</h2>
   <p class="home-sub" data-i18n="sublineP">${T.sublineP}</p>
   <div class="home-tiers">
-    <div class="home-tier"><h3 data-i18n="t1Name">${T.t1Name}</h3><div class="range" data-i18n="t1Range">${T.t1Range}</div><div class="price" data-i18n="t1Price">${T.t1Price}</div><div class="go"><a href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a></div></div>
-    <div class="home-tier"><h3 data-i18n="t2Name">${T.t2Name}</h3><div class="range" data-i18n="t2Range">${T.t2Range}</div><div class="price" data-i18n="t2Price">${T.t2Price}</div><div class="go"><a href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a></div></div>
-    <div class="home-tier"><h3 data-i18n="t3Name">${T.t3Name}</h3><div class="range" data-i18n="t3Range">${T.t3Range}</div><div class="price" data-i18n="t3Price">${T.t3Price}</div><div class="go"><a href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a></div></div>
-    <div class="home-tier"><h3 data-i18n="t4Name">${T.t4Name}</h3><div class="range" data-i18n="t4Range">${T.t4Range}</div><div class="go"><a href="mailto:bonjour@notreligue.ca" data-i18n="writeUs">${T.writeUs}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t1Name">${T.t1Name}</h3><div class="range" data-i18n="t1Range">${T.t1Range}</div><div class="price" data-i18n="t1Price">${T.t1Price}</div><div class="mail" data-i18n="t1Mail">${T.t1Mail}</div><div class="go"><a href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t2Name">${T.t2Name}</h3><div class="range" data-i18n="t2Range">${T.t2Range}</div><div class="price" data-i18n="t2Price">${T.t2Price}</div><div class="mail" data-i18n="paidMail">${T.paidMail}</div><div class="go"><a href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t3Name">${T.t3Name}</h3><div class="range" data-i18n="t3Range">${T.t3Range}</div><div class="price" data-i18n="t3Price">${T.t3Price}</div><div class="mail" data-i18n="paidMail">${T.paidMail}</div><div class="go"><a href="${esc(signupHref)}" data-i18n="cta">${T.cta}</a></div></div>
+    <div class="home-tier"><h3 data-i18n="t4Name">${T.t4Name}</h3><div class="range" data-i18n="t4Range">${T.t4Range}</div><div class="mail" data-i18n="paidMail">${T.paidMail}</div><div class="go"><a href="mailto:bonjour@notreligue.ca" data-i18n="writeUs">${T.writeUs}</a></div></div>
   </div>
   <p class="home-fine" data-i18n="priceNote">${T.priceNote}</p>
 </div></section>
@@ -7031,6 +7036,10 @@ const I18N_BILLING = {
   fr: {
     navHome: 'Accueil', navRoster: 'Joueurs', navSchedule: 'Horaire', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Paramètres',
     title: 'Abonnement',
+    // Stage 2, item 2b: the email limits of the plans (src/mail_guard.js).
+    mailTitle: 'Limites de courriels',
+    mailFree: `Gratuit : jusqu'à ${FREE_DAILY_CAP} courriels par jour aux joueurs et aux remplaçants. Les autres attendent le lendemain.`,
+    mailPaid: "Standard, Plus et l'essai gratuit : aucune limite quotidienne.",
     free: 'Ta ligue est gratuite (moins de 15 joueurs réguliers).',
     custom: 'Plus de 100 joueurs réguliers : écris-nous à bonjour@notreligue.ca pour un prix sur mesure. D\'ici là, le forfait Plus s\'applique.',
     trialOver: 'Ton essai gratuit est terminé.',
@@ -7056,6 +7065,9 @@ const I18N_BILLING = {
   en: {
     navHome: 'Home', navRoster: 'Players', navSchedule: 'Schedule', navComms: 'Comms', navFinances: 'Finances', navSettings: 'Settings',
     title: 'Subscription',
+    mailTitle: 'Email limits',
+    mailFree: `Free: up to ${FREE_DAILY_CAP} emails a day to players and subs. The rest wait for the next day.`,
+    mailPaid: 'Standard, Plus and the free trial: no daily limit.',
     free: 'Your league is free (fewer than 15 regular players).',
     custom: 'More than 100 regular players: write to bonjour@notreligue.ca for a custom price. Until then, the Plus plan applies.',
     trialOver: 'Your free trial has ended.',
@@ -7242,6 +7254,11 @@ async function handleLeagueBillingPage(req, env, url) {
     ${view.live || view.planTier === 'free' ? '' : bi(L.trial)}
     ${view.countTier === 'custom' ? `<p ${k('custom')}</p>` : ''}
     ${action}
+  </section>
+  <section class="nl-card nl-card--pad-lg bl-card" id="bl-mail">
+    <h2 class="h3" ${k('mailTitle')}</h2>
+    <p ${k('mailFree')}</p>
+    <p ${k('mailPaid')}</p>
   </section>
 </main>
 ${tabbar}`;
