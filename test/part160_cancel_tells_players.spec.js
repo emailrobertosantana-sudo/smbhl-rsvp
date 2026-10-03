@@ -38,7 +38,8 @@ describe('Cancelling a game tells the players who would come', () => {
     expect(told).toEqual(['blue.in@example.com', 'placed.sub@example.com', 'red.in@example.com', 'red.quiet@example.com']);
     const m = mail.sent.find(x => x.to === 'red.in@example.com');
     expect(m.subject).toMatch(/^Match annulé · .+ \/ Game cancelled · /);
-    expect(m.text).toContain('Bonjour Red,\nLe match de ');
+    expect(m.text).toContain('Salut Red,\nLe match de '); // email review item 2
+    expect(m.html).not.toContain('>Annulé<');
     expect(m.text).toContain(' est annulé.\nLieu : Aréna Nord\nPas besoin de te présenter.');
     expect(m.text).toContain('Hi Red,\nThe game on ');
     expect(m.text).toContain(' is cancelled.\nVenue: Aréna Nord\nNo need to come.');

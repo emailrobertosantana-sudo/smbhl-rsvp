@@ -68,9 +68,13 @@ describe('A game moved from 7pm to 9pm', () => {
     const blue1 = byTo(seen, P.Blue1);
     expect(blue1.text).toContain('Blue now plays on ');
     expect(blue1.text).toContain('9 PM');
+    // Email review item 2: the time before the change, in brackets (7 PM: the
+    // last time the players were told, not the 8 PM in between).
+    expect(blue1.text).toContain('(was ');
+    expect(blue1.text).toContain('7 PM)');
     expect(blue1.text).not.toContain('8 PM');
-    expect(blue1.text).toContain("Your answer carries over: you're still playing. Nothing to do.");
-    expect(byTo(seen, P.Blue2).text).toContain('We still need your answer.');
+    expect(blue1.text).toContain("Your answer is kept: you're still playing. Nothing to do on your end.");
+    expect(byTo(seen, P.Blue2).text).toContain("You haven't answered yet: tell us if you're playing.");
     // Their answers stayed on the game.
     expect((await one('SELECT status FROM rsvp WHERE event_id = ? AND player_id = ?', X.id, P.Blue1.player_id)).status).toBe('in');
   });

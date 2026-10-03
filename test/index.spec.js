@@ -1892,8 +1892,9 @@ describe("SMBHL Worker", () => {
 			});
 			expect(resSkater.text).toContain("💵 Frais de substitut : 10,00 $ / Sub fee: $10.00");
 			expect(resSkater.text).not.toContain("2 matchs");
-			expect(resSkater.text).toContain("Paiement de 10,00 $ en argent comptant sur place ou par virement Interac au 514-555-7890.");
-			expect(resSkater.text).toContain("Please bring $10.00 in cash to the gym or send it by Interac e-Transfer to 514-555-7890.");
+			// Email review 1d: cash or Interac, the payment reminder's variants.
+			expect(resSkater.text).toContain("Paiement de 10,00 $ comptant sur place, ou par virement Interac au 514-555-7890.");
+			expect(resSkater.text).toContain("Pay $10.00 in cash at the gym, or by Interac e-Transfer to 514-555-7890.");
 			expect(resSkater.html).toContain("10,00 $");
 			expect(resSkater.html).not.toContain("2 matchs");
 			expect(resSkater.html).toContain("514-555-7890");
@@ -1929,8 +1930,8 @@ describe("SMBHL Worker", () => {
 				}
 			});
 			expect(resUnpaid.text).toContain("Montant dû : 170,00 $ / Amount due: $170.00");
-			expect(resUnpaid.text).toContain("Paiement de 170,00 $ en argent comptant sur place ou par virement Interac au 514-555-7890.");
-			expect(resUnpaid.text).toContain("Please bring $170.00 in cash to the gym or send it by Interac e-Transfer to 514-555-7890.");
+			expect(resUnpaid.text).toContain("Paiement de 170,00 $ comptant sur place, ou par virement Interac au 514-555-7890.");
+			expect(resUnpaid.text).toContain("Pay $170.00 in cash at the gym, or by Interac e-Transfer to 514-555-7890.");
 			expect(resUnpaid.html).toContain("170,00 $");
 			expect(resUnpaid.html).toContain("514-555-7890");
 			expect(resUnpaid.text).toContain("Gérer l'équipe Rouge / Manage Red's lineup and subs");

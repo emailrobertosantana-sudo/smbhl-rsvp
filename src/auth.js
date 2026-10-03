@@ -365,7 +365,7 @@ This link expires in 24 hours. If you didn't create an account, you can ignore t
     brandName: 'Notre Ligue',
     barColor: '#16181d',
     bodyHtml: assembled.html,
-    footerHtml: nlSentByFooter(lang)
+    footerHtml: 'Notre Ligue' // email review 1e: account emails
   });
   return { subject: assembled.subject, text: assembled.text, html };
 }
@@ -493,7 +493,7 @@ This link expires in 1 hour. If you didn't request this, you can ignore this ema
     brandName: 'Notre Ligue',
     barColor: '#16181d',
     bodyHtml: assembled.html,
-    footerHtml: nlSentByFooter(languageMode)
+    footerHtml: 'Notre Ligue' // email review 1e: account emails
   });
   return { subject: assembled.subject, text: assembled.text, html };
 }

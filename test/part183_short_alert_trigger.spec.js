@@ -66,7 +66,7 @@ describe('Short of players: when it is sent', () => {
     await callSubsForShortfall(env, ev);
     await drain(env);
     const [m] = alertsTo('setup.oneteam');
-    expect(m.text).toContain('Bulls, players: 3 of 5 needed (confirmed or no reply yet).');
+    expect(m.text).toContain('Bulls, players: 3 of 5 needed.\nCounted: players confirmed or not yet answered.');
     expect(m.text).not.toContain('Parade');
   });
 
@@ -85,7 +85,7 @@ describe('Short of players: when it is sent', () => {
     await callSubsForShortfall(env, ev);
     await drain(env);
     expect(alertsTo('early')).toHaveLength(1);
-    expect(alertsTo('early')[0].text).toContain('Bulls, players: 3 of 5 needed (confirmed or no reply yet).');
+    expect(alertsTo('early')[0].text).toContain('Bulls, players: 3 of 5 needed.');
   });
 
   it('a real shortage, checked again and again: one email for the game, to each admin once', async () => {

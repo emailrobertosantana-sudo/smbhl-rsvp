@@ -48,8 +48,9 @@ describe('A short game with no subs tells the admin', () => {
     expect(adminAlerts('hc')).toHaveLength(1);
     const m = adminAlerts('hc')[0];
     expect(m.subject).toMatch(/^Manque de joueurs · .+ \/ Short of players · /);
-    expect(m.text).toContain("Joueurs : 8 sur 10 requis (confirmés ou sans réponse).\nIl ne reste aucun remplaçant à appeler. Tes joueurs n'ont pas été avisés de ce manque.");
-    expect(m.text).toContain('Players: 8 of 10 needed (confirmed or no reply yet).\nNo substitutes are left to call. Your players have not been told about this shortage.');
+    // Email review item 2: who is counted, once after the lines.
+    expect(m.text).toContain("Joueurs : 8 sur 10 requis.\nComptés : les joueurs confirmés ou sans réponse.\nIl ne reste aucun remplaçant à appeler. Tes joueurs n'ont pas été avisés de ce manque.");
+    expect(m.text).toContain('Players: 8 of 10 needed.\nCounted: players confirmed or not yet answered.\nNo substitutes are left to call. Your players have not been told about this shortage.');
     expect(m.text).not.toContain('Tous');
     expect(mail.sent.filter(x => x.to.startsWith('hc.'))).toEqual([]);
     // Once per game.
@@ -71,8 +72,8 @@ describe('A short game with no subs tells the admin', () => {
     await callSubsForShortfall(env, ev);
     await drain(env);
     expect(adminAlerts('late')).toHaveLength(1);
-    expect(adminAlerts('late')[0].text).toContain('Players: 8 of 10 needed (confirmed).');
-    expect(adminAlerts('late')[0].text).toContain('Joueurs : 8 sur 10 requis (confirmés).');
+    expect(adminAlerts('late')[0].text).toContain('Players: 8 of 10 needed.\nCounted: confirmed players.');
+    expect(adminAlerts('late')[0].text).toContain('Joueurs : 8 sur 10 requis.\nComptés : les joueurs confirmés.');
   });
 
   it('fixed teams: not while a called sub has yet to answer; once they decline, one email names each short team', async () => {
@@ -93,8 +94,8 @@ describe('A short game with no subs tells the admin', () => {
     expect(await alertRows(ev.id)).toHaveLength(1);
     await drain(env);
     const m = adminAlerts('fx')[0];
-    expect(m.text).toContain('Red, joueurs : 3 sur 5 requis (confirmés ou sans réponse).');
-    expect(m.text).toContain('Red, players: 3 of 5 needed (confirmed or no reply yet).');
+    expect(m.text).toContain('Red, joueurs : 3 sur 5 requis.');
+    expect(m.text).toContain('Red, players: 3 of 5 needed.');
     expect(m.text).not.toContain('Blue');
   });
 });

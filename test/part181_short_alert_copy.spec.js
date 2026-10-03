@@ -54,13 +54,14 @@ const min = async lg => { const r = await one('SELECT min_players, min_goalies F
 
 const FR = {
   subject: /^Manque de joueurs · /,
-  lines: ['Bulls, gardiens : 0 sur 1 requis (confirmés ou sans réponse).', 'Bulls, joueurs : 1 sur 5 requis (confirmés ou sans réponse).', 'Parade, joueurs : 4 sur 5 requis (confirmés ou sans réponse).'],
+  // Email review item 2: who is counted, once after the lines.
+  lines: ['Bulls, gardiens : 0 sur 1 requis.', 'Bulls, joueurs : 1 sur 5 requis.', 'Parade, joueurs : 4 sur 5 requis.', 'Comptés : les joueurs confirmés ou sans réponse.'],
   close: "Il ne reste aucun remplaçant à appeler. Tes joueurs n'ont pas été avisés de ce manque.",
   tag: 'Action requise', heading: 'Manque de joueurs', button: 'Voir le match'
 };
 const EN = {
   subject: /Short of players · /,
-  lines: ['Bulls, goalies: 0 of 1 needed (confirmed or no reply yet).', 'Bulls, players: 1 of 5 needed (confirmed or no reply yet).', 'Parade, players: 4 of 5 needed (confirmed or no reply yet).'],
+  lines: ['Bulls, goalies: 0 of 1 needed.', 'Bulls, players: 1 of 5 needed.', 'Parade, players: 4 of 5 needed.', 'Counted: players confirmed or not yet answered.'],
   close: 'No substitutes are left to call. Your players have not been told about this shortage.',
   tag: 'Action needed', heading: 'Short of players', button: 'View the game'
 };
@@ -114,9 +115,11 @@ describe('Short of players: the copy, in the league\'s language', () => {
     await callSubsForShortfall(env, ev);
     await drain(env);
     const m = alertsTo('copy.late')[0];
-    expect(m.text).toContain('Bulls, goalies: 0 of 1 needed (confirmed).');
-    expect(m.text).toContain('Bulls, players: 0 of 5 needed (confirmed).');
-    expect(m.text).toContain('Parade, joueurs : 0 sur 5 requis (confirmés).');
+    expect(m.text).toContain('Bulls, goalies: 0 of 1 needed.');
+    expect(m.text).toContain('Bulls, players: 0 of 5 needed.');
+    expect(m.text).toContain('Parade, joueurs : 0 sur 5 requis.');
+    expect(m.text).toContain('Counted: confirmed players.');
+    expect(m.text).toContain('Comptés : les joueurs confirmés.');
     expect(m.text).toContain(EN.close);
     expect(m.text).not.toMatch(/\((s|es|e)\)/);
   });

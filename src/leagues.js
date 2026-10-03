@@ -3715,7 +3715,7 @@ ${inviteLink}
 
 Ce lien expire dans 48 heures. Si tu ne connais pas cette ligue, ignore ce courriel.`,
     html: `
-    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Invitation à co-administrer</h1>
+    <h1 style="margin:0 0 12px;font:700 28px/34px Archivo,Arial,Helvetica,sans-serif;font-stretch:118%;color:#16181d;">Invitation à coadministrer</h1>
     <p style="margin:0 0 24px;font-size:16px;line-height:25px;">On t'invite à coadministrer <b>${nlEmailWrapEsc(leagueName)}</b>.</p>
     ${nlEmailButton(inviteLink, 'Accepter l’invitation', barColor)}
     <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">Ce lien expire dans 48 heures. Si tu ne connais pas cette ligue, ignore ce courriel.</p>`
@@ -3733,7 +3733,8 @@ This link expires in 48 hours. If you don't recognize this league, you can ignor
     <p style="margin:20px 0 0;font-size:13px;line-height:19px;color:#55585f;">This link expires in 48 hours. If you don't recognize this league, you can ignore this email.</p>`
   };
   const assembled = assembleBilingualEmail(languageMode, { fr, en });
-  const footerHtml = nlSentByFooter(languageMode, { forName: nlEmailWrapEsc(leagueName) });
+  // Email review 1e: an email to an (incoming) admin ends with « Notre Ligue ».
+  const footerHtml = 'Notre Ligue';
   const html = nlLegalEmailWrap({ languageMode: languageMode, brandName: leagueName, barColor, bodyHtml: assembled.html, footerHtml });
   return { subject: assembled.subject, text: assembled.text, html };
 }

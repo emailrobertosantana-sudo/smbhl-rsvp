@@ -156,6 +156,8 @@ describe('Every link in every league email', () => {
     }
     expect([...new Set(voice)]).toEqual([]);
     // Every kind of destination was met.
-    expect([...seen.keys()].sort()).toEqual(['/', '/auth/verify', '/avail', '/league/admins/accept', '/league/events/detail', '/league/rsvp', '/reset-password'].sort());
+    // Email review 1a: the league sub call is in Notre Ligue's card; it no
+    // longer carries SMBHL's link to the site's home page.
+    expect([...seen.keys()].sort()).toEqual(['/auth/verify', '/avail', '/league/admins/accept', '/league/events/detail', '/league/rsvp', '/reset-password'].sort());
   }, 120000);
 });

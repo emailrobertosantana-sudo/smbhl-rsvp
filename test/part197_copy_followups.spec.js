@@ -72,12 +72,14 @@ describe('3c: the stuck-mail alert', () => {
 describe('3d: Notre Ligue team_assigned says the team is new', () => {
   const args = { leagueName: 'Ligue Test', leagueColor: '#2a5fa8', firstName: 'Lea', dayLabel: { fr: 'dimanche', en: 'Sunday' }, ev: { id: 'lg:2026-11-15', date: '2026-11-15', start_time: '19:00', venue: 'Gym' }, team: 'Otters', optOutLink: 'https://x.test/o', forcedLang: null };
 
-  it('a short heading above the shared details, in French and English', () => {
+  // Email review item 2: one heading names the team; no « Équipe : » line.
+  it('one heading names the team, in French and English', () => {
     const m = renderLeagueLogisticsEmail({ ...args, newTeam: true });
-    expect(m.text).toContain('Tu fais maintenant partie de Otters\n\n');
-    expect(m.text).toContain("You're now on Otters\n\n");
-    expect(m.html).toContain('Tu fais maintenant partie de Otters</p>');
-    expect(m.html).toMatch(/You(&#39;|&#x27;|')re now on Otters<\/p>/);
+    expect(m.text).toContain("Tu es dans l'équipe Otters\n");
+    expect(m.text).toContain("You're on Otters\n");
+    expect(m.html).toMatch(/Tu es dans l(&#39;|&#x27;|')équipe Otters<\/h1>/);
+    expect(m.html).toMatch(/You(&#39;|&#x27;|')re on Otters<\/h1>/);
+    expect(m.text).not.toMatch(/Équipe : Otters|Team: Otters|Détails du match|Game details/);
   });
 
   it('the details email itself is unchanged', () => {

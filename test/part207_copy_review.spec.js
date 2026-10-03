@@ -47,12 +47,14 @@ describe('5a: the sub call', () => {
     // Batch 8 item 1c: the short call.
     expect(m.text).toContain("SMBHL a besoin d'un substitut dimanche 11 janv. à 10 h 30. Tu embarques?\nLieu : Aréna Golden");
     expect(m.text).toContain('SMBHL needs a sub on Sunday, Jan 11 at 10:30 AM. Are you in?\nVenue: Aréna Golden');
-    for (const b of ['✅ J', '❌ Pas cette fois', '✅ I', '❌ Not this time']) {
-      expect(m.text).toContain(b);
-      expect(m.html).toContain(b);
-    }
-    expect(m.text).toContain("✅ J'embarque : https://x/yes");
-    expect(m.text).toContain("✅ I'm in: https://x/yes");
+    // Email review item 3: the French text, the English text, then one pair
+    // of bilingual buttons, no emoji, no capitals.
+    expect(m.text).toContain("J'embarque / I'm in : https://x/yes");
+    expect(m.text).toContain('Pas cette fois / Not this time : https://x/no');
+    expect(m.html).toContain('J&#39;embarque / I&#39;m in');
+    expect(m.html).toContain('Pas cette fois / Not this time');
+    expect(m.text.indexOf('Are you in?')).toBeLessThan(m.text.indexOf("J'embarque / I'm in"));
+    expect(m.text + m.html).not.toMatch(/✅|❌/);
     expect(m.text).toContain('Tu ne veux plus être sur la liste de substituts? Réponds à ce courriel.');
     expect(m.text).toContain('Want off the sub list? Just reply to this email.');
     expect(m.text + m.html).not.toMatch(/décidée|decided yet|liste d'attente|waitlist|Disponible\?|Available\?/);

@@ -108,7 +108,7 @@ describe('the email', () => {
   it("Notre Ligue: the league's language only, its subject", async () => {
     const { mail } = await renderPaymentReminder(env, lg.league.id, { name: 'Léa Doit', balance: 1234.5, note: '', info: { email: 'paye@ligue.ca', phone: '' }, season: 'S1' });
     expect(mail.subject).toBe('Ligue Deux Cents : solde à payer');
-    expect(mail.text).toContain('Bonjour Léa,');
+    expect(mail.text).toContain('Salut Léa,'); // email review item 2 (SMBHL keeps « Bonjour »)
     expect(mail.text).toMatch(/Solde à payer : 1\s234,50 \$/);
     expect(mail.text).not.toMatch(/Balance owing|Hi Léa/);
     await env.DB.prepare("UPDATE leagues SET language_mode = 'en' WHERE id = ?").bind(lg.league.id).run();

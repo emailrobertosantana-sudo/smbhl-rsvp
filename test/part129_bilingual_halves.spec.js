@@ -99,11 +99,12 @@ describe('B3: no French inside English halves', () => {
   it('money: each language its own format, and the English payment sentence carries the amount', () => {
     const inv = body('invite', { ev, name: 'Marc', team: 'Red', link: 'L', payload: { yes: 'Y', no: 'N', duesReminder: { balance: 170, phone: '514-555-0000' } } });
     expect(inv.text).toContain('Montant dû : 170,00 $ / Amount due: $170.00');
-    expect(inv.text).toContain('Please bring $170.00 in cash to the gym or send it by Interac e-Transfer to 514-555-0000.');
+    expect(inv.text).toContain('Pay $170.00 in cash at the gym, or by Interac e-Transfer to 514-555-0000.'); // email review 1d
     expect(inv.html).toContain('$170.00');
     const gd = body('gameday', { ev, name: 'Marc', team: 'Red', link: 'L', payload: { subFee: { perGame: 5, total: 10, phone: '514-555-0000' } } });
-    expect(gd.text).toContain('Please bring $10.00 in cash to the gym');
-    expect(gd.html).toContain('Please bring <b>$10.00 in cash</b>');
+    // Email review 1d: the payment reminder's wording, the same in both parts.
+    expect(gd.text).toContain('Pay $10.00 in cash at the gym, or by Interac e-Transfer to 514-555-0000.');
+    expect(gd.html).toContain('Pay $10.00 in cash at the gym, or by Interac e-Transfer to 514-555-0000.');
   });
 
   it('highlights: English units beside the French ones', () => {
@@ -214,7 +215,8 @@ describe('B9: account emails follow one rule', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].html).toContain('Réinitialise ton mot de passe');
     expect(sent[0].html).toContain('Reset your password');
-    expect(sent[0].html).toContain('Envoyé par Notre Ligue · Sent by Notre Ligue');
+    expect(sent[0].html).toContain('Notre Ligue<br>'); // email review 1e: account emails end with « Notre Ligue »
+    expect(sent[0].html).not.toContain('Envoyé par');
   });
 
   it('asked from an English page: English only, whatever the account signed up in', async () => {

@@ -72,9 +72,11 @@ export function paymentLine(lang, { email, phone }) {
 
 // The email's lines in one language, as plain text (the HTML escapes them).
 // amount: already formatted for that language.
-export function paymentReminderLines(lang, { firstName, note, amount, info }) {
+// frHello: the French greeting (email review item 2: « Salut » for Notre
+// Ligue; SMBHL keeps « Bonjour »).
+export function paymentReminderLines(lang, { firstName, note, amount, info, frHello = 'Bonjour' }) {
   const fr = lang === 'fr';
-  const lines = [fr ? `Bonjour ${firstName},` : `Hi ${firstName},`];
+  const lines = [fr ? `${frHello} ${firstName},` : `Hi ${firstName},`];
   if (note) lines.push(note);
   lines.push(fr ? `Solde à payer : ${amount}` : `Balance owing: ${amount}`);
   lines.push(paymentLine(lang, info));

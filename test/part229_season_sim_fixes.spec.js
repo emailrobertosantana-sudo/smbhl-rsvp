@@ -230,9 +230,9 @@ describe('1d and 1e: subs', () => {
     await say(L.id, eid, L.p.A.skaters[0], 'out', 'A');
     vi.setSystemTime(new Date(local('2026-10-14', '20:00')));
     expect((await acceptAvailability(env, await ev(eid), sub, 'skater')).placed).toBe('A');
-    const m = sent.find(x => x.to === 'late.p1e@p229.example' && /joues avec/.test(x.text));
+    const m = sent.find(x => x.to === 'late.p1e@p229.example' && /dans l'équipe/.test(x.text));
     expect(m.subject).not.toMatch(/See you at the gym/);
-    expect(m.text).toContain('Tu joues avec A');
+    expect(m.text).toContain("Tu es dans l'équipe A"); // email review item 2
     expect(m.text).toContain('Frais de remplaçant : 7,00 $ pour ce match.');
     expect(m.text).not.toMatch(/Hi |Venue:|team-rsvp|https?:\/\/[^/\s]+\/rsvp\?|#\/team|smbhl|5,00/);
     expect(m.text).toMatch(/\/league\/rsvp\?/);
@@ -246,8 +246,8 @@ describe('1d and 1e: subs', () => {
     vi.setSystemTime(new Date(local('2026-10-14', '20:00')));
     const team = (await acceptAvailability(env, await ev(eid), sub, 'skater')).placed;
     expect(['A', 'B']).toContain(team);
-    const m = sent.find(x => x.to === 'late.p1e2@p229.example' && /playing with/.test(x.text));
-    expect(m.text).toContain(`You're playing with ${team}`);
+    const m = sent.find(x => x.to === 'late.p1e2@p229.example' && /You're on/.test(x.text));
+    expect(m.text).toContain(`You're on ${team}`);
     expect(m.text).not.toMatch(/Sub fee|Salut|Tu joues/);
   });
 });
@@ -445,7 +445,7 @@ describe('C9 and C10: a pickup league', () => {
     expect((await one('SELECT team, status FROM rsvp WHERE event_id = ? AND player_id = ?', eid, ids[3]))).toMatchObject({ team: 'Light', status: 'in' });
     await drain(env);
     const told = sent.find(x => x.to === 'p3.pc10@p229.example');
-    expect(told.text).toContain("You're now on Light");
+    expect(told.text).toContain("You're on Light"); // email review item 2
   });
 
   it("C9: before the draw, a sub's yes does not take a spot a regular who hasn't answered still holds", async () => {
